@@ -1055,3 +1055,23 @@ memory was 3,823,595,520 bytes and minimum available system commit was 5,373,673
 bytes. There were no memory/module sampling errors. These results do not identify
 the cause or establish continuous module absence between samples. The existing
 launcher and working movement/stone code are unchanged.
+
+The diagnostic now offers explicit `-WithoutMods` isolation through Warhorse's
+documented empty mod-order list, with ownership-checked restoration after process
+exit. It preserves existing mod orders and both installed mod packages. Windows
+PowerShell 5.1 preflight, cached-helper compatibility and empty-file Win32 identity
+checks pass. Default launching arguments remain unchanged; live mod exclusion is
+not inferred from file creation and must be checked in the resulting game log.
+
+The actual `-WithoutMods` run in
+`runtime/evidence/tools-startup-diagnostic-20261012-202201-861e685726ac49efb65ca5bed6faa380`
+also failed. Its fresh log explicitly reports `0 mods enabled`, with neither mod's
+startup script loaded. PID 52160 exited with the same code 250 after 28.462 seconds;
+minimum sampled available system commit was 5,098,078,208 bytes. The renderer hook
+remained disabled. This rules out a requirement for either mod to reproduce this
+failure, without identifying its cause. The helper conservatively retained its empty
+list because the exited process was still enumerated while its handle remained open.
+After all processes closed, the exact unchanged owned file was verified and removed;
+`post-exit-mod-cleanup.json` records restoration of the previous mod-loading setup.
+Cleanup now checks process exit state and disposes temporary process wrappers;
+six focused cases cover live, exited, absent and inaccessible process states.

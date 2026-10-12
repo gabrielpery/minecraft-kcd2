@@ -2,10 +2,12 @@
 # USER-ONLY diagnostic launch. Agents may invoke -PreflightOnly; they must not launch through this script.
 # Starts the exact official development executable on fresh trosecko; never loads a save.
 # Monitors only the process returned by Start-Process, then leaves a surviving game running.
+# -WithoutMods uses the official empty mod_order.txt mechanism; it never changes a mod.
+# Source: official KM-A-56 Installing mods (pinned offline wiki).
 # Memory ABI: https://learn.microsoft.com/windows/win32/api/psapi/nf-psapi-getperformanceinfo
 # Layout/units: https://learn.microsoft.com/windows/win32/api/psapi/ns-psapi-performance_information
 [CmdletBinding()]
-param([string]$GameRoot, [switch]$PreflightOnly)
+param([string]$GameRoot, [switch]$PreflightOnly, [switch]$WithoutMods)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
@@ -42,13 +44,39 @@ function Save-NewJson([string]$Path,$Value,[int]$Limit=1048576) {
     $stream=[IO.FileStream]::new($Path,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::Read)
     try {$stream.Write($body,0,$body.Length);$stream.Flush($true)}finally{$stream.Dispose()}
 }
+function Test-AllKcdProcessesExited {
+    $processes=@();$queryErrors=@()
+    try{
+        $processes=@(Get-Process -Name KingdomCome -ErrorAction SilentlyContinue -ErrorVariable queryErrors)
+        foreach($queryError in $queryErrors){
+            # Get-Process emits this expected error when the name has no matches.
+            if($queryError.FullyQualifiedErrorId-notlike'NoProcessFoundForGivenName,*'){throw 'Could not establish KingdomCome process state; preserve diagnostic mod order.'}
+        }
+        $allExited=$true
+        foreach($candidate in $processes){
+            $candidate.Refresh()
+            # A retained handle can keep an exited process enumerable. Count only live processes.
+            if(-not$candidate.HasExited){$allExited=$false}
+        }
+        return $allExited
+    }finally{
+        foreach($candidate in $processes){$candidate.Dispose()}
+    }
+}
 function Assert-ClosedExactTarget {
-    if (@(Get-Process -Name KingdomCome -ErrorAction SilentlyContinue).Count) { throw 'Close Kingdom Come normally before this manual diagnostic. No existing process will be stopped.' }
+    if (-not(Test-AllKcdProcessesExited)) { throw 'Close Kingdom Come normally before this manual diagnostic. No existing process will be stopped.' }
     $version=(Get-Item -LiteralPath $script:gameExe).VersionInfo
     if ((Get-FileHash -LiteralPath $script:gameExe -Algorithm SHA256).Hash -ine $expectedExeHash -or
         $version.FileVersion -cne '1.5.5.0' -or $version.ProductVersion -cne '1.5.5.0' -or
         $version.FileMajorPart -ne 1 -or $version.FileMinorPart -ne 0 -or $version.FileBuildPart -ne 0 -or $version.FilePrivatePart -ne 0) { throw 'The exact pinned official tools executable is required.' }
     if (Test-Path -LiteralPath (Join-Path $script:gameBin 'dxgi.dll')) { throw 'Active tools DXGI proxy still exists. Use the verified rollback before this hook-disabled baseline diagnostic.' }
+}
+function Assert-ModIsolationAvailable {
+    if (-not $WithoutMods) { return }
+    $null=Assert-UnlinkedPath $script:modsDirectory
+    if (-not (Test-Path -LiteralPath $script:modsDirectory -PathType Container)) { throw 'The discovered tools Mods directory must already exist for -WithoutMods.' }
+    $null=Assert-UnlinkedPath $script:modOrderPath
+    if (Test-Path -LiteralPath $script:modOrderPath) { throw 'Existing Mods/mod_order.txt refused. This diagnostic will never overwrite a mod order.' }
 }
 
 $inventoryPath=Join-Path $projectRoot 'runtime\environment.json'
@@ -65,8 +93,14 @@ $gameExe=Assert-UnlinkedPath (Join-Path $gameBin 'KingdomCome.exe')
 $pinned=@($tools[0].binaries|Where-Object{[IO.Path]::GetFullPath($_.path).Equals($gameExe,[StringComparison]::OrdinalIgnoreCase)})
 if ($pinned.Count-ne 1 -or $pinned[0].sha256-ine$expectedExeHash) { throw 'Inventory does not pin this exact development executable.' }
 Assert-ClosedExactTarget
+$modsDirectory=$null;$modOrderPath=$null
+if($WithoutMods){
+    $modsDirectory=Assert-UnlinkedPath (Join-Path $GameRoot 'Mods')
+    $modOrderPath=Assert-UnlinkedPath (Join-Path $modsDirectory 'mod_order.txt')
+    Assert-ModIsolationAvailable
+}
 if ($PreflightOnly) {
-    Write-Output "KCD_TOOLS_DIAGNOSTIC_PREFLIGHT_PASS target=$gameExe level=trosecko game_closed=true active_dxgi_proxy=false no_changes=true"
+    Write-Output "KCD_TOOLS_DIAGNOSTIC_PREFLIGHT_PASS target=$gameExe level=trosecko game_closed=true active_dxgi_proxy=false without_mods=$([bool]$WithoutMods) no_changes=true"
     return
 }
 if (-not ('MineCome.Diagnostics.Memory' -as [type])) {
@@ -98,6 +132,32 @@ namespace MineCome.Diagnostics {
 }
 '@
 }
+if (-not ('MineCome.Diagnostics.FileIdentity' -as [type])) {
+    # Independent guard: an earlier diagnostic may already have defined Memory in this PS session.
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+namespace MineCome.Diagnostics {
+ // File identity is captured from the CREATE_NEW handle and rechecked before cleanup.
+ // https://learn.microsoft.com/windows/win32/api/fileapi/nf-fileapi-getfileinformationbyhandle
+ public static class FileIdentity {
+  [StructLayout(LayoutKind.Sequential)] struct Information {
+   public uint Attributes,CreationLow,CreationHigh,AccessLow,AccessHigh,WriteLow,WriteHigh;
+   public uint VolumeSerial,SizeHigh,SizeLow,Links,IndexHigh,IndexLow;
+  }
+  [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+  [DllImport("kernel32.dll",SetLastError=true)] [return:MarshalAs(UnmanagedType.Bool)]
+  static extern bool GetFileInformationByHandle(IntPtr handle,out Information info);
+  public static string Read(IntPtr handle) {
+   Information info;
+   if(!GetFileInformationByHandle(handle,out info))
+    throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+   return info.VolumeSerial.ToString("X8")+":"+info.IndexHigh.ToString("X8")+info.IndexLow.ToString("X8");
+  }
+ }
+}
+'@
+}
 $evidenceRoot=Assert-UnlinkedPath (Join-Path $projectRoot 'runtime\evidence')
 $run=[guid]::NewGuid().ToString('N')
 $directory=Assert-UnlinkedPath (Join-Path $evidenceRoot ('tools-startup-diagnostic-'+[DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss')+'-'+$run))
@@ -110,15 +170,33 @@ Save-NewJson (Join-Path $directory 'launch.json') ([ordered]@{
  schema=1;kind='minecome_tools_startup_diagnostic_v1';run=$run;created_utc=[DateTime]::UtcNow.ToString('o');script_sha256=(Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256).Hash.ToLowerInvariant()
  game_exe=$gameExe;game_exe_sha256=$expectedExeHash;fixed_version='1.0.0.0';display_version='1.5.5.0';working_directory=$GameRoot;arguments=@('-devmode','+map','trosecko')
  monitoring_seconds=120;sample_period_ms=1000;monitor_scope='only_Start-Process_returned_process';active_dxgi_proxy_before_launch=$false;live_world_verified=$false;logs_before=$beforeLogs
+ without_mods=[bool]$WithoutMods;mod_order_path=$modOrderPath;mod_isolation_mechanism=$(if($WithoutMods){'official_empty_mod_order'}else{$null})
 })
 $moduleSnapshots=[Collections.Generic.List[object]]::new()
 $afterLogs=@();$memoryErrors=0;$moduleErrors=0;$maxPrivateBytes=[long]0;$minCommitAvailable=$null
 $gameProcess=$null;$samples=$null;$status='launch_failed';$failure=$null;$exitSigned=$null;$exitUnsigned=$null;$exitHex=$null;$startUtc=$null;$startFiletime=$null;$sampleCount=0;$moduleBudget=0;$processHandleCaptured=$false
 $proxyObserved=$false;$addonObserved=$false;$d3d12Observed=$false;$moduleEnumerationSucceeded=$false
+$modIsolation=[ordered]@{requested=[bool]$WithoutMods;path=$modOrderPath;created=$false;file_identity=$null;creation_time_utc=$null;last_write_time_utc=$null;bytes=0;sha256='e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';cleanup_status='not_requested';cleanup_required=$false;cleanup_error=$null}
 $timer=[Diagnostics.Stopwatch]::new()
 try {
     $samples=[IO.FileStream]::new((Join-Path $directory 'memory.ndjson'),[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::Read)
     Assert-ClosedExactTarget
+    if($WithoutMods){
+        Assert-ModIsolationAvailable
+        # CREATE_NEW atomically refuses any file which appeared after preflight.
+        $ownedOrder=[IO.FileStream]::new($modOrderPath,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::Read)
+        try{
+            $modIsolation.created=$true;$modIsolation.cleanup_required=$true;$modIsolation.cleanup_status='owned_pending_cleanup'
+            $ownedOrder.Flush($true)
+            $modIsolation.file_identity=[MineCome.Diagnostics.FileIdentity]::Read($ownedOrder.SafeFileHandle.DangerousGetHandle())
+        }finally{$ownedOrder.Dispose()}
+        $createdOrder=Get-Item -LiteralPath $modOrderPath -Force
+        if($createdOrder.Length-ne 0){throw 'New diagnostic mod_order.txt unexpectedly contains data.'}
+        $modIsolation.creation_time_utc=$createdOrder.CreationTimeUtc.ToString('o')
+        $modIsolation.last_write_time_utc=$createdOrder.LastWriteTimeUtc.ToString('o')
+        Save-NewJson (Join-Path $directory 'mod-isolation-created.json') ([ordered]@{schema=1;run=$run;created_utc=[DateTime]::UtcNow.ToString('o');mechanism='official_empty_mod_order';ownership=$modIsolation})
+        Write-Output "KCD_TOOLS_DIAGNOSTIC_MOD_EXCLUSION_REQUESTED path=$modOrderPath empty=true startup_mod_exclusion_verified=false"
+    }
     Write-Output "Starting exact official tools1.5.5 on fresh trosecko; evidence: $directory"
     Write-Output 'This diagnostic does not load retail saves or send gameplay commands.'
     $gameProcess=Start-Process -FilePath $gameExe -WorkingDirectory $GameRoot -ArgumentList @('-devmode','+map','trosecko') -WindowStyle Normal -PassThru
@@ -171,6 +249,32 @@ try {
 }catch{$failure=$_.Exception.Message;$status='diagnostic_error'}
 finally{
     $timer.Stop();if($samples){$samples.Dispose()}
+    $processAlive=$null;$gamePid=$null
+    if($gameProcess){$gamePid=$gameProcess.Id;try{$gameProcess.Refresh();$processAlive=-not$gameProcess.HasExited}catch{}}
+    if($modIsolation.created){
+        try{
+            $allGamesClosed=Test-AllKcdProcessesExited
+            $ownedGameExited=($null-ne$gameProcess-and$processAlive-eq$false)
+            $noGameLaunched=($null-eq$gameProcess-and$allGamesClosed)
+            if((-not$ownedGameExited-and-not$noGameLaunched)-or-not$allGamesClosed){
+                $modIsolation.cleanup_status='game_alive_or_state_unknown';$modIsolation.cleanup_required=$true
+            }else{
+                $null=Assert-UnlinkedPath $modsDirectory;$null=Assert-UnlinkedPath $modOrderPath
+                if(-not(Test-Path -LiteralPath $modOrderPath -PathType Leaf)){throw 'Owned mod_order.txt is missing or is not a file; no cleanup action taken.'}
+                $ownedOrder=[IO.FileStream]::new($modOrderPath,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read)
+                try{
+                    $identity=[MineCome.Diagnostics.FileIdentity]::Read($ownedOrder.SafeFileHandle.DangerousGetHandle())
+                    if($null-eq$modIsolation.file_identity-or$identity-cne$modIsolation.file_identity-or$ownedOrder.Length-ne 0){throw 'Owned mod_order.txt identity or empty content changed; preserved without deletion.'}
+                    $currentOrder=Get-Item -LiteralPath $modOrderPath -Force
+                    if($currentOrder.CreationTimeUtc.ToString('o')-cne$modIsolation.creation_time_utc-or$currentOrder.LastWriteTimeUtc.ToString('o')-cne$modIsolation.last_write_time_utc){throw 'Owned mod_order.txt timestamps changed; preserved without deletion.'}
+                }finally{$ownedOrder.Dispose()}
+                $null=Assert-UnlinkedPath $modOrderPath
+                [IO.File]::Delete($modOrderPath)
+                $modIsolation.cleanup_status='removed_unchanged_owned_file';$modIsolation.cleanup_required=$false
+            }
+        }catch{$modIsolation.cleanup_status='preserved_cleanup_error';$modIsolation.cleanup_required=$true;$modIsolation.cleanup_error=$_.Exception.Message}
+        Save-NewJson (Join-Path $directory 'mod-isolation-result.json') ([ordered]@{schema=1;run=$run;completed_utc=[DateTime]::UtcNow.ToString('o');ownership=$modIsolation})
+    }
     foreach($path in $logPaths){
         try{
             $captured=Read-LogTail $path
@@ -180,8 +284,6 @@ finally{
     }
     # Compressed snapshots total <=900KiB; allow bounded4MiB for readable JSON indentation.
     Save-NewJson (Join-Path $directory 'modules.json') ([ordered]@{schema=1;snapshot_count=$moduleSnapshots.Count;module_enumeration_succeeded=$moduleEnumerationSucceeded;enumeration_errors=$moduleErrors;reshade_observed=$proxyObserved;own_addon_observed=$addonObserved;d3d12_observed=$d3d12Observed;snapshots=@($moduleSnapshots.ToArray())}) 4MB
-    $processAlive=$null;$gamePid=$null
-    if($gameProcess){$gamePid=$gameProcess.Id;try{$gameProcess.Refresh();$processAlive=-not$gameProcess.HasExited}catch{}}
     Save-NewJson (Join-Path $directory 'result.json') ([ordered]@{
         schema=1;run=$run;status=$status;failure=$failure;pid=$gamePid;started_utc=$startUtc;start_filetime=$startFiletime;elapsed_ms=$timer.ElapsedMilliseconds
         exit_code_signed=$exitSigned;exit_code_unsigned=$exitUnsigned;exit_code_hex=$exitHex;process_handle_captured=$processHandleCaptured;process_left_running=$processAlive;process_killed=$false
@@ -189,6 +291,7 @@ finally{
         module_enumeration_succeeded=$moduleEnumerationSucceeded;reshade_observed=$proxyObserved;own_addon_observed=$addonObserved;d3d12_observed=$d3d12Observed
         reshade_absence_verified_in_sampled_snapshots=($moduleEnumerationSucceeded-and-not$proxyObserved-and-not$addonObserved);continuous_module_absence_verified=$false;live_world_verified=$false
         log_copies=$afterLogs;evidence_directory=$directory
+        mods_isolation=$modIsolation;cleanup_required=[bool]$modIsolation.cleanup_required;startup_mod_exclusion_verified=$false
     })
     if($gameProcess){$gameProcess.Dispose()} # Closes this diagnostic handle only; does not terminate the game.
 }
@@ -198,3 +301,4 @@ if($status-ceq'exited'){
     Write-Output "KCD_TOOLS_DIAGNOSTIC_MONITOR_COMPLETE pid=$gamePid game_left_running=true world_verified=false"
 }else{Write-Output "KCD_TOOLS_DIAGNOSTIC_ERROR reason=$failure game_killed=false"}
 Write-Output "KCD_TOOLS_DIAGNOSTIC_EVIDENCE $directory"
+if($modIsolation.cleanup_required){Write-Output "KCD_TOOLS_DIAGNOSTIC_CLEANUP_REQUIRED path=$modOrderPath status=$($modIsolation.cleanup_status) close_game_before_cleanup=true"}

@@ -139,6 +139,10 @@ The subsequent bounded user-run diagnostic captured exit code 250 (`0x000000FA`)
 after 28.462 seconds. Six complete module snapshots omitted ReShade and the add-on;
 available system commit remained above 5.37 GB in all 28 memory samples. The meaning
 of this exit code in the pinned game remains unresolved.
+A later fresh run with the official empty mod list confirms `0 mods enabled` and
+reproduces the same exit code during loading. The temporary list has been removed
+after ownership verification, restoring the previous mod-loading setup. Neither
+MineCome nor the pre-existing multiplayer mod is required to reproduce the failure.
 
 The official tools EXE has translated FileVersion/ProductVersion1.5.5.0 but fixed
 numeric version1.0.0.0. The native gate checks both, plus the expected distribution

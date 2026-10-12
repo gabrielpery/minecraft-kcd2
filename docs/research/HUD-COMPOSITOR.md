@@ -96,6 +96,16 @@ after 28.462 seconds, six complete module snapshots without ReShade/the add-on a
 over 5.37 GB available system commit in all memory samples. The exit code's game-
 specific meaning remains unproven.
 
+For a controlled comparison, the manual diagnostic also accepts `-WithoutMods`.
+Warhorse's documented `Mods/mod_order.txt` list loads only the listed mods; an empty
+list requests a run without mods. The helper refuses any existing list, creates a
+new empty file and records its filesystem identity. After the game exits it removes
+only that unchanged owned file, restoring the previous loading setup. If the game
+is still running at the monitoring deadline, or ownership changes, the list remains
+and the receipt explicitly requires cleanup after normal closure. No mod package
+is renamed, overwritten or deleted. Actual exclusion must be confirmed in the fresh
+game log; creating the list alone is not live verification.
+
 The SDK, official runtime, generated captures and Minecraft assets remain local
 under ignored directories. No original game executable is overwritten. Runtime
 installation and a fresh game start are separate from compilation/capture. See
