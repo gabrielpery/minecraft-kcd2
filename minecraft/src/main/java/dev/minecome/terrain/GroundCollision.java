@@ -12,7 +12,7 @@ public final class GroundCollision {
     private record Installation(BlockView world,String run,Map<Long,VoxelShape> shapes,AtomicLong queries) {}
     private static volatile Installation client,server;
     private GroundCollision() {}
-    static void install(BlockView world,GroundPatch patch,boolean serverSide) {
+    public static void install(BlockView world,GroundPatch patch,boolean serverSide) {
         Map<Long,VoxelShape> shapes=new HashMap<>();
         for(var cell:patch.cells()) {
             long key=BlockPos.asLong(cell.x(),cell.y(),cell.z());
@@ -31,9 +31,9 @@ public final class GroundCollision {
         own.queries().incrementAndGet();
         return original.isEmpty()?slab:VoxelShapes.union(original,slab);
     }
-    static boolean installed(BlockView world,boolean serverSide) {
+    public static boolean installed(BlockView world,boolean serverSide) {
         var own=serverSide?server:client;return own!=null && own.world()==world;
     }
-    static long queries(boolean serverSide){var own=serverSide?server:client;return own==null?0:own.queries().get();}
-    static void clear(){client=null;server=null;}
+    public static long queries(boolean serverSide){var own=serverSide?server:client;return own==null?0:own.queries().get();}
+    public static void clear(){client=null;server=null;}
 }

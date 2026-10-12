@@ -26,8 +26,10 @@ collision and general movement authority remain unfinished. See
 [the movement lab](kcd2/MOVEMENT-LAB.md).
 The separate Windows walking/mouse capture layer and strict Java input gate now
 compile and pass standalone checks. Actual Windows registration, neutral recording
-and cleanup pass; physical control delivery and Minecraft application are still
-separate checks. See [Windows input capture](docs/research/WINDOWS-INPUT.md).
+and cleanup pass. **External input now drives real Minecraft walking, jumping,
+landing and view changes in an isolated lab**, verified on client and server with
+a fresh scripted input producer. Physical KCD2 keyboard/mouse delivery remains a
+separate check. See [Windows input capture](docs/research/WINDOWS-INPUT.md).
 
 The retail KCSE route is blocked by a missing verified Steam 1.5.6 address library.
 The installed official tools run a distinct 1.5.5 development build. Its working HTTP

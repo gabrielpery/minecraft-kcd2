@@ -64,10 +64,16 @@ Never load newer retail1.5.6 saves into this older1.5.5 development game. Backup
   walking/mouse capture path, bindings and focus/menu/release handling.
 - A separate Windows Raw Input helper and Java decoder/session gate now compile
   and pass focused checks. The actual OS lifecycle and historical recording pass
-  with neutral data. Physical key/mouse delivery, menu detection and Minecraft
-  game-thread application remain unverified. Its F8 latch is manual arming, with
-  literal default key mappings and uncalibrated mouse counts; native KCD input
-  remains active. This layer does not establish coupled movement authority.
+  with neutral data. A new isolated Minecraft lab also passes actual client/server
+  walking, jumping, landing, view changes and neutral release using fresh scripted
+  input and synthetic ground. Physical KCD key/mouse delivery and engine menu
+  detection remain unverified. Its F8 latch is manual arming; mappings are literal
+  defaults. Minecraft uses its ordinary sensitivity/invert settings and refuses
+  smooth-camera, spyglass and toggle-sprint modes. Native KCD input remains active;
+  the new lab does not drive KCD or establish coupled movement authority.
+  The Windows file reader requires hard-link support in local runtime/evidence
+  because JDK21/24 returns a null public fileKey. A private identity link is checked
+  with Files.isSameFile and removed on reader exit; unsupported storage fails closed.
 - First interactive stone controls are compiled and live verified after the log
   framing fix. `minecome_place`/`minecome_break` request vanilla actions in one fixed
   cell of a new Creative lab, requiring optional protocol minor1/capability1. They

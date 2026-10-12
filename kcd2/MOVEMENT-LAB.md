@@ -94,3 +94,14 @@ Research and remaining authority/input requirements are in
 [MOVEMENT.md](../docs/research/MOVEMENT.md),
 [KCD-MOVEMENT.md](../docs/research/KCD-MOVEMENT.md) and
 [KCD-INPUT.md](../docs/research/KCD-INPUT.md).
+
+## External-input Minecraft lab
+
+`scripts/Start-ExternalInputLab.ps1 -Fixture` now verifies the next consumer stage:
+fresh external records drive actual vanilla keys and view changes on the Minecraft
+client thread. Client and server walking, jump/landing, yaw/pitch and terminal key
+release passed in a new world, using labelled synthetic input and flat terrain.
+This lab has no KCD follower. The physical KCD capture mode is implemented but its
+combined physical delivery remains unverified. Procedure and limits are in
+[setup](../docs/SETUP.md#external-input-applied-to-minecraft) and
+[Windows input](../docs/research/WINDOWS-INPUT.md).

@@ -278,3 +278,36 @@ This diagnostic observes controls and verifies OS cleanup; it does not control
 Minecraft or suppress KCD2's native input. It prints a local ignored evidence
 folder. A no-input run verifies only registration and neutral cleanup. Details and
 limits: `docs/research/WINDOWS-INPUT.md`.
+
+## External input applied to Minecraft
+
+From the repository root in PowerShell7, after the normal environment inventory
+and Minecraft dependencies are available:
+
+```powershell
+.\scripts\Start-ExternalInputLab.ps1 -Fixture
+```
+
+This creates a fresh isolated Adventure world, waits for stable client/server
+grounding, and sends fresh scripted key/mouse records from a separate producer.
+It checks actual vanilla walking, jumping, landing, view changes and neutral
+release, then closes Minecraft normally. No manual action or KCD process is
+required. Both the input and flat ground are explicitly synthetic. Success prints
+`EXTERNAL_INPUT_APPLICATION_PASS`; logs and verification remain under the ignored
+`runtime/evidence/external-input-*` directory.
+
+The physical-input mode is implemented but awaits a human input verification.
+With an already loaded fresh official tools world, run the same command without
+`-Fixture`. It captures a small ground patch and starts the scoped Windows helper
+only after Minecraft is ready. When `EXTERNAL_INPUT_CAPTURE_READY` appears, focus
+KCD2, close menus/console, release controls and press F8. Wait briefly, tap W for
+about0.2seconds and release, press Space once, then move the mouse slightly in both
+axes. Stop walking after that tap: collision coverage is only4×4m. The capture ends
+automatically after30seconds; `-InputSeconds` permits15–40seconds.
+
+The lab moves Minecraft only. KCD retains its native controls/physics and will also
+respond to the same physical actions. Do not combine this with the coupled follower.
+Minecraft hold-to-sprint and ordinary unsmoothed camera settings are required.
+Successful scripted input does not establish physical KCD input delivery or full
+world movement authority. A validated captured ground patch may be reused through
+`-PatchFile`; its adjacent receipts and source hashes must match.

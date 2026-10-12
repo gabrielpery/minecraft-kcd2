@@ -24,6 +24,11 @@ from live KCD2 terrain. Fresh integrated-server poses now move KCD2's player;
 delayed player/camera readbacks and restoration pass. KCD-focused keyboard/mouse
 forwarding and full-world movement authority remain unfinished.
 
+**Current input milestone: external records drive real Minecraft.** A fresh scripted
+producer now passes actual client/server walking, jumping, landing, yaw/pitch changes
+and terminal key release in a new isolated world. Physical KCD input delivery remains
+unverified. The new consumer lab has no KCD movement follower.
+
 ## Evidence matrix
 
 | Feature | Source/build | Standalone verification | Actual game verification |
@@ -44,7 +49,8 @@ forwarding and full-world movement authority remain unfinished.
 | Sampled-ground movement lab | Fabric1.21.1 collision mixins, bounded25-point Lua sampler and isolated lab compile; remapped JAR assembled |85 parser/coordinate/shape/sequence checks and14 real-Lua sampler cases pass | Real KCD2 supplied25 valid terrain hits; real Minecraft client/server walked1.2915m, became airborne, and landed on imported approximate slabs with literal underlying blocks remaining air. KCD2 movement not applied |
 | Bounded coupled movement | Java trace assembled; PowerShell receiver/controller and game-thread Lua follower implemented |126 Java ground/trace checks,25 Lua follower cases with simulated bindings,15 final receiver cases pass; final guards also validate the historical live trace offline | Real Minecraft vanilla client/server walking, jumping and landing;22 forwarded server frames,21 delayed KCD player/camera readbacks, exact starting-position restoration and normal Minecraft exit0 |
 | Lua input observer | Short leased callback wrapper preserves original callback and restores only its own handler |20 simulated-binding Lua cases pass |Final timed human check captured three real jump/press/value1 callbacks,13.5983m player displacement and view changes; watched walking/mouse callbacks were absent. Callback restored. Full input forwarding remains unfinished |
-| Windows walking/mouse source | Separate read-only C++20 helper and pure Java decoder/session gate compile; Fabric JAR reassembled |598 native state/wire checks and148 Java framing/identity/lease/mouse checks pass |Actual15s OS registration/cleanup and301 neutral records pass; Java validates the exact historical recording. Physical control delivery and Minecraft application not yet verified |
+| Windows walking/mouse source | Separate read-only C++20 helper and pure Java decoder/session gate compile; Fabric JAR reassembled |598 native state/wire checks and148 Java framing/identity/lease/mouse checks pass |Actual15s OS registration/cleanup and301 neutral records pass; Java validates the exact historical recording. Physical control delivery remains unverified |
+| External input applied to Minecraft | Bounded daemon file reader, game-thread lab and PowerShell controller compile |266 reader checks with zero skips,148 decoder/gate and126 ground checks pass |Fresh scripted producer and synthetic flat ground drive real Minecraft client/server walking0.8571695m, jump/landing, yaw/pitch, terminal neutral controls, zero post-settle corrections and normal exit. No physical KCD input or coupled authority claim |
 | Minecraft block model/atlas | Actual BakedModel and GPU atlas exporter built | Six quads,24 vertices, atlas bounds checked | Real1024×512 atlas exported and visually inspected |
 | CryEngine block asset | Original OBJ→FBX converter plus installed official RC | FBX→CGF and texture TIFF→DDS compile succeeded; pixels compared | User screenshots show Minecraft stone in KCD2 world and verify the sharpness revision |
 | World position/scale/depth | Algebraic hypothesis/tests | Known basis and inverse tests | Live entity bounds span1×1×1 engine units; depth/parallax and cross-game calibration still unverified |
@@ -665,3 +671,71 @@ Sustained coupled authority must keep the existing follower guards and account f
 KCD's native physics/input remaining active. No additional repetition of the old
 Lua callback test is needed. Reproduction and primary API sources:
 `docs/research/WINDOWS-INPUT.md` and `scripts/Test-KcdRawInputCapture.ps1`.
+
+## External input applied to real Minecraft — 2026-10-12
+
+The complete-line file reader and isolated game-thread consumer are implemented.
+`scripts/Start-ExternalInputLab.ps1 -Fixture` starts a new UUID Adventure world,
+waits for stable client/server grounding and reader readiness, then creates a fresh
+scripted input producer. The input format tag is not source authentication:
+`FixtureInput:true`, expected PID/creation identity1/1 and synthetic ground identify
+this run explicitly. No KCD process is needed or moved by this mode.
+
+The daemon reader validates the resolved evidence path before READY, requires a new
+file, opens once and provides complete LF records through a copied bounded queue.
+Partial EOF is neither an END nor a lease renewal. UTF-8/line/byte/record bounds,
+overflow, replacement and truncation fail with neutral controls. All reader IO and
+channel cleanup stay off the game thread; close signals the daemon without waiting.
+The first focused run found that the installed Windows JDK's public fileKey is null.
+The corrected Windows path opens through a private hard-link identity witness,
+checks Files.isSameFile and removes its own link on daemon exit. Unsupported storage
+fails closed. The final ownership guard never removes a link whose creation failed.
+
+The opt-in lab applies held key bindings and ordinary vanilla look deltas on the
+client thread. Sensitivity/invert follow inspected1.21.1 Mouse bytecode, including
+Entity's own0.15 look factor. Toggle-sprint, smooth-camera and spyglass modes refuse.
+World/player identity, Adventure mode, nonflying abilities, fresh server state,
+sampled coverage, menus and post-settle corrections remain guarded. The normal
+vanilla movement/collision tick owns walking and jumping after one startup teleport.
+The existing ordinary Minecraft/stone modes are mutually exclusive with this lab.
+
+Actual game evidence:
+`runtime/evidence/external-input-20261012-191252-7ec0c61766434285b7a08582db61b80b`.
+The new save was `MineCome-ExternalInput-d104c973-4af3-4391-836c-eaea8e0cc258`.
+Both real client and integrated server walked0.8571695263m, became airborne, landed,
+and agreed on final yaw94.5/pitch-1.8000002 versus initial90/0. One relative mouse
+delta was consumed once. All six held controls were released after the terminal
+record; the world was grounded and resting. Post-settle corrections were zero
+(the two startup corrections formed the baseline). Minecraft saved and exited
+normally; the owned launcher returned0 and no diagnostic identity link remained.
+
+The fresh fixture contained90 complete records/31,417bytes. Input SHA256:
+`f965a3b136ec9cf9c0313efa0038eab7a44eb48863019316daef9e7192354a5d`.
+Patch SHA256:
+`7dc5ff50109d0a0d0683088ea7e6eba2d3fd6bbc9538579725b76ff08c894fad`.
+Lab source SHA256:
+`14dc20a586725980daf78530c43a17fc6559bcb4fe735bf8884a56afacfd21c7`.
+Reader source during that live run:
+`734aa6a355636ddfe2b2b318eeb48c0845e6e42562de81af0d562284d1203a19`.
+The subsequent witness-creation ownership guard is covered by the final focused
+suite; the movement run was not repeated for that exceptional cleanup-only change.
+Final reader source:
+`a4d74da5f5ce8df2a85f099204383a45da34535d279674013cf6e5a4d43ecd42`.
+
+Focused checks:148 decoder/session cases,126 ground/trace cases and266 file-reader
+checks with zero skips; remapped JAR assembly succeeds. The file checks include
+actual Windows hard-link cleanup while a writer remains open with no write/delete
+sharing, plus replacement, truncation, UTF-8 fragmentation, bounds and symlinks.
+That Windows-only test uses the tested JDK's ExtendedOpenOption; production code
+uses ordinary Java file APIs. Final JAR166,148bytes, SHA256:
+`85bb16a1ed19a8141e7dbc26927e65c3717b1fd467e69cc29b77ba2ba87d2ed8`.
+The game run used Loom development classes; the packaged JAR is assembled, not
+separately installed/live verified. No assets, saves, credentials or runtime evidence
+are published to Git.
+
+Physical KCD key/mouse delivery, explicit engine gameplay/menu state, configurable
+bindings, view alignment and sustained authority remain. KCD native input/physics
+stays active, so this consumer lab must remain separate from the player follower.
+The non-fixture controller route captures ground and starts the existing scoped
+Windows helper after readiness; its combined physical delivery still needs a human
+input run. Procedure: `docs/SETUP.md#external-input-applied-to-minecraft`.

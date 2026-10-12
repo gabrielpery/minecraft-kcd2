@@ -3,8 +3,8 @@
 The official tools game's timed Lua observer delivered jump presses but no watched
 walking or mouse actions during actual player/view movement. The next source layer
 therefore observes Windows input in a separate, original C++20 helper. It does not
-use a game address map, replace KCD's input callback, suppress native input or apply
-any Minecraft controls yet.
+use a game address map, replace KCD's input callback or suppress native input.
+A separate opt-in Minecraft lab now consumes the format on its client thread.
 
 ## Public API route
 
@@ -91,7 +91,36 @@ bounding emitted-record age to300ms; it is not an end-to-end physical-event late
 promise. Held state expires on timeout/menu/focus/end. Mouse deltas accumulate across
 fresh unconsumed frames within bounds, are consumed once, and retain the earliest
 pending delta's expiry. Restarting a session requires a new gate and a fresh neutral
-armed sample. No Minecraft game-thread application is registered yet.
+armed sample.
+
+`ExternalInputFileReader` performs all input-file IO on its own daemon, including
+path validation, framing and close. It validates a new path inside resolved local
+`runtime/evidence` before READY; the controller creates the writer only afterward.
+It opens once, emits complete LF records through a128-entry copied mailbox, and
+limits bytes, lines, records and per-tick drains. Partial EOF does not renew a lease
+or terminate successfully. Truncation, replacement, malformed framing and overflow
+clear queued input and close the consumer. Game-thread close only signals the daemon.
+
+The installed Windows JDK returns null for BasicFileAttributes.fileKey. That path
+uses a private UUID hard link in the same evidence directory as its identity witness,
+opens through the witness, checks Files.isSameFile each poll, and removes the link
+in daemon cleanup. Unsupported hard-link storage fails closed. This changes only
+diagnostic-file link metadata. The trusted new producer, session nonce and controller
+provenance remain necessary; neither the format tag nor file path authenticates a
+hostile local process. The primary Java contracts are
+[Files.createLink/isSameFile](https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/nio/file/Files.html)
+and [BasicFileAttributes.fileKey](https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/nio/file/attribute/BasicFileAttributes.html).
+
+`ExternalInputLab` is mutually exclusive with the other development labs. It owns
+a fresh UUID Adventure world and its client/server collision proxies. After stable
+grounding, it consumes fresh records on START_CLIENT_TICK, sets vanilla held key
+bindings, and calls the ordinary Entity.changeLookDirection path. The sensitivity
+gain and invert setting follow the inspected cached1.21.1 Mouse bytecode; Entity
+applies its own0.15 factor. Smooth camera, spyglass and toggle-sprint modes refuse.
+Vanilla ticks alone perform walking, gravity, jumping and collision after the one
+initial server teleport. Fresh server observations verify the result independently.
+Menus, stale input/server samples, corrections, world changes and coverage exits
+release controls and end the lab. Temporary pause-on-focus-loss state is restored.
 
 ## Verification and current limits
 
@@ -103,8 +132,8 @@ The actual15s OS lifecycle run against the pinned tools process produced301 reco
 one begin,299 focused/disarmed samples, and one neutral duration end at15009ms.
 It verified two own registrations, foreground-observer removal and device removal.
 Java independently validated that exact historical file with recorded clocks.
-All samples were neutral; physical walking/mouse delivery and Minecraft application
-remain unverified. Evidence and hashes are in
+All samples were neutral; physical walking/mouse delivery remains unverified.
+That earlier run did not apply Minecraft controls. Evidence and hashes are in
 [progress](../PROGRESS.md#windows-input-capture-layer--2026-10-12).
 
 The first strict readback run rejected this Windows build's returned flags:
@@ -114,8 +143,17 @@ two classes/own window and rejecting other flags. This is a measured local resul
 not a documented universal normalization rule. `DEVNOTIFY` is still requested;
 actual hot-unplug notification delivery has not been physically tested.
 
-Next integration needs a complete-line file reader and game-thread handoff in an
-owned Minecraft lab, explicit engine gameplay/menu guards, binding/sensitivity
-configuration and KCD input/physics ownership before sustained coupled control.
+The new file-reader suite passes266 checks with zero skips, including real Windows
+replacement/truncation, split UTF-8/LF framing, overflow, symlinks and identity-link
+cleanup while a writer remains open without delete sharing. The existing148
+decoder/gate checks and126 ground checks pass; JAR assembly
+succeeds. A fresh scripted producer then drove an actual Minecraft client/server:
+0.8571695m walking, jump/landing, yaw+4.5degrees, pitch-1.8degrees, one consumed mouse
+delta and neutral terminal controls. There were zero post-settle corrections and
+normal process exit. Both input and flat terrain were synthetic;90 input records
+were delivered. See [progress](../PROGRESS.md#external-input-applied-to-real-minecraft--2026-10-12).
+
+Next integration needs physical KCD input proof, explicit engine gameplay/menu
+guards, binding configuration and KCD input/physics ownership before sustained control.
 Existing Lua follower guards must remain active; physical KCD movement must not be
 misrepresented as Minecraft-authoritative movement.

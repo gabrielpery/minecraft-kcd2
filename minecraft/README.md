@@ -182,3 +182,16 @@ and17 action-gate checks. These verify the new control code in standalone tests;
 live KCD commands now have matching real client/server and engine receipts after
 the relay's unterminated-log-tail fix. The default minor0 smoke behavior
 is retained.
+
+## External-input lab
+
+Use `../scripts/Start-ExternalInputLab.ps1 -Fixture` from PowerShell7 for the complete
+controller. It launches a new Adventure world, waits for reader readiness, then
+creates a fresh synthetic input stream. Direct JVM properties are internal wiring;
+an existing recording is deliberately refused. `externalInputTest` checks the pure
+decoder/session gate, `externalInputFileTest` checks bounded file transport, and
+`groundPatchTest` checks the reused collision/trace contract.
+
+The real-game fixture passed client/server movement, jumping/landing, yaw/pitch,
+neutral release and normal shutdown. Physical KCD keyboard/mouse delivery is a
+separate pending check. See `../docs/SETUP.md` for the scoped live-capture mode.

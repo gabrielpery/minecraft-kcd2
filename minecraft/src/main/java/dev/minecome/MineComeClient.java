@@ -36,6 +36,12 @@ public final class MineComeClient implements ClientModInitializer {
     private final boolean interactive=Boolean.getBoolean("minecome.interactiveStoneLab");
     private final InteractiveStoneLab interactiveLab=new InteractiveStoneLab();
     @Override public void onInitializeClient() {
+        if(Boolean.getBoolean("minecome.externalInputLab")) {
+            if(interactive || Boolean.getBoolean("minecome.groundMovementLab") || Boolean.getBoolean("minecome.smokeWorld") || Boolean.getBoolean("minecome.dynamicBridgeSmoke"))
+                throw new IllegalArgumentException("Choose one isolated development lab mode");
+            dev.minecome.input.ExternalInputLab.initialize();
+            return;
+        }
         if(Boolean.getBoolean("minecome.groundMovementLab")) {
             if(interactive || Boolean.getBoolean("minecome.smokeWorld") || Boolean.getBoolean("minecome.dynamicBridgeSmoke"))
                 throw new IllegalArgumentException("Choose one isolated development lab mode");

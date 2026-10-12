@@ -26,6 +26,15 @@ loom {
                 vmArgs '-Dminecome.interactiveStoneLab=true'
             if (project.hasProperty('minecomeGroundMovementLab'))
                 vmArgs '-Dminecome.groundMovementLab=true'
+            if (project.hasProperty('minecomeExternalInputLab'))
+                vmArgs '-Dminecome.externalInputLab=true'
+            if (project.hasProperty('minecomeExternalInputFixture'))
+                vmArgs '-Dminecome.externalInputFixture=true'
+            for (String suffix : ['File','Run','TargetPid','TargetStartFiletime']) {
+                String key = 'minecomeExternalInput' + suffix
+                if (project.hasProperty(key))
+                    vmArgs "-Dminecome.externalInput${suffix}=${project.property(key)}"
+            }
             if (project.hasProperty('minecomeGroundPatchFile'))
                 vmArgs "-Dminecome.groundPatchFile=${project.property('minecomeGroundPatchFile')}"
             if (project.hasProperty('minecomeMovementTraceFile'))
@@ -90,4 +99,10 @@ tasks.register('externalInputRecordingCheck', JavaExec) {
     mainClass = 'dev.minecome.input.ExternalInputRecordingCheck'
     if (project.hasProperty('minecomeInputRecording'))
         args project.property('minecomeInputRecording').toString()
+}
+
+tasks.register('externalInputFileTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'dev.minecome.input.ExternalInputFileReaderTests'
 }
