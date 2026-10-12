@@ -1,14 +1,16 @@
 #Requires -Version 7.3
-# Original bounded stream arm. No game launch, input, movement or process injection.
+# Original bounded stream arm. Input mode still requires a physical F8 latch.
+# No game launch, movement or process injection.
 [CmdletBinding()]
-param([string]$ReadyManifest, [string]$BundleDirectory, [switch]$PreflightOnly)
+param([string]$ReadyManifest, [string]$BundleDirectory, [switch]$PreflightOnly, [switch]$InputMode)
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'KcdToolsProbeHelpers.ps1')
 $root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $runtimeRoot=Join-Path $root 'runtime'
 $evidenceRoot=Join-Path $runtimeRoot 'evidence'
-if(-not $BundleDirectory) {$BundleDirectory=Join-Path $runtimeRoot 'hud-compositor-stream'}
+if(-not $BundleDirectory) {$BundleDirectory=Join-Path $runtimeRoot $(if($InputMode){'hud-compositor-input'}else{'hud-compositor-stream'})}
+$expectedArm=if($InputMode){'minecome-hud/addons/MineComeHudInput.ini'}else{'minecome-hud/addons/MineComeHudStream.ini'}
 $exeHash='a32d077e6b54e5cd0c5a5f3194f473779706ff266a711e4745ccdb598843340a'
 $proxyHash='0cee63f9c9f13f3ac909c5b4903f4dbb4b719a7ab3b4f13b0deaf83c814b94f7'
 $expected=@('dxgi.dll','ReShade.ini','MineComeHudPreset.ini','ReShade-LICENSE.txt','minecome-hud/addons/MineComeHudCompositor.addon64','minecome-hud/shaders/MineComeHud.fx')
@@ -34,7 +36,9 @@ function Assert-Artifact([string]$Path,$Record) {
 $BundleDirectory=Assert-Unlinked $BundleDirectory
 if(-not $BundleDirectory.StartsWith($runtimeRoot+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)) {throw 'Stream bundle must remain in workspace runtime.'}
 $bundle=Read-Receipt (Join-Path $BundleDirectory 'bundle.json')
-if($bundle.schema -ne 1 -or $bundle.kind -cne 'minecome_hud_compositor_bundle_v1' -or $bundle.stream_protocol -ne 1 -or $bundle.tools_only -ne $true -or $bundle.runtime.version -cne '6.8.0' -or $bundle.runtime.reshade64_sha256 -cne $proxyHash -or $bundle.arm_config_relative_path -cne 'minecome-hud/addons/MineComeHudStream.ini' -or @($bundle.files).Count -ne 6) {throw 'An exact prepared stream bundle is required.'}
+if($bundle.schema -ne 1 -or $bundle.kind -cne 'minecome_hud_compositor_bundle_v1' -or $bundle.stream_protocol -ne 1 -or $bundle.tools_only -ne $true -or $bundle.runtime.version -cne '6.8.0' -or $bundle.runtime.reshade64_sha256 -cne $proxyHash -or $bundle.arm_config_relative_path -cne $expectedArm -or @($bundle.files).Count -ne 6) {throw 'An exact prepared stream bundle is required.'}
+if($InputMode){if($bundle.PSObject.Properties.Name -notcontains 'ui_input_protocol' -or $bundle.ui_input_protocol -ne 1){throw 'Input mode requires explicit protocol1 provenance.'}}
+elseif($bundle.PSObject.Properties.Name -contains 'ui_input_protocol'){throw 'Input bundle requires explicit InputMode.'}
 $context=Get-MineComeProbeContext
 if($context.GameHash -ine $exeHash) {throw 'Pinned official tools executable required.'}
 $bin=Assert-Unlinked ([IO.Path]::GetDirectoryName($context.GamePath))
@@ -62,12 +66,19 @@ function Assert-LoadedStream {
 }
 Assert-LoadedStream
 $armPath=Assert-Unlinked (Join-Path $bin $bundle.arm_config_relative_path)
-if((Test-Path -LiteralPath $armPath) -or (Test-Path -LiteralPath (Join-Path $bin 'minecome-hud/addons/MineComeHud.ini'))) {throw 'Existing stream/static arm preserved; ownership-checked cleanup is required first.'}
+foreach($name in @('MineComeHud.ini','MineComeHudStream.ini','MineComeHudInput.ini')){
+    if(Test-Path -LiteralPath (Join-Path $bin ('minecome-hud/addons/'+$name))){throw 'Existing HUD arm preserved; ownership-checked cleanup is required first.'}
+}
 if($PreflightOnly) {Write-Output 'HUD_STREAM_ARM_PREFLIGHT_PASS no_changes=true';return}
 if(-not $ReadyManifest) {throw 'A fresh actual Minecraft stream-ready.json is required.'}
 $ReadyManifest=Assert-Unlinked $ReadyManifest
 if(-not $ReadyManifest.StartsWith($evidenceRoot+'\',[StringComparison]::OrdinalIgnoreCase) -or [IO.Path]::GetFileName($ReadyManifest) -cne 'stream-ready.json') {throw 'Readiness must come from workspace stream evidence.'}
 $ready=Read-Receipt $ReadyManifest
+if($InputMode){
+    if($ready.PSObject.Properties.Name -notcontains 'ui_input_protocol' -or $ready.ui_input_protocol -ne 1){throw 'Input mode requires explicit genuine guest readiness.'}
+    if($ready.PSObject.Properties.Name -notcontains 'ui_input_fixture' -or $ready.ui_input_fixture -isnot [bool] -or $ready.ui_input_fixture -ne $false){throw 'Fixture producer cannot arm live KCD input.'}
+}
+elseif($ready.PSObject.Properties.Name -contains 'ui_input_protocol'){throw 'Input producer requires explicit InputMode.'}
 $start=$context.GameStartedUtc.ToFileTimeUtc().ToString()
 $now=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
 if($ready.schema -ne 1 -or $ready.run -cnotmatch '^[0-9a-f]{32}$' -or $ready.source_kind -cne 'minecraft_vanilla_ui_stream_v1' -or $ready.mapping_bytes -ne 8294656 -or $ready.mapping_name -cne ('Local\MineComeHud_'+$ready.run) -or $ready.mutex_name -cne ('Local\MineComeHudLock_'+$ready.run) -or [string]$ready.target_pid -cne [string]$context.GamePid -or [string]$ready.target_start_filetime -cne $start -or $ready.expires_utc_ms -le $now -or $ready.expires_utc_ms-$now -gt 180000 -or [string]$ready.producer_start_filetime -cnotmatch '^[1-9][0-9]{0,19}$') {throw 'Fresh stream session identity/lease mismatch.'}

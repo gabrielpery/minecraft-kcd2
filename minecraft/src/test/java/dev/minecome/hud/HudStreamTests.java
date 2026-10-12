@@ -16,6 +16,13 @@ public final class HudStreamTests {
     private static HudStreamProducer producer(Path root,Path parent,String child,HudStreamProducer.Identity id){return new HudStreamProducer(root,parent.resolve(child),id,"MineCome-HudStream-"+UUID.randomUUID(),false);}
     private static HudStreamProducer.Frame frame(long time){return new HudStreamProducer.Frame(2,1,new byte[]{64,0,0,(byte)128,0,0,0,0},time,1,0,"{\"state\":\"fixture\"}");}
     public static void main(String[] args)throws Exception {
+        var layout=HudStreamLayout.configured();
+        check(layout.width()==1280 && layout.height()==720 && layout.guiScale()==2,"stream default1280x720 GUI2");
+        check(layout.width()/layout.guiScale()==640 && layout.height()/layout.guiScale()==360,"vanilla logical canvas independent of host fit");
+        check(new HudStreamLayout(1920,1080,4).guiScale()==4,"bounded explicit GUI scale");
+        rejects(()->new HudStreamLayout(1921,1080,2),"oversized capture");
+        rejects(()->new HudStreamLayout(640,480,3),"GUI scale below vanilla minimum canvas");
+        rejects(()->new HudStreamLayout(1280,720,0),"automatic GUI scale refused");
         var id=new HudStreamProducer.Identity("0123456789abcdef0123456789abcdef",123,0x0102030405060708L,1_800_000_000_000L);
         byte[] bytes=HudStreamProducer.header(id,456,0x1122334455667788L,9,1_700_000_000_000L,2,1,3,1,1);
         var b=ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);

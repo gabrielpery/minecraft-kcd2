@@ -3,7 +3,8 @@
 # Optional composition only arms an already-running, separately installed renderer.
 # Never launches, stops, injects input into, or moves KCD2.
 [CmdletBinding()]
-param([string]$JavaHome, [switch]$Standalone, [switch]$Composite, [string]$BundleDirectory, [switch]$PreflightOnly)
+param([string]$JavaHome, [switch]$Standalone, [switch]$Composite, [string]$BundleDirectory, [switch]$PreflightOnly,
+    [ValidateRange(320,1920)][int]$Width=1280,[ValidateRange(240,1080)][int]$Height=720,[ValidateRange(1,4)][int]$GuiScale=2)
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'KcdToolsProbeHelpers.ps1')
@@ -60,7 +61,7 @@ function Start-Child([string]$Executable,[string[]]$Arguments) {
     return [Diagnostics.Process]::Start($start)
 }
 try {
-    $arguments=@('-NoProfile','-File',(Join-Path $PSScriptRoot 'Run-HudStreamClient.ps1'),'-EvidenceDirectory',$directory,'-Run',$run,'-TargetPid',[string]$context.GamePid,'-TargetStart',$targetStart,'-ExpiresUtcMs',[string]$expires,'-JavaHome',$JavaHome)
+    $arguments=@('-NoProfile','-File',(Join-Path $PSScriptRoot 'Run-HudStreamClient.ps1'),'-EvidenceDirectory',$directory,'-Run',$run,'-TargetPid',[string]$context.GamePid,'-TargetStart',$targetStart,'-ExpiresUtcMs',[string]$expires,'-JavaHome',$JavaHome,'-Width',[string]$Width,'-Height',[string]$Height,'-GuiScale',[string]$GuiScale)
     $client=Start-Child (Join-Path $PSHOME 'pwsh.exe') $arguments
     Write-Output "HUD_STREAM_START run=$run evidence=$directory composite=$([bool]$Composite)"
     $producerDirectory=Join-Path $directory 'capture'

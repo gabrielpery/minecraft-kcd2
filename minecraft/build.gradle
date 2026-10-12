@@ -16,7 +16,11 @@ loom {
                 vmArgs "-Dminecome.hudExportDirectory=${project.property('minecomeHudExportDirectory')}"
             if (project.hasProperty('minecomeHudStreamLab'))
                 vmArgs '-Dminecome.hudStreamLab=true'
-            for (String suffix : ['Run','TargetPid','TargetStart','ExpiresUtcMs','Directory']) {
+            if (project.hasProperty('minecomeHudStreamInput'))
+                vmArgs '-Dminecome.hudStreamInput=true'
+            if (project.hasProperty('minecomeHudStreamInputFixture'))
+                vmArgs '-Dminecome.hudStreamInputFixture=true'
+            for (String suffix : ['Run','TargetPid','TargetStart','ExpiresUtcMs','Directory','Width','Height','GuiScale']) {
                 String key = 'minecomeHudStream' + suffix
                 if (project.hasProperty(key))
                     vmArgs "-Dminecome.hudStream${suffix}=${project.property(key)}"
@@ -144,6 +148,11 @@ tasks.register('hudStreamTest', JavaExec) {
     classpath = sourceSets.test.runtimeClasspath
     mainClass = 'dev.minecome.hud.HudStreamTests'
     jvmArgs '--enable-native-access=ALL-UNNAMED'
+}
+tasks.register('hudInputTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'dev.minecome.hud.HudInputTests'
 }
 
 tasks.register('hudStreamFixture', JavaExec) {

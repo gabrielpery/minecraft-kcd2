@@ -33,16 +33,24 @@ public final class HudStreamProducer implements AutoCloseable {
     private final Path root,directory;
     private final String save;
     private final boolean genuine;
+    private final int inputMode;
     private final AtomicReference<Frame> latest=new AtomicReference<>();
     private final AtomicReference<String> terminal=new AtomicReference<>(),failure=new AtomicReference<>();
     private final AtomicReference<JsonObject> finalEvidence=new AtomicReference<>();
+    private final AtomicReference<JsonArray> fixtureTargets=new AtomicReference<>();
     private final AtomicBoolean ready=new AtomicBoolean(),finished=new AtomicBoolean();
     private final AtomicLong replaced=new AtomicLong(),published=new AtomicLong();
     private Thread worker;
+    private volatile int producerPid;
+    private volatile long producerStart,lastPublishedAt;
     public HudStreamProducer(Path root,Path directory,Identity identity,String save,boolean genuine) {
+        this(root,directory,identity,save,genuine,0);
+    }
+    public HudStreamProducer(Path root,Path directory,Identity identity,String save,boolean genuine,int inputMode) {
         if(!root.isAbsolute() || !directory.isAbsolute() || save==null || !save.matches("MineCome-HudStream-[0-9a-f-]{36}"))
             throw new IllegalArgumentException("Invalid owned stream output path/save");
-        this.root=root.normalize();this.directory=directory.normalize();this.identity=identity;this.save=save;this.genuine=genuine;
+        if(inputMode<0 || inputMode>2)throw new IllegalArgumentException("Invalid input mode");
+        this.root=root.normalize();this.directory=directory.normalize();this.identity=identity;this.save=save;this.genuine=genuine;this.inputMode=inputMode;
     }
     public synchronized void start() {
         if(worker!=null)throw new IllegalStateException("HUD stream cannot restart");
@@ -54,12 +62,16 @@ public final class HudStreamProducer implements AutoCloseable {
     public boolean isFinished(){return finished.get();}
     public String failure(){return failure.get();}
     public long publishedFrames(){return published.get();}
+    public int producerPid(){return producerPid;}
+    public long producerStart(){return producerStart;}
+    public long lastPublishedAt(){return lastPublishedAt;}
+    public void offerFixtureTargets(JsonArray slots){if(inputMode!=2 || !fixtureTargets.compareAndSet(null,slots.deepCopy()))throw new IllegalStateException("Fixture targets not allowed/already queued");}
     public void offer(Frame frame) {
         if(!isReady() || terminal.get()!=null)return;
         if(latest.getAndSet(frame)!=null)replaced.incrementAndGet();
     }
     public void finish(String result,JsonObject evidence) {
-        if(!Set.of("passed","failed","stopped","fixture").contains(result))throw new IllegalArgumentException("Invalid stream result");
+        if(!Set.of("passed","failed","stopped","fixture","input_passed","input_completed","input_cancelled").contains(result))throw new IllegalArgumentException("Invalid stream result");
         if(evidence!=null)finalEvidence.compareAndSet(null,evidence.deepCopy());
         terminal.compareAndSet(null,result);
     }
@@ -86,7 +98,8 @@ public final class HudStreamProducer implements AutoCloseable {
         r.addProperty("producer_start_filetime",Long.toUnsignedString(start));r.addProperty("target_pid",identity.targetPid());
         r.addProperty("target_start_filetime",Long.toUnsignedString(identity.targetStart()));r.addProperty("expires_utc_ms",identity.expiresUtcMs());
         r.addProperty("mapping",identity.mappingName());r.addProperty("mapping_name",identity.mappingName());r.addProperty("mutex_name",identity.mutexName());r.addProperty("mapping_bytes",MAPPING_BYTES);
-        r.addProperty("save",save);r.addProperty("source_kind",genuine?"minecraft_vanilla_ui_stream_v1":"standalone_transport_fixture");return r;
+        r.addProperty("save",save);r.addProperty("source_kind",genuine?"minecraft_vanilla_ui_stream_v1":"standalone_transport_fixture");
+        if(inputMode!=0){r.addProperty("ui_input_protocol",1);r.addProperty("ui_input_fixture",inputMode==2);}return r;
     }
     private void run() {
         Kernel32 api=null;WinNT.HANDLE mapping=null,mutex=null;Pointer view=null;
@@ -106,6 +119,7 @@ public final class HudStreamProducer implements AutoCloseable {
             var creation=new WinBase.FILETIME();
             if(!api.GetProcessTimes(api.GetCurrentProcess(),creation,new WinBase.FILETIME(),new WinBase.FILETIME(),new WinBase.FILETIME()))throw nativeFailure(api,"GetProcessTimes");
             start=(Integer.toUnsignedLong(creation.dwHighDateTime)<<32)|Integer.toUnsignedLong(creation.dwLowDateTime);
+            producerPid=pid;producerStart=start;
             mapping=api.CreateFileMapping(WinBase.INVALID_HANDLE_VALUE,null,WinNT.PAGE_READWRITE,0,MAPPING_BYTES,identity.mappingName());
             int mappingError=api.GetLastError();
             if(mapping==null || mappingError==WinError.ERROR_ALREADY_EXISTS)throw new IOException("CreateFileMapping failed/existing: "+mappingError);
@@ -121,6 +135,8 @@ public final class HudStreamProducer implements AutoCloseable {
                 String end=terminal.get();
                 if(end!=null){result=end;break;}
                 if(System.currentTimeMillis()>=identity.expiresUtcMs() || System.nanoTime()>=deadline)throw new IOException("Immutable stream lease expired");
+                var targets=fixtureTargets.getAndSet(null);
+                if(targets!=null){var receipt=identityReceipt(pid,start);receipt.add("slots",targets);writeJson(target.resolve("fixture-targets.json"),receipt);}
                 Frame frame=latest.getAndSet(null);
                 if(frame==null){Thread.sleep(5);continue;}
                 long now=System.currentTimeMillis();
@@ -134,6 +150,7 @@ public final class HudStreamProducer implements AutoCloseable {
                     view.write(HEADER_BYTES,rgba,0,rgba.length);view.write(0,head,0,head.length);
                 } finally {unlock(api,mutex);}
                 published.incrementAndGet();
+                lastPublishedAt=System.nanoTime();
                 JsonObject meta=JsonParser.parseString(frame.metadata()).getAsJsonObject();String stage=meta.get("state").getAsString();
                 if(!stage.matches("[a-z0-9_]{1,40}"))throw new IOException("Invalid sample state");
                 if(states.add(stage)) {
@@ -146,6 +163,17 @@ public final class HudStreamProducer implements AutoCloseable {
             }
             if(result.equals("passed") && (!genuine || published.get()<30 || !states.containsAll(Set.of("hotbar_slot0","hotbar_slot1","inventory_screen","hotbar_slot2"))))
                 throw new IOException("Continuous vanilla state proof incomplete");
+            if(result.equals("input_passed") || result.equals("input_completed")){
+                if(!genuine || inputMode==0 || published.get()<5 || !states.contains("hotbar"))throw new IOException("Input stream vanilla proof incomplete");
+                var inputProof=finalEvidence.get();
+                if(inputProof==null || !inputProof.get("host_armed").getAsBoolean() || inputProof.get("input_events_applied").getAsLong()<=0)throw new IOException("Input stream was never armed/applied");
+                if(result.equals("input_passed")){
+                    var proof=finalEvidence.get();
+                    if(inputMode!=2 || proof==null)throw new IOException("Input fixture proof absent");
+                    for(String key:List.of("input_fixture","server_swap_verified","inventory_opened","inventory_closed","selected_nine_verified","host_armed"))
+                        if(!proof.has(key) || !proof.get(key).getAsBoolean())throw new IOException("Input fixture proof missing: "+key);
+                }
+            }
         } catch(Exception e) {failure.compareAndSet(null,e.toString());result="failed";}
         finally {
             ready.set(false);latest.set(null);

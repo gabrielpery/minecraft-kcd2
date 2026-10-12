@@ -51,8 +51,11 @@ native receiver, including three selected slots and its actual Creative inventor
 The receiver verified stale-frame hiding, fresh resumption and orderly closure.
 The continuous D3D12 add-on now also displays the HUD inside KCD2: its live run
 uploaded 200 fresh frames, and the user confirms visibility. The GUI is now too
-large and KCD's native HUD remains visible.
-Physical inventory controls and host menu/input arbitration remain unfinished. See
+large and KCD's native HUD remains visible. A separate input mode now passes an
+actual Minecraft test: nine hotbar selections, real inventory opening/closing,
+and a vanilla slot swap confirmed by the integrated server. Its 1280x720 capture
+at GUI scale 2 reduces element size while retaining full-canvas placement.
+Physical KCD inventory controls and host menu/input arbitration remain unverified. See
 [the HUD compositor](docs/research/HUD-COMPOSITOR.md).
 Earlier tools launches crashed during world loading with the renderer unarmed and
 with its hook disabled. A subsequent explicit PowerShell 7 launch reached the world,

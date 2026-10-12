@@ -184,7 +184,14 @@ upload slot drops updates without refreshing the resident image's age. ReShade's
 public signal and semantic APIs can internally flush or wait, so this is not a
 claim of a completely nonblocking render path. Expiry hides the layer; owned GPU
 resources remain until safe runtime reset/unload cleanup. HDR, GPU sharing, held
-hands, survival HUD coverage, slot clicks and crafting remain outside this lab.
+hands, survival HUD coverage and crafting remain outside this lab. The separate
+reverse-input fixture now performs real vanilla slot clicks and verifies a stack
+swap on the integrated server. Its first live mode forwards only 1-9, E and Escape
+after an F8 latch, for at most 30 seconds. Physical KCD key blocking remains
+unverified. ReShade's DirectInput8 polling path preserves mouse axes, so this mode
+does not forward mouse input or claim camera suppression. Generic KCD menus and
+cutscenes are not detected; this bounded check requires a fresh world with menus
+and console closed. The original KCD HUD and health systems remain active.
 
 The official tools EXE has translated FileVersion/ProductVersion1.5.5.0 but fixed
 numeric version1.0.0.0. The native gate checks both, plus the expected distribution

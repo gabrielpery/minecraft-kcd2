@@ -276,3 +276,44 @@ guest value immediately afterward; that display scope does not replace server
 health authority. MineCome currently implements neither health bridge nor KCD
 HUD suppression. Copying the rendering architecture does not choose a health
 authority automatically, and foreign engine hooks cannot be reused in KCD.
+
+## Separate keyboard UI mode
+
+`Start-HudInputLab.ps1 -Mode Fixture` starts an isolated real Minecraft client and
+a standalone native reverse-input peer. Its successful 31-event run selected all
+nine hotbar slots, opened/closed the real Creative inventory and used normal slot
+clicks to swap two stacks, with final integrated-server confirmation. Source
+capture is now 1280x720 at GUI scale 2; full-canvas placement is unchanged. The
+live host appearance of this smaller layout is still unverified.
+
+Rendering and server proof have distinct timing: during ordinary client prediction
+the interactive stream continues rendering with `client_server_inventory_confirmed`
+false. The fixture's final item/selection proof still waits for server agreement.
+The actual retry exercised this path and passed with 32 published frames.
+
+The separate input add-on is installed from `runtime/hud-compositor-input`, with
+the previous stream bundle preserved. `Arm-HudStream.ps1 -InputMode` requires a
+genuine live-mode ready receipt and publishes only `MineComeHudInput.ini`. Fixture
+receipts cannot arm KCD. Both image and input channels use exact PID/FILETIME
+identities and a shared immutable expiry; input ACKs originate on client ticks.
+See [the reverse input contract](../../protocol/HUD_INPUT.md).
+
+After a user starts the fresh tools world, the controller command in PowerShell 7
+is `Start-HudInputLab.ps1 -Mode Live`. This starts Minecraft, verifies readiness and
+arms the already-loaded add-on. The user must keep KCD focused, close its menus and
+console, release controls, then press F8. After half a second, 1-9 select slots,
+E opens/closes Minecraft's inventory and Escape closes it. Ownership lasts at most
+30 seconds and ends on focus loss, stale data, ReShade overlay or renderer reset.
+F8 itself can reach KCD; complete host keyboard exclusivity is still a live check.
+
+This mode does not forward the mouse. ReShade's inspected DirectInput8 polling
+implementation preserves mouse axes while blocking buttons, so its public block
+request does not establish camera suppression. Host menu/cutscene detection,
+gamepad ownership and KCD physics control are also absent. KCD's own HUD and health
+remain active pending a separately verified health/display integration.
+
+The prior stream arm and diagnostic-owned empty mod-order file have now been
+cleaned up after normal KCD closure with exact ownership verification. Normal mod
+discovery is restored. The input installation is unarmed, with save and add-on
+backups; see `docs/PROGRESS.md` for exact receipts and hashes. No new KCD launch has
+been performed for this mode.

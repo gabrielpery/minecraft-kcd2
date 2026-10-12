@@ -19,8 +19,11 @@ proof used static captures. A subsequent real-Minecraft continuous run delivered
 stale-frame hiding, fresh resumption and closure. The continuous D3D12 add-on is
 implemented and now live visible in KCD2: a subsequent run uploaded 200 fresh
 frames and completed normally. The user reports the GUI is now too large and
-the original KCD HUD remains visible. Inventory interaction, satisfactory GUI
-sizing, KCD HUD suppression and health integration remain unfinished.
+the original KCD HUD remains visible. A new reverse input channel now selects all
+nine slots, opens/closes the actual inventory and swaps two stacks with real
+Minecraft server confirmation. The smaller capture layout is standalone verified;
+physical KCD inventory input, satisfactory live sizing, KCD HUD suppression and
+health integration remain unfinished.
 
 **Current build: interactive one-cell stone controls live verified.** KCD console
 commands `minecome_place`/`minecome_break` now request real Minecraft vanilla
@@ -1264,3 +1267,67 @@ The full-canvas fit and vanilla GUI scale are separate concerns: this capture is
 smaller presentation while preserving correct anchors. No KCD health publication
 or native HUD suppression exists yet; this remains a Creative UI lab. The stream
 is closed and its owned arm awaits cleanup after normal KCD closure.
+
+## Vanilla inventory input and smaller layout — 2026-10-12
+
+The separate input mode uses a 1280x720 capture at vanilla GUI scale 2, preserving
+full-canvas aspect fit and pixel sampling. On a 2560x1440 host this changes effective
+GUI scale from approximately 6 to 4. The isolated Minecraft window/options are
+restored on shutdown. Live sizing still needs the user's observation.
+
+The new reverse channel is documented in `protocol/HUD_INPUT.md`. Exact paired
+process identities, a 64-record ordered ring, client-tick acknowledgements and
+250 ms freshness bound input. Game calls remain on the Minecraft client thread.
+The separate native `hud_input_addon.cpp` and `MineComeHudInput.ini` leave the
+previous stream source/artifact intact. F8 enables one keyboard session of at most
+30 seconds after a fresh composed image, ready guest and neutral controls. Only
+1-9, E and Escape are forwarded. Focus loss, ReShade overlay, stale input, closure
+or runtime reset ends ownership; the next-frame blocking request then stops.
+This is not verified KCD input exclusivity or automatic host-menu arbitration.
+Live mouse forwarding is disabled because the inspected ReShade DirectInput8
+polling path preserves mouse axes. The test requires host menus/console closed.
+
+The real fixture in
+`runtime/evidence/hud-input-20261012-220732-28aaccdc10d74b0cb5a10ddb08eca7e3`
+passed all 31 acknowledged events, selected all nine hotbar slots and opened/closed
+the actual Creative inventory. Three ordinary vanilla slot clicks swapped stone64
+and dirt32; final client and integrated-server inventories agree. It published
+32 real UI frames and the native fixture received 30. Controls, image mapping and
+input mapping were released, including a published terminal client ACK. Minecraft
+saved and exited normally. The genuine 1280x720 PNG samples were visually inspected.
+No KCD compositor or physical host input was exercised by this fixture.
+
+The first run exposed image starvation when the snapshot proof gate waited for
+every rapidly changing selected slot to agree with the server. Interactive mode
+now renders normal client predictions while truthfully marking pending server
+confirmation; authoritative final proofs still require server agreement. The
+successful retry exercised 13 pending and 18 confirmed captures, retaining the
+250 ms input freshness limit. The failed run remains in evidence under
+`hud-input-20261012-220451-ae51df56f91f414089c83f9142ac6cf9`.
+
+Validation passes 325 Java input checks, 174 stream/layout checks, the existing
+36 snapshot checks and 216 native input checks. Independent review covered the
+transport, UI calls, callback lifetime, controller and arm archival. Final native
+build evidence is
+`runtime/evidence/hud-input-native-frozen-4c924c5ffdbe4d5ca3f3e917d449ff51/verification.json`.
+The input add-on SHA256 is
+`d7de884b798c6480efc24981ce409821192a7fcd56f6c2361ff32ec2755eefca`.
+Final Fabric JAR SHA256 is
+`e9e89cac0e81d052538bd195a25d588769442c67ff7f912ab2c363b27c08863e`.
+
+KCD subsequently closed normally with `WM_CLOSE`, exit code 0. The unchanged
+diagnostic-owned empty mod-order file was removed only after matching its original
+file identity, timestamps, size and hash. Ordinary mod discovery is restored;
+both mod packages are unchanged. The cleanup receipt and normal-close log are in
+`runtime/evidence/tools-startup-diagnostic-20261012-204806-0878b89fc0bb475d9cfb2694a95e7e55`.
+The owned expired stream arm was archived beside its original arming receipt.
+Before deployment, all 1,008 current save/profile files were backed up and hash
+verified under `runtime/backups/20261012-230838`.
+
+The input bundle `runtime/hud-compositor-input` is installed unarmed. Both
+PowerShell 5.1 and 7 preflight passed; only the owned add-on changed, its previous
+bytes were backed up and the pinned proxy was enabled last. Deployment receipt:
+`runtime/evidence/hud-update-20261012-220935-ae5ecddf2d944d7292c41c5fc7981447/update.json`.
+No game launch was performed. The next check requires a user-started fresh world
+and `Start-HudInputLab.ps1 -Mode Live`. KCD HUD suppression, health mapping, mouse
+inventory controls, crafting and general gameplay ownership remain unfinished.
