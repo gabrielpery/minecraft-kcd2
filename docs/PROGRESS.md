@@ -17,9 +17,10 @@ hotbar snapshots and the actual Creative inventory snapshot submitted during the
 proof used static captures. A subsequent real-Minecraft continuous run delivered
 344 frames and four vanilla UI states to a standalone native receiver, including
 stale-frame hiding, fresh resumption and closure. The continuous D3D12 add-on is
-implemented, compiled and installed unarmed; live KCD2 streaming display and
-inventory interaction remain unverified. The aspect-fit correction for the reported undersized canvas
-is included in this implementation and still needs live verification.
+implemented and now live visible in KCD2: a subsequent run uploaded 200 fresh
+frames and completed normally. The user reports the GUI is now too large and
+the original KCD HUD remains visible. Inventory interaction, satisfactory GUI
+sizing, KCD HUD suppression and health integration remain unfinished.
 
 **Current build: interactive one-cell stone controls live verified.** KCD console
 commands `minecome_place`/`minecome_break` now request real Minecraft vanilla
@@ -72,7 +73,7 @@ completed its movement/view proof; the new KCD capture path still awaits a live 
 | Original saves protection | Backup script | 982 copied files SHA256 verified | Original saves were not opened for the tests |
 | Static Minecraft UI composition | Actual vanilla capture and original ReShade D3D12 add-on built | 36 Java capture checks; reset and aspect-fit contracts pass | User confirmed HUD visible in KCD2; logs record all three snapshot submissions and lease expiry |
 | Continuous vanilla UI transport | Java21/JNA producer, bounded Win32 channel and native receiver built | 168 Java stream checks and 146 native checks pass; existing 36 snapshot checks still pass | Fresh real Minecraft world sent 344 nontransparent frames, four vanilla UI states, pause/resumption and closed marker to standalone receiver; no KCD compositor was armed |
-| Continuous KCD UI compositor | Separate exact-tools D3D12 add-on built and installed unarmed with aspect fit, persistent texture and fenced upload slots | Native contract/lifecycle review and checks pass | User restart, live continuous KCD display, corrected sizing and physical inventory interaction pending |
+| Continuous KCD UI compositor | Separate exact-tools D3D12 add-on installed with aspect fit, persistent texture and fenced upload slots | Native contract/lifecycle review and checks pass | Live upload of 200 fresh frames and user-confirmed HUD visibility; GUI too large, duplicate host HUD and physical inventory interaction remain |
 
 ## Current artifacts
 
@@ -154,7 +155,7 @@ communication with the loaded KCD2 world. The fresh Minecraft log records
 6–7. **UI foundation implemented; broader gameplay remains.** Static vanilla HUD
    display is live verified in KCD2. Continuous vanilla UI transport passes with
    real Minecraft and a standalone receiver; the installed streaming compositor
-   still needs live KCD verification. Inventory input, hands, NPC/combat, terrain
+   now displays the HUD inside KCD2. Inventory input, hands, NPC/combat, terrain
    deformation, mobs and advanced features remain unfinished.
 
 ## Next concrete verification
@@ -1236,8 +1237,30 @@ owned empty mod-order list remains for the controlled renderer comparison; its
 ownership-checked restoration is still owed after that comparison and normal
 closure.
 
-Next verification is a fresh user-started tools world, followed by
+The subsequent live check used a fresh user-started tools world and
 `Start-HudStreamLab.ps1 -Composite` with the explicit installed stream bundle in
-PowerShell 7.3 or later. Continuous display and corrected sizing in KCD2 are pending.
+PowerShell 7.3 or later; its results follow below.
 Physical slot selection, inventory clicks, crafting, held hands, survival HUD
 coverage and KCD menu/input arbitration remain unfinished.
+
+### First live continuous display
+
+The user started tools PID 54196 and confirmed world readiness. Run
+`3cd7ea7bb557436cba1f428b94f7b72d` then created a fresh Minecraft world and published
+240 nontransparent frames. The native receiver observed all four UI states,
+stale-frame hiding, fresh resumption and the closed marker. KCD's loaded stream
+add-on accepted the same run, uploaded 200 fresh frames and submitted 1,882 draws,
+with zero busy-slot drops or renderer failure events. Minecraft saved and exited
+normally; KCD remained alive. These are renderer submission receipts, separately
+from the user's visual evidence.
+
+The user confirms seeing the HUD but reports it is now "a bit large" and that
+KCD's own HUD remains. They did not separately confirm every slot transition or
+the inventory opening/closing. The complete report, native log, process/artifact
+identities and controller results are preserved under
+`runtime/evidence/hud-stream-20261012-214338-3cd7ea7bb557436cba1f428b94f7b72d`.
+The full-canvas fit and vanilla GUI scale are separate concerns: this capture is
+854x480 at Minecraft GUI scale 2, enlarged to the host canvas. The GUI needs a
+smaller presentation while preserving correct anchors. No KCD health publication
+or native HUD suppression exists yet; this remains a Creative UI lab. The stream
+is closed and its owned arm awaits cleanup after normal KCD closure.

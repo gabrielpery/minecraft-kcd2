@@ -162,7 +162,8 @@ for 854×480 into 2560×1440, leaving a 1708×960 inset. The aspect-fit correcti
 builds and passes 131 focused contract checks, retaining point sampling. Its bundle
 was staged at `runtime/hud-compositor-aspect-fit`. That separate static-only build
 was not installed; the subsequently installed continuous add-on includes the same
-correction. Corrected sizing remains unverified in KCD2. The updater keeps separate
+correction. The later live report confirms the GUI is now too large; sizing needs
+refinement. The updater keeps separate
 exact static/stream build allowlists and refuses either existing arm filename.
 
 The successful zero-mod diagnostic's owned empty mod list stays in place for this
@@ -226,9 +227,9 @@ Validation passes 168 Java stream checks, the existing 36 snapshot checks and
 The real transport run and frozen build retain their own artifact hashes, keeping
 actual process evidence distinct from the later reviewed/rebuilt add-on.
 
-## Installed stream and next live check
+## Installed stream and live check
 
-The continuous add-on, including the aspect-fit correction, is installed unarmed
+The continuous add-on, including the aspect-fit correction, was installed unarmed
 from `runtime/hud-compositor-stream`. With KCD closed, the updater replaced only
 the owned add-on, preserved its predecessor and enabled the pinned owned proxy
 last. Both PowerShell 5.1 and 7.6.5 preflight passed. Deployment evidence is
@@ -237,7 +238,7 @@ The old static arm was archived; the owned empty mod-order list remains for the
 controlled renderer comparison and must be restored by ownership-checked cleanup
 after the comparison and normal closure.
 
-A fresh user-started tools world is still required. Once it is ready,
+With a fresh user-started tools world ready,
 `Start-HudStreamLab.ps1 -Composite` in PowerShell 7.3 or later starts the isolated
 Minecraft stream and arms the already-loaded add-on. Pass the absolute
 `runtime/hud-compositor-stream` path with `-BundleDirectory`. The controller never
@@ -246,8 +247,32 @@ native receiver without requiring KCD, and cannot be combined with `-Composite`.
 `Arm-HudStream.ps1` checks the loaded owned artifacts and fresh genuine-producer
 receipt before publishing a create-new arm file.
 
-Live continuous KCD display and corrected sizing remain pending. Next comes a
+The first live run delivered 240 frames to the receiver and uploaded 200 fresh
+frames in KCD, submitting 1,882 draws before normal closure. The user confirms
+the HUD is visible but now too large, with the original KCD HUD still present.
+The 854x480 source used vanilla GUI scale 2; GUI size needs adjustment separately
+from the full-canvas aspect fit. Individual slot/inventory transitions were not
+separately confirmed visually. Evidence is in
+`runtime/evidence/hud-stream-20261012-214338-3cd7ea7bb557436cba1f428b94f7b72d`.
+
+Next comes a
 separate vanilla UI input mode with focus, release and host-menu arbitration.
 The walking observer currently disarms on buttons/wheel, and the movement lab
 rejects menus; neither controls inventory. Slot clicks, crafting, held hands,
 survival HUD coverage, HDR and GPU sharing remain outside this lab.
+
+## Host HUD and health are separate integrations
+
+The pinned references both remove overlapping host HUD information, but they do
+not use the same health authority. [SkyCraft's HUD controller](https://github.com/chasmlol/SkyCraft/blob/bfcaf178524b92c2cdeb88e4ce0f13ef9ded6f32/skse/src/Game.cpp#L331-L350)
+hides Skyrim's player status/equipment widgets while preserving the compass,
+interaction prompt and enemy health. Its [combat bridge](https://github.com/chasmlol/SkyCraft/blob/bfcaf178524b92c2cdeb88e4ce0f13ef9ded6f32/skse/src/Combat.cpp#L125-L169)
+refunds Skyrim damage and forwards it into Minecraft, which owns player health.
+
+[EldenCraft's native controller](https://github.com/SocketByte/EldenCraft/blob/ba7591cdde9fb16e17552cfe53546f44d0fd856e/native/src/host_hud.rs#L180-L235)
+reversibly suppresses the host status/equipment HUD. Its [health display adapter](https://github.com/SocketByte/EldenCraft/blob/ba7591cdde9fb16e17552cfe53546f44d0fd856e/minecraft/src/client/java/dev/eldencraft/bridge/client/HostHealthDisplay.java#L32-L65)
+maps actual Elden Ring HP/maxHP into Minecraft heart rendering and restores the
+guest value immediately afterward; that display scope does not replace server
+health authority. MineCome currently implements neither health bridge nor KCD
+HUD suppression. Copying the rendering architecture does not choose a health
+authority automatically, and foreign engine hooks cannot be reused in KCD.

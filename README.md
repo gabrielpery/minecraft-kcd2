@@ -49,8 +49,9 @@ snapshots and the Creative inventory snapshot. **Continuous UI transport now als
 passes with real Minecraft:** a fresh world sent 344 frames to the standalone
 native receiver, including three selected slots and its actual Creative inventory.
 The receiver verified stale-frame hiding, fresh resumption and orderly closure.
-The continuous D3D12 add-on is installed unarmed; a fresh user launch and live
-KCD2 display verification are pending.
+The continuous D3D12 add-on now also displays the HUD inside KCD2: its live run
+uploaded 200 fresh frames, and the user confirms visibility. The GUI is now too
+large and KCD's native HUD remains visible.
 Physical inventory controls and host menu/input arbitration remain unfinished. See
 [the HUD compositor](docs/research/HUD-COMPOSITOR.md).
 Earlier tools launches crashed during world loading with the renderer unarmed and
@@ -62,7 +63,7 @@ a fresh world and completed its 40-second preview. The user reported the HUD
 canvas was too small. The aspect-fit correction passes 131 focused checks and is
 included in the new continuous compositor. The stream implementation passes 168
 Java checks and 146 native checks; the existing 36 snapshot checks still pass.
-Corrected sizing still needs live KCD2 verification.
+GUI sizing needs refinement; KCD HUD suppression and health integration remain unfinished.
 
 The retail KCSE route is blocked by a missing verified Steam 1.5.6 address library.
 The installed official tools run a distinct 1.5.5 development build. Its working HTTP
