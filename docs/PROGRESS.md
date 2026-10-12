@@ -926,3 +926,48 @@ Patch SHA256:
 Sustained camera/input ownership, generic engine menu state, streaming collision and
 combining the input consumer with the KCD follower remain unfinished. No unverified
 native hook, KCD input suppression or physics takeover was introduced.
+
+## External-input pose export and live control capabilities — 2026-10-12
+
+The external-input lab now exports immutable client/server position, velocity,
+grounding and yaw/pitch at up to10Hz. A bounded daemon writes a new NDJSON file;
+Minecraft's game threads perform no output file operations. Samples require an
+advancing server sequence and observed age at most250ms. The stream reserves its
+terminal slot within512records/1MiB. A final fresh server sample and completed
+flush/close are required before the lab reports success, within its existing4s
+terminal deadline. Review caught and fixed a failure/completion read race.
+
+Every record binds input run/process, patch/view hashes and the isolated world,
+and explicitly remains audit-only/follower-ineligible. Coordinates are projected
+in patch space, with the initial Minecraft baseline recorded separately. The input
+dispatch watermark is not a server acknowledgement. This adds the position/view
+output needed by a future coupled controller without changing the working follower.
+
+The automatic actual-Minecraft run passed in
+`runtime/evidence/external-input-20261012-202526-c1b240aa3bb340a687c2315fa97bd862`.
+Client and integrated server both walked0.8571695116m, jumped, landed and changed
+yaw45→49.5/pitch−10→−11.8. The deliberately expired input was discarded; one fresh
+mouse application, zero post-settle corrections and terminal neutral input were
+confirmed. Minecraft restored its prior settings and exited normally; KCD PID3004
+remained running. This run uses synthetic input and ground, not new physical-input
+proof. The earlier human-confirmed physical result remains valid for that version.
+
+The new export contains59records/57server samples,76,136bytes, with a passed end
+and matching final server sequence. Its source identity, framing, finite values,
+coordinate/view projection and terminal fields also pass the final offline validator.
+Recording SHA256: `23595374ed119fe6c66cdb1681d5491f00481fd0be9dbe610193c84876833209`.
+Focused checks pass:1092 Java writer assertions,16 PowerShell validator cases and
+21 Lua control-probe cases. The Fabric JAR assembles to192,880bytes, SHA256
+`d92f87b76b4786ec68b0dd3e93bb2bc1efe1ad06d93751b2ae70e4707dff243c`.
+The live run used Loom development classes; this packaged JAR was not separately
+installed. `implementation-verification.json` records the final source/build hashes.
+
+A separate read-only live probe passed against the pinned official tools executable:
+`runtime/evidence/control-capabilities-20261012-201510-c8e580acb2e642e4b2caa6cb79bcf04d`.
+It confirmed `ActionMapManager.EnableActionFilter` is absent, although its state
+reader exists. `g_gameRules.game.FreezeInput` and `player.EnablePhysics` exist;
+global `GameRules` and bound `IsFrozen` are absent. Nine partial state getters
+returned actual booleans with stable actor/function identity. No mutation was
+requested. Prior input/physics state and reliable restoration remain unproved, so
+the physical-input consumer and KCD follower are still separate. See
+[KCD input research](research/KCD-INPUT.md#live-control-capability-inspection--2026-10-12).

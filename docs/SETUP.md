@@ -321,6 +321,14 @@ previous values when it stops. The automatic fixture also sends one intentionall
 expired movement/mouse sample and requires its discard before completing the normal
 movement proof.
 
+The same helper writes `minecraft-pose.ndjson` and, on successful completion,
+`pose-verification.json` beside the input recording. The bounded asynchronous
+export contains fresh server position, velocity, yaw/pitch and a KCD coordinate
+projection. It records the input process, patch/view hashes, isolated world and
+initial Minecraft baseline. Its input dispatch watermark is client-side bookkeeping,
+not an acknowledgement that a particular input produced a server pose. The output
+is explicitly audit-only and does not activate the KCD follower.
+
 The lab moves Minecraft only. KCD retains its native controls/physics and will also
 respond to the same physical actions. Do not combine this with the coupled follower.
 Minecraft hold-to-sprint and ordinary unsmoothed camera settings are required.

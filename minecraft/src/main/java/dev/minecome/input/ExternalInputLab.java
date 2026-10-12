@@ -19,6 +19,7 @@ import net.minecraft.world.level.LevelInfo;
 import org.slf4j.*;
 
 import java.nio.file.*;
+import java.math.BigInteger;
 import java.util.*;
 import java.util.concurrent.atomic.*;
 
@@ -30,6 +31,7 @@ public final class ExternalInputLab {
     private final GroundPatch patch;
     private final HostViewSeed viewSeed;
     private final Path inputFile;
+    private final Path poseFile;
     private final ExternalInputSessionGate.Identity identity;
     private final ExternalInputSessionGate gate;
     private final boolean fixture;
@@ -43,6 +45,9 @@ public final class ExternalInputLab {
                           boolean grounded, boolean support, float yaw, float pitch) {}
     private record ServerSample(Object world, long sequence, long receivedAt, Motion motion) {}
     private ExternalInputFileReader reader;
+    private ExternalInputPoseSink poseSink;
+    private BigInteger inputDispatchWatermark = BigInteger.ZERO;
+    private boolean initialPosePending = true, poseFinalQueued;
     private Object labWorld, labPlayer, ownedServer;
     private UUID playerId;
     private String saveName;
@@ -60,8 +65,8 @@ public final class ExternalInputLab {
     private boolean clientYaw, clientPitch, serverYaw, serverPitch;
     private ExternalInputSessionGate.Input held = ExternalInputSessionGate.Input.NEUTRAL;
 
-    private ExternalInputLab(GroundPatch patch, HostViewSeed viewSeed, Path inputFile, ExternalInputSessionGate.Identity identity, boolean fixture) {
-        this.patch = patch; this.viewSeed = viewSeed; this.inputFile = inputFile; this.identity = identity; this.fixture = fixture;
+    private ExternalInputLab(GroundPatch patch, HostViewSeed viewSeed, Path inputFile, Path poseFile, ExternalInputSessionGate.Identity identity, boolean fixture) {
+        this.patch = patch; this.viewSeed = viewSeed; this.inputFile = inputFile; this.poseFile = poseFile; this.identity = identity; this.fixture = fixture;
         gate = new ExternalInputSessionGate(identity);
     }
     public static void initialize() {
@@ -74,7 +79,8 @@ public final class ExternalInputLab {
             boolean fixture = Boolean.getBoolean("minecome.externalInputFixture");
             var viewSeed = HostViewSeed.read(Path.of(required("minecome.externalInputViewFile")), identity, patch.sha256(), fixture,
                     patch.centerX(), patch.centerY(), patch.centerZ(), System.currentTimeMillis());
-            var lab = new ExternalInputLab(patch, viewSeed, Path.of(required("minecome.externalInputFile")), identity, fixture);
+            var lab = new ExternalInputLab(patch, viewSeed, Path.of(required("minecome.externalInputFile")),
+                    Path.of(required("minecome.externalInputPoseFile")), identity, fixture);
             active = lab;
             LOG.info("EXTERNAL_INPUT_LAB_INITIALIZED inputRun={} sourceKind={} patchRun={} patchSha256={} fixture={} physicalInputVerified=false approximateHeightfield=true fullCollisionExportVerified=false viewSeedSha256={} viewSeedKind={} viewCapturedUtcMs={} initialYaw={} initialPitch={} initialViewSnapshotOnly=true",
                     identity.run(), lab.patch.sourceKind(), lab.patch.run(), lab.patch.sha256(), lab.fixture,
@@ -87,6 +93,7 @@ public final class ExternalInputLab {
             ClientLifecycleEvents.CLIENT_STOPPING.register(client -> {
                 lab.stopping = true; lab.release(client); lab.gate.disconnect();
                 if (lab.reader != null) lab.reader.close();
+                if (lab.poseSink != null) lab.poseSink.close();
                 if (lab.oldPauseOnLostFocus != null) client.options.pauseOnLostFocus = lab.oldPauseOnLostFocus;
                 if (lab.oldRenderSettings != null) {
                     var previous = lab.oldRenderSettings;
@@ -131,6 +138,7 @@ public final class ExternalInputLab {
         // The independent gate still caps all input at120s and every sample lease at300ms.
         if (now - worldAt >= 135_000_000_000L) { fail(client, "World runtime135s without complete terminal proof"); return; }
         if (serverFailure.get() != null) { fail(client, serverFailure.get()); return; }
+        if (poseSink != null && poseSink.failure() != null) { fail(client, "Pose output failed: " + poseSink.failure().getMessage()); return; }
         if (!setupRequested) { install(client, now); return; }
         if (!installed.get()) {
             release(client);
@@ -177,7 +185,18 @@ public final class ExternalInputLab {
                 }
                 if (reader.failure() != null) throw reader.failure();
                 if (!reader.isReady()) return;
-            } catch (Exception e) { fail(client, "Input reader initialization: " + e.getMessage()); return; }
+                if (poseSink == null) {
+                    Path project = client.runDirectory.toPath().toAbsolutePath().normalize().getParent().getParent();
+                    var s = sample.motion();
+                    var context = new ExternalInputPoseSink.Context(identity, patch.run(), patch.sha256(), viewSeed.sha256(),
+                            patch.sourceKind(), fixture, saveName, saveName.substring("MineCome-ExternalInput-".length()),
+                            new ExternalInputPoseSink.Vec3(patch.centerX(), patch.centerY(), patch.centerZ()),
+                            new ExternalInputPoseSink.Vec3(s.x(), s.y(), s.z()));
+                    poseSink = new ExternalInputPoseSink(project, poseFile, context, System.currentTimeMillis()); poseSink.start();
+                }
+                if (poseSink.failure() != null) throw poseSink.failure();
+                if (!poseSink.isReady()) return;
+            } catch (Exception e) { fail(client, "Input/pose daemon initialization: " + e.getMessage()); return; }
             baselineClient = current; baselineServer = sample.motion(); latestClient = current;
             correctionBaseline = corrections.get(); ready = true;
             LOG.info("EXTERNAL_INPUT_LAB_READY inputRun={} save={} patchRun={} patchSha256={} sourceKind={} fixture={} physicalInputVerified=false client={} server={} correctionBaseline={} inputFile={} serverInstalled=true clientInstalled=true viewSeedSha256={} viewSeedKind={} viewCapturedUtcMs={} initialYaw={} initialPitch={} initialClientViewVerified=true initialServerViewVerified=true initialViewSnapshotOnly=true",
@@ -213,6 +232,8 @@ public final class ExternalInputLab {
         if (!terminal && inputAt != 0 && now - inputAt >= 105_000_000_000L) { fail(client, "Input session105s deadline; terminal end missing"); return; }
         held = gate.consume(System.nanoTime(), serverFresh); apply(client, held);
         if (held.active()) {
+            // Dispatch watermark only: it does not identify a vanilla server packet ACK.
+            inputDispatchWatermark = gate.lastSequence();
             appliedFrames++;
             if (held.mouseDx() != 0 || held.mouseDy() != 0) {
                 double sensitivity = client.options.getMouseSensitivity().getValue();
@@ -257,14 +278,35 @@ public final class ExternalInputLab {
         }
         if (ticks % 10 == 0) LOG.info("EXTERNAL_INPUT_OBSERVATION inputRun={} client={} server={} serverSeq={} serverAgeMillis={} postSettleCorrections={}",
                 identity.run(), latestClient, sample.motion(), sample.sequence(), (System.nanoTime() - sample.receivedAt()) / 1_000_000, corrections.get() - correctionBaseline);
-        if (!terminal) return;
+        if (!terminal) { publishPose(client, sample, initialPosePending); return; }
         release(client);
+        if (now - terminalAt > 4_000_000_000L) { fail(client, "Terminal proof/output flush exceeded existing4s deadline"); return; }
         boolean resting = grounded(latestClient) && grounded(sample.motion()) && horizontalSpeed(latestClient) < 0.02 && horizontalSpeed(sample.motion()) < 0.02;
         if (!resting) landingStableAt = 0; else if (landingStableAt == 0) landingStableAt = now;
         boolean proof = clientWalk >= 0.15 && serverWalk >= 0.15 && clientAir && serverAir && clientLand && serverLand &&
                 clientYaw && clientPitch && serverYaw && serverPitch && mouseApplications > 0 && gate.closed() && keysReleased(client) &&
                 corrections.get() == correctionBaseline && resting && now - landingStableAt >= 500_000_000L;
         if (proof) {
+            try {
+                if (!poseFinalQueued) {
+                    if (!writePose(sample, true)) {
+                        if (now - terminalAt > 4_000_000_000L) fail(client, "Fresh advancing final pose sample missing within existing terminal deadline");
+                        return;
+                    }
+                    poseSink.finish(System.currentTimeMillis(), "passed", "Actual vanilla client/server input proof; audit-only pose output");
+                    poseFinalQueued = true;
+                }
+                if (poseSink.failure() != null) throw poseSink.failure();
+                if (!poseSink.isFinished()) {
+                    if (now - terminalAt > 4_000_000_000L) fail(client, "Pose terminal flush did not finish within existing terminal deadline");
+                    return;
+                }
+                // The worker publishes its failure before finished. Re-read after
+                // observing completion so a concurrent close failure cannot pass.
+                if (poseSink.failure() != null) throw poseSink.failure();
+            } catch (Exception e) { fail(client, "Pose output finalization: " + e.getMessage()); return; }
+            LOG.info("EXTERNAL_INPUT_POSE_OUTPUT_COMPLETE inputRun={} file={} records={} bytes={} auditOnly=true followerEligible=false controlOwnershipVerified=false kcdMovementApplied=false",
+                    identity.run(), poseFile, poseSink.records(), poseSink.byteCount());
             LOG.info("EXTERNAL_INPUT_LAB_PASS inputRun={} save={} patchRun={} patchSha256={} sourceKind={} fixture={} physicalInputVerified=false actualVanillaMCInputApplication=true clientWalk={} serverWalk={} clientAir={} serverAir={} clientLand={} serverLand={} clientYawChanged={} clientPitchChanged={} serverYawChanged={} serverPitchChanged={} inputNeutralAfterEnd=true postSettleCorrections={} receivedFrames={} appliedFrames={} mouseApplications={} client={} server={} serverSeq={} fullWorldMovementAuthorityVerified=false viewSeedSha256={} viewSeedKind={} viewCapturedUtcMs={} initialYaw={} initialPitch={} initialClientViewVerified=true initialServerViewVerified=true initialViewSnapshotOnly=true",
                     identity.run(), saveName, patch.run(), patch.sha256(), patch.sourceKind(), fixture, clientWalk, serverWalk,
                     clientAir, serverAir, clientLand, serverLand, clientYaw, clientPitch, serverYaw, serverPitch,
@@ -272,6 +314,7 @@ public final class ExternalInputLab {
                     viewSeed.sha256(), viewSeed.sourceKind(), viewSeed.capturedUtcMillis(), viewSeed.yawDegrees(), viewSeed.pitchDegrees());
             stopping = true; reader.close(); client.scheduleStop();
         } else if (now - terminalAt > 4_000_000_000L) fail(client, "Terminal received but client/server walk/jump/look/neutral proof incomplete");
+        else publishPose(client, sample, initialPosePending);
     }
 
     private void create(MinecraftClient client) {
@@ -386,6 +429,21 @@ public final class ExternalInputLab {
         return true;
     }
     private static double horizontal(Motion a, Motion b) { return Math.hypot(a.x() - b.x(), a.z() - b.z()); }
+    private static ExternalInputPoseSink.Motion poseMotion(Motion motion) {
+        return new ExternalInputPoseSink.Motion(motion.x(), motion.y(), motion.z(), motion.vx(), motion.vy(), motion.vz(),
+                motion.grounded(), motion.support(), motion.yaw(), motion.pitch());
+    }
+    private boolean writePose(ServerSample sample, boolean force) throws java.io.IOException {
+        boolean written = poseSink.sample(System.nanoTime(), System.currentTimeMillis(), poseMotion(latestClient), poseMotion(sample.motion()),
+                sample.sequence(), sample.receivedAt(), inputDispatchWatermark, force);
+        if (written) initialPosePending = false;
+        return written;
+    }
+    private void publishPose(MinecraftClient client, ServerSample sample, boolean force) {
+        if (!force && inputDispatchWatermark.signum() == 0) return; // Operator arm-wait does not spend the pose stream budget.
+        try { writePose(sample, force); }
+        catch (Exception e) { fail(client, "Pose output sample: " + e.getMessage()); }
+    }
     private static double horizontalSpeed(Motion motion) { return Math.hypot(motion.vx(), motion.vz()); }
     private static void apply(MinecraftClient client, ExternalInputSessionGate.Input input) {
         var h = input.held(); client.options.forwardKey.setPressed(h.forward()); client.options.backKey.setPressed(h.back());
@@ -400,6 +458,10 @@ public final class ExternalInputLab {
     private void fail(MinecraftClient client, String reason) {
         if (stopping) return;
         stopping = true; release(client); gate.disconnect(); if (reader != null) reader.close();
+        if (poseSink != null) {
+            try { poseSink.finish(System.currentTimeMillis(), "failed", reason); }
+            catch (Exception e) { LOG.error("EXTERNAL_INPUT_POSE_OUTPUT_FAIL inputRun={} reason={}", identity.run(), e.getMessage()); }
+        }
         LOG.error("EXTERNAL_INPUT_LAB_FAIL inputRun={} save={} sourceKind={} fixture={} physicalInputVerified=false reason={} receivedFrames={} appliedFrames={} inputNeutral={} client={} server={} postSettleCorrections={}",
                 identity.run(), saveName, patch.sourceKind(), fixture, reason, receivedFrames, appliedFrames,
                 keysReleased(client), latestClient, serverSample.get(), corrections.get() - correctionBaseline);

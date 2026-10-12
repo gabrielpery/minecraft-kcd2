@@ -7,6 +7,7 @@ param(
     [Parameter(Mandatory)][string]$PatchFile,
     [Parameter(Mandatory)][string]$ViewSeedFile,
     [Parameter(Mandatory)][string]$InputFile,
+    [Parameter(Mandatory)][string]$PoseFile,
     [Parameter(Mandatory)][ValidatePattern('^[0-9a-f]{32}$')][string]$InputRun,
     [Parameter(Mandatory)][ValidateRange(1,4294967295)][long]$TargetPid,
     [Parameter(Mandatory)][ValidatePattern('^[1-9][0-9]{0,19}$')][string]$TargetStartFiletime,
@@ -20,6 +21,7 @@ $env:JAVA_HOME=(Resolve-Path -LiteralPath $JavaHome).Path
 $env:GRADLE_USER_HOME=Join-Path $minecraft '.gradle-user-home'
 $arguments=@('-p',$minecraft,'--no-daemon','runClient','-PminecomeExternalInputLab',
     "-PminecomeGroundPatchFile=$PatchFile","-PminecomeExternalInputViewFile=$ViewSeedFile","-PminecomeExternalInputFile=$InputFile",
+    "-PminecomeExternalInputPoseFile=$PoseFile",
     "-PminecomeExternalInputRun=$InputRun","-PminecomeExternalInputTargetPid=$TargetPid",
     "-PminecomeExternalInputTargetStartFiletime=$TargetStartFiletime")
 if($Fixture) { $arguments+='-PminecomeExternalInputFixture' }

@@ -35,6 +35,9 @@ The input lab now supports explicit key bindings and a starting view captured fr
 KCD's camera. The live KCD capture and matching Minecraft client/server starting
 view are verified. This bounded input lab stays separate from the KCD player follower;
 KCD's own input and physics remain active.
+The input lab also exports server position and view with validated KCD coordinate
+projections. This new output passed an automatic real-Minecraft run and remains
+audit-only until KCD control ownership and restoration are established.
 
 The retail KCSE route is blocked by a missing verified Steam 1.5.6 address library.
 The installed official tools run a distinct 1.5.5 development build. Its working HTTP

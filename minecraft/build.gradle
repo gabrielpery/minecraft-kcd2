@@ -30,7 +30,7 @@ loom {
                 vmArgs '-Dminecome.externalInputLab=true'
             if (project.hasProperty('minecomeExternalInputFixture'))
                 vmArgs '-Dminecome.externalInputFixture=true'
-            for (String suffix : ['File','ViewFile','Run','TargetPid','TargetStartFiletime']) {
+            for (String suffix : ['File','ViewFile','PoseFile','Run','TargetPid','TargetStartFiletime']) {
                 String key = 'minecomeExternalInput' + suffix
                 if (project.hasProperty(key))
                     vmArgs "-Dminecome.externalInput${suffix}=${project.property(key)}"
@@ -105,6 +105,12 @@ tasks.register('externalInputFileTest', JavaExec) {
     dependsOn testClasses
     classpath = sourceSets.test.runtimeClasspath
     mainClass = 'dev.minecome.input.ExternalInputFileReaderTests'
+}
+
+tasks.register('externalInputPoseTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'dev.minecome.input.ExternalInputPoseSinkTests'
 }
 
 tasks.register('hostViewSeedTest', JavaExec) {

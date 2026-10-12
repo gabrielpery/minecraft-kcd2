@@ -55,6 +55,10 @@ Never load newer retail1.5.6 saves into this older1.5.5 development game. Backup
   successful run; low-latency sustained control is not yet established. KCD still
   handles its own input/physics. The input lab must remain separate from the KCD
   player follower until exclusive control and engine menu state are established.
+- Read-only live inspection confirms `ActionMapManager.EnableActionFilter` is
+  absent from the official1.5.5 Lua runtime despite documentation for it.
+  `g_gameRules.game.FreezeInput` and `player.EnablePhysics` exist, but their prior
+  state and reversible ownership remain unproved. The probe does not call them.
 - An isolated real Minecraft lab now walks, jumps and lands against approximate
   slabs sampled from live KCD2 terrain, confirmed on client and server. It uses a
   static4×4m heightfield. A separate bounded follower now applies actual server
@@ -71,11 +75,11 @@ Never load newer retail1.5.6 saves into this older1.5.5 development game. Backup
   and pass focused checks. The actual OS lifecycle and historical recording pass
   with neutral data. A new isolated Minecraft lab also passes actual client/server
   walking, jumping, landing, view changes and neutral release using fresh scripted
-  input and synthetic ground. Physical KCD key/mouse delivery and engine menu
-  detection remain unverified. Its F8 latch is manual arming; explicit key mappings
+  input and synthetic ground. Physical KCD key/mouse delivery subsequently passed;
+  engine menu detection remains unverified. Its F8 latch is manual arming; explicit key mappings
   are supported but KCD's effective bindings are not discovered automatically.
-  A new read-only camera capture can seed Minecraft's initial view; the consumer
-  has real-game fixture proof, while that new KCD capture awaits a live run.
+  A read-only camera capture seeds Minecraft's initial view; the KCD capture and
+  matching client/server angles passed in the physical two-game run.
   This is one starting snapshot, not sustained camera alignment.
   Minecraft uses its ordinary sensitivity/invert settings and refuses
   smooth-camera, spyglass and toggle-sprint modes. Native KCD input remains active;

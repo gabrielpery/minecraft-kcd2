@@ -187,5 +187,36 @@ or paired physics-enabled state getter was established in this inspection.
 GameRules.IsFrozen(entityId) describes entity freezing and cannot be used as the
 inverse of FreezeInput(bool). Consequently these partial getters do not authorize
 a reversible full input/physics takeover. The new starting-view probe changes
-neither input nor physics; subsequent movement remains in the isolated MC consumer
-lab until ownership and live physical delivery are established.
+neither input nor physics. Physical Windows input delivery into the isolated MC
+consumer subsequently passed (see the physical two-game evidence in
+[progress](../PROGRESS.md)). Combining that consumer with the KCD follower still
+requires control ownership and restoration; the physical input result does not
+establish either.
+
+## Live control capability inspection — 2026-10-12
+
+`scripts/Test-KcdControlCapabilities.ps1` loads an immutable, read-only Lua probe
+into the exact pinned official tools process. It reports actual method types and
+strictly typed partial state getters. It never calls input/physics setters, filter
+setters, `IsFrozen`, or timers. Its21 standalone Lua5.2 cases trap those calls and
+cover replaced actors/functions, missing APIs, non-boolean/error returns and inert
+module loading. The live run also verified the module's fresh function reference.
+
+The actual1.5.5 process reports:
+
+| Owner | Available functions | Absent methods |
+|---|---|---|
+| `ActionMapManager` | `IsFilterEnabled`, `EnableActionMapManager` | `EnableActionFilter` |
+| `g_gameRules.game` | `FreezeInput` | `IsFrozen` |
+| `player` | `EnablePhysics` | No paired enabled-state getter established |
+
+Global `GameRules` is absent; the bound `g_gameRules.game` owner must be considered
+separately. All nine inspected partial getters returned actual booleans: death,
+unconsciousness, sitting, laying, mounting, dialogue, engine-save loading and world
+calendar pause were false, while game-started was true. Actor and method references
+remained stable throughout. These values describe that instant; they do not supply
+a generic menu/cutscene guard or establish reversible control ownership.
+
+Evidence: `runtime/evidence/control-capabilities-20261012-201510-c8e580acb2e642e4b2caa6cb79bcf04d`.
+The source references pinned official-tool binding documentation and inspected stock
+scripts. Documentation presence alone did not predict the actual filter setter.

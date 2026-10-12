@@ -14,6 +14,7 @@ param(
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'InputBindings.ps1')
 . (Join-Path $PSScriptRoot 'InputLabEvidence.ps1')
+. (Join-Path $PSScriptRoot 'ExternalInputPoseEvidence.ps1')
 $bindingSet=Get-MineComeInputBindings $Bindings
 $root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $minecraft=Join-Path $root 'minecraft'
@@ -42,6 +43,8 @@ $run=[Guid]::NewGuid().ToString('N')
 $directory=Join-Path $root ('runtime/evidence/external-input-'+(Get-Date -Format 'yyyyMMdd-HHmmss')+'-'+$run)
 New-Item -ItemType Directory -Path $directory|Out-Null
 $inputFile=Join-Path $directory 'input.ndjson'
+$poseFile=Join-Path $directory 'minecraft-pose.ndjson'
+$poseEvidence=$null
 $client=$null;$native=$null;$failure=$null;$passed=$false;$nativeCleanup=$false;$kind=$null
 $targetPid=if($Fixture){1}else{$context.GamePid}
 $targetStart=if($Fixture){'1'}else{$context.GameStartedUtc.ToFileTimeUtc().ToString([Globalization.CultureInfo]::InvariantCulture)}
@@ -123,7 +126,7 @@ try {
     $viewHash=(Get-FileHash -LiteralPath $viewFile).Hash
     $viewKind=if($Fixture){'standalone_fixture'}else{'live_kcd_view_seed'}
     $starter=Join-Path $PSScriptRoot 'Run-ExternalInputClient.ps1'
-    $arguments=@('-NoProfile','-File',('"'+$starter+'"'),'-EvidenceDirectory',('"'+$directory+'"'),'-PatchFile',('"'+$snapshot+'"'),'-ViewSeedFile',('"'+$viewFile+'"'),'-InputFile',('"'+$inputFile+'"'),'-InputRun',$run,'-TargetPid',[string]$targetPid,'-TargetStartFiletime',$targetStart,'-JavaHome',('"'+$JavaHome+'"'))
+    $arguments=@('-NoProfile','-File',('"'+$starter+'"'),'-EvidenceDirectory',('"'+$directory+'"'),'-PatchFile',('"'+$snapshot+'"'),'-ViewSeedFile',('"'+$viewFile+'"'),'-InputFile',('"'+$inputFile+'"'),'-PoseFile',('"'+$poseFile+'"'),'-InputRun',$run,'-TargetPid',[string]$targetPid,'-TargetStartFiletime',$targetStart,'-JavaHome',('"'+$JavaHome+'"'))
     if($Fixture){$arguments+='-Fixture'}
     if(-not $Fixture){Write-Output "Preparing input lab: forward/back/left/right/jump/sprint=$($bindingSet.Argument); F8 arms. Keep the KCD player/view still during startup. After READY, use a short forward tap within the4x4m patch."}
     $client=Start-Process -FilePath (Join-Path $PSHOME 'pwsh.exe') -WorkingDirectory $root -ArgumentList $arguments -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $directory 'client.stdout.log') -RedirectStandardError (Join-Path $directory 'client.stderr.log')
@@ -156,6 +159,8 @@ try {
     if($native -and $nativeLog -notmatch ('(?m)^INPUT_CAPTURE_BINDINGS keys='+[regex]::Escape($bindingSet.Argument)+'\r?$')){throw 'Native capture did not acknowledge the selected bindings.'}
     if($native -and ($nativeLog -notmatch '(?m)^INPUT_CAPTURE_ARMED elapsed_ms=\d+ active_seconds=' -or $nativeLog -match 'INPUT_CAPTURE_ARM_TIMEOUT')){throw 'F8 was not observed within the arm window; physical-input check is incomplete.'}
     if($Fixture -and $log -notmatch ('EXTERNAL_INPUT_EXPIRED_SAMPLE_DROPPED inputRun='+$run+' inputSeq=2 discardedFrames=1')){throw 'The fixture did not acknowledge dropping its expired held/mouse sample.'}
+    $poseEvidence=Test-MineComeExternalInputPoseEvidence -Path $poseFile -InputRun $run -TargetPid $targetPid -TargetStartFiletime $targetStart -PatchFile $snapshot -ViewSeedFile $viewFile -Fixture ([bool]$Fixture)
+    $poseEvidence|ConvertTo-Json -Depth 6|Set-Content -LiteralPath (Join-Path $directory 'pose-verification.json')
     Write-Output "EXTERNAL_INPUT_APPLICATION_PASS fixture=$Fixture ground=$kind; actual vanilla client/server movement/view/release verified. Evidence: $directory"
 }catch{$failure=$_.Exception.Message;throw}
 finally {
@@ -166,6 +171,7 @@ finally {
         ViewSeedFile=$viewFile;ViewSeedHash=$viewHash;ViewCaptureEvidence=$viewEvidence
         Bindings=$bindingSet;RequestedArmWaitSeconds=$ArmWaitSeconds;RequestedActiveSeconds=$InputSeconds
         InputFile=$inputFile;ExpectedTargetPid=$targetPid;ExpectedTargetStartFiletime=$targetStart
+        PoseFile=$poseFile;PoseEvidence=$poseEvidence;PoseExportVerified=($null -ne $poseEvidence)
         ClientHelperPid=$(if($client){$client.Id}else{$null});ClientHelperStartedUtc=$clientStart
         NativeHelperPid=$(if($native){$native.Id}else{$null});NativeCaptureHash=$captureHash
         NativeCleanupVerified=$nativeCleanup;MinecraftInputApplicationVerified=$passed

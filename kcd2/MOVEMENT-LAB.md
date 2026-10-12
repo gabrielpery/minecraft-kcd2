@@ -101,13 +101,30 @@ Research and remaining authority/input requirements are in
 fresh external records drive actual vanilla keys and view changes on the Minecraft
 client thread. Client and server walking, jump/landing, yaw/pitch and terminal key
 release passed in a new world, using labelled synthetic input and flat terrain.
-This lab has no KCD follower. The physical KCD capture mode is implemented but its
-combined physical delivery remains unverified. Procedure and limits are in
+This lab has no KCD follower. Physical KCD-focused W/Space/mouse input passed on
+2026-10-12: both Minecraft sides walked, jumped, landed and changed yaw/pitch in
+the fresh sampled world. Delayed samples were discarded and controls released at
+the end. Procedure and limits are in
 [setup](../docs/SETUP.md#external-input-applied-to-minecraft) and
 [Windows input](../docs/research/WINDOWS-INPUT.md).
 
 The input lab now seeds its initial orientation from a fresh, session-bound camera
 snapshot and accepts `-Bindings` for explicit keys. Both Minecraft sides verify the
-initial angles before input begins. The new capture/consumer contract has standalone
-checks and a real-Minecraft synthetic-view run; its new KCD view capture and physical
-remapped keys remain unverified. This does not change the coupled follower's scope.
+initial angles before input begins. The live physical run also verified the KCD
+view seed; alternative remapped physical keys have only standalone validation.
+This does not change the coupled follower's scope.
+
+The lab now exports `minecraft-pose.ndjson` with both client/server movement and
+view, projected server coordinates and forward vector, plus the initial Minecraft
+baseline. The mapping is explicitly patch space: `KCD=(centerX+MCx, centerY-MCz,
+centerZ+MCy-64)`. Its starting0.5/0.5 offset is recorded, not treated as the KCD
+player's original position. The record's input dispatch watermark does not prove
+server acknowledgement of that input. Every record is audit-only and ineligible
+for the KCD follower. The controller verifies the completed stream after normal
+Minecraft exit; output is bounded to512records/1MiB and written off the game thread.
+
+The read-only `scripts/Test-KcdControlCapabilities.ps1` checks actual control API
+availability in the already-running official tools world. It does not disable
+input/physics, move the player, or start a timed physical-input test. Its live
+findings and remaining ownership requirements are in
+[KCD input research](../docs/research/KCD-INPUT.md#live-control-capability-inspection--2026-10-12).
