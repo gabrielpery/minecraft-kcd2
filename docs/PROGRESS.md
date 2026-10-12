@@ -971,3 +971,87 @@ returned actual booleans with stable actor/function identity. No mutation was
 requested. Prior input/physics state and reliable restoration remain unproved, so
 the physical-input consumer and KCD follower are still separate. See
 [KCD input research](research/KCD-INPUT.md#live-control-capability-inspection--2026-10-12).
+
+## Vanilla HUD/inventory renderer capture — 2026-10-12
+
+The UI path now follows the inspected SkyCraft/EldenCraft renderer architecture:
+normal vanilla rendering supplies captured UI pixels; an original ReShade D3D12
+add-on supplies host composition. No separate desktop window or redrawn inventory
+is used. The source pins and exact capture/render contracts are in
+[HUD compositor research](research/HUD-COMPOSITOR.md).
+
+The first automatic capture exposed a startup ordering issue: suppressing world
+rendering before the terrain screen completed caused its 30-second fallback. The
+fix lets normal terrain loading finish before the owned capture mode starts.
+The corrected actual-Minecraft run passed, with normal process shutdown, in
+`runtime/evidence/hud-export-20261012-204553-727d31c1b69241b6b8226bd0bb120df6`.
+Its fresh save was `MineCome-Hud-987997db-0e12-44ae-a595-2126bb1a25c4` and run token
+`efc51913f05740b7aacc9df2dabedfec`. All three 854×480 frames were rendered through
+Minecraft 1.21.1's normal GUI path and copied using asynchronous OpenGL readback.
+
+Actual client and integrated-server inventories agreed on nine item IDs/counts.
+Frame 1 selected slot 0; frame 2 selected slot 1; frame 3 opened the actual
+`CreativeInventoryScreen`. PNGs were visually inspected: crisp vanilla item icons,
+counts, selection, chat/advancement toasts and Creative inventory were present.
+Hotbar frames retained over 275,000 fully transparent pixels each; inventory retained
+its normal translucent full-screen dimming. This is Creative UI proof, not a
+Survival health/hunger or crafting-interaction proof.
+
+Raw RGBA SHA256 values:
+
+- Frame 1: `ab78df38db3b6901788f878e147ba0ed7ed509bf0aaa57702b368afc832dd2b9`.
+- Frame 2: `ff3c4138f77a9ab985f10b94ed2aea544b3ae406535dd0e997f65ae6b1b85d35`.
+- Frame 3: `302485c1c9fefeeb92db394516740f764d9e4ad5b7da902f65ef60e2fed54234`.
+
+The final guest source assembles and passes 36 focused pixel/output checks. The
+live run used Loom development classes; the assembled mod was not separately
+installed. Existing movement/input/stone components were not changed.
+
+KCD composition remains explicitly unverified until the tools process loads the
+new renderer component and a live frame is inspected. Three captured snapshots
+cycle only for the initial renderer proof. Continuous transport, physical inventory
+controls, menu arbitration and sustained gameplay are subsequent implementation.
+
+### Native compositor build and startup investigation
+
+The original D3D12 ReShade add-on and FX now build. Final focused validation passes
+117 native contract/lifecycle checks and all four DXBC shader entries at two
+resolutions. The final add-on SHA256 is
+`a9bb60999fb526df64b3c61975431aed7c0b85728dc21a30db91b41bfccea484`.
+Final source review fixed reset cleanup using effect handles after ReShade had
+destroyed them, and made the unarmed render path return before shader access.
+The tests exercise invalidated handles, reset/reinitialization, repeated cleanup
+and owned-resource release. This is offline validation, not a live crash fix.
+
+The official ReShade 6.8.0 add-on runtime was hash-checked and extracted without
+running its installer. The six-file private bundle was installed with KCD closed;
+no original game executable or base asset was overwritten. Installation and the
+rollback helper support Windows PowerShell 5.1. No preview arm file was created.
+The first user-started process (PID 48224) registered the unarmed add-on, created a
+2560×1440 SDR D3D12 runtime and compiled the actual HUD effect before crashing
+during loading. There was no owned texture upload or submitted Minecraft frame.
+Logs and the rollback record are preserved in
+`runtime/evidence/hud-startup-crash-20261012-205804`.
+
+After normal process exit, only the owned, pinned DXGI proxy was renamed to
+`dxgi.dll.minecome-disabled`; the add-on, configuration and logs were retained.
+The user then reported another loading crash with the hook disabled. Fresh game
+logs in `runtime/evidence/loading-crash-hook-disabled-20261012-210223` end at the
+same MFX collisions-loading line, and ReShade's log did not update. No corresponding
+Application crash event, exception stack or process exit code was available.
+The cause remains unproven. The fixed source bundle is staged in
+`runtime/hud-compositor-resetfix` and has not been installed or re-enabled.
+
+The new manual `Start-Kcd2ToolsDiagnostic.ps1` records the missing process exit code,
+sampled modules and memory during a bounded 120-second launch. Windows PowerShell
+5.1 parsing, read-only exact-executable/hook preflight and the public Windows memory
+query pass. No game was started by those checks. A fresh user-run diagnostic is
+now preserved in
+`runtime/evidence/tools-startup-diagnostic-20261012-201214-1b3de6fc259a4282a316450302d68141`.
+The user confirmed the same loading failure. PID 49532 exited after 28.462 seconds
+with code 250 (`0x000000FA`). All six complete module snapshots omitted ReShade and
+the MineCome add-on; CryRenderD3D12 was observed. Across 28 samples, peak game private
+memory was 3,823,595,520 bytes and minimum available system commit was 5,373,673,472
+bytes. There were no memory/module sampling errors. These results do not identify
+the cause or establish continuous module absence between samples. The existing
+launcher and working movement/stone code are unchanged.

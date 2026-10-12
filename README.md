@@ -39,6 +39,17 @@ The input lab also exports server position and view with validated KCD coordinat
 projections. This new output passed an automatic real-Minecraft run and remains
 audit-only until KCD control ownership and restoration are established.
 
+**Genuine UI capture now works:** a fresh Minecraft world exported its actual hotbar
+with two selected slots and its real Creative inventory screen, with item contents
+confirmed by the client and server. The renderer path follows SkyCraft/EldenCraft:
+captured vanilla pixels feed a native host compositor. The first KCD D3D12/ReShade
+component is a bounded static-frame proof; live KCD display, continuous frame
+transport and inventory interaction remain to be verified/implemented. See
+[the HUD compositor](docs/research/HUD-COMPOSITOR.md).
+The latest tools launches crashed during world loading both with the new renderer
+installed but unarmed and after its hook was disabled. The hook remains disabled;
+the startup cause is unresolved and no KCD inventory frame has been verified.
+
 The retail KCSE route is blocked by a missing verified Steam 1.5.6 address library.
 The installed official tools run a distinct 1.5.5 development build. Its working HTTP
 prototype is not evidence that the retail native plugin or full gameplay works.

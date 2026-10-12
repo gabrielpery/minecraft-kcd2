@@ -10,6 +10,15 @@ SkyCraft (chasmlol, MIT) and Universal Modder (rehan-remade, MIT) informed archi
 through source inspection. No Skyrim engine bindings or their game assets are copied
 into this project. Upstream commit details and author/source links are in research.
 
+EldenCraft (SocketByte, MIT), pinned at ba7591cdde9fb16e17552cfe53546f44d0fd856e,
+also informed the renderer-level HUD architecture. Its Elden Ring loader and game
+bindings are not used. The original MineCome compositor builds against ReShade
+6.8.0 public headers (crosire/reshade, BSD-3-Clause, copyright Patrick Mours), pinned
+at 18deaa52de0c425a78b329e9cb3c497281cd00ec. The offline shader checker compiles
+ReShade's effect compiler sources from that local checkout. Preserve ReShade's full
+LICENSE.md with any redistributed runtime/compiler binary. SDK and runtime files
+remain in ignored local directories; see docs/research/HUD-COMPOSITOR.md.
+
 Fabric Loader, Fabric API, Yarn and Loom are retrieved from Fabric's Maven repository
 as declared build/runtime dependencies under their respective licences. The Gradle
 wrapper and distribution originate from Gradle (Apache-2.0), with a pinned distribution

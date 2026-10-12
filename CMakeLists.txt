@@ -5,6 +5,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 include(CTest)
 option(MINECOME_BUILD_KCSE "Build the KCSE plugin using inspected local SDK headers" OFF)
+option(MINECOME_BUILD_HUD_COMPOSITOR "Build the opt-in ReShade D3D12 HUD compositor" OFF)
 add_library(minecome_protocol protocol/src/protocol.cpp)
 target_include_directories(minecome_protocol PUBLIC protocol/include)
 if(MSVC)
@@ -41,4 +42,25 @@ target_link_libraries(protocol_tests PRIVATE minecome_protocol)
 add_test(NAME protocol_and_coordinates COMMAND protocol_tests)
 if(MINECOME_BUILD_KCSE)
   add_subdirectory(kcd2)
+endif()
+if(MINECOME_BUILD_HUD_COMPOSITOR)
+  add_subdirectory(kcd2/hud)
+  set(reshade_source "${MINECOME_RESHADE_ROOT}/source")
+  add_executable(minecome_check_hud_fx tools/check_hud_fx.cpp
+    "${reshade_source}/effect_lexer.cpp"
+    "${reshade_source}/effect_preprocessor.cpp"
+    "${reshade_source}/effect_expression.cpp"
+    "${reshade_source}/effect_symbol_table.cpp"
+    "${reshade_source}/effect_parser_exp.cpp"
+    "${reshade_source}/effect_parser_stmt.cpp"
+    "${reshade_source}/effect_codegen_dxbc.cpp")
+  target_include_directories(minecome_check_hud_fx PRIVATE "${reshade_source}")
+  # Match the pinned upstream ReShadeFX.vcxproj (C++17, UTF-8 strings are char).
+  set_target_properties(minecome_check_hud_fx PROPERTIES CXX_STANDARD 17)
+  if(MSVC)
+    target_compile_options(minecome_check_hud_fx PRIVATE /Zc:char8_t- /utf-8 /EHsc)
+  endif()
+  target_compile_definitions(minecome_check_hud_fx PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+  target_link_libraries(minecome_check_hud_fx PRIVATE d3dcompiler)
+  add_test(NAME hud_effect_dxbc COMMAND minecome_check_hud_fx "${PROJECT_SOURCE_DIR}/kcd2/hud/shaders/MineComeHud.fx")
 endif()

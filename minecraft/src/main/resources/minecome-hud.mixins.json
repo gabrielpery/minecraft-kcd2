@@ -1,0 +1,7 @@
+{
+  "required": true,
+  "package": "dev.minecome.hud.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "client": ["HudGameRendererMixin", "HudWorldRendererMixin", "HudBlendMixin"],
+  "injectors": {"defaultRequire": 1}
+}

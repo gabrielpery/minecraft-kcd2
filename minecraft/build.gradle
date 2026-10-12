@@ -10,6 +10,10 @@ loom {
         client {
             programArgs '--username', 'MineComeLab'
             vmArgs '--enable-native-access=ALL-UNNAMED'
+            if (project.hasProperty('minecomeHudExportLab'))
+                vmArgs '-Dminecome.hudExportLab=true'
+            if (project.hasProperty('minecomeHudExportDirectory'))
+                vmArgs "-Dminecome.hudExportDirectory=${project.property('minecomeHudExportDirectory')}"
             if (project.hasProperty('minecomeTokenFile'))
                 vmArgs "-Dminecome.tokenFile=${project.property('minecomeTokenFile')}"
             if (project.hasProperty('minecomePort'))
@@ -117,4 +121,10 @@ tasks.register('hostViewSeedTest', JavaExec) {
     dependsOn testClasses
     classpath = sourceSets.test.runtimeClasspath
     mainClass = 'dev.minecome.input.HostViewSeedTests'
+}
+
+tasks.register('hudExportTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'dev.minecome.hud.HudExportTests'
 }

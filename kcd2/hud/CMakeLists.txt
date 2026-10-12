@@ -1,0 +1,38 @@
+# Original addon built against separately acquired ReShade v6.8.0 SDK headers.
+if(NOT WIN32 OR NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
+    message(FATAL_ERROR "MineCome's guarded HUD compositor requires Windows x64")
+endif()
+set(MINECOME_RESHADE_ROOT "${PROJECT_SOURCE_DIR}/external/reshade" CACHE PATH
+    "Pinned ReShade v6.8.0 source (18deaa52de0c425a78b329e9cb3c497281cd00ec)")
+if(NOT EXISTS "${MINECOME_RESHADE_ROOT}/include/reshade.hpp")
+    message(FATAL_ERROR "Fetch the pinned ReShade SDK; no dependencies are installed by this build")
+endif()
+add_library(minecome_hud_contract STATIC hud_contract.cpp)
+target_include_directories(minecome_hud_contract PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+target_compile_features(minecome_hud_contract PUBLIC cxx_std_20)
+add_library(minecome_hud_compositor SHARED hud_addon.cpp)
+target_compile_features(minecome_hud_compositor PRIVATE cxx_std_20)
+target_include_directories(minecome_hud_compositor PRIVATE "${MINECOME_RESHADE_ROOT}/include")
+target_compile_definitions(minecome_hud_compositor PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
+target_link_libraries(minecome_hud_compositor PRIVATE minecome_hud_contract bcrypt user32)
+set_target_properties(minecome_hud_compositor PROPERTIES
+    OUTPUT_NAME "MineComeHudCompositor" PREFIX "" SUFFIX ".addon64")
+if(MSVC)
+    foreach(target minecome_hud_contract minecome_hud_compositor)
+        set_target_properties(${target} PROPERTIES MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+        target_compile_options(${target} PRIVATE /W4 /permissive- /utf-8 /EHsc)
+    endforeach()
+endif()
+add_custom_command(TARGET minecome_hud_compositor POST_BUILD
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "${CMAKE_CURRENT_SOURCE_DIR}/shaders/MineComeHud.fx"
+        "$<TARGET_FILE_DIR:minecome_hud_compositor>/MineComeHud.fx")
+if(BUILD_TESTING)
+    add_executable(minecome_hud_contract_tests hud_contract_tests.cpp)
+    target_link_libraries(minecome_hud_contract_tests PRIVATE minecome_hud_contract)
+    if(MSVC)
+        set_target_properties(minecome_hud_contract_tests PROPERTIES MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+        target_compile_options(minecome_hud_contract_tests PRIVATE /W4 /permissive- /utf-8 /EHsc)
+    endif()
+    add_test(NAME hud_static_contract COMMAND minecome_hud_contract_tests)
+endif()
