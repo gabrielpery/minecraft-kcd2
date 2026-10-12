@@ -258,3 +258,23 @@ moving KCD2, use `scripts/Start-GroundMovementLab.ps1` instead.
 
 Full procedure and limits: `kcd2/MOVEMENT-LAB.md`. KCD keyboard/mouse forwarding,
 streaming collision and sustained movement authority remain unfinished.
+
+## Read-only Windows input diagnostic
+
+After building native Release, with a fresh official tools world already open,
+the following PowerShell7 command checks the separate Windows observer:
+
+```powershell
+.\scripts\Test-KcdRawInputCapture.ps1 -Seconds 60
+```
+
+It starts disarmed and ends automatically. For a physical-input recording, switch
+to KCD2, close menus/console, release controls, then press F8. Allow one sample
+(about50ms) before using W/A/S/D, Space, left Shift and mouse movement. Switching
+away, unsupported actions or opening the menu/console disarm it; returning requires
+a new F8 press after releasing controls. F8 remains visible to the original game.
+
+This diagnostic observes controls and verifies OS cleanup; it does not control
+Minecraft or suppress KCD2's native input. It prints a local ignored evidence
+folder. A no-input run verifies only registration and neutral cleanup. Details and
+limits: `docs/research/WINDOWS-INPUT.md`.

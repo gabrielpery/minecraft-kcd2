@@ -24,6 +24,10 @@ real Minecraft server poses move KCD2's player, its camera follows, and the play
 returns to the starting position. KCD2 keyboard/mouse forwarding, streaming
 collision and general movement authority remain unfinished. See
 [the movement lab](kcd2/MOVEMENT-LAB.md).
+The separate Windows walking/mouse capture layer and strict Java input gate now
+compile and pass standalone checks. Actual Windows registration, neutral recording
+and cleanup pass; physical control delivery and Minecraft application are still
+separate checks. See [Windows input capture](docs/research/WINDOWS-INPUT.md).
 
 The retail KCSE route is blocked by a missing verified Steam 1.5.6 address library.
 The installed official tools run a distinct 1.5.5 development build. Its working HTTP

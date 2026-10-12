@@ -62,6 +62,12 @@ Never load newer retail1.5.6 saves into this older1.5.5 development game. Backup
   no jump release was captured. The original callback restored correctly.
   This is partial input proof; a complete control bridge still needs a supported
   walking/mouse capture path, bindings and focus/menu/release handling.
+- A separate Windows Raw Input helper and Java decoder/session gate now compile
+  and pass focused checks. The actual OS lifecycle and historical recording pass
+  with neutral data. Physical key/mouse delivery, menu detection and Minecraft
+  game-thread application remain unverified. Its F8 latch is manual arming, with
+  literal default key mappings and uncalibrated mouse counts; native KCD input
+  remains active. This layer does not establish coupled movement authority.
 - First interactive stone controls are compiled and live verified after the log
   framing fix. `minecome_place`/`minecome_break` request vanilla actions in one fixed
   cell of a new Creative lab, requiring optional protocol minor1/capability1. They

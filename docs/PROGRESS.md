@@ -44,6 +44,7 @@ forwarding and full-world movement authority remain unfinished.
 | Sampled-ground movement lab | Fabric1.21.1 collision mixins, bounded25-point Lua sampler and isolated lab compile; remapped JAR assembled |85 parser/coordinate/shape/sequence checks and14 real-Lua sampler cases pass | Real KCD2 supplied25 valid terrain hits; real Minecraft client/server walked1.2915m, became airborne, and landed on imported approximate slabs with literal underlying blocks remaining air. KCD2 movement not applied |
 | Bounded coupled movement | Java trace assembled; PowerShell receiver/controller and game-thread Lua follower implemented |126 Java ground/trace checks,25 Lua follower cases with simulated bindings,15 final receiver cases pass; final guards also validate the historical live trace offline | Real Minecraft vanilla client/server walking, jumping and landing;22 forwarded server frames,21 delayed KCD player/camera readbacks, exact starting-position restoration and normal Minecraft exit0 |
 | Lua input observer | Short leased callback wrapper preserves original callback and restores only its own handler |20 simulated-binding Lua cases pass |Final timed human check captured three real jump/press/value1 callbacks,13.5983m player displacement and view changes; watched walking/mouse callbacks were absent. Callback restored. Full input forwarding remains unfinished |
+| Windows walking/mouse source | Separate read-only C++20 helper and pure Java decoder/session gate compile; Fabric JAR reassembled |598 native state/wire checks and148 Java framing/identity/lease/mouse checks pass |Actual15s OS registration/cleanup and301 neutral records pass; Java validates the exact historical recording. Physical control delivery and Minecraft application not yet verified |
 | Minecraft block model/atlas | Actual BakedModel and GPU atlas exporter built | Six quads,24 vertices, atlas bounds checked | Real1024×512 atlas exported and visually inspected |
 | CryEngine block asset | Original OBJ→FBX converter plus installed official RC | FBX→CGF and texture TIFF→DDS compile succeeded; pixels compared | User screenshots show Minecraft stone in KCD2 world and verify the sharpness revision |
 | World position/scale/depth | Algebraic hypothesis/tests | Known basis and inverse tests | Live entity bounds span1×1×1 engine units; depth/parallax and cross-game calibration still unverified |
@@ -588,3 +589,79 @@ the separately proved jump callback and missing movement/camera callbacks.
 Next implementation needs a supported walking/mouse capture path with focus/menu
 neutralization, bindings and release/timeout handling. No further repetition of
 this same callback test is needed before investigating that route.
+
+## Windows input capture layer — 2026-10-12
+
+`tools/input_capture` now contains an original standalone Windows Raw Input
+helper and pure state machine. It observes literal W/A/S/D, Space and left Shift
+plus relative mouse movement in the exact target process's foreground window.
+It does not replace a game callback, suppress native input, inject keys or enable
+Minecraft game-thread application. The exact pinned tools executable/process gate
+remains in `scripts/Test-KcdRawInputCapture.ps1`; the helper additionally pins PID,
+creation FILETIME and a live process handle. No game address map or engine offsets
+are used by this route.
+
+Focus changes disarm the helper through both current-foreground checks and a
+same-thread out-of-context foreground-event observer. A fresh F8 press with
+controls released is required to rearm; a neutral first sample prevents inherited
+held inputs from resuming. Unsupported actions, device changes and malformed or
+stale packets disarm. Prior-phase queued packets are discarded without renewing
+the epoch, avoiding starvation from a rapid mouse stream. Mouse movement is
+bounded and consumed once; no other app metadata or typed-text stream is recorded.
+F8 is a manual latch, not proof of engine gameplay/menu state, and remains visible
+to KCD2. Literal mappings and mouse gain still require integration/configuration.
+
+The writer uses a new resolved local evidence path, a1MiB/2500-record bound,
+fixed20Hz sampling, bounded message batches and an independent15–120s deadline.
+Termination clears controls, unregisters the two own Raw Input classes, removes
+the foreground observer and closes its own resources. The wrapper only recovers
+the exact helper it created; it never stops KCD2.
+
+`ExternalInputDecoder`, `ExternalInputRecord` and `ExternalInputSessionGate` are
+pure Java receiver components, with no game calls. They validate exact fields,
+finite/bounded values, duplicate keys, UTF-8, process/session identity, sequence,
+record age and a local monotonic lease. Invalid, stale or replayed data closes the
+session with neutral controls. Focus/menu/lease reset requires a new neutral
+armed sample. Fresh mouse frames accumulate until consumption within bounds,
+with the earliest pending delta's expiry retained; newer frames cannot extend
+old mouse intent. Malicious decimal exponents are bounded before conversion.
+
+Final focused verification: native Release builds, its state-test executable
+passes598 checks, `externalInputTest` passes148 checks, and the remapped Fabric
+JAR assembles. The first Windows lifecycle attempts refused startup because
+this system's registration readback omitted the requested `DEVNOTIFY` bit.
+The gate now permits only that omission: exact own window and two classes remain
+required, and `NOLEGACY`, interception-related flags and all other flags fail.
+Removal readback must report zero registrations. This is a measured local API
+result, not a documented universal normalization rule. Actual hot-unplug event
+delivery is not yet physically verified. Both refused-run logs remain local.
+
+The final15s lifecycle against KCD PID50544 passed with299 focused/disarmed
+samples plus one begin and one neutral end:301 complete records,111,960bytes,
+terminal elapsed15009ms. Actual stdout confirms two own registrations, foreground
+observer removal, zero remaining registrations and `duration` termination;
+stderr is empty. This proves OS lifecycle and neutral capture while the actual
+KCD window was foreground, not real key/mouse delivery or Minecraft control.
+Evidence:
+`runtime/evidence/raw-input-20261012-151641-cb88db680dfe4b1d847134dcc55adde3`.
+Trace SHA256:
+`edefa13040dcbad77db43e9d7ae7623c69d4508a21a2eeb06554465089e9b333`.
+Immutable helper SHA256:
+`0433db85ed4875b25704d01f7849a890798e721a547a3b8ab01781fcd09353a4`.
+Native platform-source SHA256:
+`94e5b431b41a2f5dd95b5fe67a22c1e32d31ccef48bfbfef87f591d13b22bead`.
+
+The standalone Java historical-recording checker accepted that exact301-record
+file, with299 samples and zero active samples. It uses recorded UTC and a fictional
+local elapsed clock; its result is labelled `HISTORICAL_INPUT_RECORDING_VALIDATED`
+and does not claim a fresh live session. Current Fabric JAR:140,601bytes, SHA256
+`c94b8c51c0097c38400f4da32a7e8644086f436a7b4e3f830497542cbb39d8bd`.
+It has not been installed or tested as a packaged mod. The existing Lua sink,
+movement follower, installed assets and game executables were not changed.
+
+Next: complete-line file reading and game-thread input application in an owned
+Minecraft lab, followed by physical input proof and engine menu/input ownership.
+Sustained coupled authority must keep the existing follower guards and account for
+KCD's native physics/input remaining active. No additional repetition of the old
+Lua callback test is needed. Reproduction and primary API sources:
+`docs/research/WINDOWS-INPUT.md` and `scripts/Test-KcdRawInputCapture.ps1`.
