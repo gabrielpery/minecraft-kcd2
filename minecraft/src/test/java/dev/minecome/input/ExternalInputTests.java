@@ -61,6 +61,19 @@ public final class ExternalInputTests {
         receive(gate, sample(2, 1050, 50, false, 0, 0), 1050, nanos + 50_000_000L);
         return gate;
     }
+    private static boolean receiveLive(ExternalInputSessionGate gate, JsonObject value, long utc, long nanos) throws IOException {
+        return gate.receiveLive(bytes(value.toString()), utc, nanos);
+    }
+    private static void rejectLive(ExternalInputSessionGate gate, String value, long utc, long nanos) {
+        try { gate.receiveLive(bytes(value), utc, nanos); throw new AssertionError("Invalid live ingress record accepted"); }
+        catch (IOException expected) {
+            check(gate.closed(), "Invalid live ingress closes session");
+            check(gate.consume(nanos, true).equals(ExternalInputSessionGate.Input.NEUTRAL), "Invalid live ingress clears held/mouse");
+        }
+    }
+    private static void rejectLive(ExternalInputSessionGate gate, JsonObject value, long utc, long nanos) {
+        rejectLive(gate, value.toString(), utc, nanos);
+    }
     private static void rejectRecording(Path path, String content) throws IOException {
         Files.writeString(path, content);
         try { ExternalInputRecordingCheck.validate(path); throw new AssertionError("Invalid historical recording accepted"); }
@@ -257,6 +270,55 @@ public final class ExternalInputTests {
             rejectRecording(recording, history + sample(5, 1200, 200, false, 0, 0) + "\n");
             rejectRecording(recording, " ".repeat(ExternalInputRecordingCheck.MAX_BYTES) + "\n");
         } finally { Files.delete(recording); }
+
+        gate = gate();
+        check(receiveLive(gate, record("begin", 1, 1000, 0), 1000, 0), "Live ingress accepts fresh begin with unchanged strict contract");
+        check(receiveLive(gate, sample(2, 1050, 50, false, 0, 0), 1050, 50_000_000L), "Live ingress accepts fresh neutral arm");
+        receive(gate, sample(3, 1100, 100, true, 12, -5), 1100, 100_000_000L);
+        check(!receiveLive(gate, sample(4, 1150, 150, true, 20, -8), 1500, 500_000_000L),
+                "Expired sample is validated and discarded, never applied");
+        check(!gate.closed() && gate.lastSequence().equals(BigInteger.valueOf(4)), "Discard retains session and advances validated sequence");
+        check(gate.consume(500_000_000L, true).equals(ExternalInputSessionGate.Input.NEUTRAL), "Discard clears both pending old mouse and expired mouse/held");
+        check(receiveLive(gate, sample(5, 1550, 200, true, 3, 2), 1550, 550_000_000L), "Fresh held-only frame remains structurally accepted after discard");
+        check(!gate.consume(550_000_000L, true).active(), "Fresh held-only frame cannot re-arm after expired discard");
+        receiveLive(gate, sample(6, 1600, 250, false, 0, 0), 1600, 600_000_000L);
+        receiveLive(gate, sample(7, 1650, 300, true, 4, -2), 1650, 650_000_000L);
+        output = gate.consume(650_000_000L, true);
+        check(output.active() && output.held().forward() && output.mouseDx() == 4 && output.mouseDy() == -2,
+                "Fresh neutral then fresh control re-arms without replaying discarded mouse");
+        check(gate.consume(650_000_000L, true).mouseDx() == 0, "Fresh mouse after discard still consumed once");
+        check(receiveLive(gate, record("end", 8, 1700, 350), 1700, 700_000_000L) && gate.closed(), "Fresh end still closes live ingress neutral");
+        rejectLive(gate(), sample(1, 1000, 0, false, 0, 0), 1500, 0);
+        rejectLive(gate(), record("begin", 1, 1000, 0), 1301, 0);
+        gate = ready(0); rejectLive(gate, record("end", 3, 1100, 100), 1401, 100_000_000L);
+        gate = ready(0); rejectLive(gate, record("begin", 1, 1100, 0), 1500, 100_000_000L);
+        gate = ready(0); rejectLive(gate, sample(3, 1100, 100, false, 0, 0), 1049, 100_000_000L);
+        gate = ready(0); rejectLive(gate, sample(2, 1100, 100, true, 0, 0), 1500, 100_000_000L);
+        gate = ready(0); rejectLive(gate, sample(3, 1100, 49, true, 0, 0), 1500, 100_000_000L);
+        gate = ready(0); bad = sample(3, 1100, 100, true, 0, 0); bad.addProperty("run", "f".repeat(32));
+        rejectLive(gate, bad, 1500, 100_000_000L);
+        gate = ready(0); bad = sample(3, 1100, 100, true, 0, 0); bad.addProperty("target_pid", 47093);
+        rejectLive(gate, bad, 1500, 100_000_000L);
+        gate = ready(0); bad = sample(3, 1100, 100, true, 0, 0); bad.addProperty("target_start_filetime", "2");
+        rejectLive(gate, bad, 1500, 100_000_000L);
+        gate = ready(0); rejectLive(gate, sample(3, 1100, 100, true, 0, 0).toString().replace("\"schema\":1", "\"schema\":1,\"schema\":1"),
+                1500, 100_000_000L);
+        gate = ready(0); bad = sample(3, 1100, 100, true, 0, 0); bad.addProperty("focused", false);
+        rejectLive(gate, bad, 1500, 100_000_000L);
+        gate = ready(0); rejectLive(gate, sample(3, 1100, 100, false, 0, 0), 1500, 120_000_000_001L);
+        gate = ready(0); rejectLive(gate, sample(3, 1100, 100, false, 0, 0), 1500, -1);
+        gate = ready(0);
+        check(!receiveLive(gate, record("sample", 3, 1100, 100), 1500, 100_000_000L), "Inactive expired sample also discards safely");
+        rejectLive(gate, sample(3, 1550, 150, false, 0, 0), 1550, 150_000_000L);
+        gate = ready(0);
+        receiveLive(gate, record("sample", 3, 1100, 100), 1500, 100_000_000L);
+        rejectLive(gate, sample(4, 1550, 99, false, 0, 0), 1550, 150_000_000L);
+        gate = gate(); receive(gate, record("begin", 1, 1000, 0), 1000, 0);
+        boolean allDiscarded = true;
+        for (int index = 2; index <= ExternalInputSessionGate.MAX_RECORDS; index++)
+            allDiscarded &= !receiveLive(gate, record("sample", index, 1000, 0), 1500, index);
+        check(allDiscarded, "Expired discards still consume every record from bounded budget");
+        rejectLive(gate, record("sample", ExternalInputSessionGate.MAX_RECORDS + 1, 1000, 0), 1500, 3000);
         System.out.println("ExternalInputTests: " + checks + " checks passed (pure decoder/session gate; no game input integration).");
     }
 }

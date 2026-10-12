@@ -11,6 +11,19 @@ enum class Control : unsigned { forward, back, left, right, jump, sprint, count 
 constexpr unsigned control_count = static_cast<unsigned>(Control::count);
 using ControlBits = std::array<bool, control_count>;
 
+// Elapsed monotonic milliseconds. A first arm may start the active interval;
+// focus loss/rearming can never renew it. Zero wait preserves the old duration.
+class CaptureWindow {
+public:
+    CaptureWindow(unsigned seconds, unsigned arm_wait_seconds);
+    bool observe_arm(std::uint64_t elapsed_ms, bool armed);
+    bool expired(std::uint64_t elapsed_ms) const { return elapsed_ms >= deadline_ms_; }
+    bool waiting() const { return waiting_; }
+private:
+    std::uint64_t duration_ms_, deadline_ms_;
+    bool waiting_;
+};
+
 struct Snapshot {
     bool focused{};
     bool armed{};

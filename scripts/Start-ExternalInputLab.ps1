@@ -8,6 +8,7 @@ param(
     [string]$JavaHome,
     [string]$Bindings='W,S,A,D,SPACE,LSHIFT',
     [ValidateRange(15,40)][int]$InputSeconds=30,
+    [ValidateRange(1,60)][int]$ArmWaitSeconds=60,
     [switch]$PreflightOnly
 )
 $ErrorActionPreference='Stop'
@@ -50,9 +51,10 @@ function Write-FixtureInput {
     $encoding=[Text.UTF8Encoding]::new($false,$true)
     $stream=[IO.FileStream]::new($inputFile,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::Read)
     $clock=[Diagnostics.Stopwatch]::StartNew();$sequence=0
-    function Emit-Fixture([string]$RecordKind,[bool]$Focused,[bool]$Armed,[bool]$Forward,[bool]$Jump,[int]$Dx=0,[int]$Dy=0) {
+    function Emit-Fixture([string]$RecordKind,[bool]$Focused,[bool]$Armed,[bool]$Forward,[bool]$Jump,[int]$Dx=0,[int]$Dy=0,[int]$AgeMillis=0) {
         $script:fixtureSequence++
         $record=[ordered]@{schema=1;source_kind='windows_raw_input_v1';kind=$RecordKind;run=$run;seq=$script:fixtureSequence;utc_ms=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds();monotonic_ms=$(if($RecordKind -eq 'begin'){0}else{$clock.ElapsedMilliseconds});target_pid=$targetPid;target_start_filetime=$targetStart;focused=$Focused;armed=$Armed;held=[ordered]@{forward=$Forward;back=$false;left=$false;right=$false;jump=$Jump;sprint=$false};mouse_dx=$Dx;mouse_dy=$Dy}
+        if($AgeMillis){$record.utc_ms-=$AgeMillis}
         if($RecordKind -eq 'end'){$record.reason='duration'}
         $bytes=$encoding.GetBytes(($record|ConvertTo-Json -Depth 5 -Compress)+"`n")
         $stream.Write($bytes,0,$bytes.Length);$stream.Flush()
@@ -60,6 +62,9 @@ function Write-FixtureInput {
     $script:fixtureSequence=0;$mouseSent=$false
     try {
         Emit-Fixture begin $false $false $false $false
+        # Deliberately old held/mouse input must be discarded; the next fresh neutral
+        # sample reopens the gate before the ordinary walking/jumping/look proof.
+        Emit-Fixture sample $true $true $true $false 17 11 500
         while($clock.ElapsedMilliseconds -lt 5500) {
             Start-Sleep -Milliseconds 50;$elapsed=$clock.ElapsedMilliseconds
             $dx=0;$dy=0
@@ -69,7 +74,7 @@ function Write-FixtureInput {
         }
         Emit-Fixture end $false $false $false $false
     } finally { $stream.Dispose();$clock.Stop() }
-    Write-Output 'INPUT_FIXTURE_COMPLETE synthetic keys/mouse; physical KCD input was not supplied.'
+    Write-Output 'INPUT_FIXTURE_COMPLETE synthetic keys/mouse plus one expired held/mouse sample; physical KCD input was not supplied.'
 }
 try {
     if($Fixture -and -not $PatchFile) {
@@ -136,22 +141,34 @@ try {
         Copy-Item -LiteralPath $captureExe -Destination $nativeSnapshot
         if((Get-FileHash -LiteralPath $nativeSnapshot).Hash -ne $captureHash){throw 'Native input helper changed while copying.'}
         (Get-Item -LiteralPath $nativeSnapshot).IsReadOnly=$true
-        $args=@('--target-pid',[string]$targetPid,'--target-start',$targetStart,'--run',$run,'--output',('"'+$inputFile+'"'),'--seconds',[string]$InputSeconds,'--bindings',$bindingSet.Argument)
+        $args=@('--target-pid',[string]$targetPid,'--target-start',$targetStart,'--run',$run,'--output',('"'+$inputFile+'"'),'--seconds',[string]$InputSeconds,'--bindings',$bindingSet.Argument,'--arm-wait-seconds',[string]$ArmWaitSeconds)
         $native=Start-Process -FilePath $nativeSnapshot -WorkingDirectory $root -ArgumentList $args -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $directory 'native.stdout.log') -RedirectStandardError (Join-Path $directory 'native.stderr.log')
         $nativeStart=$native.StartTime.ToUniversalTime()
-        Write-Output "EXTERNAL_INPUT_CAPTURE_READY: in KCD2 close menus, release controls, press F8; tap $($bindingSet.Forward) briefly, release, press $($bindingSet.Jump), then move the mouse. Initial view comes from the captured camera; the test does not move KCD2 externally."
+        Write-Output "EXTERNAL_INPUT_CAPTURE_READY: you have $ArmWaitSeconds seconds to switch to KCD2, close menus, release controls and press F8. Wait briefly, tap $($bindingSet.Forward) for about0.2s, release, press $($bindingSet.Jump), then move the mouse slightly horizontally and vertically. Capture ends $InputSeconds seconds after arming; rearming does not restart it."
     }
-    $finish=[DateTime]::UtcNow.AddSeconds(90)
+    $finish=[DateTime]::UtcNow.AddSeconds($ArmWaitSeconds+$InputSeconds+30)
     while(-not $client.HasExited -and [DateTime]::UtcNow -lt $finish){Start-Sleep -Milliseconds 100}
     if(-not $client.HasExited){throw 'Owned Minecraft normal shutdown is pending; no existing game was stopped.'}
     $client.WaitForExit();$log=Get-Content -LiteralPath $logFile -Raw
     $passed=$client.ExitCode -eq 0 -and (Test-MineComeInputLabMarker -Log $log -Event READY -Run $run -ViewHash $viewHash -ViewKind $viewKind) -and (Test-MineComeInputLabMarker -Log $log -Event PASS -Run $run -ViewHash $viewHash -ViewKind $viewKind) -and $log -notmatch 'EXTERNAL_INPUT_LAB_FAIL'
+    if(-not $passed){throw 'Minecraft input proof did not complete; inspect EXTERNAL_INPUT_LAB_FAIL in minecraft.log. The owned native helper will be stopped.'}
     if($native){$native.WaitForExit(5000)|Out-Null;if(-not $native.HasExited -or $native.ExitCode -ne 0){throw 'Native capture did not exit normally.'};$nativeLog=Get-Content -LiteralPath (Join-Path $directory 'native.stdout.log') -Raw;$nativeCleanup=$nativeLog -match 'INPUT_CAPTURE_CLEANUP unregistered=true' -and $nativeLog -match 'FOCUS_OBSERVER_CLEANUP unhooked=true' -and $nativeLog -match 'INPUT_CAPTURE_END reason=duration';if(-not $nativeCleanup){throw 'Native capture cleanup was not acknowledged.'}}
     if($native -and $nativeLog -notmatch ('(?m)^INPUT_CAPTURE_BINDINGS keys='+[regex]::Escape($bindingSet.Argument)+'\r?$')){throw 'Native capture did not acknowledge the selected bindings.'}
-    if(-not $passed){throw 'Real Minecraft did not complete the independent external-input application proof.'}
+    if($native -and ($nativeLog -notmatch '(?m)^INPUT_CAPTURE_ARMED elapsed_ms=\d+ active_seconds=' -or $nativeLog -match 'INPUT_CAPTURE_ARM_TIMEOUT')){throw 'F8 was not observed within the arm window; physical-input check is incomplete.'}
+    if($Fixture -and $log -notmatch ('EXTERNAL_INPUT_EXPIRED_SAMPLE_DROPPED inputRun='+$run+' inputSeq=2 discardedFrames=1')){throw 'The fixture did not acknowledge dropping its expired held/mouse sample.'}
     Write-Output "EXTERNAL_INPUT_APPLICATION_PASS fixture=$Fixture ground=$kind; actual vanilla client/server movement/view/release verified. Evidence: $directory"
 }catch{$failure=$_.Exception.Message;throw}
 finally {
     if($native -and -not $native.HasExited){try{$owned=Get-Process -Id $native.Id -ErrorAction Stop;if($owned.Path -eq $nativeSnapshot -and $owned.StartTime.ToUniversalTime() -eq $nativeStart){Stop-Process -Id $native.Id -ErrorAction Stop}}catch{$_|Out-String|Set-Content -LiteralPath (Join-Path $directory 'native-recovery-error.txt')}}
-    [pscustomobject]@{Kind='Owned external-input Minecraft lab';Run=$run;FixtureInput=[bool]$Fixture;GroundSourceKind=$kind;PatchFile=$PatchFile;PatchHash=$patchHash;ViewSeedFile=$viewFile;ViewSeedHash=$viewHash;ViewCaptureEvidence=$viewEvidence;Bindings=$bindingSet;InputFile=$inputFile;ExpectedTargetPid=$targetPid;ExpectedTargetStartFiletime=$targetStart;ClientHelperPid=$(if($client){$client.Id}else{$null});ClientHelperStartedUtc=$clientStart;NativeHelperPid=$(if($native){$native.Id}else{$null});NativeCaptureHash=$captureHash;NativeCleanupVerified=$nativeCleanup;MinecraftInputApplicationVerified=$passed;PhysicalKcdInputVerified=$false;KcdPlayerMovementApplied=$false;FullWorldMovementAuthorityVerified=$false;Failure=$failure}|ConvertTo-Json -Depth 6|Set-Content -LiteralPath (Join-Path $directory 'verification.json')
+    [pscustomobject]@{
+        Kind='Owned external-input Minecraft lab';Run=$run;FixtureInput=[bool]$Fixture
+        GroundSourceKind=$kind;PatchFile=$PatchFile;PatchHash=$patchHash
+        ViewSeedFile=$viewFile;ViewSeedHash=$viewHash;ViewCaptureEvidence=$viewEvidence
+        Bindings=$bindingSet;RequestedArmWaitSeconds=$ArmWaitSeconds;RequestedActiveSeconds=$InputSeconds
+        InputFile=$inputFile;ExpectedTargetPid=$targetPid;ExpectedTargetStartFiletime=$targetStart
+        ClientHelperPid=$(if($client){$client.Id}else{$null});ClientHelperStartedUtc=$clientStart
+        NativeHelperPid=$(if($native){$native.Id}else{$null});NativeCaptureHash=$captureHash
+        NativeCleanupVerified=$nativeCleanup;MinecraftInputApplicationVerified=$passed
+        PhysicalKcdInputVerified=$false;KcdPlayerMovementApplied=$false;FullWorldMovementAuthorityVerified=$false;Failure=$failure
+    }|ConvertTo-Json -Depth 6|Set-Content -LiteralPath (Join-Path $directory 'verification.json')
 }

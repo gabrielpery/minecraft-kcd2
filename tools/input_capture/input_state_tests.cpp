@@ -202,6 +202,29 @@ void registration_flag_readback() {
                                     0x1100U, 0x3100U, 0x1000U, 0x101U, 0x1000100U, 0xffffffffU})
         check(!ic::valid_registration_flags(flags), "suppression/alternate/unknown readback flag rejected");
 }
+
+void bounded_arm_window() {
+    ic::CaptureWindow immediate(30, 0);
+    check(!immediate.waiting() && !immediate.expired(29999) && immediate.expired(30000), "legacy capture duration unchanged");
+    check(!immediate.observe_arm(25000, true) && immediate.expired(30000), "legacy arm cannot extend duration");
+    ic::CaptureWindow waiting(30, 60);
+    check(waiting.waiting() && !waiting.expired(59999), "operator gets full bounded wait");
+    check(!waiting.observe_arm(20000, false) && waiting.waiting(), "neutral samples never start active timer");
+    check(waiting.observe_arm(59999, true) && !waiting.waiting(), "last in-window arm starts active duration");
+    check(!waiting.expired(89998) && waiting.expired(89999), "active duration ends relative to first arm");
+    check(!waiting.observe_arm(70000, false) && !waiting.observe_arm(80000, true) && waiting.expired(89999), "focus loss and rearm never renew deadline");
+    ic::CaptureWindow timeout(40, 60);
+    check(timeout.expired(60000) && !timeout.observe_arm(60000, true) && timeout.waiting(), "arm at deadline cannot revive timed-out capture");
+    check(!timeout.observe_arm(70000, true), "late arm remains rejected");
+    ic::CaptureWindow early(40, 60);
+    check(early.observe_arm(50, true) && early.expired(40050), "early arm removes unused waiting allowance");
+    ic::CaptureWindow longest(60, 60);
+    check(longest.observe_arm(59999, true) && longest.expired(119999), "maximum permitted total stays below protocol120s");
+    throws([] { ic::CaptureWindow bad(14, 60); }, "too-short duration rejected");
+    throws([] { ic::CaptureWindow bad(121, 0); }, "too-long duration rejected");
+    throws([] { ic::CaptureWindow bad(30, 61); }, "overlong wait rejected");
+    throws([] { ic::CaptureWindow bad(61, 60); }, "combined interval beyond protocol bound rejected");
+}
 } // namespace
 
 int main() {
@@ -213,6 +236,7 @@ int main() {
         coarse_tick_liveness();
         strict_record_contract();
         registration_flag_readback();
+        bounded_arm_window();
         std::cout << "INPUT_CAPTURE_TESTS_PASS checks=" << checks << '\n';
         return 0;
     } catch (const std::exception& error) {

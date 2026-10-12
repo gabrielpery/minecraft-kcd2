@@ -21,18 +21,20 @@ receipts. The user confirmed seeing the stone after the live log-framing fix.
 an approximate collision patch sampled from the actual KCD2 ground. Both client
 and integrated server confirm the movement. **A bounded coupled run also passes:**
 real Minecraft server poses move KCD2's player, its camera follows, and the player
-returns to the starting position. KCD2 keyboard/mouse forwarding, streaming
+returns to the starting position. Sustained input ownership, streaming
 collision and general movement authority remain unfinished. See
 [the movement lab](kcd2/MOVEMENT-LAB.md).
 The separate Windows walking/mouse capture layer and strict Java input gate now
 compile and pass standalone checks. Actual Windows registration, neutral recording
 and cleanup pass. **External input now drives real Minecraft walking, jumping,
-landing and view changes in an isolated lab**, verified on client and server with
-a fresh scripted input producer. Physical KCD2 keyboard/mouse delivery remains a
-separate check. See [Windows input capture](docs/research/WINDOWS-INPUT.md).
+landing and view changes in an isolated lab**. A live two-game check now verifies
+physical W/Space/mouse input from the focused KCD2 window reaching real Minecraft's
+client and server, with neutral release and clean observer shutdown.
+See [Windows input capture](docs/research/WINDOWS-INPUT.md).
 The input lab now supports explicit key bindings and a starting view captured from
-KCD's camera. Minecraft's client/server adopted a labelled synthetic starting view
-in the latest live lab; the new KCD capture path still awaits live verification.
+KCD's camera. The live KCD capture and matching Minecraft client/server starting
+view are verified. This bounded input lab stays separate from the KCD player follower;
+KCD's own input and physics remain active.
 
 The retail KCSE route is blocked by a missing verified Steam 1.5.6 address library.
 The installed official tools run a distinct 1.5.5 development build. Its working HTTP

@@ -4,7 +4,9 @@ import dev.minecome.terrain.GroundCollision;
 import dev.minecome.terrain.GroundPatch;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.registry.RegistryKeys;
 import net.minecraft.registry.entry.RegistryEntryList;
 import net.minecraft.resource.DataConfiguration;
@@ -33,7 +35,7 @@ public final class ExternalInputLab {
     private final boolean fixture;
     private final long initializedAt = System.nanoTime();
     private final AtomicLong corrections = new AtomicLong();
-    private final AtomicBoolean serverReadPending = new AtomicBoolean(), prepared = new AtomicBoolean(), installed = new AtomicBoolean();
+    private final AtomicBoolean prepared = new AtomicBoolean(), installed = new AtomicBoolean();
     private final AtomicReference<Object> serverWorldIdentity = new AtomicReference<>();
     private final AtomicReference<ServerSample> serverSample = new AtomicReference<>();
     private final AtomicReference<String> serverFailure = new AtomicReference<>();
@@ -45,11 +47,14 @@ public final class ExternalInputLab {
     private UUID playerId;
     private String saveName;
     private long worldAt, teleportAt, stableAt, stableCorrectionCount, correctionBaseline, inputAt, terminalAt;
-    private long lastServerSequence, serverSequence, landingStableAt;
-    private int ticks, receivedFrames, appliedFrames, mouseApplications;
+    private long lastServerSequence, serverSequence, landingStableAt, serverStaleAt;
+    private int serverObservationPauses;
+    private int ticks, receivedFrames, appliedFrames, mouseApplications, discardedFrames;
     private boolean started, setupRequested, teleportRequested, ready, terminal, clientAir, serverAir, clientLand, serverLand;
     private volatile boolean stopping;
     private Boolean oldPauseOnLostFocus;
+    private record RenderSettings(boolean vsync, int frameLimit, int viewDistance, int simulationDistance) {}
+    private RenderSettings oldRenderSettings;
     private Motion baselineClient, baselineServer, latestClient;
     private double clientWalk, serverWalk;
     private boolean clientYaw, clientPitch, serverYaw, serverPitch;
@@ -76,10 +81,21 @@ public final class ExternalInputLab {
                     viewSeed.sha256(), viewSeed.sourceKind(), viewSeed.capturedUtcMillis(), viewSeed.yawDegrees(), viewSeed.pitchDegrees());
             ClientTickEvents.START_CLIENT_TICK.register(lab::beforeTick);
             ClientTickEvents.END_CLIENT_TICK.register(lab::afterTick);
+            // Fabric lifecycle-v1 END_SERVER_TICK: sampled on the server's own thread,
+            // independent of client render stalls or focus changes.
+            ServerTickEvents.END_SERVER_TICK.register(lab::observeServer);
             ClientLifecycleEvents.CLIENT_STOPPING.register(client -> {
                 lab.stopping = true; lab.release(client); lab.gate.disconnect();
                 if (lab.reader != null) lab.reader.close();
                 if (lab.oldPauseOnLostFocus != null) client.options.pauseOnLostFocus = lab.oldPauseOnLostFocus;
+                if (lab.oldRenderSettings != null) {
+                    var previous = lab.oldRenderSettings;
+                    client.getWindow().setVsync(previous.vsync());
+                    client.getWindow().setFramerateLimit(previous.frameLimit());
+                    client.options.getViewDistance().setValue(previous.viewDistance());
+                    client.options.getSimulationDistance().setValue(previous.simulationDistance());
+                    LOG.info("EXTERNAL_INPUT_RENDER_SETTINGS_RESTORED inputRun={} previous={}", lab.identity.run(), previous);
+                }
                 GroundCollision.clear(); active = null;
             });
         } catch (Exception e) {
@@ -98,17 +114,22 @@ public final class ExternalInputLab {
     private void beforeTick(MinecraftClient client) {
         if (stopping) { release(client); return; }
         long now = System.nanoTime();
-        if (now - initializedAt >= 120_000_000_000L) { fail(client, "Global startup/runtime deadline120s"); return; }
+        if (now - initializedAt >= 180_000_000_000L) { fail(client, "Global startup/runtime deadline180s"); return; }
         if (!started && client.currentScreen != null && client.getOverlay() == null) create(client);
         if (!started || client.world == null || client.player == null || !client.isIntegratedServerRunning()) {
             release(client); if (labWorld != null) fail(client, "Owned singleplayer connection ended"); return;
         }
         if (!owned(client)) { fail(client, "World/player identity changed; refusing other saves"); return; }
+        // Inspected Yarn1.21.1 Mouse.tick requires cursorLocked for local camera input.
+        // unlockCursor changes only cursor state; the explicit external look path remains active.
+        if (client.mouse.isCursorLocked()) client.mouse.unlockCursor();
         if (labWorld == null) {
             labWorld = client.world; labPlayer = client.player; ownedServer = client.getServer();
             playerId = client.player.getUuid(); worldAt = now;
         }
-        if (now - worldAt >= 60_000_000_000L) { fail(client, "World runtime60s without complete terminal proof"); return; }
+        // Allows60s operator arm wait +40s active input + bounded setup/terminal settling.
+        // The independent gate still caps all input at120s and every sample lease at300ms.
+        if (now - worldAt >= 135_000_000_000L) { fail(client, "World runtime135s without complete terminal proof"); return; }
         if (serverFailure.get() != null) { fail(client, serverFailure.get()); return; }
         if (!setupRequested) { install(client, now); return; }
         if (!installed.get()) {
@@ -120,14 +141,16 @@ public final class ExternalInputLab {
             } else if (now - teleportAt > 6_000_000_000L) fail(client, "Server proxy/teleport setup timeout");
             return;
         }
-        requestServerSample(client);
         ServerSample sample = serverSample.get();
-        if (sample == null || sample.world() != serverWorldIdentity.get() || System.nanoTime() - sample.receivedAt() > 250_000_000L) {
+        if (sample != null && sample.world() != serverWorldIdentity.get()) { fail(client, "Server observation world identity changed"); return; }
+        boolean serverFresh = sample != null && System.nanoTime() - sample.receivedAt() <= 250_000_000L;
+        if (!serverFresh && !ready) {
             release(client);
-            if (!ready) stableAt = 0;
-            if (ready || now - teleportAt > 20_000_000_000L) fail(client, "Fresh server observation missing");
+            stableAt = 0;
+            if (now - teleportAt > 20_000_000_000L) fail(client, "Fresh server observation missing");
             return;
         }
+        if (ready && !observeServerFreshness(client, serverFresh, now)) return;
         if (!ready) {
             release(client);
             if (client.currentScreen != null || client.getOverlay() != null || client.player.getPos().squaredDistanceTo(
@@ -171,19 +194,24 @@ public final class ExternalInputLab {
         // only the inspected hold-to-sprint mode; toggled sprint ignores false releases.
         if (client.options.getSprintToggled().getValue()) { fail(client, "Toggle-sprint mode unsupported by bounded held-input lab"); return; }
         if (corrections.get() != correctionBaseline) { fail(client, "Server position correction after stable handoff"); return; }
-        if (!safe(motion(client.world, client.player)) || !safe(sample.motion())) { fail(client, "Leaving bounded sampled collision coverage"); return; }
+        if (!safe(motion(client.world, client.player)) || (sample != null && !safe(sample.motion()))) { fail(client, "Leaving bounded sampled collision coverage"); return; }
         if (reader.failure() != null) { fail(client, "External input reader failed: " + reader.failure().getMessage()); return; }
         try {
             for (byte[] frame : reader.drain(64)) {
                 var record = ExternalInputDecoder.decode(frame);
-                gate.receive(frame, System.currentTimeMillis(), System.nanoTime()); receivedFrames++;
+                boolean accepted = gate.receiveLive(frame, System.currentTimeMillis(), System.nanoTime()); receivedFrames++;
+                if (!accepted) {
+                    discardedFrames++;
+                    LOG.info("EXTERNAL_INPUT_EXPIRED_SAMPLE_DROPPED inputRun={} inputSeq={} discardedFrames={} requiresFreshNeutral=true",
+                            identity.run(), record.sequence(), discardedFrames);
+                }
                 if (record.kind() == ExternalInputRecord.Kind.BEGIN) inputAt = System.nanoTime();
                 if (record.kind() == ExternalInputRecord.Kind.END) { terminal = true; terminalAt = System.nanoTime(); }
             }
         } catch (Exception e) { fail(client, "External input rejected: " + e.getMessage()); return; }
         if (reader.failure() != null) { fail(client, "External input reader failed after drain: " + reader.failure().getMessage()); return; }
-        if (!terminal && inputAt != 0 && now - inputAt >= 45_000_000_000L) { fail(client, "Input session45s deadline; terminal end missing"); return; }
-        held = gate.consume(System.nanoTime(), true); apply(client, held);
+        if (!terminal && inputAt != 0 && now - inputAt >= 105_000_000_000L) { fail(client, "Input session105s deadline; terminal end missing"); return; }
+        held = gate.consume(System.nanoTime(), serverFresh); apply(client, held);
         if (held.active()) {
             appliedFrames++;
             if (held.mouseDx() != 0 || held.mouseDy() != 0) {
@@ -206,13 +234,13 @@ public final class ExternalInputLab {
     private void afterTick(MinecraftClient client) {
         if (stopping || !ready || !owned(client)) return;
         long now = System.nanoTime();
-        if (!gate.consume(now, true).active()) release(client);
         latestClient = motion(client.world, client.player);
         var sample = serverSample.get();
         if (!safe(latestClient)) { fail(client, "Vanilla client movement reached coverage boundary"); return; }
-        if (sample == null || sample.world() != serverWorldIdentity.get() || System.nanoTime() - sample.receivedAt() > 250_000_000L) {
-            fail(client, "End-tick server observation missing/stale"); return;
-        }
+        if (sample != null && sample.world() != serverWorldIdentity.get()) { fail(client, "End-tick server world identity changed"); return; }
+        boolean serverFresh = sample != null && System.nanoTime() - sample.receivedAt() <= 250_000_000L;
+        if (!gate.consume(now, serverFresh).active()) release(client);
+        if (!observeServerFreshness(client, serverFresh, now) || !serverFresh) return;
         clientWalk = Math.max(clientWalk, horizontal(latestClient, baselineClient));
         if (!latestClient.grounded() && latestClient.y() > baselineClient.y() + 0.15) clientAir = true;
         if (clientAir && grounded(latestClient)) clientLand = true;
@@ -250,6 +278,13 @@ public final class ExternalInputLab {
         started = true;
         if (client.world != null || client.isIntegratedServerRunning()) { fail(client, "Refusing already open world"); return; }
         oldPauseOnLostFocus = client.options.pauseOnLostFocus; client.options.pauseOnLostFocus = false;
+        // Exact1.21.1 Window setters update swap interval/frame budget without writing options.
+        // Keep this tiny collision lab inexpensive while the full KCD renderer is active.
+        oldRenderSettings = new RenderSettings(client.options.getEnableVsync().getValue(), client.getWindow().getFramerateLimit(),
+                client.options.getViewDistance().getValue(), client.options.getSimulationDistance().getValue());
+        client.getWindow().setVsync(false); client.getWindow().setFramerateLimit(60);
+        client.options.getViewDistance().setValue(4); client.options.getSimulationDistance().setValue(5);
+        LOG.info("EXTERNAL_INPUT_RENDER_SETTINGS inputRun={} vsync=false frameLimit=60 viewDistance=4 simulationDistance=5 previous={}", identity.run(), oldRenderSettings);
         saveName = "MineCome-ExternalInput-" + UUID.randomUUID();
         Path save = client.runDirectory.toPath().resolve("saves").resolve(saveName).normalize();
         if (Files.exists(save)) { fail(client, "Refusing existing save"); return; }
@@ -300,20 +335,15 @@ public final class ExternalInputLab {
             } catch (Exception e) { serverFailure.set("Initial server teleport: " + e.getMessage()); }
         });
     }
-    private void requestServerSample(MinecraftClient client) {
-        if (!serverReadPending.compareAndSet(false, true)) return;
-        var server = client.getServer(); long sequence = ++serverSequence;
-        server.execute(() -> {
-            try {
-                if (stopping) return;
-                var world = server.getOverworld(); var player = server.getPlayerManager().getPlayer(playerId);
-                if (server != ownedServer || world != serverWorldIdentity.get() || player == null || player.getWorld() != world ||
-                        !saveName.equals(server.getSaveProperties().getLevelName()) || !GroundCollision.installed(world, true) || !allProxyCellsAir(world))
-                    throw new IllegalStateException("Server player/proxy identity changed");
-                serverSample.set(new ServerSample(world, sequence, System.nanoTime(), motion(world, player)));
-            } catch (Exception e) { serverFailure.set("Server observation: " + e.getMessage()); }
-            finally { serverReadPending.set(false); }
-        });
+    private void observeServer(MinecraftServer server) {
+        if (stopping || !installed.get()) return;
+        try {
+            var world = server.getOverworld(); var player = server.getPlayerManager().getPlayer(playerId);
+            if (server != ownedServer || world != serverWorldIdentity.get() || player == null || player.getWorld() != world ||
+                    !saveName.equals(server.getSaveProperties().getLevelName()) || !GroundCollision.installed(world, true) || !allProxyCellsAir(world))
+                throw new IllegalStateException("Server player/proxy identity changed");
+            serverSample.set(new ServerSample(world, ++serverSequence, System.nanoTime(), motion(world, player)));
+        } catch (Exception e) { serverFailure.set("Server observation: " + e.getMessage()); }
     }
     private boolean allProxyCellsAir(BlockView world) {
         for (var cell : patch.cells()) if (!world.getBlockState(new BlockPos(cell.x(), cell.y(), cell.z())).isAir()) return false;
@@ -338,6 +368,22 @@ public final class ExternalInputLab {
     private boolean initialViewMatches(Motion motion) {
         return Math.abs(MathHelper.wrapDegrees(motion.yaw() - (float) viewSeed.yawDegrees())) <= 0.1 &&
                 Math.abs(motion.pitch() - viewSeed.pitchDegrees()) <= 0.1;
+    }
+    /** A brief scheduling gap suppresses controls, never relaxes input age or server freshness. */
+    private boolean observeServerFreshness(MinecraftClient client, boolean fresh, long now) {
+        if (fresh) {
+            if (serverStaleAt != 0) LOG.info("EXTERNAL_INPUT_SERVER_RESUMED inputRun={} pauseMillis={} requiresFreshNeutral=true",
+                    identity.run(), (now - serverStaleAt) / 1_000_000);
+            serverStaleAt = 0;
+            return true;
+        }
+        release(client); gate.consume(now, false); landingStableAt = 0;
+        if (serverStaleAt == 0) {
+            serverStaleAt = now; serverObservationPauses++;
+            LOG.info("EXTERNAL_INPUT_SERVER_PAUSED inputRun={} inputNeutral=true pauseCount={}", identity.run(), serverObservationPauses);
+        }
+        if (now - serverStaleAt >= 2_000_000_000L) { fail(client, "Server observation unavailable for2s; input neutralized"); return false; }
+        return true;
     }
     private static double horizontal(Motion a, Motion b) { return Math.hypot(a.x() - b.x(), a.z() - b.z()); }
     private static double horizontalSpeed(Motion motion) { return Math.hypot(motion.vx(), motion.vz()); }

@@ -812,3 +812,117 @@ but no established generic menu/cutscene getter or matching prior FreezeInput-st
 getter. GameRules.IsFrozen is entity freeze, not input freeze. No native KCD input
 or physics takeover was added. Physical KCD controls, live starting-camera capture,
 ongoing view alignment and sustained world movement authority remain separate work.
+
+## Physical-input readiness and focus-switch recovery — 2026-10-12
+
+The combined lab now waits up to60s for the first sampled F8 arm before starting
+its15–40s active interval (default30s). A focus loss/rearm never renews that timer.
+The native optional wait and duration must sum to at most120s; the standalone
+observer's default remains its original fixed duration. The lab's input105s,
+world135s and global180s bounds allow this wait without changing the300ms input
+lease,120s protocol session,20s producer-file creation deadline or bounded queues.
+Fifteen new deadline cases join the native suite (613checks passed).
+
+Two actual combined attempts captured fresh KCD terrain and camera and reached
+matching initial Minecraft client/server views:
+`runtime/evidence/external-input-20261012-194153-1748ddd8a2f74ad09d584733b248c7db`
+and
+`runtime/evidence/external-input-20261012-194550-e0d857bd357a4a1d8e900562bea55c12`.
+Neither established physical movement delivery. The first stopped before arming
+when a server observation was older than250ms; the native helper observed F8 later.
+The second paused controls on that condition, then rejected a queued expired input
+sample. Both failures released controls and saved/stopped the owned Minecraft
+instance; only the owned input helper was terminated during controller cleanup.
+KCD remained open. Failed attempts are retained rather than counted as successes.
+
+The initial-view Lua module is now live verified on the pinned official tools
+executable, PID54808, creation FILETIME134363039636611832. Its unchanged source
+hash is `e056562a837c267f7ace312096887d32376e4770c27eb6c999ebb15638c9c638`.
+The second view receipt is in
+`runtime/evidence/input-view-20261012-194552-7414ffa6cc304421a58f85d6f7169890`.
+Both sides started yaw−175.33249/pitch7.1751018, matching that captured view.
+
+The owned Minecraft lab now calls public Mouse.unlockCursor while active to prevent
+local foreground mouse motion from changing its camera. This method and Mouse.tick's
+focus/cursor-lock guard were inspected in the exact cached Yarn1.21.1+build.3 merged
+JAR (SHA256 `06a137a0b9597798455412349a45255ee37f351ceaa37d731096880be6c6a727`),
+using javap. unlockCursor only changes cursor state and GLFW cursor mode; external
+changeLookDirection still applies normally. See the primary method contract:
+https://maven.fabricmc.net/docs/yarn-1.21.1+build.3/net/minecraft/client/Mouse.html#unlockCursor().
+
+Fresh server observations remain required before applying controls. Scheduling gaps
+pause input with a fresh-neutral barrier, skip proof collection, reset landing
+settling and stop after2s without a fresh observation. The live consumer additionally
+discards validated expired SAMPLE records, advancing only ordering/count state and
+clearing all held/mouse state. They cannot renew a lease or replay motion. A new
+fresh released-controls sample is required before normal input resumes. Strict
+receive remains unchanged for other consumers; malformed, foreign, replayed, future,
+stale BEGIN/END and over-budget records still close the live gate.
+
+The first recovery fixture (`external-input-20261012-195039-8d5c9c276fbd4c6089733151d18b06b1`)
+correctly discarded expired input but still missed movement while both renderers
+were running. Observations previously depended on client requests; they now publish
+an immutable sample directly from Fabric END_SERVER_TICK on the server thread, with
+the same owned-world/player/proxy checks. The callback contract was inspected in the
+cached fabric-lifecycle-events-v1 sources. Temporary lab settings disable window
+vsync, cap rendering at60fps and reduce view/simulation distance to4/5; saved settings
+restore at CLIENT_STOPPING without an options.write call. Exact cached Window and
+GameOptions bytecode was inspected. Driver/swap blocking was a possible explanation
+for earlier stalls, not an established engine diagnosis. An intervening fixture
+`external-input-20261012-195445-32d0b91a1ba540d3955380ba1a8ecab4` exited normally before
+world creation/readiness; it provides no movement proof.
+
+Final recovery fixture passed in the actual Minecraft client/integrated server with
+KCD also open:
+`runtime/evidence/external-input-20261012-195840-452f657d7e4a4de6bdf3f17054bebb7b`.
+The intentionally expired held-forward/mouse17,11 sample was discarded, then fresh
+neutral input restored normal application. Both sides walked1.0727510592m, jumped,
+landed and changed yaw45→49.5/pitch−10→−11.8. Only the one intended fresh mouse
+application reached the player;91records were received, with zero post-settle
+corrections or server-observation pauses. All controls were neutral at END. The
+launcher exited0 and restoration was acknowledged (vsync true,120fps, distances12/12);
+the local options file retained those original values. This is scripted-input proof,
+not physical input proof. Focused Java decoder/session checks now pass194cases;
+native state/deadline checks pass613 and Release/JAR builds succeed.
+
+Final lab source SHA256:
+`9da55e139a2e6c4f1d45b57335700c88f0e1792d05bbc24ad7b1acfd476afdd1`.
+Session gate source SHA256:
+`2994785325b0c8e1459b30d9b2bdb105050436d9c0bde201cb592c86d1053638`.
+Native helper88,064bytes, SHA256:
+`a11101b55755e82ac919ae70782bae12d62e8165e087dade38950b0ef72113c3`.
+Fabric JAR177,788bytes, SHA256:
+`65fecb6dabf9b3e5de93695f68f955e219c4d0979a895858441eda54f1dd0742`.
+Actual game runs use Loom development classes; the packaged JAR remains assembled,
+not separately installed/live verified. Assets, saves and runtime evidence stay local.
+
+The final physical two-game check passed:
+`runtime/evidence/external-input-20261012-195929-2fe9fb3d71534af7af29206cbd9d6d4e`.
+The user confirmed the F8/W/Space/mouse actions. Fresh exact-process checks targeted
+the restarted tools PID3004/creation FILETIME134363050534931108, not the earlier
+PID54808. Captured KCD ground and camera seeded the new Minecraft world. Both client
+and server walked0.4261759414m, jumped and landed, and changed yaw−170.09227→−143.39227
+and pitch0→−49.800007. There were zero post-settle corrections and zero server
+observation pauses. Fifteen expired samples were discarded without aborting or
+replaying controls; this is functional forwarding proof, not a low-latency guarantee.
+
+The immutable native helper produced1173records over58,607ms. Its first arm arrived
+at28,600ms, followed by the complete30s active interval. There were121armed samples,
+including6forward,5jump and38nonzero mouse samples; the real consumer reported
+25mouse applications. All controls were neutral at END. Native registration removal
+and foreground-observer unhook both passed, Minecraft restored settings and exited
+normally, and the controller returned0. KCD was neither repositioned nor stopped.
+
+The source-independent Java marker remains conservatively
+`physicalInputVerified=false`; `physical-analysis.json` separately records the
+human-confirmed actions plus owned native executable, process/run identity and real
+client/server receipts that establish physical forwarding for this session. No source
+tag alone is treated as physical authentication. Input SHA256:
+`c1f31be2e136ba3eb4d42cf51c221966c10f0e236bd4726830db185574dcd350`.
+View SHA256:
+`e400a8660cf6892917e63633a1f85ab4fd63aa80f6f90d338d9789f088a5e4fb`.
+Patch SHA256:
+`110c039bc4aba0b89527be87cd9007daae00470df058bbb7627747dec54c94db`.
+Sustained camera/input ownership, generic engine menu state, streaming collision and
+combining the input consumer with the KCD follower remain unfinished. No unverified
+native hook, KCD input suppression or physics takeover was introduced.

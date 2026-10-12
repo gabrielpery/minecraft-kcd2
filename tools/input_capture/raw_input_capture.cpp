@@ -65,12 +65,13 @@ struct Options {
     ic::RecordIdentity identity;
     std::uint64_t start{};
     unsigned seconds{};
+    unsigned arm_wait_seconds{};
     fs::path output;
     ic::InputBindings bindings{ic::default_bindings()};
 };
 
 Options options(int argc, wchar_t** argv) {
-    if (argc != 11 && argc != 13) throw std::invalid_argument("usage: --target-pid N --target-start FILETIME --run lowerhex32 --output absolute-new-file --seconds 15..120 [--bindings W,S,A,D,SPACE,LSHIFT]");
+    if (argc != 11 && argc != 13 && argc != 15) throw std::invalid_argument("usage: --target-pid N --target-start FILETIME --run lowerhex32 --output absolute-new-file --seconds 15..120 [--bindings W,S,A,D,SPACE,LSHIFT] [--arm-wait-seconds 1..60]; total <=120s");
     Options result;
     unsigned seen{};
     for (int i = 1; i < argc; i += 2) {
@@ -103,6 +104,12 @@ Options options(int argc, wchar_t** argv) {
             if (!ic::canonical_positive_decimal(ascii(value), parsed) || parsed < 15 || parsed > 120)
                 throw std::invalid_argument("seconds must be 15..120");
             result.seconds = static_cast<unsigned>(parsed);
+        } else if (key == L"--arm-wait-seconds") {
+            bit = 64;
+            std::uint64_t parsed{};
+            if (!ic::canonical_positive_decimal(ascii(value), parsed) || parsed > 60)
+                throw std::invalid_argument("arm wait must be 1..60seconds");
+            result.arm_wait_seconds = static_cast<unsigned>(parsed);
         } else if (key == L"--bindings") {
             bit = 32;
             if (value.size() > ic::max_binding_text) throw std::invalid_argument("bindings exceed canonical length bound");
@@ -112,6 +119,7 @@ Options options(int argc, wchar_t** argv) {
         seen |= bit;
     }
     if ((seen & 31) != 31) throw std::invalid_argument("missing argument");
+    (void)ic::CaptureWindow(result.seconds, result.arm_wait_seconds);
     return result;
 }
 
@@ -498,7 +506,11 @@ int run(const Options& opts) {
     ForegroundObserver foreground_observer(capture);
     SetConsoleCtrlHandler(console_handler, TRUE);
     const auto started = Clock::now();
-    const auto deadline = started + std::chrono::seconds(opts.seconds);
+    ic::CaptureWindow window(opts.seconds, opts.arm_wait_seconds);
+    const auto elapsed_ms = [&] { return static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - started).count()); };
+    if (window.waiting()) std::cout << "INPUT_CAPTURE_WAITING_FOR_ARM seconds=" << opts.arm_wait_seconds
+                                  << " active_seconds=" << opts.seconds << '\n' << std::flush;
     auto next_sample = started + std::chrono::milliseconds(50);
     std::uint64_t sequence = 1;
     bool write_error = !writer.write(ic::record_json(opts.identity, "begin", sequence++, utc_ms(), 0, {}));
@@ -507,7 +519,7 @@ int run(const Options& opts) {
         auto now = Clock::now();
         if (!alive(process.value)) { reason = "target_exit"; break; }
         if (shutdown_requested || capture.failed) { reason = "shutdown"; break; }
-        if (now >= deadline) break;
+        if (window.expired(elapsed_ms())) break;
         capture.update_focus();
         // A flood of WM_INPUT cannot starve absolute duration/focus/snapshots.
         MSG message{};
@@ -515,10 +527,10 @@ int run(const Options& opts) {
             if (message.message == WM_QUIT) { shutdown_requested = true; break; }
             capture.dispatch_time = message.time;
             DispatchMessageW(&message);
-            if (Clock::now() >= next_sample || Clock::now() >= deadline) break;
+            if (Clock::now() >= next_sample || window.expired(elapsed_ms())) break;
         }
         now = Clock::now();
-        if (now >= deadline) break;
+        if (window.expired(elapsed_ms())) break;
         if (!alive(process.value)) { reason = "target_exit"; break; }
         capture.update_focus();
         if (now >= next_sample) {
@@ -526,6 +538,8 @@ int run(const Options& opts) {
             const auto sample = capture.state.sample();
             if (was_neutral_pending) capture.epoch = GetTickCount();
             const auto elapsed = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(now - started).count());
+            if (window.observe_arm(elapsed, sample.armed))
+                std::cout << "INPUT_CAPTURE_ARMED elapsed_ms=" << elapsed << " active_seconds=" << opts.seconds << '\n' << std::flush;
             if (!writer.write(ic::record_json(opts.identity, "sample", sequence++, utc_ms(), elapsed, sample))) {
                 write_error = true; reason = "write_error"; break;
             }
@@ -539,6 +553,7 @@ int run(const Options& opts) {
         const DWORD waited = MsgWaitForMultipleObjectsEx(1, &wait_handle, timeout, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
         if (waited == WAIT_FAILED) { capture.failed = true; reason = "shutdown"; break; }
     }
+    if (window.waiting() && reason == "duration") std::cout << "INPUT_CAPTURE_ARM_TIMEOUT\n" << std::flush;
     capture.state.focus(false);
     const bool observer_cleanup = foreground_observer.cleanup();
     const bool cleanup = registration.cleanup();

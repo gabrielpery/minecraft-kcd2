@@ -296,14 +296,30 @@ required. Both the input and flat ground are explicitly synthetic. Success print
 `EXTERNAL_INPUT_APPLICATION_PASS`; logs and verification remain under the ignored
 `runtime/evidence/external-input-*` directory.
 
-The physical-input mode is implemented but awaits a human input verification.
+The physical-input mode has passed a bounded human input check with both games open.
 With an already loaded fresh official tools world, run the same command without
 `-Fixture`. It captures a small ground patch and starts the scoped Windows helper
 only after Minecraft is ready. When `EXTERNAL_INPUT_CAPTURE_READY` appears, focus
 KCD2, close menus/console, release controls and press F8. Wait briefly, tap W for
 about0.2seconds and release, press Space once, then move the mouse slightly in both
-axes. Stop walking after that tap: collision coverage is only4×4m. The capture ends
-automatically after30seconds; `-InputSeconds` permits15–40seconds.
+axes. Stop walking after that tap: collision coverage is only4×4m. You have up to
+60seconds after READY to arm with F8. The active capture then lasts30seconds;
+`-InputSeconds` permits15–40seconds and `-ArmWaitSeconds` permits1–60seconds.
+Focus loss releases input and requires a fresh F8 press; rearming never restarts
+the active timer. If no arm arrives, the check ends with an incomplete-input result.
+The independent reader still requires the producer to create its file within20s;
+neutral samples continue during the arm wait and each sample expires after300ms.
+Brief server-observation gaps pause forwarded controls; after2seconds without a
+fresh observation the check stops. The live consumer discards expired samples and
+requires fresh released controls before resuming. Malformed, foreign, replayed,
+future and stale begin/end records still end the session. Minecraft's own mouse
+cursor remains released so its foreground window cannot accidentally change the
+starting camera while switching to KCD.
+Server observations run on the server thread independently of rendering. The lab
+temporarily uses no vsync,60fps and view/simulation distances4/5, restoring the
+previous values when it stops. The automatic fixture also sends one intentionally
+expired movement/mouse sample and requires its discard before completing the normal
+movement proof.
 
 The lab moves Minecraft only. KCD retains its native controls/physics and will also
 respond to the same physical actions. Do not combine this with the coupled follower.

@@ -178,7 +178,8 @@ session-bound view file. The probe only reads established GetWorldPos,
 GetViewCameraDir and GetViewCameraUpDir APIs. It verifies stable raw player/id/API
 references and copies vectors before subsequent reads. No input or physics state
 is changed. Twenty-three Lua5.2 cases pass with simulated bindings; the new capture
-path itself has not run in KCD.
+path is now verified in the actual pinned KCD tools process; see the physical-input
+run recorded in PROGRESS.md.
 
 `HostViewSeed` strictly checks bounded UTF-8/JSON, duplicate/exact fields, session
 and process identity, ground SHA256, source kind, age≤60seconds (also rechecked at
@@ -199,5 +200,7 @@ post-settle corrections. The custom binding argument in that fixture was configu
 only; scripted semantic input does not prove native arrow/Ctrl capture.
 
 This is initial snapshot alignment. The user can move KCD's view afterward and its
-mouse gain can differ from Minecraft's. Ongoing view ownership, engine menu state,
-physical controls and native KCD physics remain separate integration work.
+mouse gain can differ from Minecraft's. Physical default W/Space/mouse controls now
+pass in the bounded two-game lab. Ongoing view ownership, engine menu state and
+native KCD physics remain separate integration work; remapped physical controls
+still have no live proof.

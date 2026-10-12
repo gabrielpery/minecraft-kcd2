@@ -6,6 +6,21 @@
 
 namespace minecome::input_capture {
 
+CaptureWindow::CaptureWindow(unsigned seconds, unsigned arm_wait_seconds)
+    : duration_ms_(static_cast<std::uint64_t>(seconds) * 1000),
+      deadline_ms_(arm_wait_seconds ? static_cast<std::uint64_t>(arm_wait_seconds) * 1000 : duration_ms_),
+      waiting_(arm_wait_seconds != 0) {
+    if (seconds < 15 || seconds > 120 || arm_wait_seconds > 60 || seconds + arm_wait_seconds > 120)
+        throw std::invalid_argument("capture duration plus arm wait must fit120s; duration15..120s, wait0..60s");
+}
+
+bool CaptureWindow::observe_arm(std::uint64_t elapsed_ms, bool armed) {
+    if (!waiting_ || !armed || expired(elapsed_ms)) return false;
+    waiting_ = false;
+    deadline_ms_ = elapsed_ms + duration_ms_;
+    return true;
+}
+
 void InputState::focus(bool focused, ControlBits currently_down, bool f8_down) {
     if (focused == focused_) return;
     focused_ = focused;

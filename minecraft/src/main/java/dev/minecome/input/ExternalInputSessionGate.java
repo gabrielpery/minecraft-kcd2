@@ -37,6 +37,18 @@ public final class ExternalInputSessionGate {
 
     /** Any malformed, stale, replayed or foreign record closes this session and clears all controls. */
     public synchronized void receive(byte[] json, long utcNowMillis, long localNowNanos) throws IOException {
+        receiveChecked(json, utcNowMillis, localNowNanos, false);
+    }
+
+    /**
+     * Optional live ingress: false means an expired SAMPLE from an already open session
+     * was fully validated, sequenced and discarded. It never extends a lease or resumes
+     * controls. Timely accepted frames return true; all other violations still close.
+     */
+    public synchronized boolean receiveLive(byte[] json, long utcNowMillis, long localNowNanos) throws IOException {
+        return receiveChecked(json, utcNowMillis, localNowNanos, true);
+    }
+    private boolean receiveChecked(byte[] json, long utcNowMillis, long localNowNanos, boolean discardExpiredSample) throws IOException {
         try {
             ExternalInputRecord record = ExternalInputDecoder.decode(json);
             if (phase == Phase.CLOSED) throw new IOException("External input session is closed");
@@ -46,8 +58,7 @@ public final class ExternalInputSessionGate {
             long age;
             try { age = Math.subtractExact(utcNowMillis, record.utcMillis()); }
             catch (ArithmeticException e) { throw new IOException("External input UTC age overflow", e); }
-            if (age < -MAX_FUTURE_SKEW_MILLIS || age > MAX_AGE_MILLIS)
-                throw new IOException("External input record is stale/future");
+            if (age < -MAX_FUTURE_SKEW_MILLIS) throw new IOException("External input record is future");
             if (record.sequence().compareTo(lastSequence) <= 0 || record.monotonicMillis() < lastElapsed)
                 throw new IOException("External input sequence/elapsed clock regressed");
             if (++records > MAX_RECORDS) throw new IOException("External input record budget exceeded");
@@ -63,16 +74,25 @@ public final class ExternalInputSessionGate {
                 long oldSampleAge = localNowNanos - sampleReceivedNanos;
                 if (active && (oldSampleAge < 0 || oldSampleAge >= sampleLeaseNanos)) clear();
             }
+            if (age > MAX_AGE_MILLIS) {
+                if (discardExpiredSample && record.kind() == ExternalInputRecord.Kind.SAMPLE) {
+                    // NEW sessions cannot reach here with a SAMPLE: begin-first was
+                    // checked above. No fresh sample time, held state or mouse survives.
+                    lastSequence = record.sequence(); lastElapsed = record.monotonicMillis();
+                    clear(); return false;
+                }
+                throw new IOException("External input record is stale");
+            }
             lastSequence = record.sequence(); lastElapsed = record.monotonicMillis();
-            if (record.kind() == ExternalInputRecord.Kind.END) { close(); return; }
+            if (record.kind() == ExternalInputRecord.Kind.END) { close(); return true; }
             if (record.kind() == ExternalInputRecord.Kind.BEGIN || !record.focused() || !record.armed()) {
-                clear(); return;
+                clear(); return true;
             }
             // Reconnection, menu suppression, focus loss and lease expiry require a fresh
             // released-controls sample. A held control cannot spring back from old state.
             if (neutralBarrier) {
                 clearControls();
-                if (!record.neutral()) return;
+                if (!record.neutral()) return true;
                 neutralBarrier = false;
             }
             long newLease = (MAX_AGE_MILLIS - Math.max(0, age)) * 1_000_000L;
@@ -90,6 +110,7 @@ public final class ExternalInputSessionGate {
             sampleReceivedNanos = localNowNanos;
             // Preserve the total 300ms observation-age bound with a local monotonic lease.
             sampleLeaseNanos = newLease;
+            return true;
         } catch (IOException | RuntimeException e) {
             close();
             if (e instanceof IOException io) throw io;

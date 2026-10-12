@@ -50,6 +50,11 @@ Never load newer retail1.5.6 saves into this older1.5.5 development game. Backup
 
 - General input forwarding, full collision export, NPC/combat synchronization,
   mining terrain and persistence are not implemented.
+- Physical W/Space/mouse forwarding and starting-camera alignment now pass in the
+  isolated4×4m Minecraft lab. Fifteen delayed samples were discarded during the
+  successful run; low-latency sustained control is not yet established. KCD still
+  handles its own input/physics. The input lab must remain separate from the KCD
+  player follower until exclusive control and engine menu state are established.
 - An isolated real Minecraft lab now walks, jumps and lands against approximate
   slabs sampled from live KCD2 terrain, confirmed on client and server. It uses a
   static4×4m heightfield. A separate bounded follower now applies actual server
