@@ -1075,3 +1075,49 @@ After all processes closed, the exact unchanged owned file was verified and remo
 `post-exit-mod-cleanup.json` records restoration of the previous mod-loading setup.
 Cleanup now checks process exit state and disposes temporary process wrappers;
 six focused cases cover live, exited, absent and inaccessible process states.
+
+### Successful explicit PowerShell 7 launch
+
+The user repeated the same zero-mod diagnostic through the installed bundled
+PowerShell 7.6.5 executable and reported `world ready`. Evidence is preserved in
+`runtime/evidence/tools-startup-diagnostic-20261012-204806-0878b89fc0bb475d9cfb2694a95e7e55`.
+PID 48368 remained alive through the complete 120-second monitor. The official
+Console API returned HTTP 200; the copied game log confirms `0 mods enabled`.
+The renderer hook remained disabled and no debugger was attached. A separate
+`user-confirmed-world-ready.json` records user confirmation, the running process
+identity, the observed PowerShell 7 parent and module snapshot. The temporary
+owned empty mod-order list remains pending cleanup after normal game closure.
+
+The successful run produced 118 memory samples without errors. Peak private memory
+was 11,389,657,088 bytes; minimum available system commit was 313,569,280 bytes.
+It began with less available commit than either earlier failed diagnostic. Its
+commit limit increased by 3,256,639,488 bytes at approximately 69 and 73 seconds,
+after the earlier failures' 28-second point. This does not prove shell-version
+causation or identify the original exit-250 cause. The working PowerShell 7 launch
+path is retained; no memory settings or unrelated applications were changed.
+
+A proposed CDB observer was tested only against an original local fixture. Exit
+capture and second-chance AV capture passed, but running-timeout cleanup changed
+the fixture's later exit code to `0x80000004`. It was never used on KCD. Its
+unvalidated source and evidence were preserved under
+`runtime/evidence/startup-debug-deferred-20261012` and removed from the user-facing
+scripts. No debugger is installed or running as part of the working game session.
+
+Both user launch helpers now forward Windows PowerShell 5.1 invocations to an
+existing PowerShell 7 runtime, preferring the installed bundled executable. They
+preserve the current console and bound arguments, including explicit false
+switches, without installing anything or closing the caller. Future diagnostic
+launch receipts record the actual shell path and version. Six non-game forwarding
+cases and parsing under both shells pass; an actual PS5 preflight correctly
+refuses while the existing PID 48368 remains open. Evidence is in
+`runtime/evidence/powershell7-bootstrap-final-1296d58fce3b42dc9eee5b6ddf92fb18`.
+
+`Update-HudCompositor.ps1` now prepares an ownership-checked update from the disabled
+original installation to the staged reset fix. Read-only preflight verifies all
+six old and new files; only the 299,008-byte add-on changes. The updater backs up
+owned bytes, uses atomic replacement, checks closed-game/executable identity on
+forward and rollback mutations, and re-enables the owned proxy last. Eight focused
+filesystem cases pass under Windows PowerShell 5.1; independent source review
+confirmed the rollback guards. Evidence is in
+`runtime/evidence/hud-update-fixture-709a44bba6ec46d29d7d9c05e9382316`.
+Actual deployment and the new live HUD frame remain pending the user's restart.

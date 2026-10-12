@@ -8,8 +8,16 @@
 # Layout/units: https://learn.microsoft.com/windows/win32/api/psapi/ns-psapi-performance_information
 [CmdletBinding()]
 param([string]$GameRoot, [switch]$PreflightOnly, [switch]$WithoutMods)
+. (Join-Path $PSScriptRoot 'powershell7.ps1')
+if($PSVersionTable.PSVersion.Major -lt 7){
+    $minecomeBootstrapExit=Invoke-MineComePowerShell7 -ScriptPath $PSCommandPath -BoundParameters $PSBoundParameters
+    if($minecomeBootstrapExit -ne 0){throw "Forwarded PowerShell 7 helper failed with exit code $minecomeBootstrapExit."}
+    return
+}
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+$minecomeShellProcess=[Diagnostics.Process]::GetCurrentProcess()
+try{$minecomeShellPath=$minecomeShellProcess.MainModule.FileName}finally{$minecomeShellProcess.Dispose()}
 $projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $expectedExeHash = 'a32d077e6b54e5cd0c5a5f3194f473779706ff266a711e4745ccdb598843340a'
 $utf8 = [Text.UTF8Encoding]::new($false, $true)
@@ -169,6 +177,7 @@ foreach($path in $logPaths){try{$beforeLogs+=(Read-LogTail $path).Metadata}catch
 Save-NewJson (Join-Path $directory 'launch.json') ([ordered]@{
  schema=1;kind='minecome_tools_startup_diagnostic_v1';run=$run;created_utc=[DateTime]::UtcNow.ToString('o');script_sha256=(Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256).Hash.ToLowerInvariant()
  game_exe=$gameExe;game_exe_sha256=$expectedExeHash;fixed_version='1.0.0.0';display_version='1.5.5.0';working_directory=$GameRoot;arguments=@('-devmode','+map','trosecko')
+ powershell_version=$PSVersionTable.PSVersion.ToString();powershell_path=$minecomeShellPath
  monitoring_seconds=120;sample_period_ms=1000;monitor_scope='only_Start-Process_returned_process';active_dxgi_proxy_before_launch=$false;live_world_verified=$false;logs_before=$beforeLogs
  without_mods=[bool]$WithoutMods;mod_order_path=$modOrderPath;mod_isolation_mechanism=$(if($WithoutMods){'official_empty_mod_order'}else{$null})
 })

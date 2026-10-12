@@ -1,6 +1,12 @@
 # Direct human launch helper. Prepare/build/package first; does not bypass review or protection.
 [CmdletBinding()]
 param([string]$GameRoot, [ValidateSet('trosecko','kutnohorsko','klaster')][string]$Level='trosecko')
+. (Join-Path $PSScriptRoot 'powershell7.ps1')
+if($PSVersionTable.PSVersion.Major -lt 7){
+    $minecomeBootstrapExit=Invoke-MineComePowerShell7 -ScriptPath $PSCommandPath -BoundParameters $PSBoundParameters
+    if($minecomeBootstrapExit -ne 0){throw "Forwarded PowerShell 7 helper failed with exit code $minecomeBootstrapExit."}
+    return
+}
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 if (-not $GameRoot) {

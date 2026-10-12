@@ -144,6 +144,13 @@ reproduces the same exit code during loading. The temporary list has been remove
 after ownership verification, restoring the previous mod-loading setup. Neither
 MineCome nor the pre-existing multiplayer mod is required to reproduce the failure.
 
+The same zero-mod diagnostic subsequently reached the world when the user invoked
+it through the bundled PowerShell 7.6.5 executable. The user confirmed world readiness;
+the game survived the full two-minute monitor and its official Console API responded.
+Use the working PowerShell 7 launch path. This outcome does not yet establish which
+shell/environment difference caused the prior exits. The HUD hook is still disabled;
+successful baseline loading does not verify the repaired compositor.
+
 The official tools EXE has translated FileVersion/ProductVersion1.5.5.0 but fixed
 numeric version1.0.0.0. The native gate checks both, plus the expected distribution
 path and actual running process image; checking only fixed1.5.5 incorrectly refused

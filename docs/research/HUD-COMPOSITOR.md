@@ -84,8 +84,9 @@ PowerShell 5.1. Preparation, guest capture and arming use the explicitly documen
 PowerShell 7 requirements in their script headers; run them with a PowerShell 7
 executable rather than assuming the user's current shell is PowerShell 7.
 
-`scripts/Start-Kcd2ToolsDiagnostic.ps1` is the manual Windows PowerShell 5.1 startup
-diagnostic. Its `-PreflightOnly` mode checks the exact executable and disabled hook
+`scripts/Start-Kcd2ToolsDiagnostic.ps1` accepts an ordinary Windows PowerShell 5.1
+invocation and selects an existing PowerShell 7 runtime. Its `-PreflightOnly` mode
+checks the exact executable and disabled hook
 without launching or writing evidence. The normal user-run mode starts a fresh
 `trosecko` world, records process exit code, sampled module paths, private memory
 and available system commit for up to 120 seconds, and preserves bounded game-log
@@ -105,6 +106,63 @@ is still running at the monitoring deadline, or ownership changes, the list rema
 and the receipt explicitly requires cleanup after normal closure. No mod package
 is renamed, overwritten or deleted. Actual exclusion must be confirmed in the fresh
 game log; creating the list alone is not live verification.
+
+## Working PowerShell 7 baseline
+
+The user repeated the zero-mod diagnostic through the installed bundled PowerShell
+7.6.5 and confirmed that the world loaded. The exact tools process survived the
+full two-minute monitor and its official Console API returned HTTP 200. The hook
+remained disabled. This restores a working baseline but does not prove which
+shell/environment difference caused the earlier exit-250 failures.
+
+Use the launch helpers through PowerShell 7. A direct command from an ordinary
+PowerShell window is:
+
+```powershell
+& 'C:/Users/xephi/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/powershell/pwsh.exe' -NoProfile -File 'C:/Users/xephi/Documents/ChatGPT/New project/MineCome/scripts/Start-Kcd2ToolsTest.ps1'
+```
+
+This command starts a fresh test world; close an existing game normally first.
+The successful diagnostic's owned empty mod-order file remains until its
+ownership-checked cleanup after normal game closure. Do not infer that MineCome
+startup scripts are active during that isolated zero-mod session.
+
+A proposed startup debugger did not pass its standalone timeout fixture and was
+never attached to KCD. Its source and local evidence are retained under
+`runtime/evidence/startup-debug-deferred-20261012`; it is not a supported test step.
+The observed failure reinforces Microsoft's distinction between normal
+[debugger detach](https://learn.microsoft.com/en-us/windows-hardware/drivers/debugger/ending-a-debugging-session-in-cdb)
+and [recovery after an abruptly ended debugger](https://learn.microsoft.com/en-us/windows-hardware/drivers/debugger/reattaching-to-the-target-application).
+
+## Repaired HUD preview restart
+
+`Update-HudCompositor.ps1 -PreflightOnly` verifies the disabled owned installation
+and the staged reset fix without changing files, including while KCD is open.
+Its actual update requires every KCD process to be closed. Only the owned add-on
+currently differs; the updater preserves the previous file and receipt, verifies
+the replacement, and re-enables the pinned owned DXGI proxy last. It does not start
+the game or arm the preview. Failed updates attempt ownership-checked restoration
+and preserve their evidence under `runtime/evidence/hud-update-*`.
+
+After closing KCD normally, the user can run this block in their existing PowerShell
+window. The launch helper selects an existing PowerShell 7 runtime automatically.
+Any terminating update error stops the block before game launch:
+
+```powershell
+& {
+    $ErrorActionPreference = 'Stop'
+    & 'C:/Users/xephi/Documents/ChatGPT/New project/MineCome/scripts/Update-HudCompositor.ps1'
+    & 'C:/Users/xephi/Documents/ChatGPT/New project/MineCome/scripts/Start-Kcd2ToolsTest.ps1'
+}
+```
+
+The successful zero-mod diagnostic's owned empty mod list stays in place for this
+renderer-only comparison. Its eventual restoration must verify the original file
+identity and empty contents after game closure. Once the new world is ready, use
+`Arm-HudPreview.ps1` with the existing verified three-frame Minecraft capture and
+`-BundleDirectory runtime/hud-compositor-resetfix`. No new Minecraft launch is needed
+for this static display proof. A new user-confirmed host frame is still required;
+the previous guest capture and successful baseline launch do not establish it.
 
 The SDK, official runtime, generated captures and Minecraft assets remain local
 under ignored directories. No original game executable is overwritten. Runtime

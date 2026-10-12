@@ -46,9 +46,11 @@ captured vanilla pixels feed a native host compositor. The first KCD D3D12/ReSha
 component is a bounded static-frame proof; live KCD display, continuous frame
 transport and inventory interaction remain to be verified/implemented. See
 [the HUD compositor](docs/research/HUD-COMPOSITOR.md).
-The latest tools launches crashed during world loading both with the new renderer
-installed but unarmed and after its hook was disabled. The hook remains disabled;
-the startup cause is unresolved and no KCD inventory frame has been verified.
+Earlier tools launches crashed during world loading with the renderer unarmed and
+with its hook disabled. A subsequent explicit PowerShell 7 launch reached the world,
+confirmed by the user and a successful two-minute process/HTTP check, with the hook
+and startup mods disabled. PowerShell 7 is the working launch path; the cause of the
+earlier exits remains unresolved. No KCD inventory frame has been verified yet.
 
 The retail KCSE route is blocked by a missing verified Steam 1.5.6 address library.
 The installed official tools run a distinct 1.5.5 development build. Its working HTTP
