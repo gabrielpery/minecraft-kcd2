@@ -152,3 +152,21 @@ that Lua cannot observe it. No action map was reassigned or key event injected.
 Player/camera following has separate live proof in the coupled Minecraft lab.
 Its scripted Minecraft inputs do not establish KCD-focused input forwarding.
 See [the progress record](../PROGRESS.md#live-coupled-movement--2026-10-12).
+
+## Timed human input proof — 2026-10-12
+
+The later restarted60s observer overlapped the user's actual W/Space/mouse check.
+The user replied "done";77 samples measured13.5983m maximum player displacement
+and a1.7893 change in the forward unit vector. The callback logged three
+`jump` actions with string activation `press` and numeric value1. No jump release,
+watched moveforward/other walking action, or watched rotateyaw/rotatepitch action
+was recorded. The fixed lease and explicit end both confirmed callback restoration.
+
+This proves some real gameplay input reaches `Player:OnAction` in the active
+official1.5.5 build. It does not prove sufficient movement/mouse intent or complete
+press/release delivery for vanilla Minecraft controls. Do not infer absence of
+physical input from an empty callback log or substitute observed KCD position for
+Minecraft-authoritative movement intent. The next route needs independently
+supported walking/mouse capture, focus/menu neutralization and explicit bindings.
+Source and live evidence are linked in
+[progress](../PROGRESS.md#source-repository-and-input-recheck--2026-10-12).

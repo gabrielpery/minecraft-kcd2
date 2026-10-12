@@ -57,9 +57,11 @@ Never load newer retail1.5.6 saves into this older1.5.5 development game. Backup
   verified in the live tools game. It does not forward KCD controls, handle
   buildings/walls/tunnels, or stream changing coverage. Native KCD physics remains
   active; this short probe does not prove sustained or exclusive movement authority.
-- The temporary Lua input observer restored correctly after its lease. The user's
-  completion reply arrived after the recorded window, which contained neither
-  movement callbacks nor sampled motion. Semantic input delivery remains inconclusive.
+- The final timed Lua observer captured real jump press callbacks while the
+  player and view changed. Watched walking and mouse action names did not appear;
+  no jump release was captured. The original callback restored correctly.
+  This is partial input proof; a complete control bridge still needs a supported
+  walking/mouse capture path, bindings and focus/menu/release handling.
 - First interactive stone controls are compiled and live verified after the log
   framing fix. `minecome_place`/`minecome_break` request vanilla actions in one fixed
   cell of a new Creative lab, requiring optional protocol minor1/capability1. They

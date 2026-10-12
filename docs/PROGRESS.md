@@ -43,7 +43,7 @@ forwarding and full-world movement authority remain unfinished.
 | Read-only ground query | Separate original Lua probe and exact-version/process/hash/HTTP-owner-gated PowerShell controller implemented |13 focused cases pass in real Lua5.2 with simulated engine bindings | One actual terrain ray returned finite hit position/normal/distance; hit height exactly matched the independent terrain elevation query. No movement or geometry streaming verified |
 | Sampled-ground movement lab | Fabric1.21.1 collision mixins, bounded25-point Lua sampler and isolated lab compile; remapped JAR assembled |85 parser/coordinate/shape/sequence checks and14 real-Lua sampler cases pass | Real KCD2 supplied25 valid terrain hits; real Minecraft client/server walked1.2915m, became airborne, and landed on imported approximate slabs with literal underlying blocks remaining air. KCD2 movement not applied |
 | Bounded coupled movement | Java trace assembled; PowerShell receiver/controller and game-thread Lua follower implemented |126 Java ground/trace checks,25 Lua follower cases with simulated bindings,15 final receiver cases pass; final guards also validate the historical live trace offline | Real Minecraft vanilla client/server walking, jumping and landing;22 forwarded server frames,21 delayed KCD player/camera readbacks, exact starting-position restoration and normal Minecraft exit0 |
-| Lua input observer | Short leased callback wrapper preserves original callback and restores only its own handler |20 simulated-binding Lua cases pass |60s observer expired and restored correctly; no callbacks or sampled motion in the window, with the user's completion reply afterward. Semantic input delivery is inconclusive |
+| Lua input observer | Short leased callback wrapper preserves original callback and restores only its own handler |20 simulated-binding Lua cases pass |Final timed human check captured three real jump/press/value1 callbacks,13.5983m player displacement and view changes; watched walking/mouse callbacks were absent. Callback restored. Full input forwarding remains unfinished |
 | Minecraft block model/atlas | Actual BakedModel and GPU atlas exporter built | Six quads,24 vertices, atlas bounds checked | Real1024×512 atlas exported and visually inspected |
 | CryEngine block asset | Original OBJ→FBX converter plus installed official RC | FBX→CGF and texture TIFF→DDS compile succeeded; pixels compared | User screenshots show Minecraft stone in KCD2 world and verify the sharpness revision |
 | World position/scale/depth | Algebraic hypothesis/tests | Known basis and inverse tests | Live entity bounds span1×1×1 engine units; depth/parallax and cross-game calibration still unverified |
@@ -560,3 +560,31 @@ actions are unavailable to Lua. Evidence:
 `runtime/evidence/input-probe-20261012-143555-490f58f86d8841968ec0471601ef810d`.
 The controller now waits for the matching asynchronous installation receipt
 before reporting that the observer is armed.
+
+The initial source import was pushed as commit `98acd75` on
+`codex/initial-import`. A fresh remote read confirmed the exact local commit at
+both that branch and remote HEAD; the local source working tree was clean.
+The private source repository contains119 files at its root. The three personal
+executable examples were replaced with portable PowerShell7/Python instructions.
+
+The user reported that the first prompt was missed, so its zero-motion recording
+must not be interpreted as a failed input route. The restarted observer was
+announced visibly and the user replied "done" during the requested test. Final
+evidence:
+`runtime/evidence/input-probe-20261012-144246-5530fe25909c46969d6a6052bd1b1c9a`.
+It contains77 position/view samples, maximum player displacement13.5983179m and
+maximum change in the forward unit vector1.7893179. Three callbacks reported
+`action:"jump", activation:"press", value:1`; no jump release, watched movement
+or watched mouse action was captured. The60s game-owned lease restored the exact
+original callback and the explicit end acknowledged restoration again. The
+module hash remained `583aea483f0f5d8931c324819aa915f83b3e85cea3d08f181a140c1abdd3d92f`.
+
+This is actual partial semantic-input proof. The player and view changed during
+capture, so absence of the watched walking/mouse action names is now a meaningful
+observation for this callback/build. It does not prove every Lua input interface
+is incapable of reading them. The original `PhysicalInputDeliveryVerified:false`
+field remains conservative for complete forwarding; `analysis.json` records
+the separately proved jump callback and missing movement/camera callbacks.
+Next implementation needs a supported walking/mouse capture path with focus/menu
+neutralization, bindings and release/timeout handling. No further repetition of
+this same callback test is needed before investigating that route.
