@@ -13,9 +13,13 @@ No retail native-engine hook is enabled.
 **Current UI milestone: genuine Minecraft HUD visible inside KCD2.** The user
 confirmed the first renderer preview on 2026-10-12. Native receipts show both
 hotbar snapshots and the actual Creative inventory snapshot submitted during the
-40-second lease, followed by expiry with the game still running. This is a static
-capture proof; continuous updates and inventory interaction remain unfinished.
-The user reported an undersized canvas, traced to integer scale rounding.
+40-second lease, followed by expiry with the game still running. That display
+proof used static captures. A subsequent real-Minecraft continuous run delivered
+344 frames and four vanilla UI states to a standalone native receiver, including
+stale-frame hiding, fresh resumption and closure. The continuous D3D12 add-on is
+implemented, compiled and installed unarmed; live KCD2 streaming display and
+inventory interaction remain unverified. The aspect-fit correction for the reported undersized canvas
+is included in this implementation and still needs live verification.
 
 **Current build: interactive one-cell stone controls live verified.** KCD console
 commands `minecome_place`/`minecome_break` now request real Minecraft vanilla
@@ -66,6 +70,9 @@ completed its movement/view proof; the new KCD capture path still awaits a live 
 | CryEngine block asset | Original OBJ→FBX converter plus installed official RC | FBX→CGF and texture TIFF→DDS compile succeeded; pixels compared | User screenshots show Minecraft stone in KCD2 world and verify the sharpness revision |
 | World position/scale/depth | Algebraic hypothesis/tests | Known basis and inverse tests | Live entity bounds span1×1×1 engine units; depth/parallax and cross-game calibration still unverified |
 | Original saves protection | Backup script | 982 copied files SHA256 verified | Original saves were not opened for the tests |
+| Static Minecraft UI composition | Actual vanilla capture and original ReShade D3D12 add-on built | 36 Java capture checks; reset and aspect-fit contracts pass | User confirmed HUD visible in KCD2; logs record all three snapshot submissions and lease expiry |
+| Continuous vanilla UI transport | Java21/JNA producer, bounded Win32 channel and native receiver built | 168 Java stream checks and 146 native checks pass; existing 36 snapshot checks still pass | Fresh real Minecraft world sent 344 nontransparent frames, four vanilla UI states, pause/resumption and closed marker to standalone receiver; no KCD compositor was armed |
+| Continuous KCD UI compositor | Separate exact-tools D3D12 add-on built and installed unarmed with aspect fit, persistent texture and fenced upload slots | Native contract/lifecycle review and checks pass | User restart, live continuous KCD display, corrected sizing and physical inventory interaction pending |
 
 ## Current artifacts
 
@@ -144,8 +151,11 @@ communication with the loaded KCD2 world. The fresh Minecraft log records
 5. **Initial collision/movement prototype live verified.** Real vanilla Minecraft
    uses approximate sampled ground on both game threads and briefly drives KCD2's
    player/camera. General collision streaming, KCD input and sustained authority remain.
-6–7. **Not implemented.** NPC/combat, terrain deformation, HUD/hands, mobs and
-   advanced features await those foundations.
+6–7. **UI foundation implemented; broader gameplay remains.** Static vanilla HUD
+   display is live verified in KCD2. Continuous vanilla UI transport passes with
+   real Minecraft and a standalone receiver; the installed streaming compositor
+   still needs live KCD verification. Inventory input, hands, NPC/combat, terrain
+   deformation, mobs and advanced features remain unfinished.
 
 ## Next concrete verification
 
@@ -1158,21 +1168,76 @@ It builds in `build/hud-aspect-fit-20261012` and passes 131 focused contract che
 including the actual resolution, noninteger scaling, aspect mismatch and bounds.
 The new add-on SHA256 is
 `819499b52971d5027745be24e136b4a428975d108870ee0f70c1edfdf60b69cb`.
-The six-file bundle is staged in `runtime/hud-compositor-aspect-fit`; verification
-is in `build/hud-aspect-fit-20261012/verification.json`. The installed add-on and
-its original built artifact remain unchanged during this open session. Corrected
-scale has not yet been deployed or live verified. The updater now accepts this
+The separate static bundle was staged in `runtime/hud-compositor-aspect-fit`;
+verification is in `build/hud-aspect-fit-20261012/verification.json`. At that stage
+the installed add-on and its original artifact remained unchanged. The later
+continuous build below includes the same correction; live corrected sizing is
+still unverified. The updater accepts this
 exact build hash alongside the prior reset-fix hash, retaining its original defaults
 and all ownership/rollback checks. Full script parsing and 17 focused hash-admission
 checks pass in each of PowerShell 5.1 and 7.6.5; these execute only the extracted
 allowlist/guard, not the updater. Evidence is in
 `runtime/evidence/hud-update-admission-fcfd50ce37a54c5bb8cb70b71142d86a`.
-A future deployment must first clean the owned
-expired arm and disable the owned proxy after normal closure, then specify
-`runtime/hud-compositor-resetfix` as the previous bundle and
-`runtime/hud-compositor-aspect-fit` as the new bundle using absolute paths.
+The proposed static-only deployment was superseded by the continuous build below;
+the separate aspect-fit bundle was not installed.
 
 This run kept the owned empty mod list from the successful baseline so only the
-renderer changed. The list and expired arm file remain for ownership-checked
-cleanup after normal game closure. No continuous UI stream, slot clicks, crafting
-or host input suppression was exercised by this static preview.
+renderer changed. No continuous UI stream, slot clicks, crafting or host input
+suppression was exercised by this static preview. The subsequent deployment below
+archived its expired arm after ownership verification.
+
+## Continuous vanilla UI stream — 2026-10-12
+
+The completed snapshot lab remains intact. A separate Java21/JNA mode captures
+the normal vanilla GUI through the existing three PBOs, discards older completed
+capture IDs and publishes the latest frame from a worker. The original channel
+in `protocol/HUD_STREAM.md` uses a fresh named mapping and mutex, exact producer
+and target PID/FILETIME identities, immutable expiry and bounded waits. Invalid,
+closed or exited peers terminate reception; stale frames cannot refresh the
+resident image. No engine offsets or game-thread mapping/file IO were introduced.
+
+The real run in
+`runtime/evidence/hud-stream-20261012-212421-479e9128381f425f8c6c3f9ae73bdc4d`
+created `MineCome-HudStream-404335e7-563f-46b1-bf16-1d80005edfc9` and sent 344
+nontransparent frames to the standalone native receiver. Both sides observed
+hotbar selection 0, selection 1, the actual Creative inventory screen, and selection
+2 after closing that screen. Fresh client/server inventories agreed before each
+capture. The preserved PNG samples were visually inspected as actual vanilla UI.
+The intentional publication pause made the receiver's freshness gate inactive;
+fresh reception resumed afterward. The receiver observed the closed marker, and
+Minecraft saved and exited normally. All mapping/mutex handles were released.
+The target was the standalone controller process: no KCD compositor was armed,
+and the receipt explicitly keeps `kcd_compositing_verified=false`.
+
+Validation passes 168 Java stream checks, the existing 36 snapshot checks and
+146 native checks. The separately frozen native build and review receipt is
+`runtime/evidence/hud-stream-native-frozen-3bc7270598a34b42bc8738cb919966e2/verification.json`.
+Its add-on SHA256 is
+`d7ebc92b59f7971998f1eafb5afe433b5bc44b84a272bcfc9840c49e1d1e6fd8`.
+The actual transport run records its own receiver hash; it is distinct from the
+subsequently rebuilt frozen artifact. Compilation and standalone evidence do not
+establish live D3D12 composition.
+
+The stream add-on uses the aspect-fit correction, a persistent texture and three
+fenced upload buffers. It checks the age of the frame actually uploaded, even
+while newer frames arrive. Busy upload slots drop updates. ReShade's public APIs
+can internally flush or wait; no absolute nonblocking renderer claim is made.
+Expiry hides the layer, with GPU resources retained until safe reset/unload.
+Independent review resolved a contended-callback lifetime race and confirmed
+effect-handle invalidation, upload ordering and worker exception containment.
+
+With every KCD process closed, the owned expired static arm was archived and the
+updater replaced only the former add-on. The previous bytes and receipts were
+backed up; the pinned owned proxy was enabled last. Preflight passed in PowerShell
+5.1 and 7.6.5. The installed bundle is `runtime/hud-compositor-stream`, and
+`runtime/evidence/hud-update-20261012-213418-25efcf776e664040bd9047eb4974aa82/update.json`
+records `updated_unarmed`, no game launch and no preview arming. The unchanged
+owned empty mod-order list remains for the controlled renderer comparison; its
+ownership-checked restoration is still owed after that comparison and normal
+closure.
+
+Next verification is a fresh user-started tools world, followed by
+`Start-HudStreamLab.ps1 -Composite` with the explicit installed stream bundle in
+PowerShell 7.3 or later. Continuous display and corrected sizing in KCD2 are pending.
+Physical slot selection, inventory clicks, crafting, held hands, survival HUD
+coverage and KCD menu/input arbitration remain unfinished.

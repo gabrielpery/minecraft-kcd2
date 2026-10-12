@@ -48,8 +48,8 @@ continuous gameplay synchronization. Arming requires the exact supported tools
 executable, PID/start identity, checked frame files and a maximum 45-second lease.
 Other foreground windows, expiry and unsupported formats hide the layer.
 
-Next stages are continuous bounded frame transport and host-to-vanilla UI input
-with focus/release handling. Drawing the inventory screen alone does not verify
+The subsequent continuous transport implementation is recorded below. The next
+input stage is host-to-vanilla UI control with focus/release handling. Drawing the inventory screen alone does not verify
 clicking slots, crafting, or KCD menu/input arbitration. The existing movement and
 stone labs remain independent while this rendering path is brought up.
 
@@ -61,7 +61,7 @@ identity, expiry, dimensions and compositing math. `minecome_check_hud_fx` compi
 the actual FX using ReShade's DXBC 5.1 backend at two resolutions. These checks
 cannot establish that the game loaded ReShade or presented the layer.
 
-The final offline build passes 36 Java pixel/output checks and 117 native contract
+The initial offline build passed 36 Java pixel/output checks and 117 native contract
 and lifecycle checks. Four shader entries compile through the pinned ReShade DXBC
 backend. A source review found a reset-lifetime bug: ReShade destroys effect handles
 before its `destroy_effect_runtime` callback. Cleanup now invalidates cached handles
@@ -160,37 +160,94 @@ HUD milestone, with the native logs separately proving submission of all states.
 The user also reported an undersized canvas. The integer-scale fit selected 2×
 for 854×480 into 2560×1440, leaving a 1708×960 inset. The aspect-fit correction now
 builds and passes 131 focused contract checks, retaining point sampling. Its bundle
-is staged at `runtime/hud-compositor-aspect-fit`, independently of the currently
-loaded add-on. It has not been installed or live verified, and the existing updater
-now accepts the exact scale-fix hash alongside the reset-fix hash. Deployment still
-requires normal game closure, owned expired-arm cleanup and proxy disable, plus
-explicit previous/new bundle paths. Continuous transport and inventory controls
-remain the next implementation stages.
+was staged at `runtime/hud-compositor-aspect-fit`. That separate static-only build
+was not installed; the subsequently installed continuous add-on includes the same
+correction. Corrected sizing remains unverified in KCD2. The updater keeps separate
+exact static/stream build allowlists and refuses either existing arm filename.
 
 The successful zero-mod diagnostic's owned empty mod list stays in place for this
 renderer-only comparison. Its eventual restoration must verify the original file
 identity and empty contents after game closure. This preview used `Arm-HudPreview.ps1`
 with the existing verified three-frame Minecraft capture and the absolute path to
 `runtime/hud-compositor-resetfix` as its bundle. No new Minecraft launch was needed
-for the completed static display proof. The add-on accepts one arm per process;
-the expired config requires ownership-checked cleanup before a future session.
+for the completed static display proof. Its expired config has since been archived
+after ownership verification. Both add-on modes accept one arm per process.
 
 The SDK, official runtime, generated captures and Minecraft assets remain local
 under ignored directories. No original game executable is overwritten. Runtime
 installation and a fresh game start are separate from compilation/capture. See
 `docs/PROGRESS.md` for the latest actual evidence and remaining live checks.
 
-## Next implementation slice
+## Continuous implementation and actual Minecraft evidence
 
-Keep the completed snapshot lab intact and add a bounded continuous capture mode.
-Reuse its three PBOs/fences, but publish the newest frame through a separate CPU
-shared-memory channel with process/session identity and a freshness deadline.
-The existing gameplay bridge caps payloads at 65,536 bytes and is not the frame
-transport. Java stays on its current Java 21 bytecode baseline.
+`HudStreamLab` is a separate opt-in Creative lab; the completed snapshot mode stays
+intact. Normal vanilla rendering supplies a 20-second sequence of hotbar selection
+0, selection 1, the real Creative inventory, and selection 2 after closing it.
+The existing three-PBO adapter retains original capture timestamps and rejects
+out-of-order completed capture IDs. A latest-frame mailbox hands pixels to a worker
+for conversion, transport and bounded evidence output. Java remains on its Java21
+bytecode baseline and uses Minecraft's existing JNA 5.14.0 dependency.
 
-On the host, reuse the effect with a persistent texture and fenced upload slots;
-bind semantics only on allocation/reload. The inspected pinned EldenCraft
-`compositor/src/addon.cpp` upload path provides the public D3D12/ReShade precedent.
-After continuous updates and producer-disconnect hiding work, add a separate
-vanilla UI input mode. The current walking observer disarms on buttons/wheel and
-the guest movement lab rejects menus, so neither currently controls inventory.
+The original [stream contract](../../protocol/HUD_STREAM.md) defines an 8,294,656-byte
+pagefile-backed mapping and a separate Win32 mutex with fresh run-derived names.
+The producer refuses existing objects; the receiver only opens existing objects.
+Every header repeats the exact PID/creation FILETIME identities and immutable
+expiry. Mutex waits are at most 5 ms, abandonment terminates the session, and
+validation/conversion uses a private snapshot. A lease lasts at most 180 seconds;
+replayed frames cannot refresh it or image freshness. Mapping and mutex APIs run
+only on workers. The 65,536-byte gameplay socket protocol is unchanged.
+
+`hud_stream_addon.cpp` follows the inspected EldenCraft upload pattern using public
+ReShade APIs: one persistent texture, three aligned upload buffers, barriers and
+copy fences. Semantic bindings change only on allocation/reload. Busy upload slots
+drop updates, and the renderer separately expires the frame actually uploaded
+500 ms after its local receiver observation. Closed, invalid or exited producers
+hide the layer. Upload fences cover staging reads; safe lifecycle queue-idle
+cleanup protects later texture draws. Effect handles are forgotten before reset
+cleanup, and callback contention disables the layer through a fresh current
+runtime handle without dereferencing shared service state.
+
+ReShade's public signal and semantic APIs may internally flush or wait. The frame
+path performs no file/mapping IO and never waits for a free upload slot, but is not
+claimed to be entirely nonblocking. On expiry, GPU resources remain allocated
+until runtime reset/unload rather than being freed while effects may still use them.
+
+The fresh actual-Minecraft run in
+`runtime/evidence/hud-stream-20261012-212421-479e9128381f425f8c6c3f9ae73bdc4d`
+published and received 344 nontransparent frames. The native receiver saw all four
+states, became inactive during an intentional publication pause, resumed on fresh
+frames and observed closure. Client/server inventories agreed, saved PNG samples
+were visually inspected, and Minecraft saved/exited normally. This run targeted
+the standalone controller process; it did not arm or display the stream in KCD2.
+
+Validation passes 168 Java stream checks, the existing 36 snapshot checks and
+146 native checks. The separately frozen native build/review receipt is
+`runtime/evidence/hud-stream-native-frozen-3bc7270598a34b42bc8738cb919966e2/verification.json`.
+The real transport run and frozen build retain their own artifact hashes, keeping
+actual process evidence distinct from the later reviewed/rebuilt add-on.
+
+## Installed stream and next live check
+
+The continuous add-on, including the aspect-fit correction, is installed unarmed
+from `runtime/hud-compositor-stream`. With KCD closed, the updater replaced only
+the owned add-on, preserved its predecessor and enabled the pinned owned proxy
+last. Both PowerShell 5.1 and 7.6.5 preflight passed. Deployment evidence is
+`runtime/evidence/hud-update-20261012-213418-25efcf776e664040bd9047eb4974aa82/update.json`.
+The old static arm was archived; the owned empty mod-order list remains for the
+controlled renderer comparison and must be restored by ownership-checked cleanup
+after the comparison and normal closure.
+
+A fresh user-started tools world is still required. Once it is ready,
+`Start-HudStreamLab.ps1 -Composite` in PowerShell 7.3 or later starts the isolated
+Minecraft stream and arms the already-loaded add-on. Pass the absolute
+`runtime/hud-compositor-stream` path with `-BundleDirectory`. The controller never
+starts, stops or controls KCD2. Its `-Standalone` mode runs actual Minecraft and the
+native receiver without requiring KCD, and cannot be combined with `-Composite`.
+`Arm-HudStream.ps1` checks the loaded owned artifacts and fresh genuine-producer
+receipt before publishing a create-new arm file.
+
+Live continuous KCD display and corrected sizing remain pending. Next comes a
+separate vanilla UI input mode with focus, release and host-menu arbitration.
+The walking observer currently disarms on buttons/wheel, and the movement lab
+rejects menus; neither controls inventory. Slot clicks, crafting, held hands,
+survival HUD coverage, HDR and GPU sharing remain outside this lab.

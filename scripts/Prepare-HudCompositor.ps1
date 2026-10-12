@@ -9,7 +9,8 @@ param(
     [Parameter(Mandatory = $true)][string]$AddonPath,
     [string]$ShaderPath,
     [string]$OutputDirectory,
-    [string]$InstallerPath
+    [string]$InstallerPath,
+    [ValidateSet('Static','Stream')][string]$Mode='Static'
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -188,9 +189,10 @@ $manifest = [ordered]@{
     runtime=[ordered]@{ version='6.8.0'; acquisition_url=$setupUrl; installer_sha256=$setupHash; reshade64_sha256=$runtimeHash; proxy_name='dxgi.dll'; full_addon_support=$true }
     sdk=[ordered]@{ expected_commit=$sdkCommit; source_root=(Join-Path $projectRoot 'external\reshade'); license_source=$licensePath; license_sha256=(Get-BytesHash $license) }
     original_addon_source=$AddonPath; original_shader_source=$ShaderPath; prepare_script_sha256=(Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256).Hash.ToLowerInvariant()
-    arm_config_relative_path='minecome-hud/addons/MineComeHud.ini'; preview_armed=$false; live_kcd_compositing_verified=$false
+    arm_config_relative_path=$(if($Mode -eq 'Stream'){'minecome-hud/addons/MineComeHudStream.ini'}else{'minecome-hud/addons/MineComeHud.ini'}); preview_armed=$false; live_kcd_compositing_verified=$false
     files=$files
 }
+if($Mode -eq 'Stream') {$manifest.stream_protocol=1}
 $manifestBytes = $utf8.GetBytes(($manifest | ConvertTo-Json -Depth 8) + "`n")
 if (Test-Path -LiteralPath (Join-Path $OutputDirectory 'bundle.json')) {
     if ((Get-BytesHash (Read-BoundedFile (Join-Path $OutputDirectory 'bundle.json') 1MB)) -cne (Get-BytesHash $manifestBytes)) { throw 'Conflicting HUD bundle provenance manifest.' }

@@ -43,10 +43,15 @@ audit-only until KCD control ownership and restoration are established.
 with two selected slots and its real Creative inventory screen, with item contents
 confirmed by the client and server. The renderer path follows SkyCraft/EldenCraft:
 captured vanilla pixels feed a native host compositor. The first KCD D3D12/ReShade
-component is a bounded static-frame proof. **The user now confirms seeing the
+component completed a bounded static-frame proof. **The user confirms seeing the
 Minecraft HUD inside KCD2**, and native logs record submission of both hotbar
-snapshots and the Creative inventory snapshot. Continuous frame transport and
-inventory interaction remain unfinished. See
+snapshots and the Creative inventory snapshot. **Continuous UI transport now also
+passes with real Minecraft:** a fresh world sent 344 frames to the standalone
+native receiver, including three selected slots and its actual Creative inventory.
+The receiver verified stale-frame hiding, fresh resumption and orderly closure.
+The continuous D3D12 add-on is installed unarmed; a fresh user launch and live
+KCD2 display verification are pending.
+Physical inventory controls and host menu/input arbitration remain unfinished. See
 [the HUD compositor](docs/research/HUD-COMPOSITOR.md).
 Earlier tools launches crashed during world loading with the renderer unarmed and
 with its hook disabled. A subsequent explicit PowerShell 7 launch reached the world,
@@ -54,8 +59,10 @@ confirmed by the user and a successful two-minute process/HTTP check, with the h
 and startup mods disabled. PowerShell 7 is the working launch path; the cause of the
 earlier exits remains unresolved. The repaired compositor subsequently loaded in
 a fresh world and completed its 40-second preview. The user reported the HUD
-canvas was too small. The aspect-fit correction now builds and passes 131 focused
-checks; it is staged for a later restart and has not replaced the running add-on.
+canvas was too small. The aspect-fit correction passes 131 focused checks and is
+included in the new continuous compositor. The stream implementation passes 168
+Java checks and 146 native checks; the existing 36 snapshot checks still pass.
+Corrected sizing still needs live KCD2 verification.
 
 The retail KCSE route is blocked by a missing verified Steam 1.5.6 address library.
 The installed official tools run a distinct 1.5.5 development build. Its working HTTP

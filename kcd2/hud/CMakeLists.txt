@@ -7,6 +7,44 @@ set(MINECOME_RESHADE_ROOT "${PROJECT_SOURCE_DIR}/external/reshade" CACHE PATH
 if(NOT EXISTS "${MINECOME_RESHADE_ROOT}/include/reshade.hpp")
     message(FATAL_ERROR "Fetch the pinned ReShade SDK; no dependencies are installed by this build")
 endif()
+
+# The continuous experiment has distinct outputs and never replaces a previously
+# verified static addon. Deployment remains an explicit controller operation.
+add_library(minecome_hud_stream STATIC stream_contract.cpp stream_channel.cpp)
+target_compile_features(minecome_hud_stream PUBLIC cxx_std_20)
+target_include_directories(minecome_hud_stream PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+target_compile_definitions(minecome_hud_stream PUBLIC WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
+target_link_libraries(minecome_hud_stream PUBLIC minecome_hud_contract bcrypt)
+add_executable(minecome_hud_stream_receiver stream_receiver.cpp)
+target_link_libraries(minecome_hud_stream_receiver PRIVATE minecome_hud_stream)
+add_library(minecome_hud_stream_compositor SHARED hud_stream_addon.cpp)
+target_link_libraries(minecome_hud_stream_compositor PRIVATE minecome_hud_stream user32)
+target_include_directories(minecome_hud_stream_compositor PRIVATE "${MINECOME_RESHADE_ROOT}/include")
+set_target_properties(minecome_hud_stream_compositor PROPERTIES
+    OUTPUT_NAME "MineComeHudCompositor" PREFIX "" SUFFIX ".addon64")
+set_target_properties(minecome_hud_stream_receiver minecome_hud_stream_compositor PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/stream"
+    ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/stream"
+    PDB_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/stream")
+if(MSVC)
+    foreach(target minecome_hud_stream minecome_hud_stream_receiver minecome_hud_stream_compositor)
+        set_target_properties(${target} PROPERTIES MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+        target_compile_options(${target} PRIVATE /W4 /permissive- /utf-8 /EHsc)
+    endforeach()
+endif()
+add_custom_command(TARGET minecome_hud_stream_compositor POST_BUILD
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "${CMAKE_CURRENT_SOURCE_DIR}/shaders/MineComeHud.fx"
+        "$<TARGET_FILE_DIR:minecome_hud_stream_compositor>/MineComeHud.fx")
+if(BUILD_TESTING)
+    add_executable(minecome_hud_stream_tests stream_tests.cpp)
+    target_link_libraries(minecome_hud_stream_tests PRIVATE minecome_hud_stream)
+    if(MSVC)
+        set_target_properties(minecome_hud_stream_tests PROPERTIES MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+        target_compile_options(minecome_hud_stream_tests PRIVATE /W4 /permissive- /utf-8 /EHsc)
+    endif()
+    add_test(NAME hud_stream_contract_and_channel COMMAND minecome_hud_stream_tests)
+endif()
 add_library(minecome_hud_contract STATIC hud_contract.cpp)
 target_include_directories(minecome_hud_contract PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_compile_features(minecome_hud_contract PUBLIC cxx_std_20)

@@ -13,6 +13,7 @@ $exeHash='a32d077e6b54e5cd0c5a5f3194f473779706ff266a711e4745ccdb598843340a'
 $proxyHash='0cee63f9c9f13f3ac909c5b4903f4dbb4b719a7ab3b4f13b0deaf83c814b94f7'
 $supportedAddonHashes=@('a9bb60999fb526df64b3c61975431aed7c0b85728dc21a30db91b41bfccea484',
     '819499b52971d5027745be24e136b4a428975d108870ee0f70c1edfdf60b69cb')
+$supportedStreamAddonHashes=@('d7ebc92b59f7971998f1eafb5afe433b5bc44b84a272bcfc9840c49e1d1e6fd8')
 $expected=@('dxgi.dll','ReShade.ini','MineComeHudPreset.ini','ReShade-LICENSE.txt',
     'minecome-hud/addons/MineComeHudCompositor.addon64','minecome-hud/shaders/MineComeHud.fx')
 $utf8=[Text.UTF8Encoding]::new($false,$true)
@@ -116,13 +117,17 @@ if($old.schema-ne 1 -or $old.kind-cne'minecome_hud_install_v1' -or $old.exe_sha2
    -not ([IO.Path]::GetFullPath($old.bundle).Equals($PreviousBundleDirectory,[StringComparison]::OrdinalIgnoreCase)) -or @($old.files).Count-ne 6){throw 'Previous receipt does not own this exact six-file tools installation.'}
 $newManifestPath=Join-Path $BundleDirectory 'bundle.json';$manifest=Read-Json $newManifestPath
 if($manifest.schema-ne 1 -or $manifest.kind-cne'minecome_hud_compositor_bundle_v1' -or $manifest.tools_only-ne$true -or @($manifest.files).Count-ne 6 -or
-   $manifest.runtime.version-cne'6.8.0' -or $manifest.runtime.full_addon_support-ne$true -or $manifest.runtime.reshade64_sha256-cne $proxyHash -or
-   $manifest.arm_config_relative_path-cne'minecome-hud/addons/MineComeHud.ini'){throw 'Unexpected pinned ReShade6.8.0 update bundle.'}
+   $manifest.runtime.version-cne'6.8.0' -or $manifest.runtime.full_addon_support-ne$true -or $manifest.runtime.reshade64_sha256-cne $proxyHash){throw 'Unexpected pinned ReShade6.8.0 update bundle.'}
+$streamBundle=$manifest.arm_config_relative_path-ceq'minecome-hud/addons/MineComeHudStream.ini'
+if($streamBundle){
+    if($manifest.PSObject.Properties.Name -notcontains 'stream_protocol' -or $manifest.stream_protocol-ne 1){throw 'Stream update requires protocol1 provenance.'}
+}elseif($manifest.arm_config_relative_path-cne'minecome-hud/addons/MineComeHud.ini' -or $manifest.PSObject.Properties.Name -contains 'stream_protocol'){throw 'Unknown or mixed HUD update mode.'}
 $activeProxy=Assert-Unlinked (Join-Path $bin 'dxgi.dll');$disabledProxy=Assert-Unlinked (Join-Path $bin 'dxgi.dll.minecome-disabled')
 if(Test-Path -LiteralPath $activeProxy){throw 'Update requires the active owned proxy to be disabled first; preserved all paths.'}
 if(-not(Test-Path -LiteralPath $disabledProxy -PathType Leaf)){throw 'Owned disabled proxy is missing.'}
 $armPath=Assert-Unlinked (Join-Path $bin $manifest.arm_config_relative_path)
-if(Test-Path -LiteralPath $armPath){throw 'Existing HUD arm configuration preserved. Update requires an unarmed installation.'}
+$otherArmPath=Assert-Unlinked (Join-Path $bin $(if($streamBundle){'minecome-hud/addons/MineComeHud.ini'}else{'minecome-hud/addons/MineComeHudStream.ini'}))
+if((Test-Path -LiteralPath $armPath) -or (Test-Path -LiteralPath $otherArmPath)){throw 'Existing HUD arm configuration preserved. Update requires an unarmed installation.'}
 $installedPath=Assert-InRuntime (Join-Path $BundleDirectory 'installed.json')
 if(Test-Path -LiteralPath $installedPath){throw 'New bundle already has an installed receipt; preserved without overwrite.'}
 $entries=@()
@@ -135,7 +140,10 @@ foreach($relative in $expected){
     $source=Assert-InRuntime (Join-Path $BundleDirectory $relative)
     Assert-File $target $before[0];Assert-File $source $after[0]
     if($relative-ceq'dxgi.dll' -and ($before[0].sha256-cne$proxyHash -or $after[0].sha256-cne$proxyHash)){throw 'Only the pinned unchanged owned proxy may be re-enabled.'}
-    if($relative-ceq'minecome-hud/addons/MineComeHudCompositor.addon64' -and $after[0].sha256-cnotin$supportedAddonHashes){throw 'An exact supported reset-lifetime or aspect-fit addon is required.'}
+    if($relative-ceq'minecome-hud/addons/MineComeHudCompositor.addon64'){
+        $allowedHashes=if($streamBundle){$supportedStreamAddonHashes}else{$supportedAddonHashes}
+        if($after[0].sha256-cnotin$allowedHashes){throw 'An exact supported addon for the declared static/stream mode is required.'}
+    }
     $entries+=[pscustomobject]@{Relative=$relative;Target=$target;Source=$source;Old=$before[0];New=$after[0];Changed=($before[0].sha256-cne$after[0].sha256);Backup=$null;Temp=$null}
 }
 $builtAddon=Assert-Unlinked $manifest.original_addon_source
@@ -167,7 +175,7 @@ try{
     }
     foreach($entry in $entries){Assert-File $entry.Target $entry.New}
     Assert-Closed;Assert-Exe
-    if((Test-Path -LiteralPath $activeProxy) -or (Test-Path -LiteralPath $armPath)){throw 'Proxy/arm path appeared during update; no re-enable attempted.'}
+    if((Test-Path -LiteralPath $activeProxy) -or (Test-Path -LiteralPath $armPath) -or (Test-Path -LiteralPath $otherArmPath)){throw 'Proxy/arm path appeared during update; no re-enable attempted.'}
     $installation=[ordered]@{schema=1;kind='minecome_hud_install_v1';installed_utc=[DateTime]::UtcNow.ToString('o');target_exe=$gameExe;exe_sha256=$exeHash;bundle=$BundleDirectory;files=$manifest.files;armed=$false;game_launched=$false;live_kcd_compositing_verified=$false;previous_installation=$oldReceiptPath;update_evidence=$evidence}
     Write-NewJson $installedPath $installation
     $installedHash=(Get-FileHash -LiteralPath $installedPath -Algorithm SHA256).Hash

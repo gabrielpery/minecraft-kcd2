@@ -114,9 +114,10 @@ Never load newer retail1.5.6 saves into this older1.5.5 development game. Backup
 - Menu validity flags must not be treated as a player at0,0,0. No transform is marked
   calibrated. Provisional1block/unit and axis math require live measurements.
 - Minecraft sends configured vertical FOV, excluding transient renderer modifiers.
-- Shared textures/frame synchronization, host depth compositing and native dynamic
-  block submission are future work. Official tool build ships D3D12, so Skyrim's
-  D3D11 render code cannot be used directly.
+- GPU-shared textures, host depth compositing and native dynamic block submission
+  are future work. Bounded CPU shared-memory UI transport now passes with real
+  Minecraft and a standalone receiver; continuous display in KCD2 is pending.
+  The official tool build ships D3D12, so Skyrim's D3D11 code cannot be used directly.
 - Current local token authentication does not authenticate host identity or defend
   against an attacker who already has access to the user's files.
 - Java stream writes lack a separate deadline. Networking runs on a daemon and
@@ -134,8 +135,9 @@ The hook was disabled for the startup investigation. A separate confirmed add-on
 reset-lifetime defect was fixed and tested offline; its relationship to the crashes
 is unproven. The repaired build has since been installed and reached the world.
 Genuine Minecraft-side hotbar and Creative screen capture passed; the user now
-confirms the HUD is visible inside KCD2. Continuous UI transport and inventory
-interaction remain unfinished.
+confirms the static HUD is visible inside KCD2. Continuous UI transport now passes
+with real Minecraft and a standalone native receiver; continuous KCD display and
+inventory interaction remain unverified.
 The subsequent bounded user-run diagnostic captured exit code 250 (`0x000000FA`)
 after 28.462 seconds. Six complete module snapshots omitted ReShade and the add-on;
 available system commit remained above 5.37 GB in all 28 memory samples. The meaning
@@ -158,10 +160,26 @@ inventory snapshot or selected-slot transition.
 The first visible HUD occupied only 1708×960 pixels within the 2560×1440 host
 backbuffer: integer upscaling rounded the 854×480 source's fit factor from about
 2.998 down to 2. The aspect-fit correction builds and passes 131 focused checks,
-including that exact resolution regression. It is staged but not live verified;
-the currently open game retains the verified earlier add-on. The zero-mod
-comparison's owned empty mod-order file also remains until verified cleanup after
-normal game closure.
+including that exact resolution regression. The continuous compositor includes
+this correction, but corrected sizing is not yet live verified. The zero-mod
+comparison's owned empty mod-order file requires ownership-checked cleanup after
+normal game closure when that comparison is complete.
+
+The continuous lab is a 20-second scripted Creative UI sequence, not an interactive
+inventory. Real Minecraft sent 344 nontransparent frames to the standalone native
+receiver, which observed all four states, the intentional pause, freshness expiry,
+resumption and closed marker. No KCD compositor was armed in that run. The native
+add-on is compiled, reviewed and installed unarmed; a fresh user launch and live
+streaming/GPU behavior inside KCD2 still need verification. The current walking observer disarms on buttons/wheel and the
+movement lab rejects menus, so neither is an inventory input bridge.
+
+Stream sessions have one immutable lease of at most 180 seconds and accept one
+producer per process. Frames expire 500 ms after receiver observation; a busy GPU
+upload slot drops updates without refreshing the resident image's age. ReShade's
+public signal and semantic APIs can internally flush or wait, so this is not a
+claim of a completely nonblocking render path. Expiry hides the layer; owned GPU
+resources remain until safe runtime reset/unload cleanup. HDR, GPU sharing, held
+hands, survival HUD coverage, slot clicks and crafting remain outside this lab.
 
 The official tools EXE has translated FileVersion/ProductVersion1.5.5.0 but fixed
 numeric version1.0.0.0. The native gate checks both, plus the expected distribution

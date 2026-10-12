@@ -14,6 +14,13 @@ loom {
                 vmArgs '-Dminecome.hudExportLab=true'
             if (project.hasProperty('minecomeHudExportDirectory'))
                 vmArgs "-Dminecome.hudExportDirectory=${project.property('minecomeHudExportDirectory')}"
+            if (project.hasProperty('minecomeHudStreamLab'))
+                vmArgs '-Dminecome.hudStreamLab=true'
+            for (String suffix : ['Run','TargetPid','TargetStart','ExpiresUtcMs','Directory']) {
+                String key = 'minecomeHudStream' + suffix
+                if (project.hasProperty(key))
+                    vmArgs "-Dminecome.hudStream${suffix}=${project.property(key)}"
+            }
             if (project.hasProperty('minecomeTokenFile'))
                 vmArgs "-Dminecome.tokenFile=${project.property('minecomeTokenFile')}"
             if (project.hasProperty('minecomePort'))
@@ -53,6 +60,9 @@ dependencies {
     mappings "net.fabricmc:yarn:${project.yarn_mappings}:v2"
     modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
     modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
+    // Minecraft 1.21.1 already supplies these exact JNA libraries at runtime.
+    implementation 'net.java.dev.jna:jna:5.14.0'
+    implementation 'net.java.dev.jna:jna-platform:5.14.0'
 }
 sourceSets {
     main.java.srcDir '../protocol/java/src/main/java'
@@ -127,4 +137,20 @@ tasks.register('hudExportTest', JavaExec) {
     dependsOn testClasses
     classpath = sourceSets.test.runtimeClasspath
     mainClass = 'dev.minecome.hud.HudExportTests'
+}
+
+tasks.register('hudStreamTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'dev.minecome.hud.HudStreamTests'
+    jvmArgs '--enable-native-access=ALL-UNNAMED'
+}
+
+tasks.register('hudStreamFixture', JavaExec) {
+    dependsOn classes
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'dev.minecome.hud.HudStreamFixture'
+    jvmArgs '--enable-native-access=ALL-UNNAMED'
+    if (project.hasProperty('minecomeHudStreamFixtureArgs'))
+        args project.property('minecomeHudStreamFixtureArgs').toString().split('\\|', -1)
 }
