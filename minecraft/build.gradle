@@ -1,0 +1,81 @@
+plugins {
+    id 'fabric-loom' version '1.10.5'
+}
+version = project.mod_version
+group = project.maven_group
+base { archivesName = project.archives_base_name }
+repositories { mavenCentral() }
+loom {
+    runs {
+        client {
+            programArgs '--username', 'MineComeLab'
+            vmArgs '--enable-native-access=ALL-UNNAMED'
+            if (project.hasProperty('minecomeTokenFile'))
+                vmArgs "-Dminecome.tokenFile=${project.property('minecomeTokenFile')}"
+            if (project.hasProperty('minecomePort'))
+                vmArgs "-Dminecome.port=${project.property('minecomePort')}"
+            if (project.hasProperty('minecomeExportStone'))
+                vmArgs '-Dminecome.exportStoneOnStart=true'
+            if (project.hasProperty('minecomeExitAfterSeconds'))
+                vmArgs "-Dminecome.exitAfterSeconds=${project.property('minecomeExitAfterSeconds')}"
+            if (project.hasProperty('minecomeSmokeWorld'))
+                vmArgs '-Dminecome.smokeWorld=true'
+            if (project.hasProperty('minecomeDynamicBridgeSmoke'))
+                vmArgs '-Dminecome.dynamicBridgeSmoke=true'
+            if (project.hasProperty('minecomeInteractiveStoneLab'))
+                vmArgs '-Dminecome.interactiveStoneLab=true'
+            if (project.hasProperty('minecomeGroundMovementLab'))
+                vmArgs '-Dminecome.groundMovementLab=true'
+            if (project.hasProperty('minecomeGroundPatchFile'))
+                vmArgs "-Dminecome.groundPatchFile=${project.property('minecomeGroundPatchFile')}"
+            if (project.hasProperty('minecomeMovementTraceFile'))
+                vmArgs "-Dminecome.movementTraceFile=${project.property('minecomeMovementTraceFile')}"
+            if (project.hasProperty('minecomeSmokeWorldSeconds'))
+                vmArgs "-Dminecome.smokeWorldSeconds=${project.property('minecomeSmokeWorldSeconds')}"
+        }
+    }
+}
+dependencies {
+    minecraft "com.mojang:minecraft:${project.minecraft_version}"
+    mappings "net.fabricmc:yarn:${project.yarn_mappings}:v2"
+    modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
+    modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
+}
+sourceSets {
+    main.java.srcDir '../protocol/java/src/main/java'
+    test.java.srcDir '../protocol/java/src/test/java'
+}
+tasks.withType(JavaCompile).configureEach { options.release = 21 }
+java {
+    sourceCompatibility = JavaVersion.VERSION_21
+    targetCompatibility = JavaVersion.VERSION_21
+    withSourcesJar()
+}
+processResources {
+    inputs.property 'version', project.version
+    filesMatching('fabric.mod.json') { expand version: project.version }
+}
+tasks.register('protocolTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'dev.minecome.protocol.ProtocolTests'
+}
+check.dependsOn protocolTest
+tasks.register('smokeSequenceTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'dev.minecome.SmokeSequenceTests'
+}
+check.dependsOn smokeSequenceTest
+tasks.register('stoneInputGateTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'dev.minecome.StoneInputGateTests'
+}
+check.dependsOn stoneInputGateTest
+tasks.register('groundPatchTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'dev.minecome.terrain.GroundPatchTests'
+}
+check.dependsOn groundPatchTest

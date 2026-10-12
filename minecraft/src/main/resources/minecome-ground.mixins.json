@@ -1,0 +1,8 @@
+{
+  "required": true,
+  "package": "dev.minecome.terrain.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "mixins": ["GroundCollisionMixin"],
+  "client": ["GroundCorrectionMixin"],
+  "injectors": { "defaultRequire": 1 }
+}

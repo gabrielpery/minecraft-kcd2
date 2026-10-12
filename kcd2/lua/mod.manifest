@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<kcd_mod>
+  <info>
+    <name>MineCome camera diagnostics</name>
+    <description>Original read-only camera logging and diagnostic commands.</description>
+    <author>MineCome contributors</author>
+    <version>0.1.0</version>
+    <created_on>2026-10-11</created_on>
+    <modid>minecome</modid>
+  </info>
+  <supports>
+    <version>1.5.5</version>
+    <version>1.5.6</version>
+  </supports>
+</kcd_mod>

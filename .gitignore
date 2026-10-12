@@ -1,0 +1,16 @@
+external/
+.tools/
+build/
+runtime/
+config/bridge.token
+minecraft/.gradle/
+minecraft/.gradle-user-home/
+minecraft/build/
+minecraft/run/
+minecraft/evidence/
+.env
+.env.*
+*.user
+*.log
+__pycache__/
+*.pyc

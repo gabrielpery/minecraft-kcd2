@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "minecome",
+  "version": "${version}",
+  "name": "MineCome",
+  "description": "Local authenticated KCD2 bridge: real Minecraft pose and block observation.",
+  "authors": ["MineCome contributors"],
+  "environment": "client",
+  "entrypoints": {"client": ["dev.minecome.MineComeClient"]},
+  "mixins": ["minecome-ground.mixins.json"],
+  "depends": {
+    "fabricloader": ">=0.16.14",
+    "fabric-api": "*",
+    "minecraft": "1.21.1",
+    "java": ">=21"
+  }
+}
