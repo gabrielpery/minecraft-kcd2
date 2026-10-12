@@ -1,7 +1,6 @@
 #include "hud_contract.hpp"
 #include <algorithm>
 #include <charconv>
-#include <cmath>
 #include <limits>
 #include <map>
 
@@ -101,8 +100,7 @@ bool premultiply_rgba(std::span<std::uint8_t> pixels, std::uint32_t w, std::uint
 }
 Rect fit_rect(std::uint32_t sw, std::uint32_t sh, std::uint32_t tw, std::uint32_t th) noexcept {
     if (!byte_count(sw, sh) || !tw || !th || tw > 16384 || th > 16384) return {};
-    double scale = std::min(static_cast<double>(tw) / sw, static_cast<double>(th) / sh);
-    if (scale >= 1) scale = std::floor(scale);
+    const double scale = std::min(static_cast<double>(tw) / sw, static_cast<double>(th) / sh);
     const double w = sw * scale / tw, h = sh * scale / th;
     return {static_cast<float>((1 - w) / 2), static_cast<float>((1 - h) / 2),
             static_cast<float>(w), static_cast<float>(h)};

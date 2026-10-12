@@ -11,7 +11,8 @@ if(-not $BundleDirectory){$BundleDirectory=Join-Path $runtimeRoot 'hud-composito
 if(-not $PreviousBundleDirectory){$PreviousBundleDirectory=Join-Path $runtimeRoot 'hud-compositor'}
 $exeHash='a32d077e6b54e5cd0c5a5f3194f473779706ff266a711e4745ccdb598843340a'
 $proxyHash='0cee63f9c9f13f3ac909c5b4903f4dbb4b719a7ab3b4f13b0deaf83c814b94f7'
-$fixedAddonHash='a9bb60999fb526df64b3c61975431aed7c0b85728dc21a30db91b41bfccea484'
+$supportedAddonHashes=@('a9bb60999fb526df64b3c61975431aed7c0b85728dc21a30db91b41bfccea484',
+    '819499b52971d5027745be24e136b4a428975d108870ee0f70c1edfdf60b69cb')
 $expected=@('dxgi.dll','ReShade.ini','MineComeHudPreset.ini','ReShade-LICENSE.txt',
     'minecome-hud/addons/MineComeHudCompositor.addon64','minecome-hud/shaders/MineComeHud.fx')
 $utf8=[Text.UTF8Encoding]::new($false,$true)
@@ -134,7 +135,7 @@ foreach($relative in $expected){
     $source=Assert-InRuntime (Join-Path $BundleDirectory $relative)
     Assert-File $target $before[0];Assert-File $source $after[0]
     if($relative-ceq'dxgi.dll' -and ($before[0].sha256-cne$proxyHash -or $after[0].sha256-cne$proxyHash)){throw 'Only the pinned unchanged owned proxy may be re-enabled.'}
-    if($relative-ceq'minecome-hud/addons/MineComeHudCompositor.addon64' -and $after[0].sha256-cne$fixedAddonHash){throw 'The already-built reset-lifetime fix is required.'}
+    if($relative-ceq'minecome-hud/addons/MineComeHudCompositor.addon64' -and $after[0].sha256-cnotin$supportedAddonHashes){throw 'An exact supported reset-lifetime or aspect-fit addon is required.'}
     $entries+=[pscustomobject]@{Relative=$relative;Target=$target;Source=$source;Old=$before[0];New=$after[0];Changed=($before[0].sha256-cne$after[0].sha256);Backup=$null;Temp=$null}
 }
 $builtAddon=Assert-Unlinked $manifest.original_addon_source

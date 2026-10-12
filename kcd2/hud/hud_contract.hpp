@@ -23,8 +23,8 @@ std::size_t byte_count(std::uint32_t width, std::uint32_t height) noexcept;
 bool premultiply_rgba(std::span<std::uint8_t> pixels, std::uint32_t width,
                       std::uint32_t height) noexcept;
 struct Rect { float x = 0, y = 0, width = 0, height = 0; };
-// Full source canvas, centered with preserved aspect. Integer enlargement where
-// possible; shrinking uses point sampling with a bounded aspect-preserving fit.
+// Full source canvas, centered with preserved aspect for enlargement or shrinking.
+// Fractional fit uses the available target area; the shader retains point sampling.
 Rect fit_rect(std::uint32_t source_width, std::uint32_t source_height,
               std::uint32_t target_width, std::uint32_t target_height) noexcept;
 enum class TeardownMode { live_effects, after_runtime_reset };

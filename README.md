@@ -43,14 +43,19 @@ audit-only until KCD control ownership and restoration are established.
 with two selected slots and its real Creative inventory screen, with item contents
 confirmed by the client and server. The renderer path follows SkyCraft/EldenCraft:
 captured vanilla pixels feed a native host compositor. The first KCD D3D12/ReShade
-component is a bounded static-frame proof; live KCD display, continuous frame
-transport and inventory interaction remain to be verified/implemented. See
+component is a bounded static-frame proof. **The user now confirms seeing the
+Minecraft HUD inside KCD2**, and native logs record submission of both hotbar
+snapshots and the Creative inventory snapshot. Continuous frame transport and
+inventory interaction remain unfinished. See
 [the HUD compositor](docs/research/HUD-COMPOSITOR.md).
 Earlier tools launches crashed during world loading with the renderer unarmed and
 with its hook disabled. A subsequent explicit PowerShell 7 launch reached the world,
 confirmed by the user and a successful two-minute process/HTTP check, with the hook
 and startup mods disabled. PowerShell 7 is the working launch path; the cause of the
-earlier exits remains unresolved. No KCD inventory frame has been verified yet.
+earlier exits remains unresolved. The repaired compositor subsequently loaded in
+a fresh world and completed its 40-second preview. The user reported the HUD
+canvas was too small. The aspect-fit correction now builds and passes 131 focused
+checks; it is staged for a later restart and has not replaced the running add-on.
 
 The retail KCSE route is blocked by a missing verified Steam 1.5.6 address library.
 The installed official tools run a distinct 1.5.5 development build. Its working HTTP

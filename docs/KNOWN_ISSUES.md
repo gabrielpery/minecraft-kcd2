@@ -130,11 +130,12 @@ the new HUD renderer installed but unarmed and after the owned DXGI hook was
 disabled. Both game logs end at `[MFX] Loading FXLib 'collisions' ...`; this is a
 last observed log line, not an identified failing subsystem. No exception stack
 or exit code was captured. ReShade's log did not change in the hook-disabled run.
-The hook remains disabled while startup is investigated. A separate confirmed
-add-on reset-lifetime defect has been fixed and tested offline; that repaired build
-is staged but not installed, and its relationship to the crashes is unproven.
-No KCD HUD/inventory frame, continuous UI transport or inventory interaction has
-been verified. Genuine Minecraft-side hotbar and Creative screen capture passed.
+The hook was disabled for the startup investigation. A separate confirmed add-on
+reset-lifetime defect was fixed and tested offline; its relationship to the crashes
+is unproven. The repaired build has since been installed and reached the world.
+Genuine Minecraft-side hotbar and Creative screen capture passed; the user now
+confirms the HUD is visible inside KCD2. Continuous UI transport and inventory
+interaction remain unfinished.
 The subsequent bounded user-run diagnostic captured exit code 250 (`0x000000FA`)
 after 28.462 seconds. Six complete module snapshots omitted ReShade and the add-on;
 available system commit remained above 5.37 GB in all 28 memory samples. The meaning
@@ -148,8 +149,19 @@ The same zero-mod diagnostic subsequently reached the world when the user invoke
 it through the bundled PowerShell 7.6.5 executable. The user confirmed world readiness;
 the game survived the full two-minute monitor and its official Console API responded.
 Use the working PowerShell 7 launch path. This outcome does not yet establish which
-shell/environment difference caused the prior exits. The HUD hook is still disabled;
-successful baseline loading does not verify the repaired compositor.
+shell/environment difference caused the prior exits. A later user-started session
+with the repaired hook enabled also reached the world. Its 40-second preview
+submitted all three captured UI states and expired with the game still running.
+The user's visual report confirms the HUD but does not separately confirm the
+inventory snapshot or selected-slot transition.
+
+The first visible HUD occupied only 1708×960 pixels within the 2560×1440 host
+backbuffer: integer upscaling rounded the 854×480 source's fit factor from about
+2.998 down to 2. The aspect-fit correction builds and passes 131 focused checks,
+including that exact resolution regression. It is staged but not live verified;
+the currently open game retains the verified earlier add-on. The zero-mod
+comparison's owned empty mod-order file also remains until verified cleanup after
+normal game closure.
 
 The official tools EXE has translated FileVersion/ProductVersion1.5.5.0 but fixed
 numeric version1.0.0.0. The native gate checks both, plus the expected distribution

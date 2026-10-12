@@ -10,6 +10,13 @@ observation. The final automated two-game run passes matching engine spawn,
 deferred removal and cleanup acknowledgements with zero owned/pending replicas.
 No retail native-engine hook is enabled.
 
+**Current UI milestone: genuine Minecraft HUD visible inside KCD2.** The user
+confirmed the first renderer preview on 2026-10-12. Native receipts show both
+hotbar snapshots and the actual Creative inventory snapshot submitted during the
+40-second lease, followed by expiry with the game still running. This is a static
+capture proof; continuous updates and inventory interaction remain unfinished.
+The user reported an undersized canvas, traced to integer scale rounding.
+
 **Current build: interactive one-cell stone controls live verified.** KCD console
 commands `minecome_place`/`minecome_break` now request real Minecraft vanilla
 actions through an opt-in minor1 protocol. Both real games now confirm placement
@@ -1007,9 +1014,9 @@ The final guest source assembles and passes 36 focused pixel/output checks. The
 live run used Loom development classes; the assembled mod was not separately
 installed. Existing movement/input/stone components were not changed.
 
-KCD composition remains explicitly unverified until the tools process loads the
-new renderer component and a live frame is inspected. Three captured snapshots
-cycle only for the initial renderer proof. Continuous transport, physical inventory
+KCD composition was unverified at this capture stage; the later live preview below
+records the user's first visible HUD confirmation. Three captured snapshots cycle
+only for the initial renderer proof. Continuous transport, physical inventory
 controls, menu arbitration and sustained gameplay are subsequent implementation.
 
 ### Native compositor build and startup investigation
@@ -1039,8 +1046,8 @@ The user then reported another loading crash with the hook disabled. Fresh game
 logs in `runtime/evidence/loading-crash-hook-disabled-20261012-210223` end at the
 same MFX collisions-loading line, and ReShade's log did not update. No corresponding
 Application crash event, exception stack or process exit code was available.
-The cause remains unproven. The fixed source bundle is staged in
-`runtime/hud-compositor-resetfix` and has not been installed or re-enabled.
+The cause remains unproven. At this stage the fixed source bundle was staged in
+`runtime/hud-compositor-resetfix`; the later deployment and preview are recorded below.
 
 The new manual `Start-Kcd2ToolsDiagnostic.ps1` records the missing process exit code,
 sampled modules and memory during a bounded 120-second launch. Windows PowerShell
@@ -1120,4 +1127,52 @@ forward and rollback mutations, and re-enables the owned proxy last. Eight focus
 filesystem cases pass under Windows PowerShell 5.1; independent source review
 confirmed the rollback guards. Evidence is in
 `runtime/evidence/hud-update-fixture-709a44bba6ec46d29d7d9c05e9382316`.
-Actual deployment and the new live HUD frame remain pending the user's restart.
+
+### First visible KCD HUD preview
+
+With all KCD processes closed, the updater replaced the owned add-on with the
+reset-fixed build and re-enabled the pinned DXGI proxy. Other bundle files were
+unchanged. Backups and deployment receipts are in
+`runtime/evidence/hud-update-20261012-210428-0718f9a4d7d749e383037d73b5e20701`.
+The user then launched PID 55096 and confirmed `world ready`. Its loaded module
+paths and hashes match the repaired installation, and the fresh ReShade log
+records successful compilation of the actual HUD effect.
+
+The existing genuine three-frame capture was armed for 40 seconds with run
+`a5b34e65665d45f1b180fbdd0c1fc852`. Native receipts record accepted arming, created
+resources, submissions of snapshots 1, 2 and 3, and lease expiry. The process
+remained alive. The user confirmed that the Minecraft HUD appears when tabbing
+into KCD2 and works, while reporting that it looks too small. This is user visual
+confirmation of the HUD, not an agent screenshot inspection or separate visual
+confirmation of every captured state. The native submission events cover all
+three states. Evidence and the exact user report are preserved in
+`runtime/evidence/hud-preview-arm-20261012-210833-a5b34e65665d45f1b180fbdd0c1fc852`.
+
+The sizing issue is reproducible in `fit_rect`: 854×480 into 2560×1440 has a
+limiting scale of about 2.998, which integer rounding reduces to 2. The resulting
+1708×960 canvas begins at (426,240), explaining the inset appearance. The correction
+removes that rounding, retaining aspect ratio and point sampling while using the
+available backbuffer area. At this resolution the fit becomes 2560×1438.876 pixels,
+leaving only the subpixel top/bottom margins required by the small aspect mismatch.
+It builds in `build/hud-aspect-fit-20261012` and passes 131 focused contract checks,
+including the actual resolution, noninteger scaling, aspect mismatch and bounds.
+The new add-on SHA256 is
+`819499b52971d5027745be24e136b4a428975d108870ee0f70c1edfdf60b69cb`.
+The six-file bundle is staged in `runtime/hud-compositor-aspect-fit`; verification
+is in `build/hud-aspect-fit-20261012/verification.json`. The installed add-on and
+its original built artifact remain unchanged during this open session. Corrected
+scale has not yet been deployed or live verified. The updater now accepts this
+exact build hash alongside the prior reset-fix hash, retaining its original defaults
+and all ownership/rollback checks. Full script parsing and 17 focused hash-admission
+checks pass in each of PowerShell 5.1 and 7.6.5; these execute only the extracted
+allowlist/guard, not the updater. Evidence is in
+`runtime/evidence/hud-update-admission-fcfd50ce37a54c5bb8cb70b71142d86a`.
+A future deployment must first clean the owned
+expired arm and disable the owned proxy after normal closure, then specify
+`runtime/hud-compositor-resetfix` as the previous bundle and
+`runtime/hud-compositor-aspect-fit` as the new bundle using absolute paths.
+
+This run kept the owned empty mod list from the successful baseline so only the
+renderer changed. The list and expired arm file remain for ownership-checked
+cleanup after normal game closure. No continuous UI stream, slot clicks, crafting
+or host input suppression was exercised by this static preview.

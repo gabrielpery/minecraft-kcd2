@@ -75,8 +75,8 @@ during world loading before any preview was armed or frame submitted. The owned
 `dxgi.dll` was renamed to `dxgi.dll.minecome-disabled`. A second user-started run
 also crashed at the same final game-log line (`[MFX] Loading FXLib 'collisions' ...`),
 while ReShade's log stayed unchanged. Neither run yielded an exception stack or
-exit code. The hook remains disabled; the fixed build is staged locally and has
-not been installed. Host visual composition is still unverified.
+exit code. The hook was disabled for the investigation; the repaired build was
+installed later, as recorded below.
 
 `scripts/Disable-HudCompositor.ps1` performs an ownership-checked reversible rollback
 and supports a read-only `-Preview`. Installation and rollback support Windows
@@ -144,27 +144,53 @@ the replacement, and re-enables the pinned owned DXGI proxy last. It does not st
 the game or arm the preview. Failed updates attempt ownership-checked restoration
 and preserve their evidence under `runtime/evidence/hud-update-*`.
 
-After closing KCD normally, the user can run this block in their existing PowerShell
-window. The launch helper selects an existing PowerShell 7 runtime automatically.
-Any terminating update error stops the block before game launch:
+This one-time reset-fix update has already been applied. Do not rerun the original
+update command against the active installation. The launch helper selects an
+existing PowerShell 7 runtime automatically, so future launch instructions need
+only call `Start-Kcd2ToolsTest.ps1` after normal game closure and any required
+ownership-checked deployment/cleanup.
 
-```powershell
-& {
-    $ErrorActionPreference = 'Stop'
-    & 'C:/Users/xephi/Documents/ChatGPT/New project/MineCome/scripts/Update-HudCompositor.ps1'
-    & 'C:/Users/xephi/Documents/ChatGPT/New project/MineCome/scripts/Start-Kcd2ToolsTest.ps1'
-}
-```
+The update and fresh restart have now succeeded. PID 55096 loaded the repaired
+add-on and compiled the effect. A 40-second preview submitted all three genuine
+Minecraft snapshots and expired with KCD2 still running. The user confirmed
+seeing the Minecraft HUD inside the game; their report did not separately identify
+the selected-slot change or inventory frame. This establishes the first visible
+HUD milestone, with the native logs separately proving submission of all states.
+
+The user also reported an undersized canvas. The integer-scale fit selected 2×
+for 854×480 into 2560×1440, leaving a 1708×960 inset. The aspect-fit correction now
+builds and passes 131 focused contract checks, retaining point sampling. Its bundle
+is staged at `runtime/hud-compositor-aspect-fit`, independently of the currently
+loaded add-on. It has not been installed or live verified, and the existing updater
+now accepts the exact scale-fix hash alongside the reset-fix hash. Deployment still
+requires normal game closure, owned expired-arm cleanup and proxy disable, plus
+explicit previous/new bundle paths. Continuous transport and inventory controls
+remain the next implementation stages.
 
 The successful zero-mod diagnostic's owned empty mod list stays in place for this
 renderer-only comparison. Its eventual restoration must verify the original file
-identity and empty contents after game closure. Once the new world is ready, use
-`Arm-HudPreview.ps1` with the existing verified three-frame Minecraft capture and
-`-BundleDirectory runtime/hud-compositor-resetfix`. No new Minecraft launch is needed
-for this static display proof. A new user-confirmed host frame is still required;
-the previous guest capture and successful baseline launch do not establish it.
+identity and empty contents after game closure. This preview used `Arm-HudPreview.ps1`
+with the existing verified three-frame Minecraft capture and the absolute path to
+`runtime/hud-compositor-resetfix` as its bundle. No new Minecraft launch was needed
+for the completed static display proof. The add-on accepts one arm per process;
+the expired config requires ownership-checked cleanup before a future session.
 
 The SDK, official runtime, generated captures and Minecraft assets remain local
 under ignored directories. No original game executable is overwritten. Runtime
 installation and a fresh game start are separate from compilation/capture. See
 `docs/PROGRESS.md` for the latest actual evidence and remaining live checks.
+
+## Next implementation slice
+
+Keep the completed snapshot lab intact and add a bounded continuous capture mode.
+Reuse its three PBOs/fences, but publish the newest frame through a separate CPU
+shared-memory channel with process/session identity and a freshness deadline.
+The existing gameplay bridge caps payloads at 65,536 bytes and is not the frame
+transport. Java stays on its current Java 21 bytecode baseline.
+
+On the host, reuse the effect with a persistent texture and fenced upload slots;
+bind semantics only on allocation/reload. The inspected pinned EldenCraft
+`compositor/src/addon.cpp` upload path provides the public D3D12/ReShade precedent.
+After continuous updates and producer-disconnect hiding work, add a separate
+vanilla UI input mode. The current walking observer disarms on buttons/wheel and
+the guest movement lab rejects menus, so neither currently controls inventory.

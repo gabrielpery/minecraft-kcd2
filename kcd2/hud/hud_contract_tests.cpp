@@ -86,13 +86,33 @@ int main() {
         rect = hud::fit_rect(640,360,1920,1080);
         check(near(rect.width,1) && near(rect.height,1), "integer 3x scale");
         rect = hud::fit_rect(640,360,1600,900);
-        check(near(rect.x,.1f) && near(rect.y,.1f) && near(rect.width,.8f) && near(rect.height,.8f), "integer 2x centered");
+        check(near(rect.x,0) && near(rect.y,0) && near(rect.width,1) && near(rect.height,1), "noninteger same-aspect scale fills target");
+        // Actual first live preview: flooring 2.9976x to 2x incorrectly made
+        // the entire vanilla UI appear inside a centered 1708x960 canvas.
+        rect = hud::fit_rect(854,480,2560,1440);
+        check(near(rect.x,0) && near(rect.width,1) && near(rect.y,1.0f/2562) &&
+            near(rect.height,1280.0f/1281), "live 854x480 canvas fills 2560x1440 width with only aspect-ratio letterbox");
+        rect = hud::fit_rect(640,480,1920,1080);
+        check(near(rect.x,.125f) && near(rect.y,0) && near(rect.width,.75f) && near(rect.height,1), "4:3 canvas pillarboxed inside 16:9 without stretching");
         rect = hud::fit_rect(1920,1080,1280,720);
         check(near(rect.width,1) && near(rect.height,1), "aspect-preserving shrink");
         rect = hud::fit_rect(1920,1080,1280,1024);
         check(near(rect.y,.1484375f) && near(rect.height,.703125f), "resize pillar/letterbox");
         check(hud::fit_rect(1920,1080,0,1080).width == 0, "zero target hidden");
         check(hud::fit_rect(1920,1080,UINT32_MAX,1080).width == 0, "unbounded target hidden");
+        check(hud::fit_rect(1920,1080,1920,0).height == 0 &&
+            hud::fit_rect(1920,1080,1920,16385).height == 0, "zero or unbounded target height hidden");
+        check(hud::fit_rect(0,480,2560,1440).width == 0 &&
+            hud::fit_rect(1921,1080,2560,1440).width == 0 &&
+            hud::fit_rect(1920,1081,2560,1440).height == 0, "invalid source dimensions hidden");
+        for (const auto [tw, th] : {std::pair{1u,1u}, {1600u,900u}, {2560u,1440u}, {16384u,1u}, {1u,16384u}}) {
+            const auto fitted = hud::fit_rect(854,480,tw,th);
+            check(std::isfinite(fitted.x) && std::isfinite(fitted.y) &&
+                fitted.x >= 0 && fitted.y >= 0 && fitted.width > 0 && fitted.height > 0 &&
+                fitted.x + fitted.width <= 1.00001f && fitted.y + fitted.height <= 1.00001f,
+                "valid extreme and ordinary targets remain inside normalized canvas");
+            check(near(fitted.width,1) || near(fitted.height,1), "aspect-fit fills at least one target axis");
+        }
         // Reproduce the actual SDK ordering: an FX handle is cached, then its
         // object is destroyed before the addon receives runtime reset. The
         // lifecycle harness poisons that handle and rejects any uniform use.
