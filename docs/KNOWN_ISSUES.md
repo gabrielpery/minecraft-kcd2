@@ -67,8 +67,12 @@ Never load newer retail1.5.6 saves into this older1.5.5 development game. Backup
   with neutral data. A new isolated Minecraft lab also passes actual client/server
   walking, jumping, landing, view changes and neutral release using fresh scripted
   input and synthetic ground. Physical KCD key/mouse delivery and engine menu
-  detection remain unverified. Its F8 latch is manual arming; mappings are literal
-  defaults. Minecraft uses its ordinary sensitivity/invert settings and refuses
+  detection remain unverified. Its F8 latch is manual arming; explicit key mappings
+  are supported but KCD's effective bindings are not discovered automatically.
+  A new read-only camera capture can seed Minecraft's initial view; the consumer
+  has real-game fixture proof, while that new KCD capture awaits a live run.
+  This is one starting snapshot, not sustained camera alignment.
+  Minecraft uses its ordinary sensitivity/invert settings and refuses
   smooth-camera, spyglass and toggle-sprint modes. Native KCD input remains active;
   the new lab does not drive KCD or establish coupled movement authority.
   The Windows file reader requires hard-link support in local runtime/evidence

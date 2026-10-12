@@ -311,3 +311,26 @@ Minecraft hold-to-sprint and ordinary unsmoothed camera settings are required.
 Successful scripted input does not establish physical KCD input delivery or full
 world movement authority. A validated captured ground patch may be reused through
 `-PatchFile`; its adjacent receipts and source hashes must match.
+
+Movement bindings can be supplied to either `Start-ExternalInputLab.ps1` or
+`Test-KcdRawInputCapture.ps1`:
+
+```powershell
+.\scripts\Start-ExternalInputLab.ps1 -Bindings 'UP,DOWN,LEFT,RIGHT,SPACE,RCTRL'
+```
+
+The six positions are forward, back, left, right, jump and sprint. Defaults remain
+`W,S,A,D,SPACE,LSHIFT`. Use distinct uppercase letters A–Z, `UP/DOWN/LEFT/RIGHT`,
+`SPACE`, `LSHIFT/RSHIFT` or `LCTRL/RCTRL`. F8 remains the fixed arm key. This configures
+the capture helper; it does not change KCD's own bindings or read them automatically.
+Match the list to the controls you intend to use. Unconfigured nonmodifier keys
+still disarm capture.
+
+The non-fixture lab now captures KCD's player position and camera forward/up after
+the ground patch, then seeds Minecraft's starting yaw/pitch once. Keep KCD's player
+and view still while Minecraft loads. A mismatched ground position, stale snapshot,
+rolled camera or near-vertical view refuses startup. Both Minecraft sides must
+adopt the exact initial view before READY. Later mouse movement uses Minecraft's
+ordinary sensitivity/invert settings; matching that initial view does not establish
+continuous camera synchronization. The fixture uses explicit yaw45/pitch−10 to
+verify the same consumer path without a KCD process.

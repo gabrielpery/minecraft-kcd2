@@ -23,8 +23,8 @@ process handle, compares its exact creation FILETIME, and ends if that process e
 Background packets are discarded before raw data is decoded. Foreground identity
 is checked before and after
 [GetRawInputData](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getrawinputdata).
-Only literal virtual-key W/A/S/D, Space and left Shift plus relative mouse deltas
-are retained. Device identities, other app metadata, typed text, mouse buttons and
+Only the six configured virtual keys (default W/A/S/D, Space and left Shift) plus
+relative mouse deltas are retained. Device identities, other app metadata, typed text, mouse buttons and
 wheel data do not enter the recording.
 
 ## Focus, release and arming
@@ -157,3 +157,47 @@ Next integration needs physical KCD input proof, explicit engine gameplay/menu
 guards, binding configuration and KCD input/physics ownership before sustained control.
 Existing Lua follower guards must remain active; physical KCD movement must not be
 misrepresented as Minecraft-authoritative movement.
+
+## Configurable bindings and initial view — 2026-10-12
+
+The optional native `--bindings` argument and wrapper `-Bindings` parameter accept
+six canonical keys in forward/back/left/right/jump/sprint order. The allowlist is
+uppercase A–Z, UP/DOWN/LEFT/RIGHT, SPACE, LSHIFT/RSHIFT and LCTRL/RCTRL. Names must
+be distinct; F8 stays reserved. Native capture validates independently, acknowledges
+the selected mapping on stdout and uses it for both raw events and held-key
+suppression. The wire retains semantic held fields. The observer does not read or
+rewrite the game's effective binding configuration. Generic Shift uses the existing
+MapVirtualKeyW scan-code translation; generic Ctrl is separated by its E0 prefix.
+The focused native binding suite passes125 checks and the existing state suite598.
+Physical remapped-key delivery has not been verified.
+
+`Capture-InputViewSeed.ps1` loads a unique immutable copy of the original
+`view_seed.lua` through the existing exact-tools gate. It requests one matching
+player/camera receipt, records source/hash/process provenance and writes a new
+session-bound view file. The probe only reads established GetWorldPos,
+GetViewCameraDir and GetViewCameraUpDir APIs. It verifies stable raw player/id/API
+references and copies vectors before subsequent reads. No input or physics state
+is changed. Twenty-three Lua5.2 cases pass with simulated bindings; the new capture
+path itself has not run in KCD.
+
+`HostViewSeed` strictly checks bounded UTF-8/JSON, duplicate/exact fields, session
+and process identity, ground SHA256, source kind, age≤60seconds (also rechecked at
+the initial teleport), player distance≤0.1m from the patch center and camera basis.
+Forward/up lengths must be within0.99–1.01, orthogonal within0.01, within1degree of
+zero roll, with horizontal forward magnitude≥0.01. The existing axis mapping gives
+MC forward=(KCD.x,KCD.z,−KCD.y), yaw=atan2(−KCD.x,−KCD.y), and
+pitch=−atan2(KCD.z,hypot(KCD.x,KCD.y)), in degrees. Seventy-five Java checks pass.
+
+Only the existing initial server teleport uses these angles. READY requires both
+client/server angles within0.1degree for two stable seconds. The controller requires
+matching view hash, source kind and both view verification flags on the run's READY
+and PASS markers. Fourteen adversarial marker cases pass; the final guard also
+accepts the exact latest historical live receipts offline. Sixteen PowerShell
+binding cases pass. A real Minecraft fixture initialized yaw45/pitch−10, walked
+1.0727511m, jumped/landed and ended at49.5/−11.8 with neutral controls and no
+post-settle corrections. The custom binding argument in that fixture was configuration
+only; scripted semantic input does not prove native arrow/Ctrl capture.
+
+This is initial snapshot alignment. The user can move KCD's view afterward and its
+mouse gain can differ from Minecraft's. Ongoing view ownership, engine menu state,
+physical controls and native KCD physics remain separate integration work.

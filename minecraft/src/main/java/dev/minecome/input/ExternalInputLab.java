@@ -26,6 +26,7 @@ public final class ExternalInputLab {
     private static volatile ExternalInputLab active;
     private static final double SPAWN_X = 0.5, SPAWN_Z = 0.5;
     private final GroundPatch patch;
+    private final HostViewSeed viewSeed;
     private final Path inputFile;
     private final ExternalInputSessionGate.Identity identity;
     private final ExternalInputSessionGate gate;
@@ -54,8 +55,8 @@ public final class ExternalInputLab {
     private boolean clientYaw, clientPitch, serverYaw, serverPitch;
     private ExternalInputSessionGate.Input held = ExternalInputSessionGate.Input.NEUTRAL;
 
-    private ExternalInputLab(GroundPatch patch, Path inputFile, ExternalInputSessionGate.Identity identity, boolean fixture) {
-        this.patch = patch; this.inputFile = inputFile; this.identity = identity; this.fixture = fixture;
+    private ExternalInputLab(GroundPatch patch, HostViewSeed viewSeed, Path inputFile, ExternalInputSessionGate.Identity identity, boolean fixture) {
+        this.patch = patch; this.viewSeed = viewSeed; this.inputFile = inputFile; this.identity = identity; this.fixture = fixture;
         gate = new ExternalInputSessionGate(identity);
     }
     public static void initialize() {
@@ -64,11 +65,15 @@ public final class ExternalInputLab {
         try {
             var identity = new ExternalInputSessionGate.Identity(required("minecome.externalInputRun"),
                     Long.parseLong(required("minecome.externalInputTargetPid")), required("minecome.externalInputTargetStartFiletime"));
-            var lab = new ExternalInputLab(GroundPatch.read(Path.of(required("minecome.groundPatchFile"))),
-                    Path.of(required("minecome.externalInputFile")), identity, Boolean.getBoolean("minecome.externalInputFixture"));
+            var patch = GroundPatch.read(Path.of(required("minecome.groundPatchFile")));
+            boolean fixture = Boolean.getBoolean("minecome.externalInputFixture");
+            var viewSeed = HostViewSeed.read(Path.of(required("minecome.externalInputViewFile")), identity, patch.sha256(), fixture,
+                    patch.centerX(), patch.centerY(), patch.centerZ(), System.currentTimeMillis());
+            var lab = new ExternalInputLab(patch, viewSeed, Path.of(required("minecome.externalInputFile")), identity, fixture);
             active = lab;
-            LOG.info("EXTERNAL_INPUT_LAB_INITIALIZED inputRun={} sourceKind={} patchRun={} patchSha256={} fixture={} physicalInputVerified=false approximateHeightfield=true fullCollisionExportVerified=false",
-                    identity.run(), lab.patch.sourceKind(), lab.patch.run(), lab.patch.sha256(), lab.fixture);
+            LOG.info("EXTERNAL_INPUT_LAB_INITIALIZED inputRun={} sourceKind={} patchRun={} patchSha256={} fixture={} physicalInputVerified=false approximateHeightfield=true fullCollisionExportVerified=false viewSeedSha256={} viewSeedKind={} viewCapturedUtcMs={} initialYaw={} initialPitch={} initialViewSnapshotOnly=true",
+                    identity.run(), lab.patch.sourceKind(), lab.patch.run(), lab.patch.sha256(), lab.fixture,
+                    viewSeed.sha256(), viewSeed.sourceKind(), viewSeed.capturedUtcMillis(), viewSeed.yawDegrees(), viewSeed.pitchDegrees());
             ClientTickEvents.START_CLIENT_TICK.register(lab::beforeTick);
             ClientTickEvents.END_CLIENT_TICK.register(lab::afterTick);
             ClientLifecycleEvents.CLIENT_STOPPING.register(client -> {
@@ -131,8 +136,11 @@ public final class ExternalInputLab {
                 if (now - teleportAt > 20_000_000_000L) fail(client, "Initial vanilla loading/teleport handoff timeout"); return;
             }
             var current = motion(client.world, client.player);
-            if (!grounded(current) || !grounded(sample.motion()) || corrections.get() != stableCorrectionCount) {
-                stableAt = 0; stableCorrectionCount = corrections.get(); return;
+            boolean viewMatches = initialViewMatches(current) && initialViewMatches(sample.motion());
+            if (!grounded(current) || !grounded(sample.motion()) || corrections.get() != stableCorrectionCount || !viewMatches) {
+                stableAt = 0; stableCorrectionCount = corrections.get();
+                if (!viewMatches && now - teleportAt > 20_000_000_000L) fail(client, "Initial view seed did not reach both client/server within startup handoff deadline");
+                return;
             }
             if (stableAt == 0) stableAt = now;
             if (now - stableAt < 2_000_000_000L) return;
@@ -149,9 +157,10 @@ public final class ExternalInputLab {
             } catch (Exception e) { fail(client, "Input reader initialization: " + e.getMessage()); return; }
             baselineClient = current; baselineServer = sample.motion(); latestClient = current;
             correctionBaseline = corrections.get(); ready = true;
-            LOG.info("EXTERNAL_INPUT_LAB_READY inputRun={} save={} patchRun={} patchSha256={} sourceKind={} fixture={} physicalInputVerified=false client={} server={} correctionBaseline={} inputFile={} serverInstalled=true clientInstalled=true",
+            LOG.info("EXTERNAL_INPUT_LAB_READY inputRun={} save={} patchRun={} patchSha256={} sourceKind={} fixture={} physicalInputVerified=false client={} server={} correctionBaseline={} inputFile={} serverInstalled=true clientInstalled=true viewSeedSha256={} viewSeedKind={} viewCapturedUtcMs={} initialYaw={} initialPitch={} initialClientViewVerified=true initialServerViewVerified=true initialViewSnapshotOnly=true",
                     identity.run(), saveName, patch.run(), patch.sha256(), patch.sourceKind(), fixture,
-                    baselineClient, baselineServer, correctionBaseline, inputFile);
+                    baselineClient, baselineServer, correctionBaseline, inputFile,
+                    viewSeed.sha256(), viewSeed.sourceKind(), viewSeed.capturedUtcMillis(), viewSeed.yawDegrees(), viewSeed.pitchDegrees());
         }
         if (client.currentScreen != null || client.getOverlay() != null || client.isPaused()) { fail(client, "Menu/overlay/pause opened; input neutralized"); return; }
         if (client.interactionManager == null || client.interactionManager.getCurrentGameMode() != GameMode.ADVENTURE ||
@@ -228,10 +237,11 @@ public final class ExternalInputLab {
                 clientYaw && clientPitch && serverYaw && serverPitch && mouseApplications > 0 && gate.closed() && keysReleased(client) &&
                 corrections.get() == correctionBaseline && resting && now - landingStableAt >= 500_000_000L;
         if (proof) {
-            LOG.info("EXTERNAL_INPUT_LAB_PASS inputRun={} save={} patchRun={} patchSha256={} sourceKind={} fixture={} physicalInputVerified=false actualVanillaMCInputApplication=true clientWalk={} serverWalk={} clientAir={} serverAir={} clientLand={} serverLand={} clientYawChanged={} clientPitchChanged={} serverYawChanged={} serverPitchChanged={} inputNeutralAfterEnd=true postSettleCorrections={} receivedFrames={} appliedFrames={} mouseApplications={} client={} server={} serverSeq={} fullWorldMovementAuthorityVerified=false",
+            LOG.info("EXTERNAL_INPUT_LAB_PASS inputRun={} save={} patchRun={} patchSha256={} sourceKind={} fixture={} physicalInputVerified=false actualVanillaMCInputApplication=true clientWalk={} serverWalk={} clientAir={} serverAir={} clientLand={} serverLand={} clientYawChanged={} clientPitchChanged={} serverYawChanged={} serverPitchChanged={} inputNeutralAfterEnd=true postSettleCorrections={} receivedFrames={} appliedFrames={} mouseApplications={} client={} server={} serverSeq={} fullWorldMovementAuthorityVerified=false viewSeedSha256={} viewSeedKind={} viewCapturedUtcMs={} initialYaw={} initialPitch={} initialClientViewVerified=true initialServerViewVerified=true initialViewSnapshotOnly=true",
                     identity.run(), saveName, patch.run(), patch.sha256(), patch.sourceKind(), fixture, clientWalk, serverWalk,
                     clientAir, serverAir, clientLand, serverLand, clientYaw, clientPitch, serverYaw, serverPitch,
-                    corrections.get() - correctionBaseline, receivedFrames, appliedFrames, mouseApplications, latestClient, sample.motion(), sample.sequence());
+                    corrections.get() - correctionBaseline, receivedFrames, appliedFrames, mouseApplications, latestClient, sample.motion(), sample.sequence(),
+                    viewSeed.sha256(), viewSeed.sourceKind(), viewSeed.capturedUtcMillis(), viewSeed.yawDegrees(), viewSeed.pitchDegrees());
             stopping = true; reader.close(); client.scheduleStop();
         } else if (now - terminalAt > 4_000_000_000L) fail(client, "Terminal received but client/server walk/jump/look/neutral proof incomplete");
     }
@@ -283,7 +293,9 @@ public final class ExternalInputLab {
                 if (server != ownedServer || world != serverWorldIdentity.get() || player == null || player.getWorld() != world ||
                         !saveName.equals(server.getSaveProperties().getLevelName()) || !GroundCollision.installed(world, true))
                     throw new IllegalStateException("Owned server identity before initial teleport changed");
-                player.teleport(world, SPAWN_X, patch.heightAt(SPAWN_X, SPAWN_Z) + 0.05, SPAWN_Z, 90, 0);
+                viewSeed.revalidate(identity, patch.sha256(), fixture, patch.centerX(), patch.centerY(), patch.centerZ(), System.currentTimeMillis());
+                player.teleport(world, SPAWN_X, patch.heightAt(SPAWN_X, SPAWN_Z) + 0.05, SPAWN_Z,
+                        (float) viewSeed.yawDegrees(), (float) viewSeed.pitchDegrees());
                 player.setVelocity(Vec3d.ZERO); player.fallDistance = 0; installed.set(true);
             } catch (Exception e) { serverFailure.set("Initial server teleport: " + e.getMessage()); }
         });
@@ -322,6 +334,10 @@ public final class ExternalInputLab {
     private boolean grounded(Motion motion) {
         return motion.grounded() && motion.support() && safe(motion) && Math.abs(motion.vy()) < 0.1 &&
                 Math.abs(motion.y() - patch.groundForFeet(motion.x(), motion.z(), 0.29)) < 0.16;
+    }
+    private boolean initialViewMatches(Motion motion) {
+        return Math.abs(MathHelper.wrapDegrees(motion.yaw() - (float) viewSeed.yawDegrees())) <= 0.1 &&
+                Math.abs(motion.pitch() - viewSeed.pitchDegrees()) <= 0.1;
     }
     private static double horizontal(Motion a, Motion b) { return Math.hypot(a.x() - b.x(), a.z() - b.z()); }
     private static double horizontalSpeed(Motion motion) { return Math.hypot(motion.vx(), motion.vz()); }

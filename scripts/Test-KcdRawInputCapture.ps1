@@ -5,9 +5,12 @@
 param(
     [ValidateRange(15,120)][int]$Seconds=30,
     [string]$CaptureExecutable,
+    [string]$Bindings='W,S,A,D,SPACE,LSHIFT',
     [switch]$PreflightOnly
 )
 $ErrorActionPreference='Stop'
+. (Join-Path $PSScriptRoot 'InputBindings.ps1')
+$bindingSet=Get-MineComeInputBindings $Bindings
 . (Join-Path $PSScriptRoot 'KcdToolsProbeHelpers.ps1')
 . (Join-Path $PSScriptRoot 'MovementTraceReceiver.ps1')
 $context=Get-MineComeProbeContext
@@ -34,7 +37,7 @@ $stdout=Join-Path $directory 'capture.stdout.log';$stderr=Join-Path $directory '
 $helper=$null;$helperStartedUtc=$null;$failure=$null;$lifecyclePassed=$false;$records=@();$begunUtc=[DateTime]::UtcNow
 try {
     Assert-MineComeProbeContext $context
-    $arguments=@('--target-pid',[string]$context.GamePid,'--target-start',$targetStart,'--run',$run,'--output',('"'+$output+'"'),'--seconds',[string]$Seconds)
+    $arguments=@('--target-pid',[string]$context.GamePid,'--target-start',$targetStart,'--run',$run,'--output',('"'+$output+'"'),'--seconds',[string]$Seconds,'--bindings',$bindingSet.Argument)
     $helper=Start-Process -FilePath $snapshot -WorkingDirectory $context.ProjectRoot -ArgumentList $arguments -WindowStyle Hidden -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
     $helperStartedUtc=$helper.StartTime.ToUniversalTime()
     Write-Output "RAW_INPUT_OBSERVER_STARTED run=$run seconds=$Seconds; read-only, initially disarmed. F8 arms while KCD2 is focused and controls are released."
@@ -44,6 +47,7 @@ try {
     $helper.WaitForExit()
     if($helper.ExitCode -ne 0) { throw "Capture helper failed with exit code $($helper.ExitCode); inspect its local stderr." }
     $log=Get-Content -LiteralPath $stdout -Raw
+    if($log -notmatch ('(?m)^INPUT_CAPTURE_BINDINGS keys='+[regex]::Escape($bindingSet.Argument)+'\r?$')) { throw 'Native helper did not acknowledge the selected bindings.' }
     if($log -notmatch 'INPUT_CAPTURE_REGISTERED classes=2' -or $log -notmatch 'INPUT_CAPTURE_CLEANUP unregistered=true' -or $log -notmatch 'FOCUS_OBSERVER_CLEANUP unhooked=true') { throw 'Actual OS registration, device cleanup or foreground-observer cleanup readbacks are missing.' }
     $file=Get-Item -LiteralPath $output
     if($file.Length -lt 1 -or $file.Length -gt 1048576) { throw 'Capture exceeded its1MiB bound or is empty.' }
@@ -91,6 +95,6 @@ finally {
             if($owned.Path -eq $snapshot -and $owned.StartTime.ToUniversalTime() -eq $helperStartedUtc) { Stop-Process -Id $helper.Id -ErrorAction Stop }
         } catch { $_.Exception.Message|Set-Content -LiteralPath (Join-Path $directory 'helper-recovery-error.txt') }
     }
-    [pscustomobject]@{Kind='Read-only Windows Raw Input lifecycle diagnostic';Run=$run;GamePid=$context.GamePid;GamePath=$context.GamePath;GameStartedUtc=$context.GameStartedUtc;GameHash=$context.GameHash;TargetStartFiletime=$targetStart;HelperPid=$(if($helper){$helper.Id}else{$null});CaptureHash=$exeHash;SourceHashes=$sourceHashes;RequestedSeconds=$Seconds;Records=$records.Count;OperatingSystemLifecyclePass=$lifecyclePassed;PhysicalWalkingAndMouseDeliveryVerified=$false;MinecraftInputApplicationVerified=$false;EngineInputWrites=$false;Failure=$failure}|
+    [pscustomobject]@{Kind='Read-only Windows Raw Input lifecycle diagnostic';Run=$run;GamePid=$context.GamePid;GamePath=$context.GamePath;GameStartedUtc=$context.GameStartedUtc;GameHash=$context.GameHash;TargetStartFiletime=$targetStart;HelperPid=$(if($helper){$helper.Id}else{$null});CaptureHash=$exeHash;SourceHashes=$sourceHashes;Bindings=$bindingSet;RequestedSeconds=$Seconds;Records=$records.Count;OperatingSystemLifecyclePass=$lifecyclePassed;PhysicalWalkingAndMouseDeliveryVerified=$false;MinecraftInputApplicationVerified=$false;EngineInputWrites=$false;Failure=$failure}|
         ConvertTo-Json -Depth 6|Set-Content -LiteralPath (Join-Path $directory 'verification.json')
 }

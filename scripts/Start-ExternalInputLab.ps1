@@ -6,10 +6,14 @@ param(
     [switch]$Fixture,
     [string]$PatchFile,
     [string]$JavaHome,
+    [string]$Bindings='W,S,A,D,SPACE,LSHIFT',
     [ValidateRange(15,40)][int]$InputSeconds=30,
     [switch]$PreflightOnly
 )
 $ErrorActionPreference='Stop'
+. (Join-Path $PSScriptRoot 'InputBindings.ps1')
+. (Join-Path $PSScriptRoot 'InputLabEvidence.ps1')
+$bindingSet=Get-MineComeInputBindings $Bindings
 $root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $minecraft=Join-Path $root 'minecraft'
 $inventory=Get-Content -LiteralPath (Join-Path $root 'runtime/environment.json') -Raw|ConvertFrom-Json
@@ -41,6 +45,7 @@ $client=$null;$native=$null;$failure=$null;$passed=$false;$nativeCleanup=$false;
 $targetPid=if($Fixture){1}else{$context.GamePid}
 $targetStart=if($Fixture){'1'}else{$context.GameStartedUtc.ToFileTimeUtc().ToString([Globalization.CultureInfo]::InvariantCulture)}
 $clientStart=$null;$nativeStart=$null;$nativeSnapshot=$null
+$viewEvidence=$null;$viewFile=$null;$viewHash=$null;$captureHash=$null
 function Write-FixtureInput {
     $encoding=[Text.UTF8Encoding]::new($false,$true)
     $stream=[IO.FileStream]::new($inputFile,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::Read)
@@ -101,14 +106,26 @@ try {
     $snapshot=Join-Path $directory 'ground-patch.json';Copy-Item -LiteralPath $PatchFile -Destination $snapshot
     if((Get-FileHash -LiteralPath $snapshot).Hash -ne $patchHash){throw 'Ground patch changed while copying.'}
     (Get-Item -LiteralPath $snapshot).IsReadOnly=$true
+    $viewFile=Join-Path $directory 'view-seed.json'
+    if($Fixture) {
+        # Explicitly synthetic yaw45/pitch-10, distinct from the old fixed yaw90.
+        [ordered]@{schema=1;run=$run;source_kind='standalone_fixture';patch_sha256=$patchHash.ToLowerInvariant();target_pid=$targetPid;target_start_filetime=$targetStart;captured_utc_ms=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds();player=$data.center;forward=[ordered]@{x=-0.6963642403200189;y=-0.696364240320019;z=0.17364817766693033};up=[ordered]@{x=0.12278780396897282;y=0.12278780396897285;z=0.984807753012208}}|ConvertTo-Json -Depth 6|Set-Content -LiteralPath $viewFile -Encoding utf8
+        (Get-Item -LiteralPath $viewFile).IsReadOnly=$true
+    } else {
+        $viewEvidence=& (Join-Path $PSScriptRoot 'Capture-InputViewSeed.ps1') -Context $context -PatchFile $snapshot -EvidenceDirectory $directory -InputRun $run
+        $viewFile=$viewEvidence.ViewSeedFile
+    }
+    $viewHash=(Get-FileHash -LiteralPath $viewFile).Hash
+    $viewKind=if($Fixture){'standalone_fixture'}else{'live_kcd_view_seed'}
     $starter=Join-Path $PSScriptRoot 'Run-ExternalInputClient.ps1'
-    $arguments=@('-NoProfile','-File',('"'+$starter+'"'),'-EvidenceDirectory',('"'+$directory+'"'),'-PatchFile',('"'+$snapshot+'"'),'-InputFile',('"'+$inputFile+'"'),'-InputRun',$run,'-TargetPid',[string]$targetPid,'-TargetStartFiletime',$targetStart,'-JavaHome',('"'+$JavaHome+'"'))
+    $arguments=@('-NoProfile','-File',('"'+$starter+'"'),'-EvidenceDirectory',('"'+$directory+'"'),'-PatchFile',('"'+$snapshot+'"'),'-ViewSeedFile',('"'+$viewFile+'"'),'-InputFile',('"'+$inputFile+'"'),'-InputRun',$run,'-TargetPid',[string]$targetPid,'-TargetStartFiletime',$targetStart,'-JavaHome',('"'+$JavaHome+'"'))
     if($Fixture){$arguments+='-Fixture'}
+    if(-not $Fixture){Write-Output "Preparing input lab: forward/back/left/right/jump/sprint=$($bindingSet.Argument); F8 arms. Keep the KCD player/view still during startup. After READY, use a short forward tap within the4x4m patch."}
     $client=Start-Process -FilePath (Join-Path $PSHOME 'pwsh.exe') -WorkingDirectory $root -ArgumentList $arguments -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $directory 'client.stdout.log') -RedirectStandardError (Join-Path $directory 'client.stderr.log')
     $clientStart=$client.StartTime.ToUniversalTime();$deadline=[DateTime]::UtcNow.AddSeconds(140);$ready=$false
     $logFile=Join-Path $directory 'minecraft.log'
     do {
-        if(Test-Path -LiteralPath $logFile){$log=Get-Content -LiteralPath $logFile -Raw;$ready=$log -match ('EXTERNAL_INPUT_LAB_READY inputRun='+$run+' ');if($log -match 'EXTERNAL_INPUT_LAB_FAIL'){throw 'Minecraft input lab failed before ready; inspect its log.'}}
+        if(Test-Path -LiteralPath $logFile){$log=Get-Content -LiteralPath $logFile -Raw;if($log){$ready=Test-MineComeInputLabMarker -Log $log -Event READY -Run $run -ViewHash $viewHash -ViewKind $viewKind};if($log -match 'EXTERNAL_INPUT_LAB_FAIL'){throw 'Minecraft input lab failed before ready; inspect its log.'}}
         if($ready){break};if($client.HasExited){throw 'Owned Minecraft launcher exited before readiness.'};Start-Sleep -Milliseconds 100
     }while([DateTime]::UtcNow -lt $deadline)
     if(-not $ready){throw 'Minecraft input lab readiness deadline elapsed.'}
@@ -119,21 +136,22 @@ try {
         Copy-Item -LiteralPath $captureExe -Destination $nativeSnapshot
         if((Get-FileHash -LiteralPath $nativeSnapshot).Hash -ne $captureHash){throw 'Native input helper changed while copying.'}
         (Get-Item -LiteralPath $nativeSnapshot).IsReadOnly=$true
-        $args=@('--target-pid',[string]$targetPid,'--target-start',$targetStart,'--run',$run,'--output',('"'+$inputFile+'"'),'--seconds',[string]$InputSeconds)
+        $args=@('--target-pid',[string]$targetPid,'--target-start',$targetStart,'--run',$run,'--output',('"'+$inputFile+'"'),'--seconds',[string]$InputSeconds,'--bindings',$bindingSet.Argument)
         $native=Start-Process -FilePath $nativeSnapshot -WorkingDirectory $root -ArgumentList $args -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $directory 'native.stdout.log') -RedirectStandardError (Join-Path $directory 'native.stderr.log')
         $nativeStart=$native.StartTime.ToUniversalTime()
-        Write-Output 'EXTERNAL_INPUT_CAPTURE_READY: in KCD2 close menus, release controls, press F8; tap W briefly, release, press Space, then move the mouse. The test does not move KCD2 externally.'
+        Write-Output "EXTERNAL_INPUT_CAPTURE_READY: in KCD2 close menus, release controls, press F8; tap $($bindingSet.Forward) briefly, release, press $($bindingSet.Jump), then move the mouse. Initial view comes from the captured camera; the test does not move KCD2 externally."
     }
     $finish=[DateTime]::UtcNow.AddSeconds(90)
     while(-not $client.HasExited -and [DateTime]::UtcNow -lt $finish){Start-Sleep -Milliseconds 100}
     if(-not $client.HasExited){throw 'Owned Minecraft normal shutdown is pending; no existing game was stopped.'}
     $client.WaitForExit();$log=Get-Content -LiteralPath $logFile -Raw
-    $passed=$client.ExitCode -eq 0 -and $log -match ('EXTERNAL_INPUT_LAB_PASS inputRun='+$run+' ') -and $log -match 'actualVanillaMCInputApplication=true' -and $log -notmatch 'EXTERNAL_INPUT_LAB_FAIL'
+    $passed=$client.ExitCode -eq 0 -and (Test-MineComeInputLabMarker -Log $log -Event READY -Run $run -ViewHash $viewHash -ViewKind $viewKind) -and (Test-MineComeInputLabMarker -Log $log -Event PASS -Run $run -ViewHash $viewHash -ViewKind $viewKind) -and $log -notmatch 'EXTERNAL_INPUT_LAB_FAIL'
     if($native){$native.WaitForExit(5000)|Out-Null;if(-not $native.HasExited -or $native.ExitCode -ne 0){throw 'Native capture did not exit normally.'};$nativeLog=Get-Content -LiteralPath (Join-Path $directory 'native.stdout.log') -Raw;$nativeCleanup=$nativeLog -match 'INPUT_CAPTURE_CLEANUP unregistered=true' -and $nativeLog -match 'FOCUS_OBSERVER_CLEANUP unhooked=true' -and $nativeLog -match 'INPUT_CAPTURE_END reason=duration';if(-not $nativeCleanup){throw 'Native capture cleanup was not acknowledged.'}}
+    if($native -and $nativeLog -notmatch ('(?m)^INPUT_CAPTURE_BINDINGS keys='+[regex]::Escape($bindingSet.Argument)+'\r?$')){throw 'Native capture did not acknowledge the selected bindings.'}
     if(-not $passed){throw 'Real Minecraft did not complete the independent external-input application proof.'}
     Write-Output "EXTERNAL_INPUT_APPLICATION_PASS fixture=$Fixture ground=$kind; actual vanilla client/server movement/view/release verified. Evidence: $directory"
 }catch{$failure=$_.Exception.Message;throw}
 finally {
     if($native -and -not $native.HasExited){try{$owned=Get-Process -Id $native.Id -ErrorAction Stop;if($owned.Path -eq $nativeSnapshot -and $owned.StartTime.ToUniversalTime() -eq $nativeStart){Stop-Process -Id $native.Id -ErrorAction Stop}}catch{$_|Out-String|Set-Content -LiteralPath (Join-Path $directory 'native-recovery-error.txt')}}
-    [pscustomobject]@{Kind='Owned external-input Minecraft lab';Run=$run;FixtureInput=[bool]$Fixture;GroundSourceKind=$kind;PatchFile=$PatchFile;PatchHash=$patchHash;InputFile=$inputFile;ExpectedTargetPid=$targetPid;ExpectedTargetStartFiletime=$targetStart;ClientHelperPid=$(if($client){$client.Id}else{$null});ClientHelperStartedUtc=$clientStart;NativeHelperPid=$(if($native){$native.Id}else{$null});NativeCleanupVerified=$nativeCleanup;MinecraftInputApplicationVerified=$passed;PhysicalKcdInputVerified=$false;KcdPlayerMovementApplied=$false;FullWorldMovementAuthorityVerified=$false;Failure=$failure}|ConvertTo-Json -Depth 6|Set-Content -LiteralPath (Join-Path $directory 'verification.json')
+    [pscustomobject]@{Kind='Owned external-input Minecraft lab';Run=$run;FixtureInput=[bool]$Fixture;GroundSourceKind=$kind;PatchFile=$PatchFile;PatchHash=$patchHash;ViewSeedFile=$viewFile;ViewSeedHash=$viewHash;ViewCaptureEvidence=$viewEvidence;Bindings=$bindingSet;InputFile=$inputFile;ExpectedTargetPid=$targetPid;ExpectedTargetStartFiletime=$targetStart;ClientHelperPid=$(if($client){$client.Id}else{$null});ClientHelperStartedUtc=$clientStart;NativeHelperPid=$(if($native){$native.Id}else{$null});NativeCaptureHash=$captureHash;NativeCleanupVerified=$nativeCleanup;MinecraftInputApplicationVerified=$passed;PhysicalKcdInputVerified=$false;KcdPlayerMovementApplied=$false;FullWorldMovementAuthorityVerified=$false;Failure=$failure}|ConvertTo-Json -Depth 6|Set-Content -LiteralPath (Join-Path $directory 'verification.json')
 }

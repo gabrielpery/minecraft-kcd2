@@ -170,3 +170,22 @@ Minecraft-authoritative movement intent. The next route needs independently
 supported walking/mouse capture, focus/menu neutralization and explicit bindings.
 Source and live evidence are linked in
 [progress](../PROGRESS.md#source-repository-and-input-recheck--2026-10-12).
+
+## Additional state getter inspection — 2026-10-12
+
+The pinned binding dump and stock scripts expose useful partial guards:
+`player.human:IsInDialog()` is documented by C_ScriptBindHuman__IsInDialog and
+used in installed Scripts.pak's TriggerBase.lua:464. Game.IsLoadingEngineSaveGame
+is documented and used by RuntimePrefab.lua:21, specifically for engine save
+loading. Calendar.IsWorldTimePaused concerns the world calendar; it does not prove
+the current game/menu pause state. CryAction.IsGameStarted is present in the pinned
+LuaState_Sorted.txt:5975,6005 and similarly does not establish gameplay readiness.
+Existing death/unconscious and sitting/laying observations remain available.
+
+No reliable generic current-menu/cutscene reader, prior FreezeInput state getter,
+or paired physics-enabled state getter was established in this inspection.
+GameRules.IsFrozen(entityId) describes entity freezing and cannot be used as the
+inverse of FreezeInput(bool). Consequently these partial getters do not authorize
+a reversible full input/physics takeover. The new starting-view probe changes
+neither input nor physics; subsequent movement remains in the isolated MC consumer
+lab until ownership and live physical delivery are established.

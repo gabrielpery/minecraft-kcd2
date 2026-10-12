@@ -28,6 +28,9 @@ forwarding and full-world movement authority remain unfinished.
 producer now passes actual client/server walking, jumping, landing, yaw/pitch changes
 and terminal key release in a new isolated world. Physical KCD input delivery remains
 unverified. The new consumer lab has no KCD movement follower.
+Explicit key bindings and a session-bound starting camera are now implemented.
+The updated Minecraft lab adopted the supplied initial angles on both sides and
+completed its movement/view proof; the new KCD capture path still awaits a live run.
 
 ## Evidence matrix
 
@@ -51,6 +54,7 @@ unverified. The new consumer lab has no KCD movement follower.
 | Lua input observer | Short leased callback wrapper preserves original callback and restores only its own handler |20 simulated-binding Lua cases pass |Final timed human check captured three real jump/press/value1 callbacks,13.5983m player displacement and view changes; watched walking/mouse callbacks were absent. Callback restored. Full input forwarding remains unfinished |
 | Windows walking/mouse source | Separate read-only C++20 helper and pure Java decoder/session gate compile; Fabric JAR reassembled |598 native state/wire checks and148 Java framing/identity/lease/mouse checks pass |Actual15s OS registration/cleanup and301 neutral records pass; Java validates the exact historical recording. Physical control delivery remains unverified |
 | External input applied to Minecraft | Bounded daemon file reader, game-thread lab and PowerShell controller compile |266 reader checks with zero skips,148 decoder/gate and126 ground checks pass |Fresh scripted producer and synthetic flat ground drive real Minecraft client/server walking0.8571695m, jump/landing, yaw/pitch, terminal neutral controls, zero post-settle corrections and normal exit. No physical KCD input or coupled authority claim |
+| Starting view and key bindings | Read-only Lua camera capture, strict Java view seed and configurable native capture built |75 Java view checks,23 simulated-engine Lua cases,125 binding checks plus598 state checks;16 PS binding and14 marker cases pass |Actual MC client/server adopted synthetic yaw45/pitch−10, walked1.0727511m, jumped/landed and applied mouse once. New KCD capture and physical remapped keys are not yet live verified |
 | Minecraft block model/atlas | Actual BakedModel and GPU atlas exporter built | Six quads,24 vertices, atlas bounds checked | Real1024×512 atlas exported and visually inspected |
 | CryEngine block asset | Original OBJ→FBX converter plus installed official RC | FBX→CGF and texture TIFF→DDS compile succeeded; pixels compared | User screenshots show Minecraft stone in KCD2 world and verify the sharpness revision |
 | World position/scale/depth | Algebraic hypothesis/tests | Known basis and inverse tests | Live entity bounds span1×1×1 engine units; depth/parallax and cross-game calibration still unverified |
@@ -739,3 +743,72 @@ stays active, so this consumer lab must remain separate from the player follower
 The non-fixture controller route captures ground and starts the existing scoped
 Windows helper after readiness; its combined physical delivery still needs a human
 input run. Procedure: `docs/SETUP.md#external-input-applied-to-minecraft`.
+
+## Starting camera and configurable controls — 2026-10-12
+
+The external-input lab now initializes Minecraft from an explicit starting camera
+instead of fixed yaw90/pitch0. The new read-only `view_seed.lua` captures player
+position plus camera forward/up using already-inspected Lua APIs. It preserves
+raw player/id/API identity, copies vectors, checks that the player stayed within
+0.1m and refuses invalid, non-unit, nonorthogonal, rolled or near-vertical views.
+The player handle requirement matches the userdata observed in earlier actual
+movement-capability receipts. The new module itself has not run in KCD; both games
+were closed before this turn's owned Minecraft fixture.
+
+`Capture-InputViewSeed.ps1` uses the existing exact tools process/hash/endpoint gate
+and immutable unique source loading. It requires one fresh matching engine receipt
+and ground-center agreement, then records patch hash, input run, target PID/start,
+source provenance and capture time. Java's bounded strict parser verifies the same
+identity and geometry association, converts KCD forward to Minecraft yaw/pitch,
+and rechecks the60s snapshot age before the sole initial server teleport. Two stable
+seconds of matching client/server angles are required before accepting controls.
+Later camera motion remains ordinary Minecraft mouse handling. This is a starting
+snapshot, not sustained KCD camera synchronization or input/physics ownership.
+
+The native observer and both PowerShell entry points accept explicit six-key
+bindings: forward/back/left/right/jump/sprint. Defaults are W,S,A,D,SPACE,LSHIFT;
+allowed alternatives are uppercase letters, arrows, SPACE and left/right Shift/Ctrl.
+Duplicate or unsupported keys reject before observation. F8 remains fixed for arming.
+Configured keys drive both raw-event mapping and held-key suppression; wire records
+remain semantic. KCD's own bindings/settings are not changed or automatically read.
+The native helper acknowledges its selected bindings, checked by each controller.
+
+Focused results: native Release builds;125 binding and598 state checks pass.
+Java hostViewSeedTest passes75 cases and JAR assembly succeeds. The read-only Lua
+probe passes23 cases in actual Lua5.2 with simulated engine bindings. PowerShell
+binding validation passes16 cases;14 marker cases reject wrong/missing/duplicate
+view hashes, source kinds and initial-view proof flags. Existing unrelated suites
+were not rerun. The final controller marker guard was added after the live fixture;
+it accepts that exact historical READY/PASS pair offline, without claiming a new run.
+
+Actual Minecraft evidence:
+`runtime/evidence/external-input-20261012-192835-1e69e789a42445fdbc12e064b93e7e15`.
+Save: `MineCome-ExternalInput-98c93664-e00a-482a-a32c-d01a02eb852b`.
+Both client/server initialized yaw45/pitch−10, walked1.0727510592m, jumped and landed,
+then agreed on final yaw49.5/pitch−11.8 after one mouse application. All controls
+were neutral at END, there were zero post-settle corrections and the owned launcher
+exited0 after normal save/shutdown. The input, flat terrain and initial view were
+explicit fixtures. Ninety records were received. The selected arrow/RCTRL binding
+argument was recorded but not exercised by physical keys in this synthetic producer.
+
+View file SHA256:
+`1c53aa02ece04382dbd05daacff0fb7207d88d57ea4397317edba3a4d0190b9e`.
+HostViewSeed source SHA256:
+`153dcd19ee35c85c5be24413b71f86a294f7e6a5237fc5bb08146b4d6f79a847`.
+ExternalInputLab source SHA256:
+`f2223797d47b50831728340ce41c20fcfa6824e99bd0b32605ab79373d612b0c`.
+Lua view source SHA256:
+`e056562a837c267f7ace312096887d32376e4770c27eb6c999ebb15638c9c638`.
+Native helper86,528bytes, SHA256:
+`3ea4a9d81ec43eebc025df68d05320abb2933cafb99ff326dc48b6e76084aeb4`.
+Fabric JAR175,548bytes, SHA256:
+`1d2532cbcc0f6f2c522f14f2aa422c08364069f58f8173f20dee102f376f3872`.
+Loom development classes provided the live Minecraft proof; the assembled JAR is
+not separately installed/live verified. Runtime evidence, worlds and assets remain
+ignored and local.
+
+Source inspection found partial death/dialogue/save-load/calendar state getters,
+but no established generic menu/cutscene getter or matching prior FreezeInput-state
+getter. GameRules.IsFrozen is entity freeze, not input freeze. No native KCD input
+or physics takeover was added. Physical KCD controls, live starting-camera capture,
+ongoing view alignment and sustained world movement authority remain separate work.

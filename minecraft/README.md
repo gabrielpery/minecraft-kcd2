@@ -195,3 +195,9 @@ decoder/session gate, `externalInputFileTest` checks bounded file transport, and
 The real-game fixture passed client/server movement, jumping/landing, yaw/pitch,
 neutral release and normal shutdown. Physical KCD keyboard/mouse delivery is a
 separate pending check. See `../docs/SETUP.md` for the scoped live-capture mode.
+
+The lab also requires an immutable `minecome.externalInputViewFile`, supplied by
+the controller. `hostViewSeedTest` checks its identity, patch association, freshness,
+camera basis and coordinate conversion. The initial server teleport applies the
+angles once; READY verifies them independently on client/server. Subsequent input
+uses the ordinary mouse path. No continuous host-pose or camera writes are added.

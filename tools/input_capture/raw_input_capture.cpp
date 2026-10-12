@@ -1,4 +1,5 @@
 #include "input_state.hpp"
+#include "input_bindings.hpp"
 
 #include <Windows.h>
 #include <algorithm>
@@ -37,7 +38,9 @@ namespace fs = std::filesystem;
 using Clock = std::chrono::steady_clock;
 constexpr wchar_t window_class[] = L"MineComeObserveRawInputV1";
 constexpr DWORD registration_flags = RIDEV_INPUTSINK | RIDEV_DEVNOTIFY;
-constexpr std::array<int, ic::control_count> control_vkeys{'W', 'S', 'A', 'D', VK_SPACE, VK_LSHIFT};
+static_assert(VK_SPACE == 0x20 && VK_UP == 0x26 && VK_DOWN == 0x28 && VK_LEFT == 0x25 && VK_RIGHT == 0x27);
+static_assert(VK_LSHIFT == 0xa0 && VK_RSHIFT == 0xa1 && VK_LCONTROL == 0xa2 && VK_RCONTROL == 0xa3);
+static_assert(RI_KEY_BREAK == 1 && RI_KEY_E0 == 2 && RI_KEY_E1 == 4);
 std::atomic_bool shutdown_requested{};
 
 struct Handle {
@@ -63,10 +66,11 @@ struct Options {
     std::uint64_t start{};
     unsigned seconds{};
     fs::path output;
+    ic::InputBindings bindings{ic::default_bindings()};
 };
 
 Options options(int argc, wchar_t** argv) {
-    if (argc != 11) throw std::invalid_argument("usage: --target-pid N --target-start FILETIME --run lowerhex32 --output absolute-new-file --seconds 15..120");
+    if (argc != 11 && argc != 13) throw std::invalid_argument("usage: --target-pid N --target-start FILETIME --run lowerhex32 --output absolute-new-file --seconds 15..120 [--bindings W,S,A,D,SPACE,LSHIFT]");
     Options result;
     unsigned seen{};
     for (int i = 1; i < argc; i += 2) {
@@ -99,11 +103,15 @@ Options options(int argc, wchar_t** argv) {
             if (!ic::canonical_positive_decimal(ascii(value), parsed) || parsed < 15 || parsed > 120)
                 throw std::invalid_argument("seconds must be 15..120");
             result.seconds = static_cast<unsigned>(parsed);
+        } else if (key == L"--bindings") {
+            bit = 32;
+            if (value.size() > ic::max_binding_text) throw std::invalid_argument("bindings exceed canonical length bound");
+            result.bindings = ic::parse_bindings(ascii(value));
         } else throw std::invalid_argument("unknown argument");
         if (seen & bit) throw std::invalid_argument("duplicate argument");
         seen |= bit;
     }
-    if (seen != 31) throw std::invalid_argument("missing argument");
+    if ((seen & 31) != 31) throw std::invalid_argument("missing argument");
     return result;
 }
 
@@ -201,11 +209,11 @@ private:
     std::size_t bytes_{};
 };
 
-ic::ControlBits current_controls() {
+ic::ControlBits current_controls(const ic::InputBindings& bindings) {
     ic::ControlBits result{};
     // Never use the unreliable LOW bit. Zero is ambiguous under desktop/UIPI
     // restrictions; this diagnostic does not establish engine gameplay state.
-    for (unsigned i = 0; i < ic::control_count; ++i) result[i] = (GetAsyncKeyState(control_vkeys[i]) & 0x8000) != 0;
+    for (unsigned i = 0; i < ic::control_count; ++i) result[i] = (GetAsyncKeyState(bindings.vkeys()[i]) & 0x8000) != 0;
     return result;
 }
 
@@ -213,6 +221,7 @@ struct Capture {
     DWORD target_pid{};
     HANDLE process{};
     ic::InputState state;
+    ic::InputBindings bindings{ic::default_bindings()};
     DWORD epoch{GetTickCount()};
     DWORD dispatch_time{};
     HANDLE keyboard_device{};
@@ -228,7 +237,7 @@ struct Capture {
         const bool focused = target_focused();
         if (focused == state.focused()) return focused;
         if (focused) {
-            const auto controls = current_controls();
+            const auto controls = current_controls(bindings);
             const bool f8 = (GetAsyncKeyState(VK_F8) & 0x8000) != 0;
             // Query only while the target is foreground, then verify again.
             if (!target_focused()) { state.focus(false); epoch = GetTickCount(); return false; }
@@ -256,7 +265,7 @@ struct Capture {
             // Coarse-tick equality is common at high mouse rates. Drop it without
             // renewing the epoch or disarming this phase. Seed only suppression
             // so a discarded key MAKE cannot become a fresh typematic edge.
-            state.suppress_currently_down(current_controls());
+            state.suppress_currently_down(current_controls(bindings));
             state.suppress_f8_until_release((GetAsyncKeyState(VK_F8) & 0x8000) != 0);
             return;
         }
@@ -288,24 +297,26 @@ struct Capture {
             const bool down = !(key.Flags & RI_KEY_BREAK);
             if ((down && key.Message != WM_KEYDOWN && key.Message != WM_SYSKEYDOWN) ||
                 (!down && key.Message != WM_KEYUP && key.Message != WM_SYSKEYUP)) { disarm(); return; }
-            UINT vk = key.VKey;
-            if (vk == VK_SHIFT) {
+            UINT mapped_shift{};
+            if (key.VKey == VK_SHIFT) {
                 UINT scan = key.MakeCode;
                 if (key.Flags & RI_KEY_E0) scan |= 0xe000;
                 if (key.Flags & RI_KEY_E1) scan |= 0xe100;
-                vk = MapVirtualKeyW(scan, MAPVK_VSC_TO_VK_EX);
+                mapped_shift = MapVirtualKeyW(scan, MAPVK_VSC_TO_VK_EX);
             }
+            const UINT vk = ic::normalize_modifier_vkey(key.VKey, key.Flags, static_cast<std::uint16_t>(mapped_shift));
+            if (!vk) { disarm(); return; }
             if (vk == VK_F8) {
                 const bool was_armed = state.armed();
-                if (down && !was_armed) state.suppress_currently_down(current_controls());
+                if (down && !was_armed) state.suppress_currently_down(current_controls(bindings));
                 state.f8(down);
                 if (!was_armed && state.armed()) epoch = GetTickCount();
                 return;
             }
-            for (unsigned i = 0; i < ic::control_count; ++i) {
-                if (vk == static_cast<UINT>(control_vkeys[i])) { state.control(static_cast<ic::Control>(i), down); return; }
+            if (const auto control = bindings.control_for(static_cast<std::uint16_t>(vk))) {
+                state.control(*control, down); return;
             }
-            // Ctrl/Alt/other Shift keys are not captured. All other unsupported
+            // Unconfigured Ctrl/Alt/Shift keys are not captured. All other unsupported
             // presses (including Esc/backtick) conservatively disarm.
             const bool modifier = vk == VK_SHIFT || vk == VK_LSHIFT || vk == VK_RSHIFT ||
                 vk == VK_CONTROL || vk == VK_LCONTROL || vk == VK_RCONTROL ||
@@ -479,8 +490,10 @@ int run(const Options& opts) {
         throw std::runtime_error("target process identity/alive check failed");
     EvidenceWriter writer(opts.output);
     Capture capture;
+    capture.bindings = opts.bindings;
     capture.target_pid = opts.identity.target_pid;
     capture.process = process.value;
+    std::cout << "INPUT_CAPTURE_BINDINGS keys=" << opts.bindings.canonical() << '\n' << std::flush;
     RawRegistration registration(capture);
     ForegroundObserver foreground_observer(capture);
     SetConsoleCtrlHandler(console_handler, TRUE);

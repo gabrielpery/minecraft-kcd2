@@ -105,3 +105,9 @@ This lab has no KCD follower. The physical KCD capture mode is implemented but i
 combined physical delivery remains unverified. Procedure and limits are in
 [setup](../docs/SETUP.md#external-input-applied-to-minecraft) and
 [Windows input](../docs/research/WINDOWS-INPUT.md).
+
+The input lab now seeds its initial orientation from a fresh, session-bound camera
+snapshot and accepts `-Bindings` for explicit keys. Both Minecraft sides verify the
+initial angles before input begins. The new capture/consumer contract has standalone
+checks and a real-Minecraft synthetic-view run; its new KCD view capture and physical
+remapped keys remain unverified. This does not change the coupled follower's scope.
