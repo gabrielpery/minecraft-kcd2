@@ -27,7 +27,7 @@ void encode_host(std::span<std::uint8_t,128> bytes,const Identity &id,std::uint6
                  std::uint64_t utc,std::uint32_t state);
 void encode_event(std::span<std::uint8_t,40> bytes,const Event &event,std::uint64_t sequence);
 bool decode_ack(std::span<const std::uint8_t,128> bytes,std::uint64_t last,std::uint64_t now,
-                const Ack &previous,Ack &ack,std::string &reason);
+                const Ack &previous,Ack &ack,std::string &reason,bool require_fresh=true);
 // One render producer and one transport worker. No native wait, allocation or
 // game call. Overflow is observable and must terminate activation.
 class Mailbox {

@@ -22,13 +22,19 @@ ui::json::Value read(const std::wstring &path,HANDLE stop) {
 bool exists(const std::wstring &path) {const DWORD attrs=GetFileAttributesW(path.c_str());return attrs!=INVALID_FILE_ATTRIBUTES&&!(attrs&(FILE_ATTRIBUTE_DIRECTORY|FILE_ATTRIBUTE_REPARSE_POINT));}
 }
 int wmain(int argc,wchar_t **argv) {
-    std::wstring output;std::string run;std::uint64_t sent=0,image_frames=0;bool opened=false,closed=false,guest_closed=false,passed=false;
+    std::wstring output;std::string run;std::uint64_t sent=0,image_frames=0,delay_ms=0,max_ack_age=0,stale_observations=0,recoveries=0,close_wait_ms=0;
+    bool opened=false,closed=false,guest_closed=false,passed=false;
     std::set<std::uint32_t> selected;std::string reason="fixture_exception";
     try {
         std::map<std::wstring,std::wstring> args;
         for(int i=1;i<argc;i+=2)if(i+1>=argc||!args.emplace(argv[i],argv[i+1]).second)throw std::runtime_error("arguments");
-        for(const auto &[key,value]:args){(void)value;if(key!=L"--run"&&key!=L"--expires"&&key!=L"--ready-output"&&key!=L"--guest-ready"&&key!=L"--output")throw std::runtime_error("arguments");}
-        if(args.size()!=5)throw std::runtime_error("arguments");
+        for(const auto &[key,value]:args){(void)value;if(key!=L"--run"&&key!=L"--expires"&&key!=L"--ready-output"&&key!=L"--guest-ready"&&key!=L"--output"&&key!=L"--prearm-delay-ms")throw std::runtime_error("arguments");}
+        if(args.size()!=5&&args.size()!=6)throw std::runtime_error("arguments");
+        if(args.contains(L"--prearm-delay-ms")) {
+            std::string value;for(auto c:args.at(L"--prearm-delay-ms")){if(c<L'0'||c>L'9')throw std::runtime_error("prearm_delay");value+=static_cast<char>(c);}
+            const auto delay=std::from_chars(value.data(),value.data()+value.size(),delay_ms);
+            if(delay.ec!=std::errc{}||delay.ptr!=value.data()+value.size()||delay_ms>5000)throw std::runtime_error("prearm_delay");
+        }
         output=args.at(L"--output");for(auto c:args.at(L"--run")){if(c>127)throw std::runtime_error("run");run+=static_cast<char>(c);}
         std::string expiry;for(auto c:args.at(L"--expires")){if(c<L'0'||c>L'9')throw std::runtime_error("expiry");expiry+=static_cast<char>(c);}
         std::uint64_t expires=0;const auto parsed=std::from_chars(expiry.data(),expiry.data()+expiry.size(),expires);
@@ -48,7 +54,8 @@ int wmain(int argc,wchar_t **argv) {
         const auto guest=read(args.at(L"--guest-ready"),stop.value);
         if(guest.at("schema").integer()!=1||guest.at("run").text()!=run||guest.at("target_pid").integer()!=id.target_pid||
             guest.at("target_start_filetime").integer()!=id.target_start||guest.at("expires_utc_ms").integer()!=expires||
-            guest.at("ui_input_protocol").integer()!=1||!guest.at("ui_input_fixture").boolean())throw std::runtime_error("guest_ready_identity");
+            guest.at("ui_input_protocol").integer()!=1||!guest.at("ui_input_fixture").boolean()||
+            guest.at("ui_input_delay_fixture").boolean()!=(delay_ms>0))throw std::runtime_error("guest_ready_identity");
         const auto producer_pid=guest.at("producer_pid").integer();if(!producer_pid||producer_pid>0xffffffffULL)throw std::runtime_error("guest_pid");
         id.producer_pid=static_cast<std::uint32_t>(producer_pid);id.producer_start=guest.at("producer_start_filetime").integer();
         st::Handle producer(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION|SYNCHRONIZE,FALSE,id.producer_pid));
@@ -69,6 +76,17 @@ int wmain(int argc,wchar_t **argv) {
         while(!writer.ready()||!images.fresh()||!ui::fresh(image_capture,st::utc_ms())) {
             pump();if(writer.status().state==2)throw std::runtime_error(writer.reason());Sleep(5);
         }
+        if(delay_ms) {
+            const auto delay_started=st::steady_ms();
+            while(st::steady_ms()-delay_started<delay_ms) {
+                pump();if(writer.status().state==2)throw std::runtime_error(writer.reason());Sleep(5);
+            }
+            while(!writer.ready()||!images.fresh()||!ui::fresh(image_capture,st::utc_ms())) {
+                pump();if(writer.status().state==2)throw std::runtime_error(writer.reason());Sleep(5);
+            }
+        }
+        max_ack_age=writer.status().max_prearm_ack_age_ms;stale_observations=writer.status().prearm_stale_observations;recoveries=writer.status().prearm_recoveries;
+        if(delay_ms&&(max_ack_age<=ui::fresh_ms||!stale_observations||!recoveries))throw std::runtime_error("waiting_recovery_not_observed");
         if(!writer.arm())throw std::runtime_error("arm_failed");
         auto emit=[&](ui::Kind kind,std::uint32_t code,float x=0,float y=0) {
             ui::Event event{st::utc_ms(),kind,code,x,y,0};
@@ -105,10 +123,13 @@ int wmain(int argc,wchar_t **argv) {
         emit(ui::Kind::key_down,0x1b);emit(ui::Kind::key_up,0x1b);
         if(writer.status().ack.screen!=0)throw std::runtime_error("inventory_close_ack");closed=true;
         writer.finish("fixture_complete");
+        const auto close_started=st::steady_ms();
         while(writer.status().ack.state!=2) {
-            if(!alive()||WaitForSingleObject(producer.value,0)!=WAIT_TIMEOUT)throw std::runtime_error("guest_close_ack_missing");
+            if(!alive()||st::steady_ms()-close_started>=1500||WaitForSingleObject(producer.value,0)!=WAIT_TIMEOUT)throw std::runtime_error("guest_close_ack_missing");
             writer.poll();Sleep(5);
         }
+        close_wait_ms=st::steady_ms()-close_started;
+        if(delay_ms&&close_wait_ms<400)throw std::runtime_error("closed_ack_delay_not_observed");
         guest_closed=true;passed=writer.status().ack.sequence==sent&&selected.size()==9;reason=passed?"guest_closed_all_events_acked":"ack_incomplete";
         // The image receiver remains bound to this exact target process. Keep it
         // alive until Minecraft exits naturally and allow its final close read.
@@ -127,6 +148,9 @@ int wmain(int argc,wchar_t **argv) {
                << ",\"selected_slots_seen\":" << selected.size() << ",\"inventory_opened\":" << (opened?"true":"false")
                << ",\"inventory_closed\":" << (closed?"true":"false") << ",\"guest_closed_seen\":" << (guest_closed?"true":"false")
                << ",\"genuine_image_frames_received\":" << image_frames
+               << ",\"prearm_delay_fixture\":" << (delay_ms?"true":"false") << ",\"max_prearm_ack_age_ms\":" << max_ack_age
+               << ",\"prearm_stale_observations\":" << stale_observations << ",\"prearm_recoveries\":" << recoveries
+               << ",\"closed_ack_wait_ms\":" << close_wait_ms
                << ",\"physical_host_input\":false,\"kcd_compositing_verified\":false}\n";
         save(output,result.str());std::cout << "HUD_INPUT_FIXTURE result=" << (passed?"passed":"failed") << " reason=" << reason << " events=" << sent << '\n';
     } catch(...) {return 3;}

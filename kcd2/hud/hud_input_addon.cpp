@@ -46,6 +46,22 @@ void receipt(std::string_view event, std::string_view result, std::string_view r
         "\",\"result\":\""+std::string(result)+"\",\"run\":\""+std::string(run)+"\",\"visual_verified\":false}";
     reshade::log::message(reshade::log::level::info,message.c_str());
 }
+void input_receipt(std::string_view event,const ui::Writer &inputs,std::string_view run,std::uint64_t closed_wait=0) {
+    const auto &status=inputs.status();
+    std::ostringstream line;
+    line << "[MineComeHudInput] {\"schema\":1,\"event\":\"" << event << "\",\"run\":\"" << run
+         << "\",\"reason\":\"" << inputs.reason() << "\",\"host_state\":" << status.state
+         << ",\"guest_state\":" << status.ack.state << ",\"events_sent\":" << status.sequence
+         << ",\"events_acknowledged\":" << status.ack.sequence
+         << ",\"max_prearm_ack_age_ms\":" << status.max_prearm_ack_age_ms
+         << ",\"prearm_stale_observations\":" << status.prearm_stale_observations
+         << ",\"prearm_recoveries\":" << status.prearm_recoveries
+         << ",\"rejected_at_utc_ms\":" << status.rejected_at_utc_ms
+         << ",\"rejected_ack_utc_ms\":" << status.rejected_ack_utc_ms
+         << ",\"rejected_host_state\":" << status.rejected_host_state
+         << ",\"closed_ack_wait_ms\":" << closed_wait << ",\"visual_verified\":false}";
+    reshade::log::message(reshade::log::level::info,line.str().c_str());
+}
 struct Session {
     st::Identity identity;
     std::uint64_t begun = 0, deadline = 0;
@@ -135,7 +151,7 @@ struct Service {
                         inputs.poll();
                         if(inputs.status().state==0&&input_request.load(std::memory_order_acquire)==1) {
                             if(!inputs.arm())inputs.finish("arm_not_ready");
-                            else receipt("input","keyboard_armed",identity.run);
+                            else {receipt("input","keyboard_armed",identity.run);input_receipt("input_armed",inputs,identity.run);}
                         }
                         if(inputs.status().state==1) {
                             ui::Event event;
@@ -148,12 +164,28 @@ struct Service {
                     if(inputs.status().state==2)inputs.poll();
                     input_status.store(std::make_shared<ui::Status>(inputs.status()),std::memory_order_release);
                     if(inputs.status().state==2&&!input_closed_logged) {
-                        receipt("input",inputs.reason(),identity.run);input_closed_logged=true;
+                        receipt("input",inputs.reason(),identity.run);input_receipt("input_closed",inputs,identity.run);input_closed_logged=true;
                     }
                 }
                 std::shared_ptr<const st::Frame> next;
                 const auto result=channel.poll(next);
-                if (result == st::Poll::closed || result == st::Poll::failed) { end(channel.reason(),identity.run); return; }
+                if (result == st::Poll::closed || result == st::Poll::failed) {
+                    // Withdraw rendered ownership immediately. Keep only the
+                    // closed input mapping briefly so the real client tick can
+                    // acknowledge its control release before handles vanish.
+                    end(channel.reason(),identity.run);
+                    if(input_created) {
+                        inputs.finish("image_channel_closed");
+                        const auto close_started=st::steady_ms();
+                        while(!stopping()&&inputs.status().ack.state!=2&&st::steady_ms()-close_started<1500) {
+                            inputs.poll();
+                            input_status.store(std::make_shared<ui::Status>(inputs.status()),std::memory_order_release);
+                            WaitForSingleObject(stop.value,5);
+                        }
+                        input_receipt("input_final",inputs,identity.run,st::steady_ms()-close_started);
+                    }
+                    return;
+                }
                 if (next) {
                     publication.store(std::move(next),std::memory_order_release);
                     if (!first) { receipt("frame","first_received",identity.run); first=true; }

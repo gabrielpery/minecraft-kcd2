@@ -37,7 +37,7 @@ void encode_event(std::span<std::uint8_t,40> b,const Event &e,std::uint64_t sequ
     put32(b,32,std::bit_cast<std::uint32_t>(e.wheel));
 }
 bool decode_ack(std::span<const std::uint8_t,128> b,std::uint64_t last,std::uint64_t now,
-                const Ack &previous,Ack &ack,std::string &reason) {
+                const Ack &previous,Ack &ack,std::string &reason,bool require_fresh) {
     auto fail=[&](const char *why){reason=why;return false;};
     if(std::any_of(b.begin()+28,b.end(),[](auto v){return v!=0;}))return fail("ack_reserved");
     Ack next{get64(b,0),get64(b,8),get32(b,16),get32(b,20),get32(b,24)};
@@ -45,7 +45,12 @@ bool decode_ack(std::span<const std::uint8_t,128> b,std::uint64_t last,std::uint
     if(next.state<previous.state)return fail("ack_regressed");
     if(next.state==0) {
         if(next.sequence||next.utc||next.screen||next.selected)return fail("ack_waiting_nonzero");
-    } else if(!fresh(next.utc,now)||next.utc<previous.utc)return fail("ack_stale");
+    } else {
+        if(!next.utc)return fail("ack_timestamp_zero");
+        if(next.utc>now&&next.utc-now>100)return fail("ack_future");
+        if(next.utc<previous.utc)return fail("ack_time_regressed");
+        if(require_fresh&&next.utc<=now&&now-next.utc>fresh_ms)return fail("ack_aged");
+    }
     ack=next;reason.clear();return true;
 }
 bool Mailbox::push(const Event &e) noexcept {

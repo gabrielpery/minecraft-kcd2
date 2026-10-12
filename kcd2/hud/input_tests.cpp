@@ -34,6 +34,16 @@ void contract() {
     check(ui::decode_ack(bytes,0,1000,previous,parsed,reason),"initial ready");previous=parsed;
     check(ui::decode_ack(bytes,0,1100,previous,parsed,reason),"duplicate ack fresh");
     check(!ui::decode_ack(bytes,0,1251,previous,parsed,reason),"duplicate ack expires");
+    check(ui::decode_ack(bytes,0,1251,previous,parsed,reason,false)&&!ui::fresh(parsed.utc,1251),"old waiting ACK parses without readiness");
+    auto fresh_recovery=ack(0,1251);
+    check(ui::decode_ack(fresh_recovery,0,1251,previous,parsed,reason,false)&&ui::fresh(parsed.utc,1251),"new real client tick restores readiness");
+    auto zero_time=ack(0,0);
+    check(!ui::decode_ack(zero_time,0,1000,previous,parsed,reason,false)&&reason=="ack_timestamp_zero","waiting zero time fatal");
+    auto future_time=ack(0,1101);
+    check(!ui::decode_ack(future_time,0,1000,previous,parsed,reason,false)&&reason=="ack_future","waiting future time fatal");
+    auto regressed_time=ack(0,999);
+    check(!ui::decode_ack(regressed_time,0,1000,previous,parsed,reason,false)&&reason=="ack_time_regressed","waiting time regression fatal");
+    check(!ui::decode_ack(bytes,0,1251,previous,parsed,reason,true)&&reason=="ack_aged","armed old ACK remains fatal");
     auto future=ack(1,1000);check(!ui::decode_ack(future,0,1000,previous,parsed,reason),"ack past event head rejected");
     auto waiting=ack(0,0,0);check(!ui::decode_ack(waiting,0,1000,previous,parsed,reason),"ready cannot regress waiting");
     auto closed=ack(0,1000,2);check(ui::decode_ack(closed,0,1000,previous,parsed,reason),"closed ack");
@@ -101,7 +111,19 @@ void channels() {
     check(!abandoned.poll()&&abandoned.reason()=="mutex_abandoned","abandon closes");
     auto stale_id=identity(5);ui::Writer stale;check(stale.create(stale_id),"stale fixture");Guest lag(stale_id);lag.write(0);stale.poll();stale.arm();
     WaitForSingleObject(lag.mutex.value,5);auto old=ack(0,st::utc_ms()-251);std::memcpy(lag.bytes+128,old.data(),128);ReleaseMutex(lag.mutex.value);
-    check(!stale.poll()&&stale.status().state==2&&stale.reason()=="ack_stale","stale tick closes");
+    check(!stale.poll()&&stale.status().state==2&&stale.reason()=="ack_time_regressed","regressed tick closes");
+    auto recovery_id=identity(6);ui::Writer recovery;check(recovery.create(recovery_id),"waiting recovery fixture");Guest recovery_peer(recovery_id);
+    recovery_peer.write(0);check(recovery.poll()&&recovery.ready(),"waiting real initial ACK");
+    Sleep(270);check(recovery.poll()&&!recovery.ready()&&recovery.status().state==0,"waiting old ACK suspends readiness only");
+    check(!recovery.arm()&&recovery.status().state==0,"cannot arm on stale waiting ACK");
+    check(recovery.status().max_prearm_ack_age_ms>250&&recovery.status().prearm_stale_observations>0,"waiting diagnostic records actual age");
+    recovery_peer.write(0);check(recovery.poll()&&recovery.ready()&&recovery.status().prearm_recoveries==1,"real fresh ACK recovers waiting session");
+    check(recovery.arm(),"arm after real recovery");Sleep(270);
+    check(!recovery.poll()&&recovery.status().state==2&&recovery.reason()=="ack_aged","active ACK lapse remains terminal");
+    check(recovery.status().rejected_host_state==1&&recovery.status().rejected_at_utc_ms-recovery.status().rejected_ack_utc_ms>250,"rejection records exact active ACK age");
+    recovery_peer.write(0);recovery.poll();check(!recovery.ready()&&!recovery.arm(),"fresh ACK never rearms closed ownership");
+    Sleep(270);check(recovery.poll()&&recovery.status().state==2,"closed rendezvous may await delayed ACK without ownership");
+    recovery_peer.write(0,2);check(recovery.poll()&&recovery.status().ack.state==2,"delayed real closed acknowledgement observed");
 }
 }
 int main() {try{contract();channels();std::cout<<"HUD_INPUT_TESTS checks="<<checks<<" PASS\n";return 0;}catch(const std::exception&e){std::cerr<<"HUD_INPUT_TESTS FAIL "<<checks<<" "<<e.what()<<'\n';return 1;}}

@@ -204,6 +204,40 @@ public final class HudInputTests {
         rejects(() -> HudInputProtocol.decode(one, ID, 0, EXPIRES, 1), "lease expires at exact deadline");
     }
 
+    private static void waitingRecovery() {
+        for (long age : new long[]{251, 1_000}) {
+            byte[] waiting = mapping(0, 0);
+            buffer(waiting).putLong(88, NOW - age);
+            var paused = decode(waiting, 0, 0);
+            check(paused.hostState() == 0 && paused.lastSequence() == 0 && paused.events().isEmpty()
+                    && paused.heartbeat() == NOW - age,
+                "old waiting heartbeat preserves its real timestamp without granting events " + age);
+            byte[] armed = waiting.clone();
+            buffer(armed).putInt(96, 1);
+            rejects(() -> decode(armed, 0, 0), "stale waiting heartbeat cannot activate " + age);
+            buffer(waiting).putLong(88, NOW);
+            check(decode(waiting, 0, 0).heartbeat() == NOW, "waiting accepts genuinely fresh recovery " + age);
+            buffer(armed).putLong(88, NOW);
+            check(decode(armed, 0, 0).hostState() == 1, "fresh recovery permits structural armed transition " + age);
+            rejects(() -> decode(waiting, 0, 1), "active session cannot recover by regressing to waiting " + age);
+            byte[] closed = mapping(0, 2);
+            buffer(closed).putLong(88, NOW - age);
+            check(decode(closed, 0, 1).events().isEmpty(), "old closed heartbeat remains terminal " + age);
+            rejects(() -> decode(armed, 0, 2), "closed session cannot reactivate after freshness recovery " + age);
+        }
+        for (int state : new int[]{0, 1, 2}) {
+            for (long invalid : new long[]{0, -1, NOW + 101, Long.MAX_VALUE}) {
+                byte[] bytes = mapping(0, state);
+                buffer(bytes).putLong(88, invalid);
+                rejects(() -> decode(bytes, 0, 0), "invalid/future heartbeat in state " + state + ": " + invalid);
+            }
+        }
+        byte[] waiting = mapping(0, 0);
+        buffer(waiting).putLong(88, NOW - 1_000);
+        altered(waiting, b -> b.putLong(64, ID.targetStart() + 1), "waiting recovery cannot change target identity");
+        rejects(() -> HudInputProtocol.decode(waiting, ID, 0, EXPIRES, 0), "waiting recovery cannot extend immutable lease");
+    }
+
     private static void recordValidation() {
         byte[] one = mapping(1, 1);
         for (int code : new int[]{0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x45, 0x1b}) {
@@ -290,6 +324,7 @@ public final class HudInputTests {
         headerAndIdentity();
         acknowledgement();
         ringAndFreshness();
+        waitingRecovery();
         recordValidation();
         clientGate();
         System.out.println("HudInputTests: " + checks + " checks passed; pure reverse-input contract/gate; no games launched.");

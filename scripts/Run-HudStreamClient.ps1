@@ -12,7 +12,8 @@ param(
     [ValidateRange(240,1080)][int]$Height=720,
     [ValidateRange(1,4)][int]$GuiScale=2,
     [switch]$InputMode,
-    [switch]$InputFixture
+    [switch]$InputFixture,
+    [switch]$InputDelayFixture
 )
 $ErrorActionPreference='Stop'
 $root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
@@ -26,9 +27,11 @@ $producerDirectory=Join-Path $EvidenceDirectory 'capture'
 $exitCode=1
 try {
     if($InputFixture -and -not $InputMode){throw 'Input fixture requires the separate UI input mode.'}
+    if($InputDelayFixture -and -not $InputFixture){throw 'Controlled input delays require the standalone fixture.'}
     $arguments=@('-p',$minecraft,'--no-daemon','runClient','-PminecomeHudStreamLab',"-PminecomeHudStreamRun=$Run","-PminecomeHudStreamTargetPid=$TargetPid","-PminecomeHudStreamTargetStart=$TargetStart","-PminecomeHudStreamExpiresUtcMs=$ExpiresUtcMs","-PminecomeHudStreamDirectory=$producerDirectory","-PminecomeHudStreamWidth=$Width","-PminecomeHudStreamHeight=$Height","-PminecomeHudStreamGuiScale=$GuiScale")
     if($InputMode){$arguments+='-PminecomeHudStreamInput'}
     if($InputFixture){$arguments+='-PminecomeHudStreamInputFixture'}
+    if($InputDelayFixture){$arguments+='-PminecomeHudStreamInputDelayFixture'}
     & (Join-Path $minecraft 'gradlew.bat') @arguments 2>&1 | Tee-Object -LiteralPath (Join-Path $EvidenceDirectory 'client.log')
     $exitCode=$LASTEXITCODE
 } finally {

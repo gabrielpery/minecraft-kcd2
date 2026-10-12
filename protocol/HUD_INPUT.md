@@ -67,9 +67,19 @@ unmatched ups and invalid key/button codes are rejected by the client input gate
 Both peers enforce the original image expiry and its initial monotonic remaining
 lifetime (at most 180 seconds), plus exact process identities. Host heartbeat,
 guest acknowledgement and client application have a 250 ms freshness limit.
-An old publication/event releases all guest controls and ends activation; it
-cannot resume on a new heartbeat. Acknowledgements come from the client tick,
-never fabricated by the worker. An idle ready tick advances time but not sequence.
+Before the host is armed, an old but structurally valid ready acknowledgement
+makes the peer unavailable for activation; it does not close the waiting session.
+Only a genuinely fresh client-tick acknowledgement restores readiness. Zero,
+excessively future, regressed or malformed acknowledgement fields remain fatal.
+Once armed, an old publication/event or acknowledgement releases all guest
+controls and ends activation; it cannot resume on a new heartbeat. After closure,
+the host may keep the closed mapping while the paired image stream remains alive.
+When the image channel ends, its worker permits at most another 1,500 ms, capped
+by the original lease, to observe a real final client acknowledgement. The
+standalone fixture caps its final ACK wait at 1,500 ms after closing input.
+Neither grace restores input ownership. Acknowledgements
+come from the client tick, never fabricated by the worker. An idle ready tick
+advances time but not sequence.
 
 The live first slice is keyboard-only. An F8 edge arms only an already visible,
 freshly composed stream with a fresh ready guest and neutral tracked keys. The

@@ -43,7 +43,9 @@ public final class HudInputProtocol {
         long last=b.getLong(80),heartbeat=b.getLong(88);int state=b.getInt(96),retained=b.getInt(100);
         if(last<lastFetched || last<0 || last-lastFetched>CAPACITY || retained!=(int)Math.min(last,CAPACITY) || state<previousHostState || state<0 || state>2 || (state==0 && last!=0))
             throw new IllegalArgumentException("Input state/sequence/overflow differs");
-        if(heartbeat<=0 || heartbeat>now+100 || (state!=2 && heartbeat<now-250))throw new IllegalArgumentException("Stale/future host heartbeat");
+        // Waiting owns no input. A real fresh heartbeat must return before arming,
+        // but startup scheduling gaps do not consume the only activation.
+        if(heartbeat<=0 || heartbeat>now+100 || (state==1 && heartbeat<now-250))throw new IllegalArgumentException("Stale/future host heartbeat");
         long acknowledged=b.getLong(128),ackTime=b.getLong(136);int guest=b.getInt(144),screen=b.getInt(148),slot=b.getInt(152);
         if(guest<0 || guest>2 || screen<0 || screen>1 || slot<0 || slot>8 || acknowledged<0 || acknowledged>last ||
                 (guest==0 && (acknowledged!=0 || ackTime!=0 || screen!=0 || slot!=0)) || (guest!=0 && (ackTime<=0 || ackTime>now+100)))

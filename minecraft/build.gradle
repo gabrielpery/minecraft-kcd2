@@ -20,6 +20,8 @@ loom {
                 vmArgs '-Dminecome.hudStreamInput=true'
             if (project.hasProperty('minecomeHudStreamInputFixture'))
                 vmArgs '-Dminecome.hudStreamInputFixture=true'
+            if (project.hasProperty('minecomeHudStreamInputDelayFixture'))
+                vmArgs '-Dminecome.hudStreamInputDelayFixture=true'
             for (String suffix : ['Run','TargetPid','TargetStart','ExpiresUtcMs','Directory','Width','Height','GuiScale']) {
                 String key = 'minecomeHudStream' + suffix
                 if (project.hasProperty(key))

@@ -63,21 +63,45 @@ bool Writer::transact(std::span<const Event> events,bool closing) {
     if(wait!=WAIT_OBJECT_0) {status_.state=2;status_.live=false;reason_="mutex_failed";return false;}
     bool valid=true;
     if(std::memcmp(mapped_,owned_.data(),128)!=0) {reason_="host_bytes_changed";valid=false;}
-    Ack ack;std::string ack_error;
-    if(valid&&!decode_ack(std::span<const std::uint8_t,128>(mapped_+128,128),status_.sequence,utc,status_.ack,ack,ack_error)) {
-        reason_=ack_error;valid=false;
+    const auto received_utc=stream::utc_ms();
+    const auto received_steady=stream::steady_ms();
+    // A worker may be descheduled while acquiring the mutex. The immutable
+    // lease must still be live at the point events are committed to the ring.
+    if(valid&&status_.state!=2&&(received_utc>=identity_.expires_utc_ms||received_steady<begun_||received_steady>=deadline_)) {
+        reason_="expired";valid=false;
     }
-    if(valid) {status_.ack=ack;status_.observed=steady;}
+    Ack ack;std::string ack_error;
+    // Only an armed host owns input. An old but structurally valid ready ACK
+    // before F8 makes ready() false; a real fresh client tick may recover. A
+    // closed host may also wait for its final ACK without renewing ownership.
+    if(valid&&!decode_ack(std::span<const std::uint8_t,128>(mapped_+128,128),status_.sequence,received_utc,
+                         status_.ack,ack,ack_error,status_.state==1)) {
+        reason_=ack_error;valid=false;
+        status_.rejected_at_utc_ms=received_utc;status_.rejected_ack_utc_ms=0;
+        for(unsigned i=0;i<8;++i)status_.rejected_ack_utc_ms|=std::uint64_t(mapped_[136+i])<<(i*8);
+        status_.rejected_host_state=status_.state;
+    }
+    if(valid) {
+        status_.ack=ack;status_.observed=stream::steady_ms();
+        if(status_.state==0&&ack.state==1) {
+            const auto age=received_utc>=ack.utc?received_utc-ack.utc:0;
+            status_.max_prearm_ack_age_ms=std::max(status_.max_prearm_ack_age_ms,age);
+            const bool old=age>fresh_ms;
+            if(old)++status_.prearm_stale_observations;
+            if(prearm_was_old_&&!old)++status_.prearm_recoveries;
+            prearm_was_old_=old;
+        }
+    }
     if(valid&&ack.state==2&&status_.state!=2) {reason_="guest_closed";valid=false;}
-    if(valid&&status_.state==1&&(!fresh(ack.utc,utc)||ack.state!=1)) {reason_="ack_not_ready";valid=false;}
+    if(valid&&status_.state==1&&(!fresh(ack.utc,received_utc)||ack.state!=1)) {reason_="ack_not_ready";valid=false;}
     if(valid&&events.size()>ring_count-(status_.sequence-ack.sequence)) {reason_="ring_overflow";valid=false;}
-    if(valid)for(const auto &event:events)if(!valid_event(event,utc)){reason_="invalid_or_stale_event";valid=false;break;}
+    if(valid)for(const auto &event:events)if(!valid_event(event,received_utc)){reason_="invalid_or_stale_event";valid=false;break;}
     if(!valid) {status_.state=2;status_.live=false;}
     if(valid&&status_.state==1)for(const auto &event:events) {
         ++status_.sequence;
         encode_event(std::span<std::uint8_t,40>(mapped_+header_bytes+((status_.sequence-1)%ring_count)*record_bytes,40),event,status_.sequence);
     }
-    encode_host(owned_,identity_,status_.sequence,utc,status_.state);std::memcpy(mapped_,owned_.data(),128);
+    encode_host(owned_,identity_,status_.sequence,received_utc,status_.state);std::memcpy(mapped_,owned_.data(),128);
     if(!ReleaseMutex(mutex_.value)) {status_.state=2;status_.live=false;reason_="mutex_release_failed";return false;}
     return valid;
 }

@@ -34,6 +34,7 @@ public final class HudStreamProducer implements AutoCloseable {
     private final String save;
     private final boolean genuine;
     private final int inputMode;
+    private final boolean inputDelayFixture;
     private final AtomicReference<Frame> latest=new AtomicReference<>();
     private final AtomicReference<String> terminal=new AtomicReference<>(),failure=new AtomicReference<>();
     private final AtomicReference<JsonObject> finalEvidence=new AtomicReference<>();
@@ -51,6 +52,7 @@ public final class HudStreamProducer implements AutoCloseable {
             throw new IllegalArgumentException("Invalid owned stream output path/save");
         if(inputMode<0 || inputMode>2)throw new IllegalArgumentException("Invalid input mode");
         this.root=root.normalize();this.directory=directory.normalize();this.identity=identity;this.save=save;this.genuine=genuine;this.inputMode=inputMode;
+        inputDelayFixture=inputMode==2 && Boolean.getBoolean("minecome.hudStreamInputDelayFixture");
     }
     public synchronized void start() {
         if(worker!=null)throw new IllegalStateException("HUD stream cannot restart");
@@ -99,7 +101,7 @@ public final class HudStreamProducer implements AutoCloseable {
         r.addProperty("target_start_filetime",Long.toUnsignedString(identity.targetStart()));r.addProperty("expires_utc_ms",identity.expiresUtcMs());
         r.addProperty("mapping",identity.mappingName());r.addProperty("mapping_name",identity.mappingName());r.addProperty("mutex_name",identity.mutexName());r.addProperty("mapping_bytes",MAPPING_BYTES);
         r.addProperty("save",save);r.addProperty("source_kind",genuine?"minecraft_vanilla_ui_stream_v1":"standalone_transport_fixture");
-        if(inputMode!=0){r.addProperty("ui_input_protocol",1);r.addProperty("ui_input_fixture",inputMode==2);}return r;
+        if(inputMode!=0){r.addProperty("ui_input_protocol",1);r.addProperty("ui_input_fixture",inputMode==2);r.addProperty("ui_input_delay_fixture",inputDelayFixture);}return r;
     }
     private void run() {
         Kernel32 api=null;WinNT.HANDLE mapping=null,mutex=null;Pointer view=null;

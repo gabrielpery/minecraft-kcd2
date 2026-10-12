@@ -1331,3 +1331,70 @@ bytes were backed up and the pinned proxy was enabled last. Deployment receipt:
 No game launch was performed. The next check requires a user-started fresh world
 and `Start-HudInputLab.ps1 -Mode Live`. KCD HUD suppression, health mapping, mouse
 inventory controls, crafting and general gameplay ownership remain unfinished.
+
+### First live keyboard attempt
+
+The user started a fresh tools world and confirmed readiness. Run
+`39d46065f12f450e8fe60dcbc57e618b` accepted the image arm, published 41 Minecraft
+frames and uploaded 24 in KCD with 179 submitted draws. It ended before the F8
+activation: no keyboard ownership and no input events were recorded. The native
+receiver rejected a waiting-state acknowledgement as `ack_stale`. That build
+combined old, future and regressed timestamps under this reason and recorded no
+exact timing details, so the precise timestamp failure is not proven. Source
+review found that both peers treated old readiness as terminal before ownership.
+
+Minecraft saved and exited normally. KCD PID 45948 remained alive, and the user
+confirmed the failed attempt. The guest released its handles but did not publish
+its terminal client ACK within the original 250 ms cleanup rendezvous; the
+controller correctly rejected this as a successful input run. Evidence, the copied
+native log and host identity observation are preserved under
+`runtime/evidence/hud-input-20261012-221347-39d46065f12f450e8fe60dcbc57e618b`.
+Live keyboard behavior and satisfactory GUI sizing remain unverified. Its expired
+owned input arm remains in place until normal KCD closure and verified cleanup.
+
+### Waiting-state repair and delayed real-client regression
+
+Waiting readiness now becomes temporarily ineligible when the real client ACK,
+image or host heartbeat is old. It can recover only on fresh client observations;
+F8 cannot acquire ownership during the gap. Armed input still expires at 250 ms,
+and malformed, zero, future or regressed timestamps, changed identities and
+immutable expiry remain terminal. Timestamp checks now use receipt time after
+mutex work, and both peers recheck the lease there. This avoids interpreting a
+newer real timestamp against a pre-wait clock sample. Worker diagnostics now
+distinguish rejection reasons and record actual ACK ages/timestamps.
+
+Closure releases controls immediately and gives the guest worker a separate
+bounded one-second rendezvous for the client-generated closed ACK, including
+mutex retries. The native add-on withdraws ownership before a final 1.5-second
+ACK grace when the image stream ends. No timestamp is manufactured, no deadline
+is renewed, and no closed session can resume input.
+
+The actual regression run
+`runtime/evidence/hud-input-20261012-222339-c67562e8e7734eaf958b9b9e6ef58b08`
+deliberately withheld ready ACKs for 498 ms and the final client ACK for 550 ms.
+The native peer observed a maximum prearm ACK age of 553 ms, 51 stale observations
+and one recovery, then all 31 UI events, nine selections and real inventory
+open/close passed. Stone/dirt swapping again agreed on client and server. Native
+closed-ACK wait was 609 ms. The run published 65 UI frames, received 52 and saved
+and exited normally with every cleanup flag true. KCD remained open but was not
+the fixture target; this does not establish live physical input or live sizing.
+
+The updated pure Java suite passes 353 checks and native suite 243; final Java and
+native compilation/remapping passed, with independent review of waiting recovery,
+active expiry, callback lifetime, fixture routing and cleanup. Frozen native
+evidence is
+`runtime/evidence/hud-input-waitfix-native-frozen-b8d6ba96e5cd437facf9bbdad9e21b15/verification.json`.
+Add-on SHA256:
+`56fb1cca6806a1cca41c9e1875da56ec1895e9781d0251bf6153d880cbd0bb80`.
+Fabric JAR SHA256:
+`1829334c03f050ef73aec6ddbdddeba911d4cc3dcd8638ac62f5c35fb6ef098b`.
+
+After the user closed KCD, the owned expired input arm was archived and all 1,008
+save/profile files were backed up again under `runtime/backups/20261012-232513`.
+PowerShell 5.1 and 7 preflight passed. The updater installed only the repaired
+owned add-on, preserving the previous bytes and enabling the pinned proxy last.
+Current bundle and input-mode default: `runtime/hud-compositor-input-waitfix`.
+Deployment receipt:
+`runtime/evidence/hud-update-20261012-222531-279ecff953e3418591c3fa0276601090/update.json`.
+It is installed unarmed, awaiting a fresh user-started world. The original input
+and continuous stream artifacts remain available as separately verified builds.

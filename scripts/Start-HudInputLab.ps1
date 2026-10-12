@@ -4,7 +4,7 @@
 [CmdletBinding()]
 param(
     [ValidateSet('Fixture','Live')][string]$Mode='Fixture',
-    [string]$JavaHome,[string]$BundleDirectory,[switch]$PreflightOnly,
+    [string]$JavaHome,[string]$BundleDirectory,[switch]$PreflightOnly,[switch]$DelayFixture,
     [ValidateRange(320,1920)][int]$Width=1280,
     [ValidateRange(240,1080)][int]$Height=720,
     [ValidateRange(1,4)][int]$GuiScale=2
@@ -14,7 +14,7 @@ Set-StrictMode -Version Latest
 $root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $minecraft=Join-Path $root 'minecraft'
 $evidenceRoot=Join-Path $root 'runtime/evidence'
-$fixturePath=Join-Path $root 'build/hud-input-20261012/kcd2/hud/input/Release/minecome_hud_input_fixture.exe'
+$fixturePath=Join-Path $root 'build/hud-input-waitfix-20261012/kcd2/hud/input/Release/minecome_hud_input_fixture.exe'
 function Assert-Unlinked([string]$Path){
     $full=[IO.Path]::GetFullPath($Path);$cursor=$full
     while($cursor){
@@ -37,6 +37,7 @@ function Start-Child([string]$Executable,[string[]]$Arguments){
     return [Diagnostics.Process]::Start($start)
 }
 $null=Assert-Unlinked $evidenceRoot
+if($DelayFixture -and $Mode -ne 'Fixture'){throw 'Controlled input delays require the standalone fixture.'}
 if($Width -lt 320*$GuiScale -or $Height -lt 240*$GuiScale){throw 'UI layout needs at least320x240 logical pixels.'}
 $inventory=Read-Receipt (Join-Path $root 'runtime/environment.json')
 if(-not $JavaHome){
@@ -57,7 +58,7 @@ if($Mode -eq 'Fixture'){
 }else{
     . (Join-Path $PSScriptRoot 'KcdToolsProbeHelpers.ps1')
     $context=Get-MineComeProbeContext
-    if(-not $BundleDirectory){$BundleDirectory=Join-Path $root 'runtime/hud-compositor-input'}
+    if(-not $BundleDirectory){$BundleDirectory=Join-Path $root 'runtime/hud-compositor-input-waitfix'}
     & (Join-Path $PSScriptRoot 'Arm-HudStream.ps1') -InputMode -BundleDirectory $BundleDirectory -PreflightOnly
 }
 if($PreflightOnly){Write-Output "HUD_INPUT_PREFLIGHT_PASS mode=$Mode no_process_started=true";return}
@@ -73,7 +74,9 @@ $fixture=$null;$client=$null;$armEvidence=$null;$failure=$null;$passed=$false;$t
 try{
     if($Mode -eq 'Fixture'){
         if((Get-FileHash -LiteralPath $fixturePath).Hash -ine $fixtureHash){throw 'Fixture changed before launch.'}
-        $fixture=Start-Child $fixturePath @('--run',$run,'--expires',[string]$expires,'--ready-output',$fixtureReady,'--guest-ready',$readyPath,'--output',$fixtureResult)
+        $fixtureArguments=@('--run',$run,'--expires',[string]$expires,'--ready-output',$fixtureReady,'--guest-ready',$readyPath,'--output',$fixtureResult)
+        if($DelayFixture){$fixtureArguments+=@('--prearm-delay-ms','1000')}
+        $fixture=Start-Child $fixturePath $fixtureArguments
         $readyDeadline=[DateTime]::UtcNow.AddSeconds(10)
         while(-not(Test-Path -LiteralPath $fixtureReady)){
             if($fixture.HasExited -or [DateTime]::UtcNow -ge $readyDeadline){throw 'Fixture did not publish readiness.'}
@@ -85,6 +88,7 @@ try{
     }else{$targetPid=$context.GamePid;$targetStart=$context.GameStartedUtc.ToFileTimeUtc().ToString()}
     $arguments=@('-NoProfile','-File',(Join-Path $PSScriptRoot 'Run-HudStreamClient.ps1'),'-EvidenceDirectory',$directory,'-Run',$run,'-TargetPid',[string]$targetPid,'-TargetStart',$targetStart,'-ExpiresUtcMs',[string]$expires,'-JavaHome',$JavaHome,'-Width',[string]$Width,'-Height',[string]$Height,'-GuiScale',[string]$GuiScale,'-InputMode')
     if($Mode -eq 'Fixture'){$arguments+='-InputFixture'}
+    if($DelayFixture){$arguments+='-InputDelayFixture'}
     $client=Start-Child (Join-Path $PSHOME 'pwsh.exe') $arguments
     Write-Output "HUD_INPUT_START mode=$Mode run=$run evidence=$directory"
     while(-not(Test-Path -LiteralPath $readyPath)){
@@ -96,6 +100,7 @@ try{
     }
     $ready=Read-Receipt $readyPath
     if($ready.PSObject.Properties.Name -notcontains 'ui_input_fixture' -or $ready.ui_input_fixture -isnot [bool] -or $ready.ui_input_fixture -ne ($Mode -eq 'Fixture')){throw 'UI producer fixture/live mode mismatch.'}
+    if($ready.PSObject.Properties.Name -notcontains 'ui_input_delay_fixture' -or $ready.ui_input_delay_fixture -isnot [bool] -or $ready.ui_input_delay_fixture -ne [bool]$DelayFixture){throw 'UI producer delay-fixture mode mismatch.'}
     if($ready.schema -ne 1 -or $ready.run -cne $run -or $ready.source_kind -cne 'minecraft_vanilla_ui_stream_v1' -or $ready.ui_input_protocol -ne 1 -or $ready.target_pid -ne $targetPid -or [string]$ready.target_start_filetime -cne $targetStart -or $ready.expires_utc_ms -ne $expires){throw 'Genuine UI producer readiness mismatch.'}
     $producer=Get-Process -Id $ready.producer_pid
     try{
@@ -110,11 +115,14 @@ try{
     if($client.ExitCode -ne 0 -or ($fixture -and $fixture.ExitCode -ne 0)){throw 'UI client or native fixture reported failure.'}
     $guest=Read-Receipt (Join-Path $directory 'capture/stream-result.json')
     if($guest.PSObject.Properties.Name -notcontains 'ui_input_fixture' -or $guest.ui_input_fixture -isnot [bool] -or $guest.ui_input_fixture -ne ($Mode -eq 'Fixture')){throw 'UI result fixture/live mode mismatch.'}
+    if($guest.PSObject.Properties.Name -notcontains 'ui_input_delay_fixture' -or $guest.ui_input_delay_fixture -isnot [bool] -or $guest.ui_input_delay_fixture -ne [bool]$DelayFixture){throw 'UI result delay-fixture mode mismatch.'}
     if($guest.run -cne $run -or $guest.ui_input_protocol -ne 1 -or $guest.published_frames -lt 1 -or $guest.closed_published -ne $true -or $guest.mapping_unmapped -ne $true -or $guest.mapping_handle_closed -ne $true -or $guest.mutex_handle_closed -ne $true){throw 'UI stream publication/closure evidence missing.'}
     if($guest.lab_evidence.input_handles_closed -ne $true -or $guest.lab_evidence.closed_acknowledgement_published -ne $true){throw 'UI input acknowledgement/handle closure evidence missing.'}
     if($Mode -eq 'Fixture'){
         $native=Read-Receipt $fixtureResult
         if($native.run -cne $run -or $native.kind -cne 'minecome_hud_input_fixture_result_v1' -or $native.result -cne 'passed' -or $guest.result -cne 'input_passed' -or $guest.lab_evidence.input_fixture -ne $true -or $guest.lab_evidence.server_swap_verified -ne $true -or $guest.lab_evidence.inventory_opened -ne $true -or $guest.lab_evidence.inventory_closed -ne $true -or $guest.lab_evidence.selected_nine_verified -ne $true){throw 'Real vanilla UI fixture evidence incomplete.'}
+        if($DelayFixture -and ($native.prearm_delay_fixture -ne $true -or $native.max_prearm_ack_age_ms -le 250 -or $native.prearm_recoveries -lt 1)){throw 'Controlled prearm delay/recovery was not observed.'}
+        if($DelayFixture -and ($guest.lab_evidence.input_delay_fixture -ne $true -or $guest.lab_evidence.withheld_ready_ack_ticks -lt 1 -or $guest.lab_evidence.prearm_ack_delay_ms -le 250 -or $guest.lab_evidence.closed_ack_delay_ms -le 250)){throw 'Actual client-tick startup/closure delays were not observed.'}
     }else{
         if($guest.result -cne 'input_completed'){throw 'Live UI session did not complete cleanly.'}
         if($guest.lab_evidence.host_armed -ne $true -or $guest.lab_evidence.input_events_applied -lt 1){throw 'Live UI session closed without observed arming and applied input.'}
@@ -124,6 +132,6 @@ try{
     Write-Output "HUD_INPUT_COMPLETED mode=$Mode run=$run actual_minecraft=true host_input_exclusivity_verified=false"
 }catch{$failure=$_.Exception.Message;throw}
 finally{
-    [ordered]@{schema=1;kind='minecome_hud_input_controller_v1';run=$run;mode=$Mode;result=$(if($passed){'passed'}else{'failed'});failure=$failure;evidence=$directory;target_pid=$targetPid;target_start_filetime=$targetStart;fixture_sha256=$fixtureHash;compositor_armed=[bool]$armEvidence;width=$Width;height=$Height;gui_scale=$GuiScale;kcd_launched=$false;kcd_stopped=$false;host_input_exclusivity_verified=$false;live_mouse_enabled=$false;created_utc_ms=$expires-180000;expires_utc_ms=$expires} | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $directory 'verification.json') -Encoding utf8NoBOM
+    [ordered]@{schema=1;kind='minecome_hud_input_controller_v1';run=$run;mode=$Mode;delay_fixture=[bool]$DelayFixture;result=$(if($passed){'passed'}else{'failed'});failure=$failure;evidence=$directory;target_pid=$targetPid;target_start_filetime=$targetStart;fixture_sha256=$fixtureHash;compositor_armed=[bool]$armEvidence;width=$Width;height=$Height;gui_scale=$GuiScale;kcd_launched=$false;kcd_stopped=$false;host_input_exclusivity_verified=$false;live_mouse_enabled=$false;created_utc_ms=$expires-180000;expires_utc_ms=$expires} | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $directory 'verification.json') -Encoding utf8NoBOM
     if($client){$client.Dispose()};if($fixture){$fixture.Dispose()}
 }

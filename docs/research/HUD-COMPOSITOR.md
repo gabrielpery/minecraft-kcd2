@@ -291,7 +291,7 @@ the interactive stream continues rendering with `client_server_inventory_confirm
 false. The fixture's final item/selection proof still waits for server agreement.
 The actual retry exercised this path and passed with 32 published frames.
 
-The separate input add-on is installed from `runtime/hud-compositor-input`, with
+The separate input add-on is installed from `runtime/hud-compositor-input-waitfix`, with
 the previous stream bundle preserved. `Arm-HudStream.ps1 -InputMode` requires a
 genuine live-mode ready receipt and publishes only `MineComeHudInput.ini`. Fixture
 receipts cannot arm KCD. Both image and input channels use exact PID/FILETIME
@@ -317,3 +317,15 @@ cleaned up after normal KCD closure with exact ownership verification. Normal mo
 discovery is restored. The input installation is unarmed, with save and add-on
 backups; see `docs/PROGRESS.md` for exact receipts and hashes. No new KCD launch has
 been performed for this mode.
+
+The first live keyboard attempt ended before F8 with zero events: a stale
+waiting-state ACK was treated as terminal. KCD remained alive. Waiting readiness
+now becomes ineligible and can recover on fresh real observations, while armed
+input retains the 250 ms cutoff. Receipt-time sampling and a separate bounded
+closed-ACK rendezvous address timing races without refreshing timestamps or
+granting ownership during waiting/closure. `Start-HudInputLab.ps1 -Mode Fixture
+-DelayFixture` verified a deliberate 498 ms prearm ACK delay and a 550 ms delayed
+closed ACK in actual Minecraft, followed by the same authoritative inventory
+proof. Delayed fixtures are explicitly marked and cannot arm Live mode. The
+repaired native build is installed unarmed; physical KCD input still needs a new
+user-started session. Exact results and deployment receipts are in `docs/PROGRESS.md`.

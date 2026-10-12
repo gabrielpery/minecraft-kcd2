@@ -9,7 +9,7 @@ Set-StrictMode -Version Latest
 $root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $runtimeRoot=Join-Path $root 'runtime'
 $evidenceRoot=Join-Path $runtimeRoot 'evidence'
-if(-not $BundleDirectory) {$BundleDirectory=Join-Path $runtimeRoot $(if($InputMode){'hud-compositor-input'}else{'hud-compositor-stream'})}
+if(-not $BundleDirectory) {$BundleDirectory=Join-Path $runtimeRoot $(if($InputMode){'hud-compositor-input-waitfix'}else{'hud-compositor-stream'})}
 $expectedArm=if($InputMode){'minecome-hud/addons/MineComeHudInput.ini'}else{'minecome-hud/addons/MineComeHudStream.ini'}
 $exeHash='a32d077e6b54e5cd0c5a5f3194f473779706ff266a711e4745ccdb598843340a'
 $proxyHash='0cee63f9c9f13f3ac909c5b4903f4dbb4b719a7ab3b4f13b0deaf83c814b94f7'
@@ -77,6 +77,7 @@ $ready=Read-Receipt $ReadyManifest
 if($InputMode){
     if($ready.PSObject.Properties.Name -notcontains 'ui_input_protocol' -or $ready.ui_input_protocol -ne 1){throw 'Input mode requires explicit genuine guest readiness.'}
     if($ready.PSObject.Properties.Name -notcontains 'ui_input_fixture' -or $ready.ui_input_fixture -isnot [bool] -or $ready.ui_input_fixture -ne $false){throw 'Fixture producer cannot arm live KCD input.'}
+    if($ready.PSObject.Properties.Name -notcontains 'ui_input_delay_fixture' -or $ready.ui_input_delay_fixture -isnot [bool] -or $ready.ui_input_delay_fixture -ne $false){throw 'Delay fixture cannot arm live KCD input.'}
 }
 elseif($ready.PSObject.Properties.Name -contains 'ui_input_protocol'){throw 'Input producer requires explicit InputMode.'}
 $start=$context.GameStartedUtc.ToFileTimeUtc().ToString()

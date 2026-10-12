@@ -36,6 +36,7 @@ public final class HudStreamLab {
     private final HudStreamProducer.Identity identity;
     private final HudStreamLayout layout=HudStreamLayout.configured();
     private final boolean inputMode=Boolean.getBoolean("minecome.hudStreamInput"),inputFixture=Boolean.getBoolean("minecome.hudStreamInputFixture");
+    private final boolean inputDelayFixture=Boolean.getBoolean("minecome.hudStreamInputDelayFixture");
     private final long initializedAt=System.nanoTime();
     private final AtomicReference<Observation> server=new AtomicReference<>();
     private final AtomicReference<String> serverFailure=new AtomicReference<>();
@@ -49,6 +50,9 @@ public final class HudStreamLab {
     private long armedAt;
     private boolean fixtureTargetsSent,selectedNineVerified,inventoryOpened,inventoryClosed,serverSwapVerified;
     private JsonObject inputEndingProof;
+    private long lastInputTickAt,maxInputTickGapMs,maxImageAgeMs,firstReadyAckAt,prearmDelayStartUtc,prearmDelayEndUtc,delayedCloseAckAt,closeDelayStartUtc;
+    private long prearmIneligibleTicks,withheldReadyTicks;
+    private String terminalResult="passed";
     private Object world,player,serverIdentity;
     private long worldAt,streamAt,stateAt,lastCaptureAt,terminalAt,pauseStartedUtc,pauseEndedUtc;
     private long capturedServerConfirmed,capturedServerPending;
@@ -69,6 +73,7 @@ public final class HudStreamLab {
         var identity=new HudStreamProducer.Identity(required("minecome.hudStreamRun"),Integer.parseInt(required("minecome.hudStreamTargetPid")),Long.parseUnsignedLong(required("minecome.hudStreamTargetStart")),Long.parseLong(required("minecome.hudStreamExpiresUtcMs")));
         var lab=new HudStreamLab(Path.of(required("minecome.hudStreamDirectory")),identity);active=lab;
         if(lab.inputFixture && !lab.inputMode)throw new IllegalArgumentException("Input fixture requires HUD input mode");
+        if(lab.inputDelayFixture && !lab.inputFixture)throw new IllegalArgumentException("Delayed input fixture requires standalone fixture mode");
         ClientTickEvents.END_CLIENT_TICK.register(lab::tick);ServerTickEvents.END_SERVER_TICK.register(lab::observe);
         ClientLifecycleEvents.CLIENT_STOPPING.register(client->{
             lab.stopInput(client);lab.stopping=true;lab.restoreBlend();lab.readback.close();if(lab.output!=null)lab.output.close();
@@ -190,17 +195,24 @@ public final class HudStreamLab {
         if(terminal){
             if(!output.isFinished()){if(now-terminalAt>4_000_000_000L)fail(client,"Stream finalization 4s deadline");return;}
             if(output.failure()!=null){fail(client,"Stream terminal: "+output.failure());return;}
-            LOG.info("HUD_STREAM_PASS run={} save={} published={} actualVanillaHud=true actualVanillaInventory=true hostCompositingVerified=false",identity.run(),save,output.publishedFrames());
+            LOG.info("HUD_STREAM_TERMINAL run={} save={} result={} published={} actualVanillaHud=true actualVanillaInventory={} hostCompositingVerified=false",identity.run(),save,terminalResult,output.publishedFrames(),inputMode?inventoryOpened:stage==3);
             stopping=true;client.scheduleStop();
         }
     }
     private void inputTick(MinecraftClient client,long now){
+        if(lastInputTickAt!=0)maxInputTickGapMs=Math.max(maxInputTickGapMs,(now-lastInputTickAt)/1_000_000);
+        lastInputTickAt=now;
         if(inputEndingProof!=null){
-            if(!input.isFinished()){if(now-terminalAt>1_000_000_000L)throw new IllegalStateException("Input cleanup1s timeout");return;}
+            if(delayedCloseAckAt!=0 && now>=delayedCloseAckAt){
+                publishClosedAck(client);delayedCloseAckAt=0;
+                inputEndingProof.addProperty("closed_ack_delay_ms",System.currentTimeMillis()-closeDelayStartUtc);
+            }
+            if(!input.isFinished()){if(now-terminalAt>1_500_000_000L)throw new IllegalStateException("Input cleanup1.5s timeout");return;}
             inputEndingProof.addProperty("input_handles_closed",input.cleanupComplete());inputEndingProof.addProperty("closed_acknowledgement_published",input.closedAcknowledgementPublished());
+            inputEndingProof.add("input_timing",input.diagnostics());inputEndingProof.addProperty("max_client_tick_gap_ms",maxInputTickGapMs);inputEndingProof.addProperty("max_own_image_age_ms",maxImageAgeMs);
             if(!input.cleanupComplete())throw new IllegalStateException("Input handle cleanup failed");
             String result=inputFixture?"input_passed":(armedAt!=0 && inputGate.sequence()>0?"input_completed":"input_cancelled");
-            output.finish(result,inputEndingProof);terminal=true;terminalAt=now;return;
+            terminalResult=result;output.finish(result,inputEndingProof);terminal=true;terminalAt=now;return;
         }
         if(input==null && output.publishedFrames()>0){
             var wire=new HudInputProtocol.Identity(identity.run(),output.producerPid(),output.producerStart(),identity.targetPid(),identity.targetStart(),identity.expiresUtcMs());
@@ -223,9 +235,13 @@ public final class HudStreamLab {
             if(!"host_closed".equals(reason) && !"guest_closed".equals(reason))throw new IllegalStateException("Input peer ended: "+reason);
             finishInput(client,now,reason);return;
         }
-        if(input.connected() && (System.currentTimeMillis()-input.heartbeat()>250 || now-input.observedAt()>250_000_000L))throw new IllegalStateException("Input host observation stale");
-        if(now-output.lastPublishedAt()>250_000_000L)throw new IllegalStateException("Own image publication stale");
-        if(input.hostState()==1){
+        boolean connected=input.connected();int hostState=connected?input.hostState():0;
+        boolean hostFresh=connected && System.currentTimeMillis()-input.heartbeat()<=250 && now-input.observedAt()<=250_000_000L;
+        long imageAgeMs=(now-output.lastPublishedAt())/1_000_000;maxImageAgeMs=Math.max(maxImageAgeMs,imageAgeMs);
+        boolean imageFresh=imageAgeMs<=250;
+        if(hostState==1 && !hostFresh)throw new IllegalStateException("Input host observation stale");
+        if(hostState==1 && !imageFresh)throw new IllegalStateException("Own image publication stale");
+        if(hostState==1){
             if(armedAt==0){armedAt=now;LOG.info("HUD_INPUT_ARMED run={} fixture={}",identity.run(),inputFixture);}
             for(int count=0;count<64;count++){
                 var event=input.poll();if(event==null)break;
@@ -233,17 +249,34 @@ public final class HudStreamLab {
             }
             if(now-armedAt>=30_000_000_000L){finishInput(client,now,"activation_30s_complete");return;}
         }else if(now-streamAt>=60_000_000_000L){finishInput(client,now,"waiting_60s_complete");return;}
+        // While waiting we own no controls. Old image/heartbeat/ticks make us
+        // ineligible; only a later real fresh client tick can restore readiness.
+        if(!hostFresh || !imageFresh){prearmIneligibleTicks++;return;}
+        if(inputDelayFixture && hostState==0 && firstReadyAckAt!=0){
+            long elapsed=now-firstReadyAckAt;
+            if(elapsed>=200_000_000L && elapsed<700_000_000L){
+                if(prearmDelayStartUtc==0)prearmDelayStartUtc=System.currentTimeMillis();withheldReadyTicks++;return;
+            }
+            if(elapsed>=700_000_000L && prearmDelayStartUtc!=0 && prearmDelayEndUtc==0)prearmDelayEndUtc=System.currentTimeMillis();
+        }
         input.acknowledge(new HudInputReader.Acknowledgement(inputGate.sequence(),System.currentTimeMillis(),1,HudVanillaUiAdapter.inventory(client.currentScreen)?1:0,client.player.getInventory().selectedSlot));
+        if(firstReadyAckAt==0)firstReadyAckAt=now;
     }
     private void finishInput(MinecraftClient client,long now,String reason){
         var proof=new JsonObject();proof.addProperty("input_fixture",inputFixture);proof.addProperty("input_armed",armedAt!=0);proof.addProperty("end_reason",reason);
         proof.addProperty("host_armed",armedAt!=0);proof.addProperty("input_events_applied",inputGate.sequence());
+        proof.addProperty("input_delay_fixture",inputDelayFixture);proof.addProperty("withheld_ready_ack_ticks",withheldReadyTicks);proof.addProperty("prearm_ineligible_ticks",prearmIneligibleTicks);
+        proof.addProperty("prearm_ack_delay_start_utc_ms",prearmDelayStartUtc);proof.addProperty("prearm_ack_delay_end_utc_ms",prearmDelayEndUtc);proof.addProperty("prearm_ack_delay_ms",prearmDelayEndUtc-prearmDelayStartUtc);
         proof.addProperty("captured_server_confirmed",capturedServerConfirmed);proof.addProperty("captured_server_pending",capturedServerPending);
         proof.addProperty("server_swap_verified",serverSwapVerified);proof.addProperty("inventory_opened",inventoryOpened);proof.addProperty("inventory_closed",inventoryClosed);proof.addProperty("selected_nine_verified",selectedNineVerified);
         proof.addProperty("events_applied",inputGate.sequence());proof.addProperty("capture_width",layout.width());proof.addProperty("capture_height",layout.height());proof.addProperty("vanilla_gui_scale",layout.guiScale());
         proof.addProperty("new_world",true);proof.addProperty("real_creative_packets",true);proof.addProperty("normal_vanilla_render_path",true);proof.addProperty("normal_shutdown_requested",true);
         proof.add("final_client_slots",jsonSlots(slots(client.player.getInventory())));Observation observation=server.get();if(observation!=null)proof.add("final_server_slots",jsonSlots(observation.slots()));
-        stopInput(client);proof.addProperty("controls_released",inputGate.heldKeyCount()==0 && inputGate.heldButtonCount()==0);
+        if(inputDelayFixture){
+            if(ui!=null)ui.releaseAndClose(client);inputGate.releaseAll();input.close();
+            delayedCloseAckAt=now+500_000_000L;closeDelayStartUtc=System.currentTimeMillis();
+        }else stopInput(client);
+        proof.addProperty("controls_released",inputGate.heldKeyCount()==0 && inputGate.heldButtonCount()==0);
         inputEndingProof=proof;terminalAt=now;
         LOG.info("HUD_INPUT_TERMINAL run={} reason={} events={} serverSwapVerified={}",identity.run(),reason,inputGate.sequence(),serverSwapVerified);
     }
@@ -254,8 +287,9 @@ public final class HudStreamLab {
     }
     private void stopInput(MinecraftClient client){
         if(ui!=null)ui.releaseAndClose(client);inputGate.releaseAll();
-        if(input!=null){int selected=client.player==null?0:client.player.getInventory().selectedSlot;input.acknowledge(new HudInputReader.Acknowledgement(inputGate.sequence(),System.currentTimeMillis(),2,0,selected));input.close();}
+        if(input!=null){publishClosedAck(client);input.close();}
     }
+    private void publishClosedAck(MinecraftClient client){int selected=client.player==null?0:client.player.getInventory().selectedSlot;input.acknowledge(new HudInputReader.Acknowledgement(inputGate.sequence(),System.currentTimeMillis(),2,0,selected));}
     private void create(MinecraftClient client){
         started=true;if(client.world!=null || client.isIntegratedServerRunning()){fail(client,"Refusing existing/open world");return;}
         oldPause=client.options.pauseOnLostFocus;client.options.pauseOnLostFocus=false;oldHidden=client.options.hudHidden;client.options.hudHidden=false;
