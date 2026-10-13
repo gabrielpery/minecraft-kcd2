@@ -56,7 +56,10 @@ Never load newer retail1.5.6 saves into this older1.5.5 development game. Backup
   combined guest now has an explicit live relay controller; the user confirmed
   the HUD and stone appearance/removal together, with matching engine and cleanup
   receipts. Live arming still refuses fixture markers. General
-  targeting, physical world-click actions and other block types remain unfinished.
+  targeting and other block types remain unfinished. Physical world clicks and
+  camera look subsequently passed in the fixed-cell live profile. The new
+  standalone aimed-stone component also passes actual Minecraft raycast/action
+  checks with synthetic host rays, but is not yet connected to the KCD crosshair.
 - Physical W/Space/mouse forwarding and starting-camera alignment now pass in the
   isolated4×4m Minecraft lab. Fifteen delayed samples were discarded during the
   successful run; low-latency sustained control is not yet established. KCD still

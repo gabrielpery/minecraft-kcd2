@@ -201,3 +201,37 @@ the controller. `hostViewSeedTest` checks its identity, patch association, fresh
 camera basis and coordinate conversion. The initial server teleport applies the
 angles once; READY verifies them independently on client/server. Subsequent input
 uses the ordinary mouse path. No continuous host-pose or camera writes are added.
+
+## Standalone aimed-stone lab
+
+From the repository root, run:
+
+```powershell
+& .\scripts\Start-AimedStoneLab.ps1
+```
+
+The controller uses the already-installed PowerShell 7 runtime automatically and
+the tested installed JDK 24. `-JavaHome` selects that JDK's location;
+`-PreflightOnly` checks prerequisites without launching Minecraft. An existing
+MineCome development client must be closed first. KCD2 is not used by this lab.
+
+The opt-in `minecomeAimedStoneLab` mode creates a fresh UUID Creative save and
+returns before the normal bridge starts. Actual Minecraft outline raycasts
+select the stone and face. Vanilla placement/breaking builds and removes a small
+cluster, with both client and integrated-server observations required for every
+change. Scripted fixture teleports and synthetic host rays exercise all six
+selection faces, side placement, nearest-block selection and refused requests.
+These are automated Minecraft checks, not evidence of live KCD crosshair alignment.
+
+The run ends automatically, restores its changed options and writes process,
+selection and action evidence beneath `runtime/evidence/aimed-stone-*`. The
+controller requires normal Java and wrapper exit, a matching fresh save, balanced
+confirmed placements/removals and no remaining owned stones. Failure evidence and
+the isolated save are retained. The working HUD and fixed-cell paths are separate.
+
+Verified run `d388905d36fa4865892a77ce69cc572d` passes all 21 scenarios, including
+six-face selection, actual UP/EAST placement, seven refusal cases, rejected-ID
+replay and a camera turn while an action is pending. Its four placements and four
+breaks have matching client/server proof and final cleanup. The receipt validator
+passes 31 direct/JSON/tamper checks with `tests/aimed_stone_receipt.Tests.ps1` under
+both PowerShell 5.1 and 7. No live aimed protocol capability is enabled by this run.

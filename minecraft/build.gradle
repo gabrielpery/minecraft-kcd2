@@ -10,6 +10,13 @@ loom {
         client {
             programArgs '--username', 'MineComeLab'
             vmArgs '--enable-native-access=ALL-UNNAMED'
+            if (project.hasProperty('minecomeAimedStoneLab'))
+                vmArgs '-Dminecome.aimedStoneLab=true'
+            for (String suffix : ['Run','Directory']) {
+                String key = 'minecomeAimedStone' + suffix
+                if (project.hasProperty(key))
+                    vmArgs "-Dminecome.aimedStone${suffix}=${project.property(key)}"
+            }
             if (project.hasProperty('minecomeHudExportLab'))
                 vmArgs '-Dminecome.hudExportLab=true'
             if (project.hasProperty('minecomeHudExportDirectory'))

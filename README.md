@@ -92,9 +92,16 @@ relay explicitly refused after disconnect. The corrected verifier passes a repla
 of the unchanged live evidence. Earlier revisions' camera failures remain recorded.
 The verified camera-locked profile remains available.
 Shared aiming geometry is tested in Java and C++, but live targeting still uses
-the fixed cell until the alignment handshake and vanilla raycast are connected.
-The next host-side piece is implemented: a separate read-only camera/obstruction
-probe with tested Lua and receipt validation. Its live sample remains pending.
+the fixed cell until the alignment handshake and live ray are connected.
+**The actual Minecraft aimed-action component now passes its automatic lab:**
+21 scenarios verify all six selection faces, side placement, nearest-block
+selection, refused rays and a pending action remaining on its original target
+after a camera turn. Four placements and four breaks have client/server proof,
+followed by complete stone cleanup and normal exit. This uses synthetic host rays;
+it does not yet enable aiming at different blocks from KCD. The separate read-only
+KCD camera/obstruction probe is implemented and tested; its live sample and the
+shared alignment/aimed-request protocol remain pending. See the
+[standalone aimed-stone lab](minecraft/README.md#standalone-aimed-stone-lab).
 Earlier tools launches crashed during world loading with the renderer unarmed and
 with its hook disabled. A subsequent explicit PowerShell 7 launch reached the world,
 confirmed by the user and a successful two-minute process/HTTP check, with the hook

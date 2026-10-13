@@ -305,3 +305,34 @@ cannot reuse the most recent diagnostic sample. Alignment must be agreed before
 bootstrap, using the actual guest camera and sampled host camera for the first
 turn-only lab. Inverting the existing four-unit display offset would place the
 ray origin away from the actual Minecraft player and invalidate reach assumptions.
+
+### Standalone Minecraft aimed arena (no wire change)
+
+`AimedStoneArena` implements the guest selection/action portion independently of
+the existing fixed-cell bridge. It pins one immutable alignment and a fresh
+Creative world, allows at most 16 confirmed owned stones within a 5×5×5 cell
+volume, and requires a host ray no longer than 4.5 units and no older than 500 ms.
+The mapped origin must agree with the actual Minecraft player's eye within
+0.15 blocks on both the client and integrated server. Host obstruction is
+explicitly clear, hit, or unavailable; unavailable samples cannot act.
+
+Selection calls Minecraft's real `World.raycast` with `OUTLINE` and `NONE`.
+Only an owned stone can be selected. The returned block, face and hit point are
+retained through server prestate observation and client revalidation, then used
+by vanilla `interactBlock` or `attackBlock`. A later camera turn cannot redirect
+the pending action. Ownership changes only after client/server agreement on the
+result. Rejected request IDs are consumed, and a deadline, changed world, missing
+chunk or unexplained owned-cell transition prevents further actions.
+
+The only floor-support exception is one explicit initial vanilla bootstrap.
+Removing the last owned stone leaves an empty arena; there is no automatic seed
+or invented terrain support. Minecraft's ordinary placement collision checks
+remain active. The bounded volume and entity collisions may refuse some adjacent
+placements even when the selected face itself is valid.
+
+`Start-AimedStoneLab.ps1` exercises this component in a separate actual Minecraft
+process, using synthetic host rays, a fresh UUID flat world and declared fixture
+teleports. It opens no bridge connection and makes no KCD calls. The default
+minor 0/1 path, live fixed-cell controls and installed renderer are unchanged.
+An aimed wire capability, shared alignment acknowledgement, paired live host
+click/sample and KCD replica integration still need implementation.

@@ -16,6 +16,34 @@ the unchanged live evidence. Explicit terminal refusals remain separate from
 completed Minecraft actions. The raw failed result is preserved. Free aiming
 and continuous gameplay remain unfinished.
 
+**Minecraft aimed actions: implemented, compiled and actual-game standalone
+verified.** `AimedStoneArena` now selects owned stones with Minecraft's real
+outline raycast and passes the returned face/hit point to vanilla actions.
+Run `d388905d36fa4865892a77ce69cc572d`, in
+`runtime/evidence/aimed-stone-20261013-191056-d388905d36fa4865892a77ce69cc572d`,
+passes all 21 scenarios. All six faces are selection-verified; placement is
+verified on UP and EAST, not all six directions. Four placements and four breaks
+are independently confirmed by the client and integrated server. The run checks
+nearest-block selection, a miss, unowned floor, host obstruction/unavailability,
+stale data, eye/alignment mismatch and rejection of a reused request ID. Turning
+the view after queuing does not change the pending target. All four cells used by
+the fixture are rechecked as air on both threads, with zero remaining ownership,
+no pending action, restored options, a persisted fresh UUID save and Java/wrapper
+exit 0. Host rays and fixture teleports are synthetic; KCD was not connected.
+
+The component permits one bootstrap and at most 16 confirmed stones in a bounded
+5×5×5 volume, with immutable alignment, a 4.5-unit/500 ms host ray limit and
+0.15-block agreement with the actual player's eye. Review fixed a preproof
+scheduling race, consumed rejected IDs and strengthened proof/chunk freshness.
+The earlier run `ee3a0b858a0841b9b7d0847bde2a1575` completed the same gameplay
+checks but failed controller validation because Gson omitted a null failure
+field. Its failed evidence is preserved. The corrected writer produces the
+fully verified run above; 31 receipt regression cases pass in both PowerShell
+5.1 and 7. Fabric build/remap succeeds; existing protocol and stone gate/proof/
+mode checks pass. The default bridge, live HUD controls and installed renderer
+remain unchanged. The next integration work is shared alignment, a click paired
+with its live host ray and obstruction sample, and KCD replica acknowledgement.
+
 **Crosshair targeting groundwork: read-only host aim sample implemented and
 standalone verified.** The new separate Lua probe captures camera origin/forward
 and nearest host obstruction in one call. It checks every hit, distinguishes
@@ -23,7 +51,7 @@ unavailable data from clear space, and makes no game-state changes. Fourteen
 mock-engine groups pass 1,533 checks; host receipt validation passes 343 checks.
 Its caller preserves source/log evidence and pins the existing tools process.
 No live ray sample, alignment handshake,
-vanilla aimed action or new wire capability is claimed. See the
+live KCD aimed action or new wire capability is claimed. See the
 [aim sample contract](../protocol/PROTOCOL.md#read-only-host-aim-sample-implemented-no-aimed-request-enabled).
 
 **Selective capture implementation and earlier checks.** A separate
