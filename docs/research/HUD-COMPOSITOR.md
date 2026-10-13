@@ -4,6 +4,14 @@ The required architecture is Minecraft's real HUD and screens captured as pixels
 then composited in the host renderer. There is no desktop overlay, hand-drawn
 hotbar, web UI, or replacement inventory implementation.
 
+**Current result:** the user has verified live 1/2/9 hotbar selection, E/Escape
+inventory control and accepted HUD size in KCD2. Ten physical press/release events
+were acknowledged; the temporary host cap and guest state were restored, and
+Minecraft exited normally. Ownership lasted about 10.47 seconds with an unknown
+close trigger. Full-session behavior, mouse ownership, KCD menu exclusivity,
+host HUD suppression and health integration remain unfinished. Detailed evidence
+and the earlier failed runs are recorded below.
+
 ## Inspected implementations
 
 - [SkyCraft FrameExporter](https://github.com/chasmlol/SkyCraft/blob/bfcaf178524b92c2cdeb88e4ce0f13ef9ded6f32/fabric/src/client/java/dev/skycraft/client/FrameExporter.java)
@@ -284,7 +292,8 @@ a standalone native reverse-input peer. Its successful 31-event run selected all
 nine hotbar slots, opened/closed the real Creative inventory and used normal slot
 clicks to swap two stacks, with final integrated-server confirmation. Source
 capture is now 1280x720 at GUI scale 2; full-canvas placement is unchanged. The
-live host appearance of this smaller layout is still unverified.
+live appearance of this smaller layout was subsequently accepted in the final
+short keyboard check recorded below.
 
 Rendering and server proof have distinct timing: during ordinary client prediction
 the interactive stream continues rendering with `client_server_inventory_confirmed`
@@ -589,6 +598,30 @@ After a fresh KCD restart, the opt-in command is:
 & 'C:/Users/xephi/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/powershell/pwsh.exe' -NoProfile -File 'C:/Users/xephi/Documents/ChatGPT/New project/MineCome/scripts/Start-HudInputLab.ps1' -Mode Live -OffscreenPresentation -HostGpuBudget
 ```
 
-Final independent controller review passed; the combined live physical-key test is
-pending. The current KCD process has consumed its arm; the restart uses the same
-installed waitfix add-on. This controller change requires no new native or JAR build.
+Final independent controller review passed. The user restarted with the same
+installed waitfix add-on for the live check below; this controller change required
+no new native or JAR build.
+
+## Short live keyboard sequence and sizing verified
+
+Run `3f322ff93e6a4b35b1b64dd3f16410f4`, at
+`runtime/evidence/hud-input-20261013-122232-3f322ff93e6a4b35b1b64dd3f16410f4`,
+passes against fresh KCD PID 48640 with the unchanged waitfix installation.
+The user accepted the HUD size and controls. Ten physical press/release events
+for 1, 2, 9, E and Escape were acknowledged/applied, and the actual Creative
+inventory opened and closed. Minecraft published 496 real frames; KCD uploaded
+478 and submitted 2,001 draws with zero drops. Maximum image/readback ages were
+140/46 ms. All-nine-slot and server stack-swap proof remains standalone only.
+
+The guest ended with `input_completed`/`host_closed`, no failure, real closed ACK,
+complete cleanup, normal saves and exit 0; the closing Minecraft window was not
+a crash. Native ownership lasted about 10.47 seconds, from 13:23:27.197 to
+13:23:37.670. Its exact close trigger is unavailable in the installed build;
+this does not prove full 30-second operation or KCD menu/input exclusivity.
+
+Budget run `11e7171fd8fb4966a351c72b2a7349ad` restored −1 after the temporary
+60 FPS cap through requested End before expiry, with its timer cancelled. Its
+receipt is at
+`runtime/evidence/hud-gpu-budget-20261013-132304-11e7171fd8fb4966a351c72b2a7349ad/budget-verification.json`.
+The next work is full-session close diagnostics and mouse ownership. Host HUD
+suppression and health integration remain separate unfinished integrations.
