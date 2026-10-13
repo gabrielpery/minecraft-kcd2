@@ -96,9 +96,13 @@ client and integrated server. Its standalone actual-game fixture passes; the new
 `AimedBridgeLab` connects that component to an explicitly synthetic native host.
 Its actual two-process run passes immutable alignment acknowledgement, confirmed
 bootstrap, a permit-bound network break, separate result/removal events and final
-client/server air with normal process exits. The official KCD relay and replica
-sink are not yet connected to this alignment/aimed-request route. Existing HUD and
-minor1 controls retain their fixed-cell path. See the
+client/server air with normal process exits. An explicit tools-host aimed mode
+now maps replicas through that same agreement and connects original guest permits
+to Lua camera/obstruction captures. It passes simulated-engine integration checks.
+The separate aimed HUD guest and physical-edge selector are implemented; a bounded
+live controller and actual KCD crosshair verification remain unfinished. Existing
+HUD and minor1 controls retain their fixed-cell path. See
+[aimed controls](research/AIMED-CONTROLS.md) and the
 [minor2 contract](../protocol/PROTOCOL.md#optional-minor2-aimed-stone-arena).
 
 **C — protocol and transport.** Independent C++/Java codecs implement explicit version,

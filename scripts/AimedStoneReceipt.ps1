@@ -51,13 +51,13 @@ function Assert-MineComeAimedStoneReceipt {
     $cleanup=@($Receipt.final_client_server_air_cells);$expectedCells=@($seed,$middle,$top,$east)
     if($cleanup.Count -ne 4){throw 'Final client/server cleanup count differs.'}
     foreach($expected in $expectedCells){$matches=0;foreach($actual in $cleanup){Cell $actual;if($actual.x -eq $expected.x -and $actual.y -eq $expected.y -and $actual.z -eq $expected.z){$matches++}};if($matches -ne 1){throw 'Final client/server cleanup cells differ.'}}
-    $names=@('column_middle','column_top','remove_seed','remove_middle','face_down','face_up','face_north','face_south','face_west','face_east','place_east','nearest','miss','unowned_floor','host_occluded','host_occlusion_unavailable','stale_ray','origin_mismatch','alignment_changed','turn_while_pending','cleanup_top')
+    $names=@('column_middle','column_top','remove_seed','remove_middle','face_down','face_up','face_north','face_south','face_west','face_east','place_east','nearest','miss','unowned_floor','host_occluded','host_occlusion_unavailable','stale_ray','origin_mismatch','alignment_changed','cancel_before_dispatch','turn_while_pending','cleanup_top')
     $rejections=@{miss='ray_miss';unowned_floor='unowned_hit';host_occluded='host_obstructed';host_occlusion_unavailable='host_obstruction_unavailable';stale_ray='ray_stale';origin_mismatch='ray_origin_disagrees_with_eye';alignment_changed='alignment_changed'}
     $dispatch=@{column_middle=1;column_top=1;remove_seed=2;remove_middle=2;place_east=1;turn_while_pending=2;cleanup_top=2}
     if(@($Receipt.checks).Count -ne $names.Count -or @($Receipt.fixture_teleports).Count -ne $names.Count){throw 'Aimed scenario/teleport count mismatch.'}
     $confirmations=@($arena.confirmations);$requests=@($arena.requests)
-    if($confirmations.Count -ne 8 -or $requests.Count -ne 16){throw 'Aimed action/refusal proof count differs.'}
-    $ids=@(1,2,3,4,5,6,14,15);$actions=@(1,1,1,2,2,1,2,2);$targets=@($seed,$middle,$top,$seed,$middle,$east,$east,$top)
+    if($confirmations.Count -ne 8 -or $requests.Count -ne 17){throw 'Aimed action/refusal proof count differs.'}
+    $ids=@(1,2,3,4,5,6,15,16);$actions=@(1,1,1,2,2,1,2,2);$targets=@($seed,$middle,$top,$seed,$middle,$east,$east,$top)
     $hitCells=@((Offset $seed 0 -1 0),$seed,$middle,$seed,$middle,$top,$east,$top);$faces=@('UP','UP','UP','WEST','WEST','EAST','EAST','WEST')
     for($i=0;$i -lt 8;$i++) {
         $c=$confirmations[$i];Integer $c id $ids[$i];Integer $c action $actions[$i];Bool $c client_and_server $true;Bool $c bootstrap ($i -eq 0)
@@ -66,9 +66,9 @@ function Assert-MineComeAimedStoneReceipt {
         Integer $c selected_slot 0;Text $c selected_item 'minecraft:stone';Integer $c selected_count 64
         if($i -gt 0){Need $c @('host_ray');Need $c.host_ray @('origin','direction','range','age_at_queue_ns','host_obstruction','host_obstruction_distance');$null=Number $c.host_ray.age_at_queue_ns 0 500000000;Text $c.host_ray host_obstruction 'KNOWN_CLEAR';Near (Number $c.host_ray.host_obstruction_distance 0 4.5) 0}
     }
-    $requestIds=@(1,2,3,4,5,6,7,7,8,9,10,11,12,13,14,15)
+    $requestIds=@(1,2,3,4,5,6,7,7,8,9,10,11,12,13,14,15,16)
     $confirmedById=@{};foreach($c in $confirmations){$confirmedById[[long]$c.id]=$c}
-    $rejectedReasons=@('ray_miss','unowned_hit','host_obstructed','host_obstruction_unavailable','ray_stale','ray_origin_disagrees_with_eye','alignment_changed')
+    $rejectedReasons=@('ray_miss','unowned_hit','host_obstructed','host_obstruction_unavailable','ray_stale','ray_origin_disagrees_with_eye','alignment_changed','actions_disabled_before_dispatch')
     for($i=0;$i -lt $requests.Count;$i++) {
         $q=$requests[$i];$id=$requestIds[$i];Integer $q id $id
         if($confirmedById.ContainsKey([long]$id)) {
@@ -87,6 +87,11 @@ function Assert-MineComeAimedStoneReceipt {
         Bool $c selection_allowed (-not $negative);Bool $c vanilla_dispatch $doesDispatch;Bool $c client_and_server_confirmed $doesDispatch
         Bool $c view_turned_after_queue ($name -eq 'turn_while_pending');Bool $c rejected_request_checked $negative;Bool $c rejected_id_replay_checked ($name -eq 'miss')
         if($negative){Text $c reason $rejections[$name];Integer $c request_id $negativeId;Integer $c action 2;$negativeId++}else{Text $c reason 'selected'}
+        if($name -eq 'cancel_before_dispatch'){
+            Integer $c request_id 14;Integer $c action 2;Bool $c queued_then_cancelled $true
+            Text $c cancellation_reason 'actions_disabled_before_dispatch';Bool $c client_server_cells_unchanged $true
+            SameCell $c.target $east;SameCell $c.hit_block $east;Text $c face 'east'
+        }
         if($name.StartsWith('face_')){Text $c face $name.Substring(5);SameCell $c.hit_block $top;SameCell $c.target $top}
         if($name -eq 'nearest'){SameCell $c.target $east;SameCell $c.hit_block $east;Text $c face 'east'}
         if($doesDispatch){$proof=$confirmations[$actionIndex++];Integer $c request_id $proof.id;Integer $c action $dispatch[$name];SameCell $c.target $proof.target;SameCell $c.hit_block $proof.hit_block;Text $c face $proof.face.ToLowerInvariant()}

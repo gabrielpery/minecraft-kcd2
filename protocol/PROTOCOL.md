@@ -194,8 +194,12 @@ The optional minor2/capability2 extension is implemented in the C++/Java codecs
 and bridges. Existing minor0/1 callers and live fixed-cell controls remain on their
 original paths. The new `AimedBridgeLab` connects actual Minecraft to an explicitly
 synthetic C++ host; its automatic two-process run passes an exact arena ACK,
-confirmed bootstrap, aimed network break, separate removal/result and cleanup. The official
-KCD relay, live click/ray capture and KCD replica sink do not yet use this extension.
+confirmed bootstrap, aimed network break, separate removal/result and cleanup.
+The tools-host's explicit `--aimed-stone --aimed-run <run>` mode now uses the
+extension and the agreed replica alignment. Its Lua permit/capture route passes
+simulated-engine integration tests. The aimed HUD guest and physical-edge permit
+selector are implemented, but the existing live controller does not enable them
+yet. See [aimed controls](../docs/research/AIMED-CONTROLS.md).
 
 The implemented minor1 fixed-cell request remains unchanged. `AimGeometry`
 (Java) and `aim_geometry.hpp` (C++) contain pure alignment and reference-ray
@@ -206,8 +210,9 @@ new gameplay. Actual Minecraft target selection must use its world raycast,
 not the reference cube picker.
 
 The intended live feature is a bounded, visible **stone cluster**. A bootstrap
-stone is placed through the real vanilla action path. The existing KCD sink still
-needs connection to this arena's alignment before it can display the cluster.
+stone is placed through the real vanilla action path. The optional aimed KCD
+sink uses this arena's alignment to display the cluster; its live verification
+is outstanding.
 Thereafter a fresh camera ray selects an owned stone for breaking, or adjacent
 placement using the returned face. Implemented limits are 16 owned cells, a
 5×5×5 cell volume, a 4.5 KCD-unit ray, and Minecraft's
@@ -282,7 +287,7 @@ peer is permitted to create a Minecraft block state directly.
    when the first block event happens to arrive. A translated display island
    is not global terrain/player calibration, so the `CALIBRATED` pose bit stays
    clear until that separate measurement is complete.
-3. **Still pending for live KCD:** capture the camera origin/forward and nearest
+3. **Implemented; live KCD verification pending:** capture the camera origin/forward and nearest
    physical host obstruction in the same Lua aim-intent call, tied to the original
    click/request and arena ID. The implemented request carries the immutable ray,
    obstruction availability and distance plus its one-use permit ID. Do not combine
@@ -319,11 +324,11 @@ centre ray. The pure reference AABB helper marks origins inside a box and uses
 stable XYZ ordering on equal-distance cell hits. Minecraft's actual shape
 raycast remains authoritative for real face/edge behavior.
 
-Inspected implementation seams are `StoneConsumer::update` in
-`kcd2/src/tools_http_host.cpp` (currently anchors on the first event),
-`StoneAlignment::create/map` in `kcd2/src/stone_mirror.cpp`,
-`HudStoneBridge.initializeCell/dispatch/readServer` (currently one cell and
-hard-coded UP face), and the action-only protocol/mailboxes. Minecraft 1.21.1
+Implementation seams are `StoneConsumer::update` and `AimedInputRelay` in
+`kcd2/src/tools_http_host.cpp`, `StoneAlignment::from_arena/map` in
+`kcd2/src/stone_mirror.cpp`, the separate `HudAimedStoneBridge`, and
+`AimedStoneArena`. Legacy `HudStoneBridge` retains its one-cell/UP-face actions
+and original protocol/mailboxes. Minecraft 1.21.1
 named bytecode confirms `Entity.raycast` uses `RaycastContext.ShapeType.OUTLINE`
 and `World.raycast`; the same cached classes expose `interactBlock` and
 `attackBlock`. Existing `kcd2/probes/ground_probe.lua` documents the inspected
@@ -334,9 +339,10 @@ include host obstacles; the terrain-only sampler cannot establish wall
 occlusion. Mirrored stones currently have `physics=false`, so the host ray
 does not replace Minecraft selection of those stones.
 
-Live work still needed before this feature can be claimed in KCD: connect the
-implemented handshake to the official relay and replica sink, pair each physical
-click with its engine ray/obstruction sample, and check centre-ray alignment on
+Live work still needed before this feature can be claimed in KCD: build the bounded
+controller that loads the new Lua modules, forwards each physical click with its
+original acknowledged permit, and validates the separate aimed HUD proof; then
+check centre-ray alignment on
 several block faces while turning/stepping. Standalone Minecraft selection and
 transport checks do not prove host camera timing, eye/feet alignment or KCD gameplay.
 
@@ -359,9 +365,10 @@ the strict host-side receipt validator passes 343 checks for numeric types,
 finite vectors, unit/scaled rays, timing, hit geometry and availability flags.
 The probe is not yet live verified. KCD was closed after the successful camera test.
 
-This establishes a host sample contract, not click/sample pairing or shared
-alignment. A future aimed request must capture this data with that click; it
-cannot reuse the most recent diagnostic sample. Alignment must be agreed before
+This establishes a host sample contract. The separate `aim_intent.lua` now pins
+this sampler and consumes an installed one-use permit when capturing a click's
+ray. That capture occurs at the later Lua callback, not at the renderer input
+frame; it cannot reuse the most recent diagnostic sample. Alignment must be agreed before
 bootstrap, using the actual guest camera and sampled host camera for the first
 turn-only lab. Inverting the existing four-unit display offset would place the
 ray origin away from the actual Minecraft player and invalidate reach assumptions.
@@ -395,7 +402,7 @@ process, using synthetic host rays, a fresh UUID flat world and declared fixture
 teleports. It opens no bridge connection and makes no KCD calls. The default
 minor 0/1 path, live fixed-cell controls and installed renderer are unchanged.
 This original standalone lab does not enable the new minor2 wire extension.
-Paired live host click/sample and KCD replica integration remain unfinished.
+Paired live host click/sample and KCD replica verification remain unfinished.
 
 ### Actual-Minecraft network fixture
 

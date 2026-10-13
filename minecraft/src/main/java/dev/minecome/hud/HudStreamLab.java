@@ -44,6 +44,7 @@ public final class HudStreamLab {
     private final boolean inputDelayFixture=Boolean.getBoolean("minecome.hudStreamInputDelayFixture");
     private final boolean inputPointerFixture=Boolean.getBoolean("minecome.hudStreamInputPointerFixture");
     private final boolean stoneMode=Boolean.getBoolean("minecome.hudStoneBridge"),stoneFixture=Boolean.getBoolean("minecome.hudStoneFixture"),stoneLive=Boolean.getBoolean("minecome.hudStoneLive");
+    private final boolean aimedStone=Boolean.getBoolean("minecome.hudAimedStoneBridge");
     private final boolean backgroundTrial=Boolean.getBoolean("minecome.hudStreamBackgroundTrial");
     private final boolean offscreenPresentation=Boolean.getBoolean("minecome.hudStreamOffscreenPresentation"),offscreenTrial=Boolean.getBoolean("minecome.hudStreamOffscreenTrial");
     private final long initializedAt=System.nanoTime();
@@ -58,7 +59,7 @@ public final class HudStreamLab {
     private HudInputReader input;
     private HudVanillaUiAdapter ui;
     private HudPointerFixture pointerFixture;
-    private HudStoneBridge stoneBridge;
+    private HudBlockBridge stoneBridge;
     private boolean stoneActionsEnabled;
     private final HudInputGate inputGate=new HudInputGate();
     private long armedAt,inputEventsApplied,pointerEventsApplied;
@@ -121,6 +122,7 @@ public final class HudStreamLab {
         if(lab.offscreenTrial && (!lab.offscreenPresentation || !lab.inputFixture || lab.inputDelayFixture || lab.backgroundTrial))throw new IllegalArgumentException("Offscreen trial requires exclusive offscreen input fixture");
         HudStoneMode.require(lab.stoneMode,lab.stoneFixture,lab.stoneLive,lab.inputMode,lab.inputFixture,lab.offscreenPresentation,
                 lab.offscreenTrial,lab.inputPointerFixture,lab.inputDelayFixture,lab.backgroundTrial,lab.liveMouse);
+        HudAimedStoneMode.require(lab.aimedStone,lab.stoneMode,lab.stoneLive,lab.stoneFixture,lab.inputMode,lab.inputFixture);
         ClientTickEvents.START_CLIENT_TICK.register(lab::timingTick);
         ClientTickEvents.END_CLIENT_TICK.register(lab::tick);ServerTickEvents.END_SERVER_TICK.register(lab::observe);
         ClientLifecycleEvents.CLIENT_STOPPING.register(client->{
@@ -284,7 +286,7 @@ public final class HudStreamLab {
             output=new HudStreamProducer(project,outputDirectory,identity,save,true,inputMode?(inputFixture?2:1):0);output.start();
             if(inputMode)ui=new HudVanillaUiAdapter(client,mouseInputEnabled);
             if(inputPointerFixture)pointerFixture=new HudPointerFixture();
-            if(stoneMode)stoneBridge=new HudStoneBridge(Path.of(required("minecome.tokenFile")));
+            if(stoneMode)stoneBridge=aimedStone?new HudAimedStoneBridge(Path.of(required("minecome.tokenFile")),save):new HudStoneBridge(Path.of(required("minecome.tokenFile")));
             if(backgroundTrial || offscreenPresentation)timing=new HudRenderTiming(Thread.currentThread(),RenderSystem::isFrozenAtPollEvents);
         }
         if(output.failure()!=null){fail(client,"HUD stream worker: "+output.failure());return;}
@@ -357,7 +359,7 @@ public final class HudStreamLab {
             if(offscreenPresentation){restoreOwnedWindow(client);inputEndingProof.add("window_restoration",windowRestoration.deepCopy());if(!windowRestoration.get("cleanup_succeeded").getAsBoolean())throw new IllegalStateException("Owned window terminal cleanup failed");}
             addOffscreenEvidence(inputEndingProof);
             if(!input.cleanupComplete())throw new IllegalStateException("Input handle cleanup failed");
-            boolean interacted=inputEventsApplied>0 || (stoneLive && HudStoneProof.hasConfirmedLiveInteraction(inputEndingProof));
+            boolean interacted=inputEventsApplied>0 || (stoneLive && (aimedStone?HudAimedStoneProof.hasConfirmedLiveInteraction(inputEndingProof):HudStoneProof.hasConfirmedLiveInteraction(inputEndingProof)));
             String result=inputFailure!=null?"failed":inputFixture?"input_passed":(armedAt!=0 && interacted?"input_completed":"input_cancelled");
             terminalResult=result;output.finish(result,inputEndingProof);terminal=true;terminalAt=now;return;
         }
@@ -434,6 +436,7 @@ public final class HudStreamLab {
     private void finishInput(MinecraftClient client,long now,String reason){
         if(inputPointerFixture && inputFailure==null && (pointerFixture==null || !pointerFixture.complete()))throw new IllegalStateException("Pointer fixture ended before all real gesture proofs");
         var proof=new JsonObject();proof.addProperty("input_fixture",inputFixture);proof.addProperty("input_armed",armedAt!=0);proof.addProperty("end_reason",reason);
+        proof.addProperty("aimed_stone_bridge",aimedStone);
         proof.addProperty("live_mouse",liveMouse);proof.addProperty("pointer_events_applied",pointerEventsApplied);if(ui!=null)proof.add("pointer_adapter",ui.pointerDiagnostics());
         proof.addProperty("pointer_fixture",inputPointerFixture);if(pointerFixture!=null)proof.add("pointer_evidence",pointerFixture.evidence());
         proof.addProperty("host_armed",armedAt!=0);proof.addProperty("input_events_applied",inputEventsApplied);proof.addProperty("input_consumed_sequence",inputGate.sequence());

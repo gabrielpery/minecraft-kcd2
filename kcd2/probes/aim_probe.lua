@@ -122,17 +122,27 @@ local function sample(record)
     return "none"
 end
 
+-- Public original sampler for the separately loaded opt-in aim intent module.
+-- Loading either file does not sample or authorize input. Callers pin this exact
+-- function after verifying both source snapshots; each call owns its result table.
+local function capture_aim_sample()
+    local record = { result = "unavailable", skip_player = false }
+    local ok, reason = pcall(sample, record)
+    if not ok then reason = "probe_error" end
+    record.reason, record.obstruction_known = reason, ok and reason == "none"
+    if not record.obstruction_known then
+        record.result, record.nearest_position, record.nearest_distance = "unavailable", nil, nil
+    end
+    return record
+end
+MineCome.CaptureAimSample = capture_aim_sample
+
 function MineCome.ProbeAim(runToken)
     if type(runToken) ~= "string" or #runToken < 1 or #runToken > 64
         or not string.match(runToken, "^[0-9a-fA-F]+$") then return false, "invalid_run" end
     if not System or type(System.LogAlways) ~= "function" then return false, "log_unavailable" end
-    local record = { result = "unavailable", skip_player = false }
-    local ok, reason = pcall(sample, record)
-    if not ok then reason = "probe_error" end
-    local known = ok and reason == "none"
-    if not known then
-        record.result, record.nearest_position, record.nearest_distance = "unavailable", nil, nil
-    end
+    local record = capture_aim_sample()
+    local reason, known = record.reason, record.obstruction_known
     local line = string.format(
         '[MineComeAimProbe] {"schema":1,"run":"%s","result":"%s","reason":"%s","engine_time":%s,"completed_engine_time":%s,"origin":%s,"forward":%s,"direction":%s,"range":4.5,"max_hits":16,"mask_name":"ent_all","mask":%s,"skip_player":%s,"hit_count":%s,"obstruction_known":%s,"clear":%s,"nearest_position":%s,"nearest_distance":%s,"diagnostic_only":true,"aiming_verified":false}',
         runToken, record.result, reason, number_json(record.engine_time), number_json(record.completed_engine_time),

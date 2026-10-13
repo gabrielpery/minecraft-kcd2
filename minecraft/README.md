@@ -229,12 +229,19 @@ controller requires normal Java and wrapper exit, a matching fresh save, balance
 confirmed placements/removals and no remaining owned stones. Failure evidence and
 the isolated save are retained. The working HUD and fixed-cell paths are separate.
 
-Verified run `d388905d36fa4865892a77ce69cc572d` passes all 21 scenarios, including
+Verified run `96d8cf1be9224d2d95dac6fc314c99e1` passes all 22 scenarios, including
 six-face selection, actual UP/EAST placement, seven refusal cases, rejected-ID
-replay and a camera turn while an action is pending. Its four placements and four
+replay, a camera turn while an action is pending, and authority revocation before
+vanilla dispatch. The cancelled request leaves owned cells unchanged on both
+client and server. Its four placements and four
 breaks have matching client/server proof and final cleanup. The receipt validator
-passes 31 direct/JSON/tamper checks with `tests/aimed_stone_receipt.Tests.ps1` under
+passes 37 direct/JSON/tamper checks with `tests/aimed_stone_receipt.Tests.ps1` under
 both PowerShell 5.1 and 7. No live aimed protocol capability is enabled by this run.
+
+The optional `minecomeHudAimedStoneBridge` development property selects a separate
+minor2 HUD guest with its own readiness and proof contracts. It has compiled and
+passed contract checks; the existing live HUD controller does not enable it yet.
+See [aimed controls](../docs/research/AIMED-CONTROLS.md) for the integration boundary.
 
 ## Aimed-stone network lab
 

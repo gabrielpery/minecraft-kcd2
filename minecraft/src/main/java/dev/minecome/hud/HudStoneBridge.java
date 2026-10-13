@@ -28,7 +28,7 @@ import java.util.concurrent.atomic.AtomicReference;
  * Explicit opt-in bridge for one cell inside the already-owned HUD Creative world.
  * It never creates a world, changes a slot, or changes either game's camera.
  */
-public final class HudStoneBridge implements AutoCloseable {
+public final class HudStoneBridge implements HudBlockBridge {
     private static final Logger LOG = LoggerFactory.getLogger("MineComeHudStone");
     // Detailed request predicates remain bounded within the HUD receipt size limit.
     private static final int MAX_RECORDS = 16;

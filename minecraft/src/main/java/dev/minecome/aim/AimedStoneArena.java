@@ -25,7 +25,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * Standalone-only, real vanilla selection/interaction in a fresh Creative test save.
+ * Real vanilla selection/interaction in an explicitly owned fresh Creative test save.
  * Owns at most sixteen confirmed stones inside a five-block cube around one seed.
  * It never writes blocks, changes inventory/camera, or grants a transport capability.
  */
@@ -69,6 +69,7 @@ public final class AimedStoneArena implements AutoCloseable {
                                Stack selected, Hit hit, String failure) {}
 
     private final AimGeometry.Alignment alignment;
+    private final String ownedHudSave;
     private final Set<BlockPos> owned = new LinkedHashSet<>();
     private final AtomicReference<Observation> observation = new AtomicReference<>();
     private final AtomicBoolean reading = new AtomicBoolean();
@@ -84,10 +85,25 @@ public final class AimedStoneArena implements AutoCloseable {
     private long lastId, dispatchedAt, lastReadAt;
     private int omittedReceipts;
 
-    public AimedStoneArena(AimGeometry.Alignment alignment) { this.alignment = Objects.requireNonNull(alignment); }
+    public AimedStoneArena(AimGeometry.Alignment alignment) {
+        this.alignment = Objects.requireNonNull(alignment); this.ownedHudSave = null;
+    }
+
+    /** HUD callers must supply the exact save they created, never merely a prefix. */
+    public AimedStoneArena(AimGeometry.Alignment alignment, String ownedHudSave) {
+        this.alignment = Objects.requireNonNull(alignment);
+        if (ownedHudSave == null || !ownedHudSave.matches("MineCome-HudStream-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"))
+            throw new IllegalArgumentException("Exact owned HUD save required");
+        this.ownedHudSave = ownedHudSave;
+    }
 
     /** Only the Minecraft client tick calls this method. Authoritative reads use server.execute. */
     public void tick(MinecraftClient client) {
+        tick(client, true);
+    }
+
+    /** Revocation cancels only actions not dispatched to vanilla; dispatched actions still need proof. */
+    public void tick(MinecraftClient client, boolean actionsEnabled) {
         if (closed || failure != null) return;
         if (!client.isOnThread()) { fail("arena_client_thread_required"); return; }
         try {
@@ -97,13 +113,24 @@ public final class AimedStoneArena implements AutoCloseable {
                 readServer(client, null, "baseline");
             }
             if (!owner(client)) { fail("arena_owner_changed"); return; }
+            if (pending != null && !dispatched && !actionsEnabled)
+                finishRejected(pending, "actions_disabled_before_dispatch");
             Observation proof = observation.getAndSet(null);
             long now = System.nanoTime();
             if (pending != null && now - pending.at > PROOF_TIMEOUT_NS) {
                 fail("vanilla_action_proof_timeout"); return;
             }
             if (proof != null) {
-                if (proof.failure != null) { fail(proof.failure); return; }
+                if (proof.failure != null) {
+                    // A revoked request may finish its read later. It cannot poison a
+                    // subsequent request; ordinary lease expiry is a terminal refusal.
+                    if (pending != null && proof.id == pending.id) {
+                        if (proof.phase.equals("pre") && proof.failure.equals("authoritative_ray_stale"))
+                            finishRejected(pending, "ray_stale");
+                        else fail(proof.failure);
+                    } else if (proof.phase.equals("baseline")) fail(proof.failure);
+                    return;
+                }
                 if (proof.phase.equals("baseline")) {
                     if (now - proof.at < 0 || now - proof.at > MAX_RAY_AGE_NS) {
                         fail("baseline_proof_stale"); return;
@@ -134,7 +161,8 @@ public final class AimedStoneArena implements AutoCloseable {
                 || !client.player.isCreative() || client.interactionManager.getCurrentGameMode() != GameMode.CREATIVE)
             throw new IllegalStateException("Fresh integrated Creative world required");
         save = client.getServer().getSaveProperties().getLevelName();
-        if (!save.startsWith("MineCome-AimedStone-")) throw new IllegalStateException("Standalone aimed save required");
+        if (ownedHudSave == null ? !save.startsWith("MineCome-AimedStone-") : !ownedHudSave.equals(save))
+            throw new IllegalStateException("Owned aimed save required");
         world = client.world; player = client.player; server = client.getServer(); playerId = client.player.getUuid();
         seed = client.player.getBlockPos().add(2, 0, 0).toImmutable(); support = seed.down();
         if (!loaded(client.world, Set.of(seed, support)) || !client.world.getBlockState(seed).isAir()

@@ -1,5 +1,43 @@
 # MineCome progress — 2026-10-13
 
+**Aimed host controls: implemented and compiled; live controller still pending.**
+The explicit tools-host aimed mode maps replicas through the exact acknowledged
+arena, waits for the engine bootstrap receipt, then installs original Minecraft
+permits in a separate Lua gate. A physical-click selector admits only an unused
+permit acknowledged before that click. Lua samples camera and obstruction in the
+same callback; native validation retains the original permit age and generation.
+The new aimed HUD adapter uses actual Arena actions and a separate readiness/proof
+contract. The existing live controller and fixed-cell controls remain unchanged.
+No KCD launch, add-on installation or frozen live-bundle replacement occurred.
+
+The native Release build and all **30 CTest suites pass**, including existing
+stone/input HTTP tests and the new simulated-engine aimed integration. The latter
+checks exact alignment, bootstrap acknowledgement, original permits, matching
+Lua receipts, stale/replayed/refused captures and replica cleanup. Lua intent
+coverage passes 569 checks; the existing aim sampler passes 1,533. Physical-edge
+admission passes 23 checks under both PowerShell 5.1 and 7. Guest mode and proof
+contracts pass 9 and 48 checks; the proof validator replays exact owned cells
+rather than accepting cleanup from action counts alone. These contracts do not
+establish an actual integrated aimed HUD/KCD session.
+The full Fabric build/remap also passes, with 3,819 protocol checks and the
+existing HUD gate/proof/mode checks (51/227/2,048).
+
+Actual Minecraft regression run `96d8cf1be9224d2d95dac6fc314c99e1`, in
+`runtime/evidence/aimed-stone-20261013-200034-96d8cf1be9224d2d95dac6fc314c99e1`,
+passes **22 scenarios** with synthetic host rays. The additional case queues a
+valid break, revokes action authority before vanilla dispatch, then independently
+checks unchanged cells on client and server. The run retains four confirmed
+placements, four confirmed breaks, final air, zero ownership/pending work,
+restored options and normal Java/wrapper exits. Source hashes are stable.
+The updated receipt validator passes 37 checks in both PowerShell versions.
+
+Next is the bounded controller joining these components and validating the
+distinct guest, native and engine receipts, followed by actual KCD crosshair
+verification. Two limits remain explicit: replica cleanup does not prove the
+separate Lua input gate ended, and changing the selected slot/stack after vanilla
+dispatch but before authoritative confirmation can end the experimental HUD
+session under the existing Arena contract. See [aimed controls](research/AIMED-CONTROLS.md).
+
 **Public source repository.** The user made `gabrielpery/minecraft-kcd2` public;
 GitHub metadata confirms public visibility and the existing `codex/initial-import`
 default branch. README, setup and known issues now describe public cloning, the
@@ -14,7 +52,7 @@ immutable arena agreement, expiring single-use guest permits, aimed requests and
 explicit client/server-confirmed results. Both sides validate current session,
 fresh camera poses, bounds and ownership. The host acknowledges the alignment
 only after the consumer acknowledges previous-session cleanup. Existing minor0/1
-callers retain their behavior; the live KCD relay does not enable minor2 yet.
+callers retain their behavior; the live controller does not enable minor2 yet.
 
 Run `e78ba82a6d23467eba714c1a82871983`, in
 `runtime/evidence/aimed-bridge-20261013-193528-e78ba82a6d23467eba714c1a82871983`,
@@ -38,9 +76,8 @@ tools-host integration. Focused coverage includes 1,578 native session checks,
 414 existing codec checks and 336 aimed/shared-golden checks. The Fabric build
 and remapping pass with 3,819 Java protocol checks plus existing stone/HUD
 gate, proof and mode checks (51/227/2,048). No installed game renderer or frozen
-live-test bundle was replaced. Next: pair physical KCD clicks with the live
-camera/obstruction sample and the same agreed alignment, then connect replica
-acknowledgements. See [the networked lab](../minecraft/README.md#aimed-stone-network-lab).
+live-test bundle was replaced. The later optional host-control implementation
+is recorded above. See [the networked lab](../minecraft/README.md#aimed-stone-network-lab).
 
 **Camera movement with HUD controls: live verified in revision 3.** The user
 reports "it worked!" for camera movement before/after inventory, inventory cursor
@@ -84,8 +121,8 @@ fully verified run above; 31 receipt regression cases pass in both PowerShell
 5.1 and 7. Fabric build/remap succeeds; existing protocol and stone gate/proof/
 mode checks pass. The default bridge, live HUD controls and installed renderer
 remain unchanged. Shared alignment and transport have since passed the network
-lab above; pairing a click with its live host ray/obstruction sample and KCD
-replica acknowledgement remain unfinished.
+lab above; the newer source integration and remaining live controller work are
+recorded at the top of this page.
 
 **Crosshair targeting groundwork: read-only host aim sample implemented and
 standalone verified.** The new separate Lua probe captures camera origin/forward

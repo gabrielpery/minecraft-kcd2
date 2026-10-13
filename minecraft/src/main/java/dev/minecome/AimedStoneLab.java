@@ -42,6 +42,7 @@ public final class AimedStoneLab {
     private final AtomicReference<TeleportProof> teleportProof=new AtomicReference<>();
     private final AtomicReference<String> serverFailure=new AtomicReference<>();
     private final AtomicReference<Set<BlockPos>> finalAir=new AtomicReference<>();
+    private final AtomicReference<Set<BlockPos>> cancelledOwnedProof=new AtomicReference<>();
     private final Set<BlockPos> everPlaced=new LinkedHashSet<>();
     private final long initializedAt=System.nanoTime();
     private final int producerPid;
@@ -161,6 +162,26 @@ public final class AimedStoneLab {
                 require(selected.target().equals(current.expectedCell()),current.name()+": wrong immutable target "+selected.target());
                 require(selected.hit().side()==current.face(),current.name()+": wrong vanilla face "+selected.hit().side());
             }
+            if(current.name().equals("cancel_before_dispatch")) {
+                var ownedBefore=arena.ownedCells();int confirmations=arena.evidence().getAsJsonArray("confirmations").size();
+                var decision=arena.request(client,++requestId,current.action(),ray);
+                require(decision.queued(),"Cancellation case must first queue a valid vanilla action");
+                // No further client tick/dispatch occurs between queueing and revocation.
+                arena.tick(client,false);
+                var result=arena.lastResult();
+                require(!arena.pending() && result.id()==requestId && result.status().equals("rejected")
+                        && result.reason().equals("actions_disabled_before_dispatch") && !result.clientAndServer(),"Revoked action was not cancelled");
+                require(arena.ownedCells().equals(ownedBefore) && arena.evidence().getAsJsonArray("confirmations").size()==confirmations,"Cancellation changed confirmed ownership");
+                var server=client.getServer();server.execute(()->{
+                    try {
+                        require(server==serverIdentity && server.getOverworld()!=null,"Cancellation authoritative world changed");
+                        for(BlockPos cell:ownedBefore)require(server.getOverworld().isChunkLoaded(cell)
+                                && server.getOverworld().getBlockState(cell).isOf(Blocks.STONE),"Cancelled action mutated authoritative cell");
+                        cancelledOwnedProof.set(ownedBefore);
+                    }catch(Exception e){serverFailure.set(e.getMessage());}
+                });
+                return;
+            }
             if(!current.dispatch()) {
                 AimedStoneArena.Result result=null;
                 if(!selected.allowed()) {
@@ -182,6 +203,12 @@ public final class AimedStoneLab {
                 client.player.setYaw(client.player.getYaw()+90);client.player.setPitch(35);
             }
             return;
+        }
+        if(current.name().equals("cancel_before_dispatch")) {
+            var proof=cancelledOwnedProof.get();if(proof==null)return;
+            require(proof.equals(arena.ownedCells()),"Cancelled action ownership changed after server read");
+            for(BlockPos cell:proof)require(client.world.isChunkLoaded(cell) && client.world.getBlockState(cell).isOf(Blocks.STONE),"Cancelled action mutated client cell");
+            record(current,selected,arena.lastResult());next();return;
         }
         if(queued && !arena.pending()) {
             var result=arena.lastResult();
@@ -263,6 +290,7 @@ public final class AimedStoneLab {
         result.add(selection("stale_ray",s,new Vec3d(-2,2.5,.5),top,null,null,false,"stale"));
         result.add(selection("origin_mismatch",s,new Vec3d(-2,2.5,.5),top,null,null,false,"origin_mismatch"));
         result.add(selection("alignment_changed",s,new Vec3d(-2,2.5,.5),top,null,null,false,"alignment_changed"));
+        result.add(selection("cancel_before_dispatch",s,new Vec3d(4,2.5,.5),top,east,Direction.EAST,true,"clear"));
         result.add(action("turn_while_pending",s,new Vec3d(4,2.5,.5),top,east,Direction.EAST,BREAK,true));
         result.add(action("cleanup_top",s,new Vec3d(-2,2.5,.5),top,top,Direction.WEST,BREAK,false));
         return List.copyOf(result);
@@ -278,6 +306,10 @@ public final class AimedStoneLab {
         record.addProperty("vanilla_dispatch",step.dispatch());record.addProperty("client_and_server_confirmed",result!=null && result.clientAndServer());
         record.addProperty("view_turned_after_queue",step.turn());
         record.addProperty("rejected_request_checked",!selection.allowed());record.addProperty("rejected_id_replay_checked",step.name().equals("miss"));
+        if(step.name().equals("cancel_before_dispatch")) {
+            record.addProperty("queued_then_cancelled",true);record.addProperty("cancellation_reason",result.reason());
+            record.addProperty("client_server_cells_unchanged",true);
+        }
         var rayRecord=new JsonObject();rayRecord.add("host_origin",protocolVector(selectedRay.hostRay().origin()));rayRecord.add("host_direction",protocolVector(selectedRay.hostRay().direction()));rayRecord.addProperty("host_range",selectedRay.hostRay().range());
         rayRecord.add("minecraft_anchor",protocolVector(selectedRay.alignment().minecraftAnchor()));rayRecord.add("host_anchor",protocolVector(selectedRay.alignment().kcdAnchor()));rayRecord.addProperty("blocks_per_host_unit",selectedRay.alignment().blocksPerUnit());
         rayRecord.addProperty("age_at_selection_ns",selectionAge);

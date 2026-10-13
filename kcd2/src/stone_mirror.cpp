@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include <minecome/stone_mirror.hpp>
+#include <algorithm>
 #include <cmath>
 #include <iomanip>
 #include <locale>
@@ -15,6 +16,11 @@ bool bounded(protocol::Vec3 p) {
         &&std::abs(p.x)<=1e7&&std::abs(p.y)<=1e7&&std::abs(p.z)<=1e7;
 }
 bool valid_id(std::uint64_t value) {return value>0&&value<=max_lua_integer;}
+bool valid_run(std::string_view run) {return run.size()==32&&std::all_of(run.begin(),run.end(),[](char c){return (c>='0'&&c<='9')||(c>='a'&&c<='f');});}
+}
+std::optional<StoneAlignment> StoneAlignment::from_arena(const protocol::AimedArena& arena) {
+    try {(void)protocol::encode(arena);}catch(const std::exception&) {return {};}
+    return StoneAlignment{arena.minecraft_anchor,arena.kcd_anchor,arena};
 }
 std::optional<StoneAlignment> StoneAlignment::create(const protocol::Pose& mc,const protocol::Pose& kcd) {
     if(mc.space!=protocol::Space::minecraft||(mc.flags&9)!=9||!bounded(mc.player)
@@ -34,6 +40,7 @@ std::optional<StoneAlignment> StoneAlignment::create(const protocol::Pose& mc,co
 std::optional<protocol::Vec3> StoneAlignment::map(const protocol::BlockEvent& event) const {
     if(event.block_id!="minecraft:stone"||(event.operation!=1&&event.operation!=2)
         ||!bounded(minecraft_anchor)||!bounded(kcd_anchor)) return {};
+    if(arena&&(event.x<arena->minimum.x||event.x>arena->maximum.x||event.y<arena->minimum.y||event.y>arena->maximum.y||event.z<arena->minimum.z||event.z>arena->maximum.z)) return {};
     const double x=event.x-minecraft_anchor.x,y=event.y-minecraft_anchor.y,z=event.z-minecraft_anchor.z;
     if(x*x+y*y+z*z>16*16) return {};
     protocol::Vec3 result{kcd_anchor.x+x,kcd_anchor.y-z,kcd_anchor.z+y};
@@ -105,5 +112,64 @@ std::optional<protocol::StoneInputRequest> parse_stone_input_intent(std::string_
         if(!valid_id(id)) return {};
         return protocol::StoneInputRequest{id,static_cast<std::uint32_t>(std::stoul(match[2]))};
     } catch(const std::exception&) {return {};}
+}
+std::string aimed_begin_command(std::string_view run,std::uint64_t arena) {
+    if(!valid_run(run)||!valid_id(arena)) throw std::invalid_argument("invalid aimed begin command");
+    return "#MineCome.BeginAimedInput('"+std::string(run)+"','"+std::to_string(arena)+"',60)";
+}
+std::string aimed_permit_command(std::string_view run,const protocol::AimPermit& permit) {
+    if(!valid_run(run)) throw std::invalid_argument("invalid aimed permit run");(void)protocol::encode(permit);
+    return "#MineCome.InstallAimedPermit('"+std::string(run)+"','"+std::to_string(permit.arena_id)+"','"+std::to_string(permit.permit_id)+"')";
+}
+std::string aimed_end_command(std::string_view run,std::uint64_t arena) {
+    if(!valid_run(run)||!valid_id(arena)) throw std::invalid_argument("invalid aimed end command");
+    return "#MineCome.EndAimedInput('"+std::string(run)+"','"+std::to_string(arena)+"')";
+}
+std::optional<AimedLuaReceipt> parse_aimed_lua_receipt(std::string_view line) {
+    if(line.size()>4096) return {};
+    static const std::string number=R"(([+-]?(?:[0-9]+\.?[0-9]*|\.[0-9]+)(?:[eE][+-]?[0-9]+)?))";
+    static const std::string run=R"re("run":"([0-9a-f]{32})","arena":"([1-9][0-9]{0,15})")re";
+    static const std::regex begin("\\[MineComeAimSession\\] \\{\"schema\":1,"+run+",\"event\":\"begin\",\"result\":\"accepted\",\"engine_time\":"+number+",\"expires_engine_time\":"+number+"\\}\\r?$");
+    static const std::regex permit("\\[MineComeAimPermit\\] \\{\"schema\":1,"+run+",\"permit\":\"([1-9][0-9]{0,15})\",\"result\":\"installed\",\"engine_time\":"+number+",\"expires_engine_time\":"+number+"\\}\\r?$");
+    static const std::regex end("\\[MineComeAimSession\\] \\{\"schema\":1,"+run+",\"event\":\"end\",\"result\":\"ended\",\"engine_time\":(?:"+number+"|null),\"expires_engine_time\":null\\}\\r?$");
+    std::smatch match;const std::string text(line);
+    try {
+        AimedLuaReceipt result;
+        if(std::regex_search(text,match,begin)) {result.event="begin";result.engine_time=std::stod(match[3]);result.expires_engine_time=std::stod(match[4]);}
+        else if(std::regex_search(text,match,permit)) {result.event="permit";result.permit=std::stoull(match[3]);if(!valid_id(result.permit)) return {};result.engine_time=std::stod(match[4]);result.expires_engine_time=std::stod(match[5]);}
+        else if(std::regex_search(text,match,end)) {result.event="end";result.engine_time=match[3].matched?std::stod(match[3]):0;}
+        else return {};
+        result.run=match[1];result.arena=std::stoull(match[2]);if(!valid_id(result.arena)) return {};
+        if(!std::isfinite(result.engine_time)||result.engine_time<0||result.engine_time>1e12||!std::isfinite(result.expires_engine_time)) return {};
+        if(result.event!="end") {
+            const auto duration=result.expires_engine_time-result.engine_time,expected=result.event=="permit"?.5:60.;
+            if(result.expires_engine_time>1e12||std::abs(duration-expected)>.001) return {};
+        }
+        return result;
+    }catch(const std::exception&) {return {};}
+}
+std::optional<AimedInputIntent> parse_aimed_input_intent(std::string_view line) {
+    if(line.size()>4096) return {};
+    static const std::string number=R"(([+-]?(?:[0-9]+\.?[0-9]*|\.[0-9]+)(?:[eE][+-]?[0-9]+)?))";
+    static const std::string vector="\\{\"x\":"+number+",\"y\":"+number+",\"z\":"+number+"\\}";
+    static const std::regex pattern("\\[MineComeAimInput\\] \\{\"schema\":1,\"run\":\"([0-9a-f]{32})\",\"arena\":\"([1-9][0-9]{0,15})\",\"request\":\"([1-9][0-9]{0,15})\",\"permit\":\"([1-9][0-9]{0,15})\",\"click\":\"([1-9][0-9]{0,15})\",\"action\":([12]),\"result\":\"sampled\",\"reason\":\"none\",\"permit_engine_time\":"+number+",\"engine_time\":"+number+",\"completed_engine_time\":"+number+",\"origin\":"+vector+",\"direction\":"+vector+",\"range\":"+number+",\"occlusion\":([12]),\"nearest_distance\":"+number+"\\}\\r?$");
+    std::smatch match;const std::string text(line);
+    if(!std::regex_search(text,match,pattern)) return {};
+    try {
+        AimedInputIntent result;result.run=match[1];auto& request=result.request;
+        request.arena_id=std::stoull(match[2]);request.request_id=std::stoull(match[3]);request.permit_id=std::stoull(match[4]);result.click=std::stoull(match[5]);request.action=static_cast<std::uint32_t>(std::stoul(match[6]));
+        if(!valid_id(result.click)||result.click!=request.request_id) return {};
+        result.permit_engine_time=std::stod(match[7]);result.engine_time=std::stod(match[8]);result.completed_engine_time=std::stod(match[9]);
+        for(const auto time:{result.permit_engine_time,result.engine_time,result.completed_engine_time}) if(!std::isfinite(time)||time<0||time>1e12) return {};
+        if(result.engine_time<result.permit_engine_time||result.completed_engine_time<result.engine_time||result.completed_engine_time-result.engine_time>.25||result.completed_engine_time-result.permit_engine_time>.5) return {};
+        auto vec=[&](int index){return protocol::Vec3{std::stod(match[index]),std::stod(match[index+1]),std::stod(match[index+2])};};
+        request.origin=vec(10);request.direction=vec(13);request.range=std::stod(match[16]);request.occlusion=static_cast<protocol::AimOcclusion>(std::stoul(match[17]));request.nearest_distance=std::stod(match[18]);
+        const auto norm=request.direction.x*request.direction.x+request.direction.y*request.direction.y+request.direction.z*request.direction.z;
+        if(!std::isfinite(norm)||std::abs(norm-1)>1e-5||request.range!=4.5) return {};
+        // Lua uses float32 on the inspected build. Preserve its measured ray,
+        // correcting only normalized-vector rounding before strict wire encoding.
+        const auto length=std::sqrt(norm);request.direction.x/=length;request.direction.y/=length;request.direction.z/=length;
+        (void)protocol::encode(request);return result;
+    }catch(const std::exception&) {return {};}
 }
 }

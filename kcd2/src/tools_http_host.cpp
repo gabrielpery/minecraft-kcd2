@@ -146,6 +146,8 @@ class StoneConsumer {
     Phase phase_{Phase::idle};
     std::uint64_t session_{},last_session_{},pending_sequence_{},pending_operation_{};
     std::optional<minecome::StoneAlignment> alignment_;
+    std::optional<minecome::AimedArenaReceipt> aimed_arena_;
+    bool aimed_{};
     std::deque<minecome::BlockEventReceipt> queue_;
     Clock::time_point pending_since_{},last_heartbeat_{},last_end_{},last_wait_report_{};
     void command(const std::string& value) {
@@ -154,12 +156,20 @@ class StoneConsumer {
     }
 public:
     std::uint64_t spawned{},removed{},rejected{};
-    StoneConsumer(minecome::Bridge& bridge,ToolsHttp& http,std::function<void(const std::string&)> record)
-        :bridge_(bridge),http_(http),record_(std::move(record)) {}
+    StoneConsumer(minecome::Bridge& bridge,ToolsHttp& http,std::function<void(const std::string&)> record,bool aimed=false)
+        :bridge_(bridge),http_(http),record_(std::move(record)),aimed_(aimed) {}
     bool idle() const {return phase_==Phase::idle;}
+    bool aimed_session_current() const {
+        const auto current=bridge_.aimed_arena();
+        return aimed_&&aimed_arena_&&current&&(phase_==Phase::begin||phase_==Phase::ready)
+            &&current->connection_generation==aimed_arena_->connection_generation&&current->reset_generation==aimed_arena_->reset_generation
+            &&minecome::protocol::encode(current->arena)==minecome::protocol::encode(aimed_arena_->arena);
+    }
+    bool ready_for_aim() const {return aimed_session_current()&&phase_==Phase::ready&&!pending_sequence_&&queue_.empty();}
     void end(const char* reason) {
         queue_.clear();pending_sequence_=0;
         if(phase_==Phase::idle||phase_==Phase::ending) return;
+        if(aimed_) bridge_.cancel_stone_inputs();
         record_(std::string("STONE_SESSION_END reason=")+reason+" session="+std::to_string(session_));
         phase_=Phase::ending;last_end_=Clock::now();last_wait_report_=last_end_;
         command(minecome::stone_session_command("End",session_));
@@ -171,7 +181,7 @@ public:
             const bool never_registered=receipt.event=="end"&&receipt.result=="rejected_session"&&phase_==Phase::ending;
             if((ended||never_registered)&&receipt.owned_count==0&&receipt.pending_count==0) {
                 record_("STONE_CLEANUP_ACK session="+std::to_string(session_));
-                phase_=Phase::idle;alignment_.reset();queue_.clear();pending_sequence_=0;
+                phase_=Phase::idle;alignment_.reset();aimed_arena_.reset();queue_.clear();pending_sequence_=0;
             } else if(receipt.event=="expired"||receipt.event=="timer_failed"||(receipt.event=="heartbeat"&&receipt.result!="alive")) {
                 end("Lua session lease or timer unavailable");
             } else if(receipt.event=="begin"&&phase_==Phase::begin) {
@@ -199,13 +209,14 @@ public:
         const auto now=Clock::now();
         const auto mc=bridge_.latest_client_pose();
         const bool valid=kcd&&mc&&bridge_.connected()&&bridge_.peer_role()==minecome::protocol::Role::minecraft
-            &&(mc->flags&9)==9&&(kcd->flags&3)==3;
+            &&(mc->flags&9)==9&&(kcd->flags&3)==3&&(!aimed_||((mc->flags&11)==11&&(kcd->flags&11)==11));
         auto batch=bridge_.drain_block_events(queue_.size()<64?std::min<std::size_t>(8,64-queue_.size()):0);
         if(batch.reset_required) {
             end("transport connection or bounded queue reset");
             if(idle()) bridge_.acknowledge_event_reset(batch.reset_generation);
         }
         if(!valid) end("fresh world pose or authenticated Minecraft peer unavailable");
+        if(aimed_arena_&&!aimed_session_current()) end("acknowledged aimed arena was revoked");
         if(alignment_&&valid) {
             const auto a=alignment_->minecraft_anchor;
             const auto dx=mc->player.x-a.x,dy=mc->player.y-a.y,dz=mc->player.z-a.z;
@@ -226,7 +237,11 @@ public:
             // Anchor only on a real accepted event; transport HELLO is not sink readiness.
             const auto& first=queue_.front();
             if(!first.client_pose||!bridge_.game_write_allowed(first)) {queue_.pop_front();return;}
-            alignment_=minecome::StoneAlignment::create(*first.client_pose,*kcd);
+            if(aimed_) {
+                aimed_arena_=bridge_.aimed_arena();
+                if(!aimed_arena_||aimed_arena_->connection_generation!=first.connection_generation||aimed_arena_->reset_generation!=first.reset_generation) {queue_.pop_front();return;}
+                alignment_=minecome::StoneAlignment::from_arena(aimed_arena_->arena);
+            } else alignment_=minecome::StoneAlignment::create(*first.client_pose,*kcd);
             if(!alignment_||!alignment_->map(first.event)) {queue_.pop_front();alignment_.reset();++rejected;return;}
             const auto micros=std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
             session_=std::max(last_session_+1,static_cast<std::uint64_t>(micros));last_session_=session_;
@@ -249,6 +264,108 @@ public:
         }
     }
 };
+// This opt-in adapter never creates an aiming sample itself. It installs a
+// guest-issued permit first, then admits only a Lua record carrying that same
+// permit after the physical controller requested capture in the game callback.
+class AimedInputRelay {
+    enum class Phase {waiting,begin,ready,ended};
+    struct Installed {
+        minecome::AimPermitReceipt original;
+        bool acknowledged{};
+        double engine_time{};
+    };
+    minecome::Bridge& bridge_;
+    ToolsHttp& http_;
+    StoneConsumer& stones_;
+    std::function<void(const std::string&)> record_;
+    std::string run_;
+    Phase phase_{Phase::waiting};
+    std::optional<minecome::AimedArenaReceipt> arena_;
+    std::deque<Installed> installed_;
+    std::uint64_t last_permit_{},last_request_{};
+    bool end_acknowledged_{};
+    Clock::time_point began_{},last_install_{};
+    bool same_arena() const {
+        auto current=bridge_.aimed_arena();
+        return current&&arena_&&current->connection_generation==arena_->connection_generation&&current->reset_generation==arena_->reset_generation
+            &&minecome::protocol::encode(current->arena)==minecome::protocol::encode(arena_->arena);
+    }
+    void command(const std::string& command) {
+        http_.command(command);record_("AIM_LUA_DISPATCH "+command);
+    }
+public:
+    AimedInputRelay(minecome::Bridge& bridge,ToolsHttp& http,StoneConsumer& stones,std::function<void(const std::string&)> record,std::string run)
+        :bridge_(bridge),http_(http),stones_(stones),record_(std::move(record)),run_(std::move(run)) {}
+    void end(const char* reason) {
+        if(phase_==Phase::waiting||phase_==Phase::ended) return;
+        phase_=Phase::ended;installed_.clear();
+        record_(std::string("AIM_INPUT_END reason=")+reason+" run="+run_);
+        // Revoke queued/inflight authority under the bridge dispatch lock.
+        // Already-written requests cannot be recalled: the immutable bridge
+        // AIM_REQUEST journal remains the evidence of that earlier dispatch.
+        bridge_.cancel_stone_inputs();
+        record_("AIM_INPUT_CANCEL run="+run_+" arena="+std::to_string(arena_->arena.arena_id)+" authority_revoked=true sent_requests_recallable=false");
+        stones_.end("aimed input session ended");
+        try {command(minecome::aimed_end_command(run_,arena_->arena.arena_id));}catch(const std::exception& e) {record_(std::string("AIM_END_DISPATCH_FAILED ")+e.what());}
+    }
+    void update() {
+        const auto now=Clock::now();
+        if(phase_==Phase::ended) return;
+        if(phase_==Phase::waiting) {
+            if(!stones_.ready_for_aim()) return;
+            arena_=bridge_.aimed_arena();if(!arena_) return;
+            phase_=Phase::begin;began_=now;
+            try {command(minecome::aimed_begin_command(run_,arena_->arena.arena_id));}
+            catch(const std::exception&) {end("Lua begin dispatch unavailable");}
+            return;
+        }
+        if(!same_arena()||!stones_.aimed_session_current()) {end("arena or engine session invalidated");return;}
+        if(now-began_>60s) {end("bounded input session complete");return;}
+        if(phase_==Phase::begin) {if(now-began_>1s) end("Lua begin acknowledgement unavailable");return;}
+        std::erase_if(installed_,[&](const Installed& value){return now-value.original.received>500ms;});
+        if(!stones_.ready_for_aim()||now-last_install_<100ms) return;
+        auto permit=bridge_.latest_aimed_permit();
+        if(!permit||permit->permit.permit_id<=last_permit_||permit->connection_generation!=arena_->connection_generation||permit->reset_generation!=arena_->reset_generation||now-permit->received>250ms||installed_.size()>=16) return;
+        // Record the immutable receipt before HTTP dispatch. A later log record
+        // must match this original permit; observing an ACK never renews it.
+        installed_.push_back({*permit});last_permit_=permit->permit.permit_id;last_install_=now;
+        try {command(minecome::aimed_permit_command(run_,permit->permit));}
+        catch(const std::exception&) {end("Lua permit dispatch unavailable");}
+    }
+    void receipt(const minecome::AimedLuaReceipt& receipt,bool fresh) {
+        if(receipt.run!=run_||!arena_||receipt.arena!=arena_->arena.arena_id) return;
+        if(receipt.event=="end") {
+            if(phase_==Phase::ended&&!end_acknowledged_) {end_acknowledged_=true;record_("AIM_INPUT_END_ACK run="+run_+" arena="+std::to_string(receipt.arena));}
+            return;
+        }
+        if(!fresh||!same_arena()) return;
+        if(receipt.event=="begin"&&phase_==Phase::begin&&Clock::now()-began_<=1s) {
+            phase_=Phase::ready;record_("AIM_INPUT_BEGIN_ACK run="+run_+" arena="+std::to_string(receipt.arena));return;
+        }
+        if(receipt.event!="permit"||phase_!=Phase::ready) return;
+        const auto found=std::find_if(installed_.begin(),installed_.end(),[&](const Installed& value){return value.original.permit.permit_id==receipt.permit;});
+        if(found==installed_.end()||found->acknowledged||Clock::now()-found->original.received>350ms) return;
+        found->acknowledged=true;found->engine_time=receipt.engine_time;
+        const auto utc=std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+        record_("AIM_PERMIT_READY run="+run_+" arena="+std::to_string(receipt.arena)+" permit="+std::to_string(receipt.permit)+" installed_utc_ms="+std::to_string(utc));
+    }
+    void intent(const minecome::AimedInputIntent& intent,bool fresh) {
+        const auto& request=intent.request;
+        auto refuse=[&](const char* reason){record_(std::string("AIM_INPUT_REJECTED reason=")+reason+" run="+intent.run+" request="+std::to_string(request.request_id)+" permit="+std::to_string(request.permit_id));};
+        if(intent.run!=run_||!arena_||request.arena_id!=arena_->arena.arena_id) {refuse("wrong_run_or_arena");return;}
+        if(request.request_id<=last_request_) {refuse("replayed_intent");return;}
+        last_request_=request.request_id;
+        const auto found=std::find_if(installed_.begin(),installed_.end(),[&](const Installed& value){return value.original.permit.permit_id==request.permit_id;});
+        if(found==installed_.end()) {refuse("unknown_or_consumed_permit");return;}
+        const auto original=*found;installed_.erase(found);
+        if(!fresh||phase_!=Phase::ready||!original.acknowledged||!same_arena()||!stones_.ready_for_aim()
+            ||Clock::now()-original.original.received>500ms||std::abs(original.engine_time-intent.permit_engine_time)>.000001) {refuse("stale_or_unready_capture");return;}
+        // Permit receipt precedes installation and the observed click callback;
+        // using that original time is conservative in the shared 500 ms budget.
+        if(!bridge_.request_aimed_stone(request,original.original,original.original.received)) {refuse("bridge_refused");return;}
+        record_("AIM_INPUT_DISPATCH run="+run_+" arena="+std::to_string(request.arena_id)+" request="+std::to_string(request.request_id)+" permit="+std::to_string(request.permit_id)+" click="+std::to_string(intent.click)+" action="+std::to_string(request.action));
+    }
+};
 }
 
 int wmain(int argc,wchar_t** argv) {
@@ -256,18 +373,24 @@ int wmain(int argc,wchar_t** argv) {
         std::filesystem::path home,game_log,stop_file;
         unsigned seconds=120,port=38765,http_port=1403;
         std::optional<minecome::FovUnit> fov;
-        bool camera_only=false,mirror_stone=false,interactive_stone=false,standalone_fixture=false;
+        bool camera_only=false,mirror_stone=false,interactive_stone=false,standalone_fixture=false,aimed_stone=false;
+        std::string aimed_run;
         for(int i=1;i<argc;++i) {
             const std::wstring argument=argv[i];
             if(argument==L"--camera-only") {camera_only=true;continue;}
             if(argument==L"--mirror-stone") {mirror_stone=true;continue;}
             if(argument==L"--interactive-stone") {interactive_stone=true;mirror_stone=true;continue;}
+            if(argument==L"--aimed-stone") {aimed_stone=true;mirror_stone=true;continue;}
             if(argument==L"--standalone-fixture") {standalone_fixture=true;continue;}
             if(i+1==argc) throw std::runtime_error("missing argument value");
             const std::wstring value=argv[++i];
             if(argument==L"--home") home=value;
             else if(argument==L"--game-log") game_log=value;
             else if(argument==L"--stop-file") stop_file=value;
+            else if(argument==L"--aimed-run") {
+                if(value.size()!=32||!std::all_of(value.begin(),value.end(),[](wchar_t c){return (c>=L'0'&&c<=L'9')||(c>=L'a'&&c<=L'f');})) throw std::runtime_error("aimed run must be 32 lowercase hexadecimal characters");
+                aimed_run.clear();for(wchar_t c:value) aimed_run.push_back(static_cast<char>(c));
+            }
             else if(argument==L"--seconds") seconds=bounded_integer(value,3600);
             else if(argument==L"--port") port=bounded_integer(value,65535);
             else if(argument==L"--tools-port") http_port=bounded_integer(value,65535);
@@ -278,7 +401,10 @@ int wmain(int argc,wchar_t** argv) {
             } else throw std::runtime_error("unknown argument");
         }
         if(home.empty()||game_log.empty()||!home.is_absolute()||!game_log.is_absolute()||!fov)
-            throw std::runtime_error("Usage: minecome_tools_host --home ABS --game-log ABS --fov-unit radians|degrees [--seconds 120] [--port 38765] [--tools-port 1403] [--stop-file ABS] [--camera-only] [--mirror-stone] [--interactive-stone]");
+            throw std::runtime_error("Usage: minecome_tools_host --home ABS --game-log ABS --fov-unit radians|degrees [--seconds 120] [--port 38765] [--tools-port 1403] [--stop-file ABS] [--camera-only] [--mirror-stone] [--interactive-stone | --aimed-stone --aimed-run HEX32]");
+        if(aimed_stone&&(interactive_stone||camera_only)) throw std::runtime_error("aimed stone mode cannot mix with fixed-cell or camera-only modes");
+        if(aimed_stone) (void)minecome::aimed_begin_command(aimed_run,1);
+        else if(!aimed_run.empty()) throw std::runtime_error("aimed run requires explicit aimed stone mode");
         if(!stop_file.empty()&&!stop_file.is_absolute()) throw std::runtime_error("stop file must be an absolute path");
         if(standalone_fixture&&(http_port==1403||game_log.filename()!=L"fixture-kcd.log"
             ||std::filesystem::exists(game_log.parent_path()/L"Bin/Win64ReleaseSteamLTO_DLL/KingdomCome.exe")))
@@ -292,11 +418,13 @@ int wmain(int argc,wchar_t** argv) {
         const auto info=http.get(L"/api/System/Console?info");
         if(info.find("ExecuteString")==std::string::npos) throw std::runtime_error("expected official console binding missing");
         minecome::Bridge bridge;
-        if(!bridge.start(home/"config"/"bridge.token",home/"runtime"/"logs"/"tools-bridge.log",static_cast<std::uint16_t>(port),"MineCome KCD2 official-tools/0.1.0"))
+        if(!bridge.start(home/"config"/"bridge.token",home/"runtime"/"logs"/"tools-bridge.log",static_cast<std::uint16_t>(port),"MineCome KCD2 official-tools/0.1.0",aimed_stone))
             throw std::runtime_error("transport startup failed; inspect tools-bridge.log");
         auto offset=std::filesystem::file_size(game_log);
         std::optional<StoneConsumer> stones;
-        if(mirror_stone) {stones.emplace(bridge,http,record);record("Stone mirroring enabled: transient display alignment, physics disabled, engine log acknowledgement required");}
+        if(mirror_stone) {stones.emplace(bridge,http,record,aimed_stone);record(aimed_stone?"Aimed stone mirroring enabled: acknowledged arena alignment, physics disabled, engine log acknowledgement required":"Stone mirroring enabled: transient display alignment, physics disabled, engine log acknowledgement required");}
+        std::optional<AimedInputRelay> aimed_inputs;
+        if(aimed_stone) aimed_inputs.emplace(bridge,http,*stones,record,aimed_run);
         std::optional<minecome::protocol::Pose> current_world;
         std::string pending;
         struct LoggedInput {
@@ -320,6 +448,7 @@ int wmain(int argc,wchar_t** argv) {
         unsigned http_failures=0;
         auto invalidate_world=[&](const char* reason) {
             pending_inputs.clear();
+            if(aimed_inputs) aimed_inputs->end(reason);
             bridge.cancel_stone_inputs();
             if(!world_state_valid) return;
             minecome::protocol::Pose invalid;
@@ -364,6 +493,14 @@ int wmain(int argc,wchar_t** argv) {
                 const auto line=pending.substr(0,end);pending.erase(0,end+1);
                 if(line.find("[MineComePing]")!=std::string::npos) record("KCD2_LOG "+line);
                 if(auto receipt=minecome::parse_stone_receipt(line)) {record("KCD2_LOG "+line);if(stones) stones->receipt(*receipt);}
+                if(aimed_inputs) {
+                    if(auto receipt=minecome::parse_aimed_lua_receipt(line)) {record("KCD2_LOG "+line);aimed_inputs->receipt(*receipt,!line_input_stale);}
+                    if(auto intent=minecome::parse_aimed_input_intent(line)) {record("KCD2_LOG "+line);aimed_inputs->intent(*intent,!line_input_stale);}
+                    else if(line.find("[MineComeAimInput]")!=std::string::npos) {
+                        record("KCD2_LOG "+line.substr(0,4096));
+                        record("AIM_INPUT_REJECTED reason=unavailable_or_malformed_sample");
+                    }
+                }
                 if(auto input=minecome::parse_stone_input_intent(line)) {
                     record("KCD2_LOG "+line);
                     if(input->id<=last_input_id) record("STONE_INPUT_REJECTED reason=replayed_intent request="+std::to_string(input->id));
@@ -378,6 +515,7 @@ int wmain(int argc,wchar_t** argv) {
                 if(auto sample=minecome::parse_tools_pose(line,*fov)) {
                     ++samples;
                     if(sample->has_player) {
+                        if(aimed_stone) sample->pose.flags|=8u;
                         ++world_samples;bridge.publish(sample->pose);
                         world_state_valid=true;had_world=true;last_world_sample=Clock::now();
                         current_world=sample->pose;
@@ -398,6 +536,7 @@ int wmain(int argc,wchar_t** argv) {
             if(consumed_line||!carried_partial||pending.empty()) partial_input_received=input_log_read;
             if(world_state_valid&&Clock::now()-last_world_sample>1s) invalidate_world("no fresh valid world sample for one second");
             if(stones) stones->update(current_world);
+            if(aimed_inputs) aimed_inputs->update();
             while(!pending_inputs.empty()) {
                 const auto logged=pending_inputs.front();pending_inputs.pop_front();
                 const auto& input=logged.request;
@@ -411,6 +550,10 @@ int wmain(int argc,wchar_t** argv) {
                 const auto& result=receipt.result;
                 record("STONE_INPUT_RESULT request="+std::to_string(result.id)+" action="+std::to_string(result.action)
                     +" result="+std::to_string(static_cast<std::uint32_t>(result.result)));
+            }
+            if(aimed_inputs) for(const auto& receipt:bridge.drain_aimed_results()) {
+                const auto& result=receipt.result;
+                record("AIM_INPUT_RESULT run="+aimed_run+" arena="+std::to_string(result.arena_id)+" request="+std::to_string(result.request_id)+" action="+std::to_string(result.action)+" result="+std::to_string(static_cast<unsigned>(result.result)));
             }
             const bool connected=bridge.connected();
             if(connected&&!was_connected) {
@@ -431,9 +574,10 @@ int wmain(int argc,wchar_t** argv) {
                 catch(const std::exception& error) {record(std::string("In-game event acknowledgement unavailable: ")+error.what());}
                 acknowledged_events=events;
             }
-            std::this_thread::sleep_for(200ms);
+            std::this_thread::sleep_for(aimed_stone?50ms:200ms);
         }
         pending_inputs.clear();
+        if(aimed_inputs) aimed_inputs->end("relay shutting down");
         bridge.cancel_stone_inputs();
         if(stones) {
             stones->end("relay shutting down");
@@ -447,6 +591,7 @@ int wmain(int argc,wchar_t** argv) {
                     const auto newline=pending.find('\n');if(newline==std::string::npos) break;
                     const auto line=pending.substr(0,newline);pending.erase(0,newline+1);
                     if(auto receipt=minecome::parse_stone_receipt(line)) {record("KCD2_LOG "+line);stones->receipt(*receipt);}
+                    if(aimed_inputs) if(auto receipt=minecome::parse_aimed_lua_receipt(line)) {record("KCD2_LOG "+line);aimed_inputs->receipt(*receipt,false);}
                 }
                 std::this_thread::sleep_for(50ms);
             }

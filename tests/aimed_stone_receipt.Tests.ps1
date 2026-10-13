@@ -11,7 +11,7 @@ function Ray($name){
     return @{host_origin=$origin;host_direction=(V 1.0 0.0 0.0);host_range=4.5;minecraft_anchor=$anchor;host_anchor=(V 0.0 0.0 0.0);blocks_per_host_unit=1.0;occlusion_kind=$kind;host_obstruction_distance=$distance;age_at_selection_ns=$age}
 }
 $seed=V 0 0 0;$middle=V 0 1 0;$top=V 0 2 0;$east=V 1 2 0
-$ids=@(1,2,3,4,5,6,14,15);$actions=@(1,1,1,2,2,1,2,2);$targets=@($seed,$middle,$top,$seed,$middle,$east,$east,$top)
+$ids=@(1,2,3,4,5,6,15,16);$actions=@(1,1,1,2,2,1,2,2);$targets=@($seed,$middle,$top,$seed,$middle,$east,$east,$top)
 $hits=@((V 0 -1 0),$seed,$middle,$seed,$middle,$top,$east,$top);$faces=@('UP','UP','UP','WEST','WEST','EAST','EAST','WEST')
 $confirmations=@(for($i=0;$i -lt 8;$i++){
     $h=$hits[$i];$point=@(($h.x+0.5),($h.y+0.5),($h.z+0.5));if($faces[$i] -eq 'UP'){$point[1]=$h.y+1.0}elseif($faces[$i] -eq 'WEST'){$point[0]=[double]$h.x}else{$point[0]=$h.x+1.0}
@@ -22,8 +22,8 @@ $confirmations=@(for($i=0;$i -lt 8;$i++){
 $reasons=@('ray_miss','unowned_hit','host_obstructed','host_obstruction_unavailable','ray_stale','ray_origin_disagrees_with_eye','alignment_changed')
 $requests=@($confirmations[0..5])+@(@{id=7;action=2;status='rejected';reason=$reasons[0];client_and_server=$false},@{id=7;action=2;status='rejected';reason='request_id_not_increasing';client_and_server=$false})
 for($i=1;$i -lt 7;$i++){$requests+=@{id=7+$i;action=2;status='rejected';reason=$reasons[$i];client_and_server=$false}}
-$requests+=@($confirmations[6],$confirmations[7])
-$names=@('column_middle','column_top','remove_seed','remove_middle','face_down','face_up','face_north','face_south','face_west','face_east','place_east','nearest','miss','unowned_floor','host_occluded','host_occlusion_unavailable','stale_ray','origin_mismatch','alignment_changed','turn_while_pending','cleanup_top')
+$requests+=@(@{id=14;action=2;status='rejected';reason='actions_disabled_before_dispatch';client_and_server=$false},$confirmations[6],$confirmations[7])
+$names=@('column_middle','column_top','remove_seed','remove_middle','face_down','face_up','face_north','face_south','face_west','face_east','place_east','nearest','miss','unowned_floor','host_occluded','host_occlusion_unavailable','stale_ray','origin_mismatch','alignment_changed','cancel_before_dispatch','turn_while_pending','cleanup_top')
 $dispatch=@{column_middle=1;column_top=2;remove_seed=3;remove_middle=4;place_east=5;turn_while_pending=6;cleanup_top=7}
 $checks=@();$teleports=@();$negativeId=7
 for($i=0;$i -lt $names.Count;$i++){
@@ -33,6 +33,7 @@ for($i=0;$i -lt $names.Count;$i++){
     if($negative){$c.request_id=$negativeId;$c.action=2;$c.reason=$reasons[$negativeId-7];$negativeId++}
     if($name.StartsWith('face_')){$c.target=$top;$c.hit_block=$top;$c.face=$name.Substring(5)}
     if($name -eq 'nearest'){$c.target=$east;$c.hit_block=$east;$c.face='east'}
+    if($name -eq 'cancel_before_dispatch'){$c.request_id=14;$c.action=2;$c.queued_then_cancelled=$true;$c.cancellation_reason='actions_disabled_before_dispatch';$c.client_server_cells_unchanged=$true;$c.target=$east;$c.hit_block=$east;$c.face='east'}
     $checks+=$c;$teleports+=@{scenario=$name;eye=(V 0.0 0.0 0.0);client_server_eye_agreed=$true}
 }
 $save='MineCome-AimedStone-'+[guid]::ParseExact($run,'N').ToString('D')
@@ -69,7 +70,13 @@ $mutations=@(
     {param($r)$r.checks[15].synthetic_ray.occlusion_kind='KNOWN_CLEAR'},
     {param($r)$r.checks[14].synthetic_ray.host_obstruction_distance=4.5},
     {param($r)$r.checks[20].synthetic_ray.host_direction.x=-1.0},
-    {param($r)$r.arena.arena_maximum_inclusive.y=3}
+    {param($r)$r.arena.arena_maximum_inclusive.y=3},
+    {param($r)$r.checks[19].queued_then_cancelled=$false},
+    {param($r)$r.checks[19].cancellation_reason='confirmed'},
+    {param($r)$r.checks[19].client_server_cells_unchanged=$false},
+    {param($r)$r.checks[19].vanilla_dispatch=$true},
+    {param($r)$r.checks[19].request_id=15},
+    {param($r)$r.arena.requests[14].reason='ray_miss'}
 )
 foreach($mutate in $mutations){$r=CloneReceipt $valid;& $mutate $r;$rejected=$false;try{Check $r}catch{$rejected=$true};if(-not $rejected){throw "Malformed aimed receipt accepted, case $count"};$count++}
 Write-Output "AIMED_STONE_RECEIPT_TESTS_PASS checks=$count"

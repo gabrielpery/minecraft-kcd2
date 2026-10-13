@@ -68,6 +68,41 @@ int main() {
             "[MineComeInput] {\"schema\":1,\"request\":1,\"action\":1}garbage",
             "[MineComeInput] {\"schema\":2,\"request\":1,\"action\":1}"}) check(!parse_stone_input_intent(invalid));
         check(!parse_stone_input_intent(std::string(1025,'x')));
+        const AimedArena arena{1,{10.5,65.62,20.5},{100,200,51.7},1,{12,64,20},{10,62,18},{14,66,22}};
+        auto fixed=StoneAlignment::from_arena(arena);check(fixed.has_value());
+        const auto mapped=fixed->map({1,12,64,20,"minecraft:stone"});check(mapped&&std::abs(mapped->x-101.5)<1e-9&&std::abs(mapped->y-200.5)<1e-9&&std::abs(mapped->z-50.08)<1e-9);
+        check(!fixed->map({1,15,64,20,"minecraft:stone"}));
+        auto invalid_arena=arena;invalid_arena.blocks_per_unit=2;check(!StoneAlignment::from_arena(invalid_arena));
+        const std::string run="0123456789abcdef0123456789abcdef";
+        check(aimed_begin_command(run,9007199254740991ULL)=="#MineCome.BeginAimedInput('"+run+"','9007199254740991',60)");
+        check(aimed_permit_command(run,{1,2})=="#MineCome.InstallAimedPermit('"+run+"','1','2')");
+        check(aimed_end_command(run,1)=="#MineCome.EndAimedInput('"+run+"','1')");
+        for(const auto bad_run:{"", "abc", "0123456789ABCDEF0123456789ABCDEF", "0123456789abcdef0123456789abcde'"}) {
+            try {aimed_begin_command(bad_run,1);check(false);}catch(const std::invalid_argument&) {check(true);}
+        }
+        const std::string begin="[MineComeAimSession] {\"schema\":1,\"run\":\""+run+"\",\"arena\":\"1\",\"event\":\"begin\",\"result\":\"accepted\",\"engine_time\":10,\"expires_engine_time\":70}";
+        const std::string permit="[MineComeAimPermit] {\"schema\":1,\"run\":\""+run+"\",\"arena\":\"1\",\"permit\":\"2\",\"result\":\"installed\",\"engine_time\":10,\"expires_engine_time\":10.5}";
+        auto ack=parse_aimed_lua_receipt(begin);check(ack&&ack->event=="begin"&&ack->arena==1&&ack->engine_time==10);
+        ack=parse_aimed_lua_receipt(permit);check(ack&&ack->event=="permit"&&ack->permit==2&&ack->expires_engine_time==10.5);
+        check(parse_aimed_lua_receipt("prefix [MineComeAimSession] {\"schema\":1,\"run\":\""+run+"\",\"arena\":\"1\",\"event\":\"end\",\"result\":\"ended\",\"engine_time\":null,\"expires_engine_time\":null}\r").has_value());
+        auto replace=[](std::string text,const std::string& from,const std::string& to){const auto at=text.find(from);if(at==std::string::npos)throw std::runtime_error("missing fixture token");text.replace(at,from.size(),to);return text;};
+        for(const auto bad:{replace(begin,"\"arena\":\"1\"","\"arena\":\"01\""),replace(permit,"10.5","11.0"),replace(permit,"10.5","1e999"),replace(begin,"accepted","rejected"),begin+"garbage"}) check(!parse_aimed_lua_receipt(bad));
+        const std::string intent="[MineComeAimInput] {\"schema\":1,\"run\":\""+run+"\",\"arena\":\"1\",\"request\":\"3\",\"permit\":\"2\",\"click\":\"3\",\"action\":2,\"result\":\"sampled\",\"reason\":\"none\",\"permit_engine_time\":10,\"engine_time\":10.1,\"completed_engine_time\":10.12,\"origin\":{\"x\":100,\"y\":200,\"z\":51.7},\"direction\":{\"x\":0.60000002384185791,\"y\":0.80000001192092896,\"z\":0},\"range\":4.5,\"occlusion\":1,\"nearest_distance\":0}";
+        auto captured=parse_aimed_input_intent(intent);check(captured&&captured->request.request_id==3&&captured->click==3&&captured->request.permit_id==2);
+        check(std::abs(captured->request.direction.x*captured->request.direction.x+captured->request.direction.y*captured->request.direction.y-1)<1e-9);
+        check(encode(captured->request).size()==96);
+        auto hit=replace(replace(intent,"\"occlusion\":1","\"occlusion\":2"),"\"nearest_distance\":0","\"nearest_distance\":2.25");
+        check(parse_aimed_input_intent(hit).has_value());
+        for(const auto bad:{
+            replace(intent,"\"arena\":\"1\"","\"arena\":\"0\""),replace(intent,"\"permit\":\"2\"","\"permit\":\"9007199254740992\""),
+            replace(intent,"\"click\":\"3\"","\"click\":\"4\""),replace(intent,"\"request\":\"3\"","\"request\":3"),
+            replace(intent,"\"action\":2","\"action\":3"),replace(intent,"sampled","unavailable"),replace(intent,"none","ray_error"),
+            replace(intent,"\"engine_time\":10.1","\"engine_time\":9.9"),replace(intent,"\"completed_engine_time\":10.12","\"completed_engine_time\":10.4"),
+            replace(intent,"\"completed_engine_time\":10.12","\"completed_engine_time\":9.9"),replace(intent,"\"permit_engine_time\":10","\"permit_engine_time\":9"),
+            replace(intent,"100","10000001"),replace(intent,"100","1e999"),replace(intent,"0.60000002384185791","0.61"),
+            replace(intent,"\"range\":4.5","\"range\":5"),replace(intent,"\"occlusion\":1","\"occlusion\":0"),
+            replace(intent,"\"nearest_distance\":0","\"nearest_distance\":1"),replace(hit,"2.25","4.6"),
+            intent+"garbage",intent.substr(0,intent.size()-1),std::string(4097,'x')}) check(!parse_aimed_input_intent(bad));
         std::cout<<checks<<" stone alignment/receipt checks passed\n";return 0;
     }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}
 }
