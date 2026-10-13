@@ -1,5 +1,47 @@
 # MineCome progress — 2026-10-13
 
+**Public source repository.** The user made `gabrielpery/minecraft-kcd2` public;
+GitHub metadata confirms public visibility and the existing `codex/initial-import`
+default branch. README, setup and known issues now describe public cloning, the
+verified prototype scope and fresh-clone prerequisites. Historical local evidence
+and staged game artifacts remain outside Git. The PowerShell 7 bootstrap now
+preserves an explicit `-JavaHome`; eight argument/exit-code regression checks
+pass under both PowerShell 5.1 and 7 without launching a game.
+
+**Aligned aiming over the bridge: implemented, compiled and verified with actual
+Minecraft and a synthetic native host.** Optional protocol minor2 adds one
+immutable arena agreement, expiring single-use guest permits, aimed requests and
+explicit client/server-confirmed results. Both sides validate current session,
+fresh camera poses, bounds and ownership. The host acknowledges the alignment
+only after the consumer acknowledges previous-session cleanup. Existing minor0/1
+callers retain their behavior; the live KCD relay does not enable minor2 yet.
+
+Run `e78ba82a6d23467eba714c1a82871983`, in
+`runtime/evidence/aimed-bridge-20261013-193528-e78ba82a6d23467eba714c1a82871983`,
+passes on its first actual-game attempt. A fresh UUID Minecraft world confirms
+an initial vanilla stone placement, then receives a native C++ BREAK request
+with an issued permit and aligned ray. Minecraft's real outline raycast selects
+the stone's WEST face; the vanilla break is confirmed independently by its client
+and integrated server. The native host receives both the terminal result and
+removal event before sending GOODBYE. Final observations confirm air, zero owned
+stones, no pending action, two sent events with none dropped, restored options,
+a persisted save and normal Java/wrapper/native exits. Source and native-binary
+hashes remain unchanged through the run. This verifies a networked Minecraft
+action, not live KCD aiming or an engine-rendered replica acknowledgement.
+The receipt validator passes 226 synthetic rejection/correlation checks under
+PowerShell 5.1 and 7. Additional ID bounds found by those checks also pass a
+read-only revalidation of this unchanged actual-game evidence; the original
+validator is preserved beside the run's receipts. No repeat game test was needed.
+
+The full native Release build and all 28 CTest suites pass, including legacy
+tools-host integration. Focused coverage includes 1,578 native session checks,
+414 existing codec checks and 336 aimed/shared-golden checks. The Fabric build
+and remapping pass with 3,819 Java protocol checks plus existing stone/HUD
+gate, proof and mode checks (51/227/2,048). No installed game renderer or frozen
+live-test bundle was replaced. Next: pair physical KCD clicks with the live
+camera/obstruction sample and the same agreed alignment, then connect replica
+acknowledgements. See [the networked lab](../minecraft/README.md#aimed-stone-network-lab).
+
 **Camera movement with HUD controls: live verified in revision 3.** The user
 reports "it worked!" for camera movement before/after inventory, inventory cursor
 control and stone place/break. Run `70ed9e3b395d44a48993f9d59c89dac5` reaches its
@@ -41,8 +83,9 @@ field. Its failed evidence is preserved. The corrected writer produces the
 fully verified run above; 31 receipt regression cases pass in both PowerShell
 5.1 and 7. Fabric build/remap succeeds; existing protocol and stone gate/proof/
 mode checks pass. The default bridge, live HUD controls and installed renderer
-remain unchanged. The next integration work is shared alignment, a click paired
-with its live host ray and obstruction sample, and KCD replica acknowledgement.
+remain unchanged. Shared alignment and transport have since passed the network
+lab above; pairing a click with its live host ray/obstruction sample and KCD
+replica acknowledgement remain unfinished.
 
 **Crosshair targeting groundwork: read-only host aim sample implemented and
 standalone verified.** The new separate Lua probe captures camera origin/forward
@@ -50,8 +93,8 @@ and nearest host obstruction in one call. It checks every hit, distinguishes
 unavailable data from clear space, and makes no game-state changes. Fourteen
 mock-engine groups pass 1,533 checks; host receipt validation passes 343 checks.
 Its caller preserves source/log evidence and pins the existing tools process.
-No live ray sample, alignment handshake,
-live KCD aimed action or new wire capability is claimed. See the
+This read-only probe alone does not verify a live ray sample or live KCD aimed
+action. The separate minor2 alignment/network result is recorded above. See the
 [aim sample contract](../protocol/PROTOCOL.md#read-only-host-aim-sample-implemented-no-aimed-request-enabled).
 
 **Selective capture implementation and earlier checks.** A separate
@@ -813,7 +856,7 @@ before reporting that the observer is armed.
 The initial source import was pushed as commit `98acd75` on
 `codex/initial-import`. A fresh remote read confirmed the exact local commit at
 both that branch and remote HEAD; the local source working tree was clean.
-The private source repository contains119 files at its root. The three personal
+At the initial import, the then-private source repository contained 119 files. The three personal
 executable examples were replaced with portable PowerShell7/Python instructions.
 
 The user reported that the first prompt was missed, so its zero-motion recording

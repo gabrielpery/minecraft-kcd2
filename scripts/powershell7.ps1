@@ -55,7 +55,7 @@ function Invoke-MineComePowerShell7([string]$ScriptPath,[Collections.IDictionary
     $hostPath=Get-MineComePowerShell7
     $arguments=[Collections.Generic.List[string]]::new()
     foreach($argument in @('-NoLogo','-NoProfile','-File',[IO.Path]::GetFullPath($ScriptPath))){$arguments.Add($argument)}
-    foreach($name in @('GameRoot','Level','PreflightOnly','WithoutMods')){
+    foreach($name in @('GameRoot','Level','JavaHome','PreflightOnly','WithoutMods')){
         if($BoundParameters.Keys -notcontains $name){continue}
         $value=$BoundParameters[$name]
         if($name -eq 'PreflightOnly' -or $name -eq 'WithoutMods'){

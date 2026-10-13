@@ -1,9 +1,36 @@
 # Reproducible Windows setup
 
-Run commands from the MineCome directory in PowerShell 7 (installed here as 7.6.5).
-The official-tools HTTP helpers require PowerShell 7. Paths in code are discovered
-or supplied explicitly; the installed paths below are evidence from this computer.
-No global installer or elevated dependency installation was needed.
+This is a source-development setup for an experimental prototype, not a retail mod
+installer. The repository is public; no private GitHub access or Codex account is
+required to clone and build it. Game assets, prepared runtime bundles, tokens, saves
+and local evidence are excluded from the repository.
+
+## Prerequisites and clone
+
+- Windows x64 and Git.
+- PowerShell 7 for the official-tools HTTP helpers and lab controllers. Open it
+  with `pwsh -NoProfile` after installing it, and check
+  `$PSVersionTable.PSVersion.Major`. Selected entry points can discover an existing
+  PowerShell 7 installation from Windows PowerShell 5.1; they do not install one.
+- Visual Studio with the x64 C++ tools and Windows SDK; the native helper discovers
+  Visual Studio and CMake. CMake 3.25 or newer is required.
+- An installed JDK 21 or 24 with both `java.exe` and `javac.exe`. JDK 24 is the
+  tested development baseline and is currently required by the aimed-stone lab.
+- Node.js for `tests/integration.mjs`; Python with Pillow for asset conversion.
+- Your own legitimate Minecraft Java Edition and KCD2 installations for game
+  tests. Live KCD tests currently use the separate official 1.5.5 development
+  build; retail 1.5.6 is not supported by a verified loader yet.
+
+```powershell
+git clone https://github.com/gabrielpery/minecraft-kcd2.git
+Set-Location minecraft-kcd2
+```
+
+Run the remaining commands from the cloned repository root in PowerShell 7. Paths
+are discovered or supplied explicitly. The versions and installation paths below
+record the original development machine; a clone does not come with those tools or
+pre-staged game files. Build scripts use installed dependencies and do not perform
+global installations or request administrator access.
 
 ## Discovered versions (2026-10-11)
 
@@ -60,7 +87,7 @@ node .\tests\integration.mjs
 ```
 
 The integration test uses port38770, an actual Java codec peer and
-explicit synthetic C++/Node peers; it does not launch games. Node is already installed.
+explicit synthetic C++/Node peers; it does not launch games. Node must be installed separately.
 Fabric output: `minecraft/build/libs/minecome-fabric-0.1.0.jar` (not the sources JAR).
 
 For a real isolated development Minecraft process, first start a host. In another
@@ -143,11 +170,13 @@ for a MineCome deployment when uninstalling; preserve other mods and saves.
 
 ## Prepared block-display test
 
-The local compiled Minecraft asset is already staged with our original Lua module
-under the discovered official tools root's `Mods/minecome`. The updated deployment
-fingerprint is in `runtime/lua-deployment.json`; the previous owned package was
-preserved under `runtime/packages/previous-*` before updating it. Default staging
-still refuses to overwrite an existing mod. To reproduce asset compilation/staging:
+The original development machine has a compiled Minecraft asset staged with the
+Lua module under the official tools root's `Mods/minecome`. A fresh clone has no
+such package: export the actual Minecraft asset first as described in
+[the asset pipeline](research/ASSET_PIPELINE.md), then compile and stage it below.
+Deployment fingerprints are written to `runtime/lua-deployment.json`; owned prior
+packages are preserved under `runtime/packages/previous-*` on update. Default
+staging refuses to overwrite an existing mod.
 
 ```powershell
 .\tools\Convert-BlockAsset.ps1 -PythonPath '<installed Python executable>'
@@ -160,9 +189,9 @@ The latest texture revision isolates and enlarges the actual stone pixels withou
 interpolation to reduce the initial blur. The user has verified the sharpness fix
 in a second live screenshot; its evidence record is referenced in PROGRESS.md.
 
-The engine launch could not be performed automatically: approval review rejected
-`-devmode +map trosecko` with only `blocked by policy`. The user subsequently ran
-this helper successfully. Run it directly from the MineCome directory for a retest:
+After completing local staging, run this helper from the repository root to open
+the fresh development test world. It selects an existing PowerShell 7 installation
+when invoked from Windows PowerShell 5.1:
 
 ```powershell
 .\scripts\Start-Kcd2ToolsTest.ps1
@@ -218,7 +247,7 @@ Do not replace the open package; the staging guard refuses that operation.
 
 ## Interactive stone lab
 
-The next build adds two console commands to the proven stone mirroring path. With
+This lab adds two console commands to the proven stone mirroring path. With
 the official development forest/player world already loaded, run:
 
 ```powershell

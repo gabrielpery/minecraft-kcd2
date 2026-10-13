@@ -400,6 +400,104 @@ int wmain(int argc,wchar_t** argv) {
         const minecome::StoneInputResultReceipt final_receipt{{222,2,protocol::StoneInputResultCode::absent},final_session.connection_generation,final_session.reset_generation,1,final_sequence};
         require(std::count(audited.begin(),audited.end(),audit_text(final_receipt))==1,"final absent result audit lost or duplicated across graceful disconnect");
         require(log.find(audit_text(final_receipt))<log.rfind("session ended: graceful peer goodbye"),"final result audit was not persisted before disconnect");
+
+        // Minor 2 stays inaccessible to all production/default start() callers.
+        port=free_port();require(bridge.start(token_file,logfile,port),"default restart failed");
+        {Peer denied(port,protocol::Role::minecraft,token,2,protocol::CAP_AIMED_STONE,false);require(denied.rejected(),"default host enabled experimental aimed mode");}
+        bridge.stop();port=free_port();require(bridge.start(token_file,logfile,port,"explicit aimed synthetic test",true),"aimed opt-in restart failed");
+        for(const auto invalid:std::array<std::pair<std::uint16_t,std::uint32_t>,3>{{{2,0},{2,1},{1,2}}}) {
+            Peer denied(port,protocol::Role::minecraft,token,invalid.first,invalid.second,false);require(denied.rejected(),"aimed mismatched negotiation accepted");
+        }
+        {Peer denied(port,protocol::Role::harness,token,2,2,false);require(denied.rejected(),"aimed harness enabled");}
+        protocol::Pose host;host.camera={100,200,50};host.player={100,200,48.38};host.flags=11;
+        auto fresh_aim=[&](Peer& peer) {bridge.publish(host);const auto count=bridge.received_poses()+1;peer.send(protocol::Type::mc_pose,protocol::encode(pose(301)));await([&]{return bridge.received_poses()==count;},"aimed pose fence missing");};
+        const protocol::AimedArena offered{123,{301,65.62,200},{100,200,50},1,{303,64,200},{301,62,198},{305,66,202}};
+        auto offer=[&](Peer& peer) {
+            fresh_aim(peer);peer.send(protocol::Type::arena_offer,protocol::encode(offered));
+            require(peer.receive(protocol::Type::arena_ack).second==protocol::encode(offered),"arena ACK changed exact bytes");
+        };
+        auto ready_aim=[&](Peer& peer) {
+            const auto session=connected_reset(bridge,protocol::Role::minecraft);
+            require(bridge.acknowledge_event_reset(session.reset_generation),"aimed reset ACK failed");offer(peer);
+            await([&]{return bridge.aimed_arena().has_value();},"arena ACK did not enable aimed state");return session;
+        };
+        Peer aimed(port,protocol::Role::minecraft,token,2,2);
+        const auto aimed_session=connected_reset(bridge,protocol::Role::minecraft);fresh_aim(aimed);
+        aimed.send(protocol::Type::arena_offer,protocol::encode(offered));
+        std::this_thread::sleep_for(40ms);
+        require(!bridge.aimed_arena()&&!bridge.latest_aimed_permit(),"arena escaped cleanup reset gate");
+        require(bridge.acknowledge_event_reset(aimed_session.reset_generation),"aimed cleanup ACK failed");
+        require(aimed.receive(protocol::Type::arena_ack).second==protocol::encode(offered),"delayed arena ACK changed exact bytes");
+        await([&]{return bridge.aimed_arena().has_value();},"aimed arena unavailable after reset ACK");
+        require(!bridge.input_ready()&&!bridge.request_stone_input({1,2}),"aimed session enabled legacy fixed-cell input");
+        aimed.send(protocol::Type::aim_permit,protocol::encode(protocol::AimPermit{123,1}));
+        await([&]{return bridge.latest_aimed_permit().has_value();},"aim permit unavailable");const auto first_permit=*bridge.latest_aimed_permit();
+        protocol::AimedStoneRequest aimed_request{123,1,1,2,protocol::AimOcclusion::clear,host.camera,{1,0,0},4.5,0};
+        require(!bridge.request_aimed_stone(aimed_request,first_permit,first_permit.received-1ms),"pre-permit capture accepted");
+        require(!bridge.request_aimed_stone(aimed_request,first_permit,Clock::now()+1s),"future capture accepted");
+        auto forged=first_permit;forged.connection_generation++;require(!bridge.request_aimed_stone(aimed_request,forged,Clock::now()),"forged permit generation accepted");
+        forged=first_permit;forged.reset_generation++;require(!bridge.request_aimed_stone(aimed_request,forged,Clock::now()),"forged permit reset accepted");
+        forged=first_permit;forged.received-=1ms;require(!bridge.request_aimed_stone(aimed_request,forged,Clock::now()),"forged permit time accepted");
+        auto wrong_request=aimed_request;wrong_request.origin.x+=1;require(!bridge.request_aimed_stone(wrong_request,first_permit,Clock::now()),"ray detached from actual eye accepted");
+        require(bridge.request_aimed_stone(aimed_request,first_permit,Clock::now()),"valid aimed request rejected");
+        require(aimed.receive(protocol::Type::aimed_stone_request).second==protocol::encode(aimed_request),"aimed dispatch changed immutable request");
+        require(!bridge.request_aimed_stone(aimed_request,first_permit,Clock::now()),"aim permit replay accepted");
+        aimed.send(protocol::Type::aimed_stone_result,protocol::encode(protocol::AimedStoneResult{123,1,2,protocol::AimedStoneResultCode::confirmed}));fresh_aim(aimed);
+        const auto aimed_results=bridge.drain_aimed_results();require(aimed_results.size()==1&&aimed_results[0].connection_generation==aimed_session.connection_generation&&aimed_results[0].reset_generation==aimed_session.reset_generation&&aimed_results[0].result.result==protocol::AimedStoneResultCode::confirmed,"aimed result provenance lost");
+        require(bridge.drain_block_events().events.empty(),"confirmed action result fabricated block transition");
+        aimed.send(protocol::Type::aim_permit,protocol::encode(protocol::AimPermit{123,2}));fresh_aim(aimed);
+        const auto expired=*bridge.latest_aimed_permit();std::this_thread::sleep_for(510ms);fresh_aim(aimed);
+        aimed_request.request_id=2;aimed_request.permit_id=2;
+        require(!bridge.latest_aimed_permit()&&!bridge.request_aimed_stone(aimed_request,expired,Clock::now()),"expired permit accepted with fresh poses");
+        aimed.close();await([&]{return !bridge.connected();},"aimed disconnect missing");
+        require(!bridge.aimed_arena()&&!bridge.latest_aimed_permit()&&bridge.drain_aimed_results().empty(),"aimed state survived disconnect");
+        Peer aimed_reconnect(port,protocol::Role::minecraft,token,2,2);const auto aimed_replacement=ready_aim(aimed_reconnect);
+        require(aimed_replacement.connection_generation>aimed_session.connection_generation,"aimed reconnect reused generation");
+        aimed_reconnect.send(protocol::Type::aim_permit,protocol::encode(protocol::AimPermit{123,1}));fresh_aim(aimed_reconnect);
+        aimed_request.request_id=1;aimed_request.permit_id=1;
+        require(!bridge.request_aimed_stone(aimed_request,first_permit,Clock::now()),"reconnect accepted old permit receipt");
+        auto current=*bridge.latest_aimed_permit();require(bridge.request_aimed_stone(aimed_request,current,Clock::now()),"reconnect did not allow fresh namespace");aimed_reconnect.receive(protocol::Type::aimed_stone_request);
+        const auto before_aimed_event=bridge.received_events();aimed_reconnect.send(protocol::Type::block_event,protocol::encode(block(1,303)));
+        await([&]{return bridge.received_events()==before_aimed_event+1;},"aimed owned event missing");
+        const auto owned_receipts=bridge.drain_block_events();require(owned_receipts.events.size()==1&&bridge.game_write_allowed(owned_receipts.events[0]),"aimed event not write eligible before cancellation");
+        bridge.cancel_stone_inputs();require(!bridge.aimed_arena()&&!bridge.latest_aimed_permit(),"cancellation kept aimed authority");
+        require(!bridge.game_write_allowed(owned_receipts.events[0]),"copied aimed event retained write authority after cancellation");
+        aimed_reconnect.send(protocol::Type::aimed_stone_result,protocol::encode(protocol::AimedStoneResult{123,1,2,protocol::AimedStoneResultCode::confirmed}));await([&]{return !bridge.connected();},"post-cancel result not rejected");aimed_reconnect.close();
+        for(int violation=0;violation<16;++violation) {
+            Peer invalid(port,protocol::Role::minecraft,token,2,2);
+            if(violation==0) {
+                auto reset=connected_reset(bridge,protocol::Role::minecraft);bridge.acknowledge_event_reset(reset.reset_generation);fresh_aim(invalid);
+                invalid.send(protocol::Type::block_event,protocol::encode(block(1,303)));
+            } else if(violation==1) {
+                auto reset=connected_reset(bridge,protocol::Role::minecraft);bridge.acknowledge_event_reset(reset.reset_generation);fresh_aim(invalid);
+                auto wrong=offered;wrong.minecraft_anchor.x+=1;invalid.send(protocol::Type::arena_offer,protocol::encode(wrong));
+            } else if(violation>=14) {
+                auto reset=connected_reset(bridge,protocol::Role::minecraft);bridge.acknowledge_event_reset(reset.reset_generation);fresh_aim(invalid);
+                if(violation==14) {auto missing=host;missing.flags=9;bridge.publish(missing);}
+                else invalid.send(protocol::Type::mc_pose,protocol::encode(pose(301,9)));
+                invalid.send(protocol::Type::arena_offer,protocol::encode(offered));
+            } else {
+                ready_aim(invalid);
+                if(violation==2) invalid.send(protocol::Type::arena_offer,protocol::encode(offered));
+                if(violation==3) invalid.send(protocol::Type::aim_permit,protocol::encode(protocol::AimPermit{124,1}));
+                if(violation==4) {invalid.send(protocol::Type::aim_permit,protocol::encode(protocol::AimPermit{123,1}));invalid.send(protocol::Type::aim_permit,protocol::encode(protocol::AimPermit{123,1}));}
+                if(violation==5) invalid.send(protocol::Type::aimed_stone_result,protocol::encode(protocol::AimedStoneResult{123,1,2,protocol::AimedStoneResultCode::confirmed}));
+                if(violation==6) invalid.send(protocol::Type::mc_pose,protocol::encode(pose(301,0)));
+                if(violation==7) {for(std::uint64_t id=1;id<=17;++id) invalid.send(protocol::Type::aim_permit,protocol::encode(protocol::AimPermit{123,id}));}
+                if(violation>=8) {
+                    auto event=protocol::BlockEvent{1,303,64,200,"minecraft:stone"};
+                    if(violation==8) event.x=306;
+                    if(violation==9) event.block_id="minecraft:dirt";
+                    if(violation==10) event.operation=2;
+                    if(violation==11) event.x=302;
+                    invalid.send(protocol::Type::block_event,protocol::encode(event));
+                    if(violation==12) invalid.send(protocol::Type::block_event,protocol::encode(event));
+                    if(violation==13) for(int i=0;i<16;++i) invalid.send(protocol::Type::block_event,protocol::encode(protocol::BlockEvent{1,301+i%5,62+i/5,198,"minecraft:stone"}));
+                }
+            }
+            await([&]{return !bridge.connected();},"aimed protocol violation retained session");require(!bridge.aimed_arena()&&bridge.drain_aimed_results().empty(),"violation retained aimed authority");
+        }
+        bridge.stop();
         std::cout<<checks<<" native loopback event/session checks passed. Explicit synthetic peers; no games launched.\n";
         return 0;
     } catch(const std::exception& error) {std::cerr<<"FAIL: "<<error.what()<<'\n';return 1;}

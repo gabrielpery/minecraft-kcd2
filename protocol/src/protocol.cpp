@@ -40,10 +40,31 @@ bool valid_utf8(const std::string& s) {
 }
 void hello_ok(const Hello& h) {
     if(h.role!=Role::kcd&&h.role!=Role::minecraft&&h.role!=Role::harness) throw std::runtime_error("invalid role");
-    if((h.capabilities&~CAP_STONE_INPUT)||(h.capabilities&&h.role==Role::harness)||h.name.empty()||h.name.size()>128||h.credential.size()>128||!valid_utf8(h.name)||!valid_utf8(h.credential)) throw std::runtime_error("invalid hello");
+    if(h.capabilities>CAP_AIMED_STONE||(h.capabilities&&h.role==Role::harness)||h.name.empty()||h.name.size()>128||h.credential.size()>128||!valid_utf8(h.name)||!valid_utf8(h.credential)) throw std::runtime_error("invalid hello");
 }
 void input_ok(std::uint64_t id,std::uint32_t action) {
     if(id==0||id>maximum_input_id||action<1||action>2) throw std::runtime_error("invalid stone input");
+}
+void id_ok(std::uint64_t id) { if(id==0||id>maximum_input_id) throw std::runtime_error("invalid exact53 ID"); }
+void bounded(Vec3 p) { for(double d:{p.x,p.y,p.z}) if(!std::isfinite(d)||std::abs(d)>1e7) throw std::runtime_error("aim coordinate out of bounds"); }
+void arena_ok(const AimedArena& a) {
+    id_ok(a.arena_id);bounded(a.minecraft_anchor);bounded(a.kcd_anchor);
+    if(a.blocks_per_unit!=1) throw std::runtime_error("aimed arena requires unit scale");
+    const std::array seed{a.seed.x,a.seed.y,a.seed.z}, lo{a.minimum.x,a.minimum.y,a.minimum.z}, hi{a.maximum.x,a.maximum.y,a.maximum.z};
+    for(std::size_t i=0;i<3;++i) if(std::abs(static_cast<double>(seed[i]))>1e7||static_cast<std::int64_t>(lo[i])!=static_cast<std::int64_t>(seed[i])-2||static_cast<std::int64_t>(hi[i])!=static_cast<std::int64_t>(seed[i])+2) throw std::runtime_error("invalid arena bounds");
+    for(double x:{static_cast<double>(a.minimum.x),static_cast<double>(a.maximum.x)+1})
+      for(double y:{static_cast<double>(a.minimum.y),static_cast<double>(a.maximum.y)+1})
+        for(double z:{static_cast<double>(a.minimum.z),static_cast<double>(a.maximum.z)+1}) {
+            bounded({x,y,z});bounded({a.kcd_anchor.x+x-a.minecraft_anchor.x,a.kcd_anchor.y-z+a.minecraft_anchor.z,a.kcd_anchor.z+y-a.minecraft_anchor.y});
+        }
+}
+void aimed_request_ok(const AimedStoneRequest& a) {
+    id_ok(a.arena_id);input_ok(a.request_id,a.action);id_ok(a.permit_id);bounded(a.origin);
+    const double norm=a.direction.x*a.direction.x+a.direction.y*a.direction.y+a.direction.z*a.direction.z;
+    if(!std::isfinite(norm)||std::abs(norm-1)>1e-9||!std::isfinite(a.range)||a.range<=0||a.range>4.5||!std::isfinite(a.nearest_distance)) throw std::runtime_error("invalid aimed ray");
+    auto o=static_cast<std::uint32_t>(a.occlusion);
+    if(o>2||(o<2&&a.nearest_distance!=0)||(o==2&&(a.nearest_distance<0||a.nearest_distance>a.range))) throw std::runtime_error("invalid aim occlusion");
+    bounded({a.origin.x+a.direction.x*a.range,a.origin.y+a.direction.y*a.range,a.origin.z+a.direction.z*a.range});
 }
 void block_ok(const BlockEvent& e) {
     if(e.operation<1||e.operation>2||e.block_id.empty()||e.block_id.size()>256) throw std::runtime_error("invalid block event");
@@ -54,7 +75,8 @@ Quaternion multiply(Quaternion a,Quaternion b) { return {a.w*b.x+a.x*b.w+a.y*b.z
 Vec3 finite_vec(Vec3 v) {if(!std::isfinite(v.x)||!std::isfinite(v.y)||!std::isfinite(v.z)) throw std::runtime_error("nonfinite coordinate");return v;}
 }
 Bytes encode_header(const Header& h) {
-    if(h.payload_size>max_payload||h.sequence==0||h.minor>1||static_cast<unsigned>(h.type)<1||static_cast<unsigned>(h.type)>(h.minor==1?9u:7u)) throw std::runtime_error("invalid header");
+    const auto type=static_cast<unsigned>(h.type);
+    if(h.payload_size>max_payload||h.sequence==0||h.minor>2||type<1||type>(h.minor==2?14u:h.minor==1?9u:7u)||(h.minor==2&&(type==8||type==9))) throw std::runtime_error("invalid header");
     Writer w; w.text("MCME"); w.integer<std::uint16_t>(1);w.integer(h.minor);w.integer<std::uint16_t>(static_cast<std::uint16_t>(h.type));w.integer<std::uint16_t>(0);w.integer(h.payload_size);w.integer(h.sequence);w.integer(h.timestamp_us); return w.b;
 }
 Header decode_header(std::span<const std::uint8_t> b) {
@@ -73,6 +95,14 @@ Bytes encode(const StoneInputRequest& input) {input_ok(input.id,input.action);Wr
 StoneInputRequest decode_stone_input_request(std::span<const std::uint8_t> b) {Reader r{b};StoneInputRequest input{r.integer<std::uint64_t>(),r.integer<std::uint32_t>()};r.end();input_ok(input.id,input.action);return input;}
 Bytes encode(const StoneInputResult& input) {input_ok(input.id,input.action);const auto code=static_cast<std::uint32_t>(input.result);if(code<1||code>7) throw std::runtime_error("invalid stone input result");Writer w;w.integer(input.id);w.integer(input.action);w.integer(code);return w.b;}
 StoneInputResult decode_stone_input_result(std::span<const std::uint8_t> b) {Reader r{b};StoneInputResult input{r.integer<std::uint64_t>(),r.integer<std::uint32_t>(),static_cast<StoneInputResultCode>(r.integer<std::uint32_t>())};r.end();(void)encode(input);return input;}
+Bytes encode(const AimedArena& a) {arena_ok(a);Writer w;w.integer(a.arena_id);w.vec(a.minecraft_anchor);w.vec(a.kcd_anchor);w.real(a.blocks_per_unit);for(auto c:{a.seed,a.minimum,a.maximum}) {w.integer(c.x);w.integer(c.y);w.integer(c.z);}return w.b;}
+AimedArena decode_aimed_arena(std::span<const std::uint8_t> b) {Reader r{b};AimedArena a;a.arena_id=r.integer<std::uint64_t>();a.minecraft_anchor=r.vec();a.kcd_anchor=r.vec();a.blocks_per_unit=r.real();for(auto* c:{&a.seed,&a.minimum,&a.maximum}) *c={r.integer<std::int32_t>(),r.integer<std::int32_t>(),r.integer<std::int32_t>()};r.end();arena_ok(a);return a;}
+Bytes encode(const AimPermit& a) {id_ok(a.arena_id);id_ok(a.permit_id);Writer w;w.integer(a.arena_id);w.integer(a.permit_id);return w.b;}
+AimPermit decode_aim_permit(std::span<const std::uint8_t> b) {Reader r{b};AimPermit a{r.integer<std::uint64_t>(),r.integer<std::uint64_t>()};r.end();(void)encode(a);return a;}
+Bytes encode(const AimedStoneRequest& a) {aimed_request_ok(a);Writer w;w.integer(a.arena_id);w.integer(a.request_id);w.integer(a.permit_id);w.integer(a.action);w.integer(static_cast<std::uint32_t>(a.occlusion));w.vec(a.origin);w.vec(a.direction);w.real(a.range);w.real(a.nearest_distance);return w.b;}
+AimedStoneRequest decode_aimed_stone_request(std::span<const std::uint8_t> b) {Reader r{b};AimedStoneRequest a;a.arena_id=r.integer<std::uint64_t>();a.request_id=r.integer<std::uint64_t>();a.permit_id=r.integer<std::uint64_t>();a.action=r.integer<std::uint32_t>();a.occlusion=static_cast<AimOcclusion>(r.integer<std::uint32_t>());a.origin=r.vec();a.direction=r.vec();a.range=r.real();a.nearest_distance=r.real();r.end();aimed_request_ok(a);return a;}
+Bytes encode(const AimedStoneResult& a) {id_ok(a.arena_id);input_ok(a.request_id,a.action);const auto code=static_cast<std::uint32_t>(a.result);if(code<1||code>10) throw std::runtime_error("invalid aimed result");Writer w;w.integer(a.arena_id);w.integer(a.request_id);w.integer(a.action);w.integer(code);return w.b;}
+AimedStoneResult decode_aimed_stone_result(std::span<const std::uint8_t> b) {Reader r{b};AimedStoneResult a{r.integer<std::uint64_t>(),r.integer<std::uint64_t>(),r.integer<std::uint32_t>(),static_cast<AimedStoneResultCode>(r.integer<std::uint32_t>())};r.end();(void)encode(a);return a;}
 Bytes frame(Type t,std::uint64_t seq,std::uint64_t time,std::span<const std::uint8_t> payload,std::uint16_t minor) { if(payload.size()>max_payload) throw std::runtime_error("oversized payload"); auto b=encode_header({t,static_cast<std::uint32_t>(payload.size()),seq,time,minor});b.insert(b.end(),payload.begin(),payload.end());return b; }
 Vec3 to_minecraft(Vec3 k,Vec3 o,double s) {scale_ok(s);finite_vec(k);finite_vec(o);return finite_vec({(k.x-o.x)*s,(k.z-o.z)*s,-(k.y-o.y)*s});}
 Vec3 to_kcd(Vec3 m,Vec3 o,double s) {scale_ok(s);finite_vec(m);finite_vec(o);return finite_vec({m.x/s+o.x,-m.z/s+o.y,m.y/s+o.z});}

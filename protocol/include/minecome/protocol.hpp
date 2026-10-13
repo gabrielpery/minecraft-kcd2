@@ -10,8 +10,9 @@ using Bytes = std::vector<std::uint8_t>;
 constexpr std::size_t header_size = 32;
 constexpr std::uint32_t max_payload = 65536;
 constexpr std::uint32_t CAP_STONE_INPUT = 1;
+constexpr std::uint32_t CAP_AIMED_STONE = 2;
 constexpr std::uint64_t maximum_input_id = 9007199254740991ULL;
-enum class Type : std::uint16_t { hello=1, heartbeat=2, kcd_pose=3, mc_pose=4, block_event=5, error=6, goodbye=7, stone_input_request=8, stone_input_result=9 };
+enum class Type : std::uint16_t { hello=1, heartbeat=2, kcd_pose=3, mc_pose=4, block_event=5, error=6, goodbye=7, stone_input_request=8, stone_input_result=9, arena_offer=10, arena_ack=11, aimed_stone_request=12, aimed_stone_result=13, aim_permit=14 };
 enum class Role : std::uint32_t { kcd=1, minecraft=2, harness=3 };
 enum class Space : std::uint32_t { kcd=1, minecraft=2 };
 struct Header {
@@ -37,6 +38,24 @@ struct BlockEvent { std::uint32_t operation{}; std::int32_t x{}, y{}, z{}; std::
 struct StoneInputRequest { std::uint64_t id{}; std::uint32_t action{}; };
 enum class StoneInputResultCode : std::uint32_t { accepted=1, unavailable=2, stale=3, busy=4, occupied=5, absent=6, vanilla_failed=7 };
 struct StoneInputResult { std::uint64_t id{}; std::uint32_t action{}; StoneInputResultCode result{}; };
+struct Cell { std::int32_t x{}, y{}, z{}; };
+struct AimedArena {
+    std::uint64_t arena_id{};
+    Vec3 minecraft_anchor, kcd_anchor;
+    double blocks_per_unit{1};
+    Cell seed, minimum, maximum;
+};
+struct AimPermit { std::uint64_t arena_id{}, permit_id{}; };
+enum class AimOcclusion : std::uint32_t { unavailable=0, clear=1, hit=2 };
+struct AimedStoneRequest {
+    std::uint64_t arena_id{}, request_id{}, permit_id{};
+    std::uint32_t action{};
+    AimOcclusion occlusion{};
+    Vec3 origin, direction;
+    double range{}, nearest_distance{};
+};
+enum class AimedStoneResultCode : std::uint32_t { confirmed=1, unavailable=2, stale=3, busy=4, occupied=5, absent=6, vanilla_failed=7, invalid_target=8, host_obstructed=9, out_of_reach=10 };
+struct AimedStoneResult { std::uint64_t arena_id{}, request_id{}; std::uint32_t action{}; AimedStoneResultCode result{}; };
 Bytes encode_header(const Header&);
 Header decode_header(std::span<const std::uint8_t>);
 Bytes encode(const Hello&);
@@ -49,6 +68,14 @@ Bytes encode(const StoneInputRequest&);
 StoneInputRequest decode_stone_input_request(std::span<const std::uint8_t>);
 Bytes encode(const StoneInputResult&);
 StoneInputResult decode_stone_input_result(std::span<const std::uint8_t>);
+Bytes encode(const AimedArena&);
+AimedArena decode_aimed_arena(std::span<const std::uint8_t>);
+Bytes encode(const AimPermit&);
+AimPermit decode_aim_permit(std::span<const std::uint8_t>);
+Bytes encode(const AimedStoneRequest&);
+AimedStoneRequest decode_aimed_stone_request(std::span<const std::uint8_t>);
+Bytes encode(const AimedStoneResult&);
+AimedStoneResult decode_aimed_stone_result(std::span<const std::uint8_t>);
 Bytes frame(Type, std::uint64_t sequence, std::uint64_t timestamp_us, std::span<const std::uint8_t> payload={}, std::uint16_t minor=0);
 // Provisional right-handed Z-up KCD basis -> Minecraft Y-up basis.
 // Origin is subtracted BEFORE conversion; scale is blocks per KCD unit.

@@ -1,7 +1,8 @@
 # MineCome architecture
 
-Status: implemented control-plane prototype, partial live verification; not a playable
-mashup yet. Research and evidence date: 2026-10-11.
+Status: experimental prototype with bounded live HUD, camera and fixed-cell block
+tests; not a complete playable mashup. Updated 2026-10-13. See
+[progress](PROGRESS.md) for the verification history.
 
 ## Decisions grounded in inspected sources
 
@@ -86,6 +87,19 @@ save. It checks fresh host state, reach, chunks, support, current cell and one p
 action before dispatch. Matching result1 reports dispatch only; actual client/server
 state and the existing KCD engine receipts are separate proofs. This console path
 does not install keyboard binds or establish shared movement/collision.
+
+A separate optional minor2/capability2 route now implements an immutable arena
+offer/ACK and one-use aiming permits before network actions. `AimedStoneArena`
+uses actual Minecraft OUTLINE raycasts, holds the returned target/face/point fixed
+through server prestate checks, and confirms vanilla placement/breaking on both
+client and integrated server. Its standalone actual-game fixture passes; the new
+`AimedBridgeLab` connects that component to an explicitly synthetic native host.
+Its actual two-process run passes immutable alignment acknowledgement, confirmed
+bootstrap, a permit-bound network break, separate result/removal events and final
+client/server air with normal process exits. The official KCD relay and replica
+sink are not yet connected to this alignment/aimed-request route. Existing HUD and
+minor1 controls retain their fixed-cell path. See the
+[minor2 contract](../protocol/PROTOCOL.md#optional-minor2-aimed-stone-arena).
 
 **C — protocol and transport.** Independent C++/Java codecs implement explicit version,
 bounded framing, authenticated HELLO, sequence validation, state/event messages,

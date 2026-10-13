@@ -37,7 +37,7 @@ public final class ProtocolTests {
         check(frame!=null && frame.sequence()==1,"fragmented frame assembled");
         byte[] bad=wire.clone(); bad[0]=0; reject(bad,"magic");
         bad=wire.clone(); bad[4]=2; reject(bad,"major version");
-        bad=wire.clone(); bad[6]=2; reject(bad,"unsupported minor version");
+        bad=wire.clone(); bad[6]=3; reject(bad,"unsupported minor version");
         bad=wire.clone(); bad[10]=1; reject(bad,"reserved flags");
         bad=wire.clone(); ByteBuffer.wrap(bad).order(ByteOrder.LITTLE_ENDIAN).putInt(12,65537);reject(bad,"oversize");
         bad=wire.clone(); ByteBuffer.wrap(bad).order(ByteOrder.LITTLE_ENDIAN).putLong(16,0);reject(bad,"zero sequence");
@@ -71,6 +71,7 @@ public final class ProtocolTests {
         var restored=Protocol.toKcdOrientation(Protocol.toMinecraftOrientation(p.orientation()));
         close(restored.x(),p.orientation().x());close(restored.y(),p.orientation().y());
         close(restored.z(),p.orientation().z());close(restored.w(),p.orientation().w());
+        checks+=AimedProtocolTests.run();
         checks+=StoneInputTests.run();
         checks+=BridgeClientTests.run();
         System.out.println("PASS Java protocol: "+checks+" checks");

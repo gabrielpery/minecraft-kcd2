@@ -42,6 +42,19 @@ struct StoneInputResultReceipt {
     std::uint64_t receive_order{};
     std::uint64_t wire_sequence{};
 };
+struct AimedArenaReceipt {
+    protocol::AimedArena arena;
+    std::uint64_t connection_generation{}, reset_generation{};
+};
+struct AimPermitReceipt {
+    protocol::AimPermit permit;
+    std::uint64_t connection_generation{}, reset_generation{};
+    std::chrono::steady_clock::time_point received;
+};
+struct AimedStoneResultReceipt {
+    protocol::AimedStoneResult result;
+    std::uint64_t connection_generation{}, reset_generation{}, wire_sequence{};
+};
 
 class Bridge {
 public:
@@ -52,7 +65,7 @@ public:
     ~Bridge();
     Bridge(const Bridge&) = delete;
     Bridge& operator=(const Bridge&) = delete;
-    bool start(const std::filesystem::path& token_file, const std::filesystem::path& log_file, std::uint16_t port=38765, std::string identity="MineCome native/0.1.0");
+    bool start(const std::filesystem::path& token_file, const std::filesystem::path& log_file, std::uint16_t port=38765, std::string identity="MineCome native/0.1.0", bool allow_aimed=false);
     void stop();
     void publish(const protocol::Pose&);
     std::optional<protocol::Pose> latest_client_pose() const;
@@ -75,6 +88,12 @@ public:
     // Requests already sent cannot be recalled. ID monotonicity is preserved.
     void cancel_stone_inputs();
     std::vector<StoneInputResultReceipt> drain_stone_input_results(std::size_t maximum = stone_input_capacity);
+    // Experimental minor 2 is disabled for every existing caller. Receipts are
+    // revoked on reset/disconnect; local monotonic capture follows permit receipt.
+    std::optional<AimedArenaReceipt> aimed_arena() const;
+    std::optional<AimPermitReceipt> latest_aimed_permit() const;
+    bool request_aimed_stone(const protocol::AimedStoneRequest&, const AimPermitReceipt&, std::chrono::steady_clock::time_point captured_at);
+    std::vector<AimedStoneResultReceipt> drain_aimed_results();
     bool connected() const { return connected_.load(); }
     std::uint64_t received_poses() const { return poses_.load(); }
     std::uint64_t received_events() const { return events_.load(); }
@@ -85,6 +104,8 @@ private:
     bool input_ready_locked() const;
     bool request_stone_input_locked(const protocol::StoneInputRequest&);
     void clear_inputs_locked();
+    void clear_aimed_locked();
+    bool aimed_ready_locked() const;
     struct PendingInput {
         protocol::StoneInputRequest request;
         std::uint64_t connection_generation{}, reset_generation{};
@@ -97,6 +118,7 @@ private:
     std::mutex input_dispatch_;
     std::optional<protocol::Pose> host_pose_, client_pose_;
     std::chrono::steady_clock::time_point client_pose_time_{};
+    std::chrono::steady_clock::time_point host_pose_time_{};
     std::uint64_t host_generation_{};
     std::deque<BlockEventReceipt> block_events_;
     std::optional<protocol::Role> peer_role_;
@@ -108,6 +130,21 @@ private:
     std::uint64_t connection_generation_{}, event_reset_generation_{}, event_receive_order_{};
     EventResetReason event_reset_reason_{EventResetReason::none};
     bool event_reset_required_{};
+    bool allow_aimed_{}, arena_offer_seen_{}, arena_ack_sent_{};
+    std::optional<protocol::AimedArena> aimed_arena_;
+    protocol::Bytes arena_offer_bytes_;
+    std::chrono::steady_clock::time_point arena_offered_time_{};
+    std::deque<AimPermitReceipt> aim_permits_;
+    struct PendingAim {
+        protocol::AimedStoneRequest request;
+        std::uint64_t connection_generation{}, reset_generation{};
+        std::chrono::steady_clock::time_point captured, permit_received, dispatched;
+    };
+    std::optional<PendingAim> queued_aim_, inflight_aim_;
+    std::deque<AimedStoneResultReceipt> aimed_results_;
+    std::uint64_t last_aim_request_id_{}, last_aim_permit_id_{};
+    std::vector<protocol::Cell> aimed_owned_cells_;
+    bool aimed_bootstrap_seen_{};
     std::string token_;
     std::string identity_;
     std::ofstream logfile_;

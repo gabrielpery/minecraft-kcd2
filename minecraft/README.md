@@ -235,3 +235,49 @@ replay and a camera turn while an action is pending. Its four placements and fou
 breaks have matching client/server proof and final cleanup. The receipt validator
 passes 31 direct/JSON/tamper checks with `tests/aimed_stone_receipt.Tests.ps1` under
 both PowerShell 5.1 and 7. No live aimed protocol capability is enabled by this run.
+
+## Aimed-stone network lab
+
+This automatic lab runs **actual Minecraft against a synthetic C++ host** over
+loopback using optional protocol minor2. It makes no KCD calls, installs no renderer
+and needs no physical input. Complete [the source setup](../docs/SETUP.md) first,
+then run from the repository root:
+
+```powershell
+& .\scripts\Build-Native.ps1 -Kcse Off
+& .\scripts\Start-AimedBridgeLab.ps1 -PreflightOnly
+& .\scripts\Start-AimedBridgeLab.ps1
+```
+
+The native build includes CMake target `minecome_aimed_bridge_fixture`, producing
+`build/native/Release/minecome_aimed_bridge_fixture.exe`. On an already configured
+build with CMake on PATH, that target alone can be rebuilt with
+`cmake --build .\build\native --config Release --target minecome_aimed_bridge_fixture`.
+The controller requires the tested installed JDK 24; pass
+`-JavaHome '<your installed JDK24 directory>'` to either controller invocation if
+needed. It discovers an existing PowerShell 7 installation when called from Windows
+PowerShell 5.1. Close any existing MineCome development client before running.
+
+The controller creates a fresh token, evidence directory and UUID Creative save.
+Client/server observations establish the actual player eye, selected stone stack,
+empty seed and solid UP support. The guest exchanges one immutable arena with the
+native host and rechecks that baseline after its exact acknowledgement. A genuine
+vanilla bootstrap produces the first confirmed placement event. The native host
+then consumes a fresh guest permit, maps a synthetic ray toward the seed and sends
+a network break request. Minecraft's actual OUTLINE raycast chooses its block/face;
+vanilla breaking must be confirmed on the client and integrated server before
+the guest sends result1 and the separate removal event.
+
+Success requires the native host to observe both messages and send GOODBYE, then
+the guest to verify final air and empty ownership, restore its changed settings
+and exit normally. The controller checks actual Java/wrapper/native exit codes,
+process identity, source/binary hashes, fresh save and correlated receipts. It
+prints `AIMED_BRIDGE_VERIFIED`; evidence remains under
+`runtime/evidence/aimed-bridge-*`. Failed evidence and the isolated save are retained.
+
+Run `e78ba82a6d23467eba714c1a82871983` passed on 2026-10-13 with one client/server
+confirmed bootstrap and one confirmed network break. Wire request ID1 mapped to
+local component request ID2, followed by the exact session GOODBYE, final air and
+all three processes exiting0. This verifies the new transport with actual Minecraft. It
+does not verify live KCD camera/click pairing, KCD replicas under this alignment,
+or placement requests over the network; those remain separate integration work.

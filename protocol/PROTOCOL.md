@@ -1,4 +1,4 @@
-# MineCome wire protocol 1.0 and optional 1.1 stone input
+# MineCome wire protocol 1.0, fixed-cell 1.1 and aimed 1.2
 
 TCP IPv4 loopback only, default `127.0.0.1:38765`. This is a control/state prototype;
 large render payloads are intentionally excluded. The host owns the listener, one
@@ -12,7 +12,7 @@ All integers and IEEE-754 doubles are little endian. Every frame begins with:
 |---|---:|---|
 | 0 | 4 | ASCII `MCME` |
 | 4 | 2 | major version 1 |
-| 6 | 2 | minor version 0 by default, or negotiated stone-input minor 1 |
+| 6 | 2 | minor version 0 by default, fixed-cell input 1, or separately opted-in aimed input 2 |
 | 8 | 2 | message type |
 | 10 | 2 | flags, must be zero |
 | 12 | 4 | payload length, at most 65,536 |
@@ -30,7 +30,7 @@ replication log. World persistence and full block resynchronization remain futur
 
 | Type | Name | Payload |
 |---:|---|---|
-| 1 | HELLO | role u32, capabilities u32=0, name byte length u16, credential byte length u16, UTF-8 name, UTF-8 credential |
+| 1 | HELLO | role u32, capabilities u32, name byte length u16, credential byte length u16, UTF-8 name, UTF-8 credential |
 | 2 | HEARTBEAT | empty |
 | 3 | KCD_POSE | 128-byte pose, space=1 |
 | 4 | MC_POSE | 128-byte pose, space=2 |
@@ -42,7 +42,9 @@ Client sends HELLO first, role 2 (Minecraft) or 3 (explicit test harness), crede
 equal to the local token. Host responds HELLO role 1, empty credential. Names are
 1–128 UTF-8 bytes; credentials at most 128 bytes. Capability extensions need a version
 change; minor0 supports only zero. The opt-in minor1 extension below requires
-capability1 and a real Minecraft role. No state is exchanged before authentication.
+capability1 and a real Minecraft role. Optional minor2 requires capability2 and the
+real Minecraft role; it does not combine capability1 and capability2. Existing
+host callers disable minor2 unless explicitly enabled. No state is exchanged before authentication.
 The token protects against accidental local peers, not an attacker who can read the
 user's files. Host identity is not cryptographically authenticated in this prototype.
 
@@ -90,6 +92,8 @@ authority, collision geometry, general input, texture/mesh payloads and frame sy
 require later versioned extensions.
 
 Cached received poses expire after one second even if heartbeats continue. The
+aimed extension additionally requires player/camera/in-world validity and poses
+no older than 500 ms; it does not extend the legacy pose lifetime. The
 official-tools adapter also clears validity after world loss, stale sampling or
 HTTP failure. Java HELLO reception has an absolute six-second deadline independent
 of fragmented arrivals. Java socket writes currently use blocking stream output;
@@ -184,9 +188,16 @@ immediately before using vanilla inventory/interaction APIs. Integrated-server
 state is observed on its own thread. No movement, keybinding override, general
 input, persistence or initial-world snapshot is added by this extension.
 
-## Proposed aimed stone arena (not a negotiated or implemented wire extension)
+## Optional minor2 aimed stone arena
 
-The implemented minor 1 fixed-cell request remains unchanged. `AimGeometry`
+The optional minor2/capability2 extension is implemented in the C++/Java codecs
+and bridges. Existing minor0/1 callers and live fixed-cell controls remain on their
+original paths. The new `AimedBridgeLab` connects actual Minecraft to an explicitly
+synthetic C++ host; its automatic two-process run passes an exact arena ACK,
+confirmed bootstrap, aimed network break, separate removal/result and cleanup. The official
+KCD relay, live click/ray capture and KCD replica sink do not yet use this extension.
+
+The implemented minor1 fixed-cell request remains unchanged. `AimGeometry`
 (Java) and `aim_geometry.hpp` (C++) contain pure alignment and reference-ray
 math only. Their shared fixture `tests/fixtures/aim_geometry.txt` checks 22
 identical map, orientation and hit/miss vectors. Passing these tests does not
@@ -194,11 +205,12 @@ demonstrate crosshair targeting, KCD camera calibration, engine ray capture or
 new gameplay. Actual Minecraft target selection must use its world raycast,
 not the reference cube picker.
 
-The next coherent feature is a bounded, visible **stone cluster**. A bootstrap
-stone is placed through the existing real vanilla action path and mirrored by
-the acknowledged KCD sink. Thereafter a fresh camera ray selects any owned
-stone: left click breaks it, and right click places adjacent to the returned
-face. Proposed limits are 16 owned cells, a 4.5 KCD-unit ray, and Minecraft's
+The intended live feature is a bounded, visible **stone cluster**. A bootstrap
+stone is placed through the real vanilla action path. The existing KCD sink still
+needs connection to this arena's alignment before it can display the cluster.
+Thereafter a fresh camera ray selects an owned stone for breaking, or adjacent
+placement using the returned face. Implemented limits are 16 owned cells, a
+5×5×5 cell volume, a 4.5 KCD-unit ray, and Minecraft's
 actual interaction-reach checks. An empty cluster has no invented support.
 The ordinary superflat floor is not rendered in KCD and must not be an aimed
 placement surface. The earlier captured 5×5 terrain patch is injected only
@@ -207,9 +219,57 @@ OUTLINE raycast shapes nor vanilla block-item support. Host terrain placement
 requires a separate, explicit support representation and is not part of this
 cluster feature.
 
-Proposed negotiation and ordering for minor 2:
+### Message layout and lifecycle
 
-1. Add an explicit aimed-stone capability and new message schemas; retain the
+HELLO selects exactly minor2/`CAP_AIMED_STONE=2`, role2. A minor2 frame may contain
+base types1–7 or new types10–14; fixed-cell types8–9 are rejected. Unknown or combined
+capabilities, changed minors and harness role3 with this capability are rejected.
+
+| Type | Name | Exact little-endian payload |
+|---:|---|---|
+| 10 | ARENA_OFFER | arena ID u64; Minecraft anchor xyz f64; KCD anchor xyz f64; scale f64; seed xyz i32; minimum xyz i32; maximum inclusive xyz i32: 100 bytes |
+| 11 | ARENA_ACK | Byte-for-byte copy of the 100-byte ARENA_OFFER payload |
+| 12 | AIMED_STONE_REQUEST | arena ID u64; request ID u64; permit ID u64; action u32; occlusion u32; host origin xyz f64; unit direction xyz f64; range f64; nearest obstruction distance f64: 96 bytes |
+| 13 | AIMED_STONE_RESULT | arena ID u64; request ID u64; action u32; result u32: 24 bytes |
+| 14 | AIM_PERMIT | arena ID u64; permit ID u64: 16 bytes |
+
+IDs are 1–9007199254740991. Arena bounds must equal seed±2 on each axis, and
+scale must be exactly1 in this initial extension. Coordinates, mapped bounds and
+ray endpoints are finite and limited to ±10,000,000. Ray direction squared length
+must differ from1 by no more than1e-9; range is greater than0 and at most4.5.
+Actions remain1 place/2 break. Occlusion is0 unavailable,1 clear,2 hit. Only a hit
+may carry a nonzero nearest distance, within the ray range; unavailable cannot act.
+
+Minor2 result1 means **confirmed on the Minecraft client and integrated server**,
+unlike minor1's dispatch-only result1. Other codes are2 unavailable,3 stale,4 busy,
+5 occupied,6 absent,7 vanilla failed,8 invalid target,9 host obstructed,10 out of
+reach. A result must match the outstanding arena/request/action and connection.
+It does not acknowledge a KCD engine entity; actual block events and engine
+receipts remain separate evidence.
+
+The guest offers one immutable arena per authenticated connection. The host checks
+fresh player/camera/world poses and both anchors, waits for its local consumer reset
+acknowledgement, and writes the exact arena ACK before admitting events/permits.
+Changed or duplicate offers/ACKs fail; an unacknowledged offer expires after six
+seconds. Reset, world loss and disconnect revoke the arena and its requests.
+
+After ACK, the guest issues one-use, increasing permits with a 500 ms local lifetime.
+At most16 permits are retained. The host captures a ray only after receiving its
+permit and requires fresh poses plus a matching session, arena and permit immediately
+before dispatch. The guest measures age from its own permit issue time, so queue
+and network transit are included without comparing clocks across processes. Reused,
+expired or unavailable samples cannot become vanilla actions. Only one aimed
+request is pending; the host's matching result deadline is three seconds. The
+guest's output mailbox is bounded and overflow closes the session.
+
+Native minor2 block events are stone-only, inside the agreed bounds, with the first
+placement at the seed. Duplicate additions, removal of unowned cells, more than16
+owned cells or events before the reset/arena ACK are rejected. Neither network
+peer is permitted to create a Minecraft block state directly.
+
+### Gameplay ordering and remaining KCD integration
+
+1. Negotiate the explicit aimed-stone capability and message schemas; retain the
    existing minor 0/1 semantics and reject capability/version mismatches. Do
    not extend the 12-byte minor 1 request in place or reinterpret raw pose
    calibration fields.
@@ -222,12 +282,12 @@ Proposed negotiation and ordering for minor 2:
    when the first block event happens to arrive. A translated display island
    is not global terrain/player calibration, so the `CALIBRATED` pose bit stays
    clear until that separate measurement is complete.
-3. Capture the camera origin/forward and nearest physical host obstruction in
-   the same Lua aim-intent call, tied to the original click/request and arena
-   ID. The proposed request carries that immutable ray and bounded obstruction
-   distance/availability, or references an already acknowledged exact sample
-   ID. Do not combine an action with an unrelated latest 5 Hz pose. Bound
-   capture-to-dispatch age, reject duplicate IDs, and never retry ambiguous
+3. **Still pending for live KCD:** capture the camera origin/forward and nearest
+   physical host obstruction in the same Lua aim-intent call, tied to the original
+   click/request and arena ID. The implemented request carries the immutable ray,
+   obstruction availability and distance plus its one-use permit ID. Do not combine
+   an action with an unrelated latest 5 Hz pose. Bound capture-to-dispatch age,
+   reject duplicate IDs, and never retry ambiguous
    dispatch. An absent/invalid host occlusion sample is not evidence of clear
    space.
 4. On the actual Minecraft client thread, map the captured ray into the arena
@@ -274,11 +334,11 @@ include host obstacles; the terrain-only sampler cannot establish wall
 occlusion. Mirrored stones currently have `physics=false`, so the host ray
 does not replace Minecraft selection of those stones.
 
-Live work still needed before this feature can be claimed: shared-alignment
-handshake, exact sample/intent pairing, client/server selection agreement,
-host occlusion, and visual checks of centre-ray alignment on several block
-faces while turning/stepping. Existing orientation algebra tests and stone
-model bounds do not prove those camera timing, eye/feet or gameplay outcomes.
+Live work still needed before this feature can be claimed in KCD: connect the
+implemented handshake to the official relay and replica sink, pair each physical
+click with its engine ray/obstruction sample, and check centre-ray alignment on
+several block faces while turning/stepping. Standalone Minecraft selection and
+transport checks do not prove host camera timing, eye/feet alignment or KCD gameplay.
 
 ### Read-only host aim sample implemented (no aimed request enabled)
 
@@ -306,7 +366,7 @@ bootstrap, using the actual guest camera and sampled host camera for the first
 turn-only lab. Inverting the existing four-unit display offset would place the
 ray origin away from the actual Minecraft player and invalidate reach assumptions.
 
-### Standalone Minecraft aimed arena (no wire change)
+### Standalone Minecraft aimed arena
 
 `AimedStoneArena` implements the guest selection/action portion independently of
 the existing fixed-cell bridge. It pins one immutable alignment and a fresh
@@ -334,5 +394,34 @@ placements even when the selected face itself is valid.
 process, using synthetic host rays, a fresh UUID flat world and declared fixture
 teleports. It opens no bridge connection and makes no KCD calls. The default
 minor 0/1 path, live fixed-cell controls and installed renderer are unchanged.
-An aimed wire capability, shared alignment acknowledgement, paired live host
-click/sample and KCD replica integration still need implementation.
+This original standalone lab does not enable the new minor2 wire extension.
+Paired live host click/sample and KCD replica integration remain unfinished.
+
+### Actual-Minecraft network fixture
+
+The separate `AimedBridgeLab` opt-in uses minor2 against
+`minecome_aimed_bridge_fixture`, an explicitly synthetic native host. Run
+`e78ba82a6d23467eba714c1a82871983` passes with actual Minecraft and the native
+process, followed by Java/wrapper/native exit0. It leaves the original standalone
+fixture, default bridge and installed HUD profiles separate. See the
+[network lab procedure](../minecraft/README.md#aimed-stone-network-lab).
+
+It creates a fresh UUID Creative save, obtains matching client/server eye,
+selected stone stack, seed air and solid UP support, then connects. Its outgoing
+pose uses the actual gameplay eye rather than an interpolated render camera.
+The immutable offer maps this eye to the synthetic host camera. After the exact
+ACK it rechecks the baseline, performs one genuine vanilla bootstrap, and emits
+the confirmed placement event. A permit-bound synthetic host ray then requests
+breaking that stone through the same actual Minecraft raycast/action component.
+
+Only client/server-confirmed air produces the removal event and terminal result1.
+The native fixture must receive both before sending GOODBYE. The guest checks that
+exact session, zero owned/pending stones and a final air observation on both threads,
+restores its changed options and exits normally. Receipts identify the fresh save,
+process, immutable offer, permit, network request, local action and separate block
+events. The verified run confirms exactly one bootstrap and one network break;
+wire request ID1 maps to component request ID2 because the local bootstrap used ID1.
+Both peers agree on removal/result1, the guest records host GOODBYE for session1,
+and final client/server reads show air with no owned stones. Source hashes stayed
+unchanged during the run. This is transport validation with actual Minecraft,
+not live KCD targeting or proof of network placement on every face.

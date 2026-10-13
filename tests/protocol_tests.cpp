@@ -15,9 +15,9 @@ int main() {
         auto h=encode_header({Type::kcd_pose,128,0x0102030405060708ULL,9});
         require(h.size()==32&&h[0]=='M'&&h[4]==1&&h[8]==3&&h[12]==128&&h[16]==8&&h[23]==1,"header byte order");
         require(decode_header(h).sequence==0x0102030405060708ULL,"header sequence");
-        auto bad=h;bad[0]='X';rejects([&]{decode_header(bad);});bad=h;bad[4]=2;rejects([&]{decode_header(bad);});bad=h;bad[6]=2;rejects([&]{decode_header(bad);});bad=h;bad[10]=1;rejects([&]{decode_header(bad);});bad=h;bad[14]=2;rejects([&]{decode_header(bad);});bad=h;bad[8]=8;rejects([&]{decode_header(bad);});rejects([&]{decode_header(std::span(h).first(31));});rejects([&]{encode_header({Type::heartbeat,0,0,0});});
+        auto bad=h;bad[0]='X';rejects([&]{decode_header(bad);});bad=h;bad[4]=2;rejects([&]{decode_header(bad);});bad=h;bad[6]=3;rejects([&]{decode_header(bad);});bad=h;bad[10]=1;rejects([&]{decode_header(bad);});bad=h;bad[14]=2;rejects([&]{decode_header(bad);});bad=h;bad[8]=8;rejects([&]{decode_header(bad);});rejects([&]{decode_header(std::span(h).first(31));});rejects([&]{encode_header({Type::heartbeat,0,0,0});});
         Hello hello{Role::minecraft,0,"Minecraft / \xe2\x98\x83",std::string(64,'a')};auto hb=encode(hello);auto hr=decode_hello(hb);require(hr.name==hello.name&&hr.credential==hello.credential,"hello UTF8 roundtrip");
-        hb.push_back(0);rejects([&]{decode_hello(hb);});rejects([&]{encode(Hello{Role::minecraft,0,"\xc0\x80",{}});});rejects([&]{encode(Hello{Role::minecraft,2,"name",{}});});
+        hb.push_back(0);rejects([&]{decode_hello(hb);});rejects([&]{encode(Hello{Role::minecraft,0,"\xc0\x80",{}});});rejects([&]{encode(Hello{Role::minecraft,3,"name",{}});});
         for(auto role:{Role::minecraft,Role::kcd}) require(decode_hello(encode(Hello{role,CAP_STONE_INPUT,"input-capable",{}})).capabilities==CAP_STONE_INPUT,"capability hello roundtrip");
         rejects([&]{encode(Hello{Role::harness,CAP_STONE_INPUT,"fixture",{}});});
         const StoneInputRequest request{maximum_input_id,2};auto request_bytes=encode(request);
@@ -32,7 +32,7 @@ int main() {
         result_bytes.push_back(0);rejects([&]{decode_stone_input_result(result_bytes);});
         rejects([&]{encode(StoneInputResult{1,1,static_cast<StoneInputResultCode>(0)});});rejects([&]{encode(StoneInputResult{1,1,static_cast<StoneInputResultCode>(8)});});
         auto input_frame=frame(Type::stone_input_request,1,2,request_bytes,1);const auto input_header=decode_header(std::span(input_frame).first(header_size));require(input_header.minor==1&&input_header.type==Type::stone_input_request&&input_header.payload_size==12,"minor1 input frame");
-        rejects([&]{frame(Type::stone_input_request,1,2,request_bytes);});rejects([&]{frame(Type::heartbeat,1,2,{},2);});
+        rejects([&]{frame(Type::stone_input_request,1,2,request_bytes);});rejects([&]{frame(Type::heartbeat,1,2,{},3);});
         Pose p;p.player={-123.5,2e6,17.25};p.camera={-123.5,2e6,18.87};p.kcd_origin={-123,2e6,0};p.flags=3;p.blocks_per_unit=2.5;
         auto pb=encode(p);auto pr=decode_pose(pb);require(pb.size()==128&&near(pr.player.x,p.player.x)&&near(pr.camera.z,p.camera.z)&&pr.flags==3,"pose layout/roundtrip");
         for(std::size_t i=0;i<pb.size();++i) rejects([&]{decode_pose(std::span(pb).first(i));});

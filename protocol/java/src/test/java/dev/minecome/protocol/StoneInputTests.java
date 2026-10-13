@@ -78,7 +78,7 @@ final class StoneInputTests {
         }
         try{Protocol.hello(new Protocol.Hello(Protocol.ROLE_HARNESS,1,"harness",""));throw new AssertionError("Harness capability accepted");}
         catch(IllegalArgumentException expected){checks++;}
-        try{Protocol.hello(new Protocol.Hello(Protocol.ROLE_MC,2,"client",""));throw new AssertionError("Unknown capability accepted");}
+        try{Protocol.hello(new Protocol.Hello(Protocol.ROLE_MC,4,"client",""));throw new AssertionError("Unknown capability accepted");}
         catch(IllegalArgumentException expected){checks++;}
     }
     private static BridgeClient.InputEnvelope envelope(long session,long world,long reset,long id) {

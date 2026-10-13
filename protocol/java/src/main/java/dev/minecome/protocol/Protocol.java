@@ -4,16 +4,22 @@ import java.io.*;
 import java.nio.*;
 import java.nio.charset.*;
 import java.util.Arrays;
+import java.util.Objects;
 
-/** The v1 wire format, with an opt-in minor 1 stone input extension. */
+/** The v1 wire format with separately opted-in fixed-cell and aimed input extensions. */
 public final class Protocol {
     private Protocol() {}
     public static final int PORT = 38765, HEADER_SIZE = 32, MAX_PAYLOAD = 65536;
     public static final int HELLO = 1, HEARTBEAT = 2, KCD_POSE = 3, MC_POSE = 4,
-            BLOCK_EVENT = 5, ERROR = 6, GOODBYE = 7, STONE_INPUT_REQUEST = 8, STONE_INPUT_RESULT = 9;
-    public static final int CAP_STONE_INPUT = 1, PLACE_STONE = 1, BREAK_STONE = 2;
+            BLOCK_EVENT = 5, ERROR = 6, GOODBYE = 7, STONE_INPUT_REQUEST = 8, STONE_INPUT_RESULT = 9,
+            ARENA_OFFER = 10, ARENA_ACK = 11, AIMED_STONE_REQUEST = 12, AIMED_STONE_RESULT = 13, AIM_PERMIT = 14;
+    public static final int CAP_STONE_INPUT = 1, CAP_AIMED_STONE = 2, PLACE_STONE = 1, BREAK_STONE = 2;
     public static final int INPUT_ACCEPTED = 1, INPUT_UNAVAILABLE = 2, INPUT_STALE = 3,
             INPUT_BUSY = 4, INPUT_OCCUPIED = 5, INPUT_ABSENT = 6, INPUT_VANILLA_FAILED = 7;
+    public static final int AIM_CONFIRMED = 1, AIM_UNAVAILABLE = 2, AIM_STALE = 3, AIM_BUSY = 4,
+            AIM_OCCUPIED = 5, AIM_ABSENT = 6, AIM_VANILLA_FAILED = 7, AIM_INVALID_TARGET = 8,
+            AIM_HOST_OBSTRUCTED = 9, AIM_OUT_OF_REACH = 10;
+    public static final int OCCLUSION_UNAVAILABLE = 0, OCCLUSION_CLEAR = 1, OCCLUSION_HIT = 2;
     public static final long MAX_INPUT_ID = 9_007_199_254_740_991L;
     public static final int ROLE_KCD = 1, ROLE_MC = 2, ROLE_HARNESS = 3;
     public static final int SPACE_KCD = 1, SPACE_MC = 2;
@@ -21,7 +27,7 @@ public final class Protocol {
     public record Frame(int type, int minor, long sequence, long timestampMicros, byte[] payload) {
         public Frame(int type,long sequence,long timestampMicros,byte[] payload) { this(type,0,sequence,timestampMicros,payload); }
         public Frame {
-            if (minor < 0 || minor > 1 || type < HELLO || type > (minor==0?GOODBYE:STONE_INPUT_RESULT) ||
+            if (!validType(minor,type) ||
                     sequence == 0 || payload.length > MAX_PAYLOAD)
                 throw new IllegalArgumentException("Invalid frame");
             payload = payload.clone();
@@ -84,6 +90,80 @@ public final class Protocol {
         try{return new StoneInputResult(b.getLong(),b.getInt(),b.getInt());}
         catch(IllegalArgumentException e){throw new IOException(e.getMessage(),e);}
     }
+    private static boolean validType(int minor,int type) {
+        return minor>=0 && minor<=2 && type>=HELLO &&
+                (type<=GOODBYE || (minor==1 && type<=STONE_INPUT_RESULT) || (minor==2 && type>=ARENA_OFFER && type<=AIM_PERMIT));
+    }
+    public record Cell(int x,int y,int z) {}
+    /** One immutable five-cell-wide display island; scale one is the initial minor2 contract. */
+    public record AimedArena(long arenaId,Vec3 minecraftAnchor,Vec3 kcdAnchor,double blocksPerUnit,
+                             Cell seed,Cell minimum,Cell maximum) {
+        public AimedArena {
+            aimId(arenaId); aimPosition(minecraftAnchor); aimPosition(kcdAnchor);
+            Objects.requireNonNull(seed); Objects.requireNonNull(minimum); Objects.requireNonNull(maximum);
+            if(blocksPerUnit!=1 || minimum.x()!=(long)seed.x()-2 || minimum.y()!=(long)seed.y()-2 || minimum.z()!=(long)seed.z()-2 ||
+                    maximum.x()!=(long)seed.x()+2 || maximum.y()!=(long)seed.y()+2 || maximum.z()!=(long)seed.z()+2)
+                throw new IllegalArgumentException("Invalid aimed arena scale/bounds");
+            for(int x:new int[]{minimum.x(),maximum.x()+1}) for(int y:new int[]{minimum.y(),maximum.y()+1}) for(int z:new int[]{minimum.z(),maximum.z()+1}) {
+                Vec3 corner=new Vec3(x,y,z); aimPosition(corner);
+                aimPosition(new Vec3(kcdAnchor.x()+x-minecraftAnchor.x(),kcdAnchor.y()-z+minecraftAnchor.z(),kcdAnchor.z()+y-minecraftAnchor.y()));
+            }
+        }
+    }
+    public record AimPermit(long arenaId,long permitId) { public AimPermit { aimId(arenaId); aimId(permitId); } }
+    public record AimedStoneRequest(long arenaId,long requestId,long permitId,int action,int occlusion,
+                                    Vec3 origin,Vec3 direction,double range,double nearestDistance) {
+        public AimedStoneRequest {
+            aimId(arenaId); aimId(permitId); validateInput(requestId,action); aimPosition(origin); Objects.requireNonNull(direction);
+            double norm=direction.x()*direction.x()+direction.y()*direction.y()+direction.z()*direction.z();
+            if(!Double.isFinite(norm) || Math.abs(norm-1)>1e-9 || !Double.isFinite(range) || range<=0 || range>4.5 ||
+                    occlusion<OCCLUSION_UNAVAILABLE || occlusion>OCCLUSION_HIT || !Double.isFinite(nearestDistance) || nearestDistance<0 ||
+                    (occlusion==OCCLUSION_HIT?nearestDistance>range:nearestDistance!=0))
+                throw new IllegalArgumentException("Invalid aimed request ray/obstruction");
+            aimPosition(new Vec3(origin.x()+direction.x()*range,origin.y()+direction.y()*range,origin.z()+direction.z()*range));
+        }
+    }
+    public record AimedStoneResult(long arenaId,long requestId,int action,int result) {
+        public AimedStoneResult { aimId(arenaId);validateInput(requestId,action);if(result<AIM_CONFIRMED || result>AIM_OUT_OF_REACH)throw new IllegalArgumentException("Invalid aimed result"); }
+    }
+    private static void aimId(long id) { if(id<1 || id>MAX_INPUT_ID)throw new IllegalArgumentException("Invalid aimed ID"); }
+    private static void aimPosition(Vec3 p) {
+        Objects.requireNonNull(p);
+        if(Math.abs(p.x())>10_000_000 || Math.abs(p.y())>10_000_000 || Math.abs(p.z())>10_000_000)
+            throw new IllegalArgumentException("Aimed coordinate outside bounds");
+    }
+    private static void cell(ByteBuffer b,Cell c) { b.putInt(c.x()).putInt(c.y()).putInt(c.z()); }
+    private static Cell cell(ByteBuffer b) { return new Cell(b.getInt(),b.getInt(),b.getInt()); }
+    public static byte[] aimedArena(AimedArena arena) {
+        ByteBuffer b=buffer(100);b.putLong(arena.arenaId());vec(b,arena.minecraftAnchor());vec(b,arena.kcdAnchor());
+        b.putDouble(arena.blocksPerUnit());cell(b,arena.seed());cell(b,arena.minimum());cell(b,arena.maximum());return b.array();
+    }
+    public static AimedArena parseAimedArena(byte[] data) throws IOException {
+        if(data.length!=100)throw new IOException("Aimed arena must be 100 bytes");ByteBuffer b=wrap(data);
+        try{return new AimedArena(b.getLong(),vec(b),vec(b),b.getDouble(),cell(b),cell(b),cell(b));}
+        catch(IllegalArgumentException|NullPointerException e){throw new IOException(e.getMessage(),e);}
+    }
+    public static byte[] aimPermit(AimPermit permit) { return buffer(16).putLong(permit.arenaId()).putLong(permit.permitId()).array(); }
+    public static AimPermit parseAimPermit(byte[] data) throws IOException {
+        if(data.length!=16)throw new IOException("Aim permit must be 16 bytes");ByteBuffer b=wrap(data);
+        try{return new AimPermit(b.getLong(),b.getLong());}catch(IllegalArgumentException e){throw new IOException(e.getMessage(),e);}
+    }
+    public static byte[] aimedStoneRequest(AimedStoneRequest request) {
+        ByteBuffer b=buffer(96).putLong(request.arenaId()).putLong(request.requestId()).putLong(request.permitId()).putInt(request.action()).putInt(request.occlusion());
+        vec(b,request.origin());vec(b,request.direction());return b.putDouble(request.range()).putDouble(request.nearestDistance()).array();
+    }
+    public static AimedStoneRequest parseAimedStoneRequest(byte[] data) throws IOException {
+        if(data.length!=96)throw new IOException("Aimed request must be 96 bytes");ByteBuffer b=wrap(data);
+        try{return new AimedStoneRequest(b.getLong(),b.getLong(),b.getLong(),b.getInt(),b.getInt(),vec(b),vec(b),b.getDouble(),b.getDouble());}
+        catch(IllegalArgumentException|NullPointerException e){throw new IOException(e.getMessage(),e);}
+    }
+    public static byte[] aimedStoneResult(AimedStoneResult result) {
+        return buffer(24).putLong(result.arenaId()).putLong(result.requestId()).putInt(result.action()).putInt(result.result()).array();
+    }
+    public static AimedStoneResult parseAimedStoneResult(byte[] data) throws IOException {
+        if(data.length!=24)throw new IOException("Aimed result must be 24 bytes");ByteBuffer b=wrap(data);
+        try{return new AimedStoneResult(b.getLong(),b.getLong(),b.getInt(),b.getInt());}catch(IllegalArgumentException e){throw new IOException(e.getMessage(),e);}
+    }
     private static ByteBuffer buffer(int size) { return ByteBuffer.allocate(size).order(ByteOrder.LITTLE_ENDIAN); }
     private static ByteBuffer wrap(byte[] bytes) { return ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN); }
     public static byte[] encode(Frame frame) {
@@ -99,11 +179,11 @@ public final class Protocol {
         if (b.get() != 'M' || b.get() != 'C' || b.get() != 'M' || b.get() != 'E')
             throw new IOException("Bad MineCome magic");
         int major=Short.toUnsignedInt(b.getShort()),minor=Short.toUnsignedInt(b.getShort());
-        if (major != 1 || minor > 1)
+        if (major != 1 || minor > 2)
             throw new IOException("Unsupported protocol version");
         int type = Short.toUnsignedInt(b.getShort()), flags = Short.toUnsignedInt(b.getShort());
         long size = Integer.toUnsignedLong(b.getInt());
-        if (type < HELLO || type > (minor==0?GOODBYE:STONE_INPUT_RESULT) || flags != 0 || size > MAX_PAYLOAD)
+        if (!validType(minor,type) || flags != 0 || size > MAX_PAYLOAD)
             throw new IOException("Invalid header type, flags, or length");
         return (int)size;
     }
@@ -182,7 +262,7 @@ public final class Protocol {
     }
     private static boolean validHelloCapabilities(int role,int caps) {
         return role>=ROLE_KCD && role<=ROLE_HARNESS &&
-                (caps==0 || (caps==CAP_STONE_INPUT && role!=ROLE_HARNESS));
+                (caps==0 || ((caps==CAP_STONE_INPUT || caps==CAP_AIMED_STONE) && role!=ROLE_HARNESS));
     }
     private static void vec(ByteBuffer b, Vec3 v) { b.putDouble(v.x()).putDouble(v.y()).putDouble(v.z()); }
     private static Vec3 vec(ByteBuffer b) { return new Vec3(b.getDouble(), b.getDouble(), b.getDouble()); }

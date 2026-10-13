@@ -14,6 +14,10 @@ public final class BridgeClient implements AutoCloseable {
     private final int role;
     private final int port;
     private final int minor,capabilities;
+    public enum Mode { PASSIVE, STONE_INPUT, AIMED_STONE }
+    private record AimedConnection(long session,long world,long reset,AimedSession gate) {}
+    private volatile AimedConnection aimedConnection;
+    private final AtomicLong lastHostGoodbyeSession=new AtomicLong();
     private final Consumer<String> diagnostics;
     private final AtomicReference<Protocol.Pose> latestOutgoing = new AtomicReference<>();
     private record HostSnapshot(Protocol.Pose pose,long receivedAtNanos,long world,long reset) {}
@@ -25,6 +29,7 @@ public final class BridgeClient implements AutoCloseable {
     private volatile long activeWorldGeneration,activeResetGeneration;
     public record Status(boolean connected,long session,long world,int pendingEvents,long queuedEvents,long sentEvents,long droppedEvents,long resets,long receivedPoses) {}
     public record SentBlockEvent(Protocol.BlockEvent event,long sequence,long session) {}
+    public record AimedEnvelope(Protocol.AimedStoneRequest request,long session,long world,long reset,long capturedAtNanos) {}
     public record InputEnvelope(Protocol.StoneInputRequest request,long session,long world,long reset,long receivedAtNanos) {}
     private final AtomicReference<SentBlockEvent> lastSentBlockEvent=new AtomicReference<>();
     private volatile boolean running, connected;
@@ -34,10 +39,15 @@ public final class BridgeClient implements AutoCloseable {
         this(tokenFile,name,role,diagnostics,false);
     }
     public BridgeClient(Path tokenFile,String name,int role,Consumer<String> diagnostics,boolean interactiveStone) {
+        this(tokenFile,name,role,diagnostics,interactiveStone?Mode.STONE_INPUT:Mode.PASSIVE);
+    }
+    public BridgeClient(Path tokenFile,String name,int role,Consumer<String> diagnostics,Mode mode) {
         this.tokenFile=tokenFile; this.name=name; this.role=role; this.diagnostics=diagnostics;
         if (role!=Protocol.ROLE_MC && role!=Protocol.ROLE_HARNESS) throw new IllegalArgumentException("Client role must be Minecraft or Harness");
-        if(interactiveStone && role!=Protocol.ROLE_MC)throw new IllegalArgumentException("Stone input requires the real Minecraft role");
-        this.minor=interactiveStone?1:0;this.capabilities=interactiveStone?Protocol.CAP_STONE_INPUT:0;
+        if(mode==null)throw new IllegalArgumentException("Bridge mode required");
+        if(mode!=Mode.PASSIVE && role!=Protocol.ROLE_MC)throw new IllegalArgumentException("Stone input requires the real Minecraft role");
+        this.minor=mode==Mode.AIMED_STONE?2:mode==Mode.STONE_INPUT?1:0;
+        this.capabilities=mode==Mode.AIMED_STONE?Protocol.CAP_AIMED_STONE:mode==Mode.STONE_INPUT?Protocol.CAP_STONE_INPUT:0;
         Protocol.hello(new Protocol.Hello(role,capabilities,name,""));
         this.port=Integer.getInteger("minecome.port",Protocol.PORT);
         if (port<1 || port>65535) throw new IllegalArgumentException("minecome.port must be 1..65535");
@@ -54,6 +64,47 @@ public final class BridgeClient implements AutoCloseable {
     /** A successful socket write is diagnostic evidence, not an acknowledgement from the host/sink. */
     public SentBlockEvent lastSentBlockEvent() { return lastSentBlockEvent.get(); }
     public long receivedPoses() { return receivedPoses.get(); }
+    /** Persists after teardown; only a parsed, empty peer GOODBYE updates this value. */
+    public long lastHostGoodbyeSession(){return lastHostGoodbyeSession.get();}
+    private AimedConnection activeAimed(){
+        AimedConnection value=aimedConnection;
+        return connected() && value!=null && value.session==sessionGeneration.get() && value.world==worldGeneration.get() && value.reset==resetGeneration.get()?value:null;
+    }
+    public boolean offerAimedArena(Protocol.AimedArena arena){
+        AimedConnection value=activeAimed();return value!=null && value.gate.offer(arena,System.nanoTime());
+    }
+    public boolean aimedArenaReady(){AimedConnection value=activeAimed();return value!=null && value.gate.ready();}
+    public Protocol.AimPermit issueAimPermit(){
+        AimedConnection value=activeAimed();
+        if(value==null)return null;
+        try{return value.gate.issue(System.nanoTime());}catch(IllegalStateException error){requestReconnect(error.getMessage());return null;}
+    }
+    public AimedEnvelope pollAimedStoneRequest(){
+        AimedConnection value=activeAimed();if(value==null)return null;
+        AimedSession.Admitted admitted=value.gate.poll();
+        if(admitted==null || value!=activeAimed())return null;
+        return new AimedEnvelope(admitted.request(),value.session,value.world,value.reset,admitted.capturedAtNanos());
+    }
+    public Protocol.Pose latestAimedHostPose(){
+        HostSnapshot snapshot=latestIncoming.get();
+        if(activeAimed()==null || snapshot==null || snapshot.world()!=worldGeneration.get() || snapshot.reset()!=resetGeneration.get())return null;
+        long age=System.nanoTime()-snapshot.receivedAtNanos();
+        return age>=0 && age<=AimedSession.PERMIT_LIFETIME_NANOS && (snapshot.pose().flags()&11)==11?snapshot.pose():null;
+    }
+    public int aimedInputAvailability(AimedEnvelope envelope){
+        AimedConnection value=activeAimed();
+        if(envelope==null || value==null || !value.gate.ready() || envelope.session()!=value.session || envelope.world()!=value.world || envelope.reset()!=value.reset)
+            return Protocol.AIM_UNAVAILABLE;
+        long age=System.nanoTime()-envelope.capturedAtNanos();
+        if(age<0 || age>AimedSession.PERMIT_LIFETIME_NANOS)return Protocol.AIM_STALE;
+        return latestAimedHostPose()!=null?0:Protocol.AIM_UNAVAILABLE;
+    }
+    public boolean sendAimedStoneResult(AimedEnvelope envelope,int result){
+        AimedConnection value=activeAimed();
+        if(envelope==null || value==null || envelope.session()!=value.session || envelope.world()!=value.world || envelope.reset()!=value.reset)return false;
+        try{return value.gate.complete(envelope.request(),result);}
+        catch(IllegalStateException error){requestReconnect(error.getMessage());return false;}
+    }
     public boolean supportsStoneInput(){return minor==1 && connected();}
     public InputEnvelope pollStoneInputRequest(){return inputs.poll(sessionGeneration.get(),worldGeneration.get(),resetGeneration.get());}
     /** Runs on the client tick. Zero means the request may proceed to the lab's vanilla checks. */
@@ -85,7 +136,7 @@ public final class BridgeClient implements AutoCloseable {
     }
     public boolean blockEvent(Protocol.BlockEvent event) {
         Protocol.blockEvent(event);
-        if(!connected()){events.rejected();return false;}
+        if(!connected() || (minor==2 && !aimedArenaReady())){events.rejected();return false;}
         var entry=new BlockEventMailbox.Entry(sessionGeneration.get(),worldGeneration.get(),resetGeneration.get(),event);
         if(!events.offer(entry)) {
             requestReconnect("Block event queue overflow; resetting transient host session");return false;
@@ -98,7 +149,7 @@ public final class BridgeClient implements AutoCloseable {
         requestReconnect("Minecraft world/dimension changed; clearing event baseline and reconnecting");
     }
     private void requestReconnect(String reason) {
-        resetGeneration.incrementAndGet();connected=false;latestIncoming.set(null);events.clear();inputs.clear();
+        resetGeneration.incrementAndGet();connected=false;aimedConnection=null;latestIncoming.set(null);events.clear();inputs.clear();
         diagnostics.accept(reason);
         Socket socket=currentSocket;
         if(socket!=null)try{socket.close();}catch(IOException ignored){}
@@ -126,7 +177,9 @@ public final class BridgeClient implements AutoCloseable {
                 if(sessionWorld!=worldGeneration.get() || sessionReset!=resetGeneration.get())throw new IOException("Session reset during handshake");
                 long session=sessionGeneration.incrementAndGet();
                 activeWorldGeneration=sessionWorld;activeResetGeneration=sessionReset;
-                rx=hello.sequence(); connected=true; lastFailure="";
+                rx=hello.sequence();
+                AimedConnection aimed=minor==2?new AimedConnection(session,sessionWorld,sessionReset,new AimedSession()):null;
+                aimedConnection=aimed;connected=true; lastFailure="";
                 diagnostics.accept("Connected to "+peer.name()+" at 127.0.0.1:"+port);
                 long lastRx=System.nanoTime(), lastSend=lastRx, poseSend=0,lastInputId=0;
                 while (running) {
@@ -151,7 +204,16 @@ public final class BridgeClient implements AutoCloseable {
                             case Protocol.ERROR -> throw new IOException("Host reported an error");
                             case Protocol.GOODBYE -> {
                                 if (received.payload().length!=0) throw new IOException("GOODBYE payload must be empty");
+                                lastHostGoodbyeSession.set(session);
                                 throw new EOFException("Host closed session");
+                            }
+                            case Protocol.ARENA_ACK -> {
+                                if(aimed==null)throw new IOException("Aimed alignment was not negotiated");
+                                aimed.gate.acknowledge(received.payload());
+                            }
+                            case Protocol.AIMED_STONE_REQUEST -> {
+                                if(aimed==null)throw new IOException("Aimed input was not negotiated");
+                                aimed.gate.receive(Protocol.parseAimedStoneRequest(received.payload()),System.nanoTime());
                             }
                             case Protocol.STONE_INPUT_REQUEST -> {
                                 if(capabilities!=Protocol.CAP_STONE_INPUT)throw new IOException("Stone input was not negotiated");
@@ -169,10 +231,19 @@ public final class BridgeClient implements AutoCloseable {
                     if (p!=null && now-poseSend>=TimeUnit.MILLISECONDS.toNanos(50)) {
                         Protocol.write(out,new Protocol.Frame(Protocol.MC_POSE,minor,tx++,Protocol.nowMicros(),Protocol.pose(p))); poseSend=now; lastSend=now;
                     }
+                    if(aimed!=null){
+                        aimed.gate.checkDeadline(System.nanoTime());
+                        AimedSession.Outbound message;int sentAimed=0;
+                        while(sentAimed++<32 && (message=aimed.gate.pollOutbound())!=null){
+                            if(!connected() || aimed!=activeAimed())throw new IOException("Session reset before aimed output write");
+                            Protocol.write(out,new Protocol.Frame(message.type(),minor,tx++,Protocol.nowMicros(),message.payload()));
+                            aimed.gate.written(message);lastSend=System.nanoTime();
+                        }
+                    }
                     BlockEventMailbox.Entry entry;
                     int sentEvents=0;
                     while (sentEvents++<128 && (entry=events.poll(session,sessionWorld,sessionReset))!=null) {
-                        if(!connected()){events.rejected();throw new IOException("Session reset before event write");}
+                        if(!connected() || (minor==2 && !aimedArenaReady())){events.rejected();throw new IOException("Session reset or unacknowledged arena before event write");}
                         Protocol.BlockEvent event=entry.event();long sequence=tx++;
                         try { Protocol.write(out,new Protocol.Frame(Protocol.BLOCK_EVENT,minor,sequence,Protocol.nowMicros(),Protocol.blockEvent(event))); }
                         catch(IOException failure){events.rejected();throw failure;}
@@ -196,11 +267,11 @@ public final class BridgeClient implements AutoCloseable {
                     Thread.sleep(10);
                 }
                 Protocol.write(out,new Protocol.Frame(Protocol.GOODBYE,minor,tx,Protocol.nowMicros(),new byte[0]));
-            } catch (IOException | InterruptedException e) {
+            } catch (IOException | InterruptedException | IllegalStateException e) {
                 String failure=e.getClass().getSimpleName()+": "+e.getMessage();
                 if (running && !failure.equals(lastFailure)) { diagnostics.accept("Disconnected: "+failure); lastFailure=failure; }
             } finally {
-                connected=false; currentSocket=null; latestIncoming.set(null); events.clear();inputs.clear();
+                connected=false; aimedConnection=null;currentSocket=null; latestIncoming.set(null); events.clear();inputs.clear();
             }
             if (running) {
                 try { Thread.sleep(1000); } catch (InterruptedException ignored) { Thread.currentThread().interrupt(); break; }

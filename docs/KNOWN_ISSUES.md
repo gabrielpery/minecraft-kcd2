@@ -1,5 +1,24 @@
 # Known issues and blockers
 
+## Public source, experimental game support
+
+The [public repository](https://github.com/gabrielpery/minecraft-kcd2) contains
+source and development procedures. It does not include a ready-to-install retail
+release, prepared game assets, local test evidence or runtime bundles. Follow
+[setup](SETUP.md) for a fresh clone; references to a staged package or installed
+tool in historical reports describe the development machine.
+
+Current live HUD, inventory, camera and fixed-cell stone tests use the official
+KCD2 1.5.5 development game. Retail 1.5.6 support remains gated below. Actual
+Minecraft aiming passes isolated automatic tests, including an aimed break from
+the native C++ host through the new optional protocol. That host supplies synthetic
+coordinates; aiming is not yet connected to the live KCD crosshair. Continuous shared movement, general block rendering,
+persistence, survival integration and multiplayer remain unfinished.
+
+Earlier failures below are retained for diagnosis. The latest verification status
+is in [progress and evidence](PROGRESS.md); successful bounded tests do not remove
+the remaining gameplay limits.
+
 ## Stone texture blur resolved in the verified close view
 
 The user's screenshot now verifies actual Minecraft stone in the loaded official
