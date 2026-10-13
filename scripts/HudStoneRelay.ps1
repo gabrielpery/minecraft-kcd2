@@ -47,7 +47,7 @@ function New-MineComeHudStoneRelay($Context,[string]$Directory,[string]$Run,[lon
         Stdout=(Join-Path $relayHome 'relay.log');Stderr=(Join-Path $relayHome 'relay-errors.log');Process=$null
         ProcessId=0;ProcessStart=$null;Preflight=$null;Probe=$null;StartAttempted=$false;StopAttempted=$false
         Ready=$false;CleanupVerified=$false;ExitObserved=$false;ExitCode=$null;EngineMirroringVerified=$false;TransportAuthVerified=$false
-        Failure=$null;CleanupFailure=$null;GuestVerificationFailure=$null;LastIntentUtcMs=0L;ReceiptAudit=$null;ReceiptAuditFailure=$null
+        Failure=$null;CleanupFailure=$null;GuestVerificationFailure=$null;LastIntentUtcMs=0L;ReceiptAudit=$null;ReceiptAuditFailure=$null;InputDisposition=$null
         Intents=[Collections.Generic.List[object]]::new();Native=$null
     }
 }
@@ -56,12 +56,29 @@ function ConvertFrom-MineComeHudStoneRelayLog([string]$Text,[switch]$Completed) 
     if($Completed -and $Text.Length -gt 0 -and -not $Text.EndsWith("`n")){throw 'Completed relay log ends with an incomplete line.'}
     $begins=[Collections.Generic.List[string]]::new();$ends=[Collections.Generic.List[string]]::new()
     $results=[Collections.Generic.List[object]]::new();$dispatches=[Collections.Generic.List[object]]::new();$events=[Collections.Generic.List[object]]::new();$acks=[Collections.Generic.List[object]]::new()
-    $world=$false;$authenticated=$false;$summary=$null
+    $inputs=[Collections.Generic.List[object]]::new();$dispositions=[Collections.Generic.List[object]]::new();$rejections=[Collections.Generic.List[object]]::new();$sessionEnds=[Collections.Generic.HashSet[string]]::new()
+    $world=$false;$authenticated=$false;$summary=$null;$endedSession=$null;$lineNumber=0
     foreach($line in ($Text -split "`n" | Select-Object -SkipLast 1)){
-        $line=$line.TrimEnd("`r")
-        if($line -match '^STONE_BEGIN_ACK session=([1-9][0-9]{0,15})$'){$begins.Add($Matches[1])}
+        $line=$line.TrimEnd("`r");$lineNumber++
+        if($line -match '^STONE_BEGIN_ACK session=([1-9][0-9]{0,15})$'){$begins.Add($Matches[1]);$endedSession=$null}
         elseif($line -match '^STONE_CLEANUP_ACK session=([1-9][0-9]{0,15})$'){$ends.Add($Matches[1])}
-        elseif($line -match '^STONE_INPUT_DISPATCH request=([1-9][0-9]{0,15}) action=([12])$'){$dispatches.Add([pscustomobject]@{request_id=[long]$Matches[1];action=[int]$Matches[2]})}
+        elseif($line -cmatch '^STONE_SESSION_END reason=([^=\r\n]+) session=([1-9][0-9]{0,15})$'){
+            if(-not $sessionEnds.Add($Matches[2]) -or $sessionEnds.Count -gt 16){throw 'Duplicate or excessive native stone session end.'}
+            $endedSession=$(if($Matches[1] -ceq 'transport connection or bounded queue reset'){$Matches[2]}else{$null})
+        }
+        elseif($line.Contains('STONE_SESSION_END')){throw 'Malformed native stone session end.'}
+        elseif($line -cmatch '^KCD2_LOG [^\r\n]*\[MineComeInput\] \{"schema":1,"request":([1-9][0-9]{0,15}),"action":([12])\}$'){$inputs.Add([pscustomobject]@{request_id=[long]$Matches[1];action=[int]$Matches[2];line_number=$lineNumber})}
+        elseif($line.Contains('[MineComeInput]')){throw 'Malformed native Lua input record.'}
+        elseif($line -cmatch '^STONE_INPUT_DISPATCH request=([1-9][0-9]{0,15}) action=([12])$'){
+            $dispatches.Add([pscustomobject]@{request_id=[long]$Matches[1];action=[int]$Matches[2]})
+            $dispositions.Add([pscustomobject]@{kind='dispatched';request_id=[long]$Matches[1];line_number=$lineNumber})
+        }
+        elseif($line.Contains('STONE_INPUT_DISPATCH')){throw 'Malformed native stone dispatch record.'}
+        elseif($line -cmatch '^STONE_INPUT_REJECTED reason=(replayed_intent|stale_log_batch|disabled_or_busy|no_ready_world_or_input_peer) request=([1-9][0-9]{0,15})$'){
+            $rejections.Add([pscustomobject]@{request_id=[long]$Matches[2];reason=$Matches[1];line_number=$lineNumber;ended_session=$endedSession})
+            $dispositions.Add([pscustomobject]@{kind='refused';request_id=[long]$Matches[2];line_number=$lineNumber})
+        }
+        elseif($line.Contains('STONE_INPUT_REJECTED')){throw 'Malformed native stone refusal record.'}
         elseif($line -match '^STONE_INPUT_RESULT request=([1-9][0-9]{0,15}) action=([12]) result=([1-7])$'){$results.Add([pscustomobject]@{request_id=[long]$Matches[1];action=[int]$Matches[2];result=[int]$Matches[3]})}
         elseif($line.Contains('STONE_INPUT_RESULT')){throw 'Malformed polled stone result receipt.'}
         elseif($line -match '^STONE_ENGINE_ACK session=([1-9][0-9]{0,15}) sequence=([1-9][0-9]{0,15}) result=(spawned|already_present|removed|absent)$'){$acks.Add([pscustomobject]@{session=$Matches[1];sequence=$Matches[2];result=$Matches[3]})}
@@ -76,8 +93,8 @@ function ConvertFrom-MineComeHudStoneRelayLog([string]$Text,[switch]$Completed) 
         if($line -match '^KCD2_LOG .*\[MineComePing\] MC_CONNECTED_AUTHENTICATED$'){$authenticated=$true}
         if($line -match '^Stone engine acknowledgements: placed=([0-9]+) removed=([0-9]+) rejected=([0-9]+) cleanup_ack=(true|false; Lua lease remains responsible)$'){$summary=[pscustomobject]@{placed=[int]$Matches[1];removed=[int]$Matches[2];rejected=[int]$Matches[3];cleanup_ack=($Matches[4] -ceq 'true')}}
     }
-    if($begins.Count -gt 16 -or $results.Count -gt 16 -or $dispatches.Count -gt 16 -or $events.Count -gt 16 -or $acks.Count -gt 16){throw 'Combined relay exceeded its sixteen-action evidence bound.'}
-    [pscustomobject]@{begin_sessions=@($begins.ToArray());cleanup_sessions=@($ends.ToArray());dispatches=@($dispatches.ToArray());results=@($results.ToArray());events=@($events.ToArray());engine_acks=@($acks.ToArray());fresh_world=$world;authenticated=$authenticated;summary=$summary}
+    if($begins.Count -gt 16 -or $results.Count -gt 16 -or $dispositions.Count -gt 16 -or $inputs.Count -gt 16 -or $events.Count -gt 16 -or $acks.Count -gt 16){throw 'Combined relay exceeded its sixteen-action evidence bound.'}
+    [pscustomobject]@{begin_sessions=@($begins.ToArray());cleanup_sessions=@($ends.ToArray());dispatches=@($dispatches.ToArray());dispatch_rejections=@($rejections.ToArray());input_records=@($inputs.ToArray());input_dispositions=@($dispositions.ToArray());results=@($results.ToArray());events=@($events.ToArray());engine_acks=@($acks.ToArray());fresh_world=$world;authenticated=$authenticated;summary=$summary}
 }
 function Update-MineComeHudStoneRelayEvidence($Session) {
     $Session.TransportAuthVerified=$false;$Session.ReceiptAudit=$null
@@ -86,7 +103,7 @@ function Update-MineComeHudStoneRelayEvidence($Session) {
             $Session.Native=ConvertFrom-MineComeHudStoneRelayLog (Read-MineComeHudStoneText $Session.Stdout) -Completed:$Session.ExitObserved
             $Session.Native | Add-Member NoteProperty polled_results @($Session.Native.results)
             $Session.Native.results=@()
-        }
+        }else{$Session.Native=$null;if($Session.ExitObserved){throw 'Completed native relay log is missing.'}}
         $transportLog=Join-Path $Session.Home 'runtime/logs/tools-bridge.log'
         if(Test-Path -LiteralPath $transportLog){
             $Session.ReceiptAudit=ConvertFrom-MineComeHudStoneReceiptAudit (Read-MineComeHudStoneText $transportLog) -Completed:$Session.ExitObserved
@@ -101,6 +118,7 @@ function Update-MineComeHudStoneRelayEvidence($Session) {
         # A later read cannot erase an already observed malformed/mismatched receipt.
         if(-not $Session.ReceiptAuditFailure){$Session.ReceiptAuditFailure=$_.Exception.Message}
         $Session.EngineMirroringVerified=$false
+        $Session.InputDisposition=$null
         if($Session.Native){$Session.Native.results=@()}
     }
     if(-not $Session.TransportAuthVerified){$Session.EngineMirroringVerified=$false}
@@ -109,7 +127,7 @@ function ConvertFrom-MineComeHudStoneReceiptAudit([string]$Text,[switch]$Complet
     if($Text.Length -gt 2MB){throw 'Stone receipt audit exceeds its bounded extent.'}
     if($Completed -and $Text.Length -gt 0 -and -not $Text.EndsWith("`n")){throw 'Stone receipt audit ends with an incomplete line.'}
     $results=[Collections.Generic.List[object]]::new();$ids=[Collections.Generic.HashSet[long]]::new()
-    $anchor=$null;$helloCount=0;$ended=$false;[uint64]$lastSequence=1;[uint64]$lastTime=0
+    $anchor=$null;$helloCount=0;$ended=$false;$endReason=$null;[uint64]$lastSequence=1;[uint64]$lastTime=0
     function AuditNumber([string]$Value){
         [uint64]$parsed=0
         if($Value -cnotmatch '^[1-9][0-9]{0,19}$' -or -not [uint64]::TryParse($Value,[ref]$parsed)){throw 'Stone receipt audit integer is invalid.'}
@@ -121,7 +139,12 @@ function ConvertFrom-MineComeHudStoneReceiptAudit([string]$Text,[switch]$Complet
             $helloCount++
             if($helloCount -ne 1 -or $line -cnotmatch '^[0-9]+ HELLO authenticated; protocol 1\.1 session ready; peer role=minecraft$'){throw 'Stone receipt audit requires one authenticated Minecraft 1.1 session.'}
         }
-        if($line -match '^[0-9]+ session ended: '){$ended=$true}
+        if($line.Contains('session ended')){
+            if($line -cnotmatch '^([1-9][0-9]{0,19}) session ended: (.+)$'){throw 'Malformed stone receipt audit session end.'}
+            $timeText=$Matches[1];$reason=$Matches[2];$stamp=AuditNumber $timeText
+            if($ended -or $null -eq $anchor -or $stamp -lt $lastTime){throw 'Stone receipt audit has an ambiguous or out-of-order session end.'}
+            $ended=$true;$endReason=$reason;$lastTime=$stamp
+        }
         if(-not $line.Contains('STONE_INPUT_AUDIT')){continue}
         if($line -cmatch '^([1-9][0-9]{0,19}) STONE_INPUT_AUDIT_SESSION schema=1 connection=([1-9][0-9]{0,19}) reset=([1-9][0-9]{0,19})$'){
             if($null -ne $anchor -or $helloCount -ne 1 -or $ended){throw 'Stone receipt audit has an ambiguous or unauthenticated session anchor.'}
@@ -140,7 +163,7 @@ function ConvertFrom-MineComeHudStoneReceiptAudit([string]$Text,[switch]$Complet
         }else{throw 'Malformed or unsupported stone receipt audit record.'}
     }
     if($Completed -and $null -eq $anchor){throw 'Stone receipt audit session anchor is missing.'}
-    [pscustomobject]@{schema=1;kind='minecome_stone_receipt_audit_v1';authenticated=($null -ne $anchor);session=$anchor;results=@($results.ToArray());completed=[bool]$Completed}
+    [pscustomobject]@{schema=1;kind='minecome_stone_receipt_audit_v1';authenticated=($null -ne $anchor);session=$anchor;results=@($results.ToArray());ended=$ended;end_reason=$endReason;completed=[bool]$Completed}
 }
 function Assert-MineComeHudStoneReceiptOverlap($AuditResults,$PolledResults,[switch]$Completed) {
     $seen=[Collections.Generic.HashSet[long]]::new();[uint64]$lastOrder=0
@@ -152,6 +175,30 @@ function Assert-MineComeHudStoneReceiptOverlap($AuditResults,$PolledResults,[swi
         if($matches.Count -ne 1 -or $audit.action -ne $result.action -or $audit.result -ne $result.result -or $audit.receive_order -le $lastOrder){throw 'Polled stone result differs from its canonical audit receipt.'}
         $lastOrder=$audit.receive_order
     }
+}
+function Get-MineComeHudStoneInputDisposition($Session) {
+    # Lua admission is distinct from transport dispatch. Only an explicit final
+    # refusal after the owned peer/session closes can account for an unsent edge.
+    # A missing guest result for a dispatched request is never a cancellation.
+    $native=$Session.Native;$audit=$Session.ReceiptAudit;$intents=@($Session.Intents.ToArray())
+    if($intents.Count -lt 1 -or $intents.Count -gt 16 -or $native.input_records.Count -ne $intents.Count -or $native.input_dispositions.Count -ne $intents.Count){throw 'Relay intent/source/disposition count mismatch.'}
+    $seen=[Collections.Generic.HashSet[long]]::new();$forwarded=[Collections.Generic.List[object]]::new();$refused=[Collections.Generic.List[object]]::new()
+    for($i=0;$i -lt $intents.Count;$i++){
+        $intent=$intents[$i];$source=$native.input_records[$i];$disposition=$native.input_dispositions[$i]
+        if($intent.accepted -isnot [bool] -or -not $intent.accepted -or $intent.failure -or $intent.ordinal -ne $i+1 -or $intent.request_id -lt 1 -or $intent.request_id -gt 9007199254740991 -or -not $seen.Add($intent.request_id) -or $source.request_id -ne $intent.request_id -or $source.action -ne $intent.action -or $disposition.request_id -ne $intent.request_id -or $source.line_number -ge $disposition.line_number){throw 'Relay disposition lacks the same unique preceding Lua/controller intent.'}
+        if($disposition.kind -ceq 'dispatched'){
+            if($refused.Count -gt 0){throw 'Native dispatch followed a terminal input refusal.'}
+            $forwarded.Add($intent)
+        }else{
+            $matches=@($native.dispatch_rejections | Where-Object request_id -eq $intent.request_id)
+            if($matches.Count -ne 1){throw 'Terminal input refusal is ambiguous.'}
+            $rejection=$matches[0]
+            if(-not $audit.completed -or -not $audit.authenticated -or -not $audit.ended -or $audit.end_reason -cne 'graceful peer goodbye' -or $rejection.reason -cne 'no_ready_world_or_input_peer' -or -not $rejection.ended_session -or $native.begin_sessions -cnotcontains $rejection.ended_session -or $native.cleanup_sessions -cnotcontains $rejection.ended_session){throw 'Native input refusal is not a proven terminal peer/session cancellation.'}
+            if(@($native.dispatches | Where-Object request_id -eq $intent.request_id).Count -or @($native.results | Where-Object request_id -eq $intent.request_id).Count){throw 'A dispatched or completed input cannot be a terminal refusal.'}
+            $refused.Add([pscustomobject]@{ordinal=$intent.ordinal;request_id=$intent.request_id;action=$intent.action;reason=$rejection.reason;outcome='not_dispatched';source_line=$source.line_number;refusal_line=$rejection.line_number;ended_session=$rejection.ended_session})
+        }
+    }
+    [pscustomobject]@{schema=1;kind='minecome_stone_input_disposition_v1';intent_count=$intents.Count;dispatched_intents=@($forwarded.ToArray());terminal_refusals=@($refused.ToArray())}
 }
 function Assert-MineComeHudStoneRelay($Session) {
     Assert-MineComeProbeContext $Session.Context
@@ -231,7 +278,7 @@ function Send-MineComeHudStoneIntent($Session,[ValidateSet(1,2)][int]$Action,[sc
     }catch{$record.failure=$_.Exception.Message;$Session.Failure=$_.Exception.Message;throw}
 }
 function Assert-MineComeHudStoneRelayGuest($Session,$Guest) {
-    $Session.EngineMirroringVerified=$false
+    $Session.EngineMirroringVerified=$false;$Session.InputDisposition=$null
     try {
         function Flag($Value,[bool]$Expected){if($Value -isnot [bool] -or $Value -ne $Expected){throw 'Relay/guest Boolean receipt invalid.'}}
         function Integer($Value){if($Value -isnot [int] -and $Value -isnot [long]){throw 'Relay/guest integer receipt invalid.'}}
@@ -246,8 +293,10 @@ function Assert-MineComeHudStoneRelayGuest($Session,$Guest) {
         foreach($field in @('cancelled_pending','request_count','omitted_requests','omitted_confirmations','confirmed_actions','block_events_queued')){Integer $proof.$field}
         if($Guest.run -cne $Session.Run -or $proof.kind -cne 'minecome_hud_stone_bridge_v1' -or $proof.save -cne $Guest.save -or $proof.failed -ne $false -or $proof.closed -ne $true -or $proof.pending -ne $false -or $proof.cancelled_pending -ne 0 -or $proof.vanilla_dispatch_inventory_unchanged -ne $true -or $proof.inventory_mutated -ne $false -or $proof.camera_mutated -ne $false){throw 'Combined guest ownership/action completion proof is invalid.'}
         if(-not $Session.ExitObserved -or $Session.ExitCode -ne 0 -or -not $Session.CleanupVerified -or -not $Session.TransportAuthVerified -or -not $native.fresh_world){throw 'Native relay shutdown, authentication, world or cleanup proof missing.'}
-        $requests=@($proof.requests);$confirmations=@($proof.confirmations);$intents=@($Session.Intents.ToArray())
-        if($intents.Count -lt 1 -or $requests.Count -ne $intents.Count -or $native.results.Count -ne $requests.Count -or $native.dispatches.Count -ne $requests.Count -or $proof.request_count -ne $requests.Count -or $proof.omitted_requests -ne 0 -or $proof.omitted_confirmations -ne 0){throw 'Relay/guest request count mismatch.'}
+        $requests=@($proof.requests);$confirmations=@($proof.confirmations)
+        $Session.InputDisposition=Get-MineComeHudStoneInputDisposition $Session
+        $intents=@($Session.InputDisposition.dispatched_intents)
+        if($requests.Count -ne $intents.Count -or $native.results.Count -ne $requests.Count -or $native.dispatches.Count -ne $requests.Count -or $proof.request_count -ne $requests.Count -or $proof.omitted_requests -ne 0 -or $proof.omitted_confirmations -ne 0){throw 'Relay/guest request count mismatch.'}
         for($i=0;$i -lt $requests.Count;$i++){
             $r=$requests[$i];$intent=$intents[$i];$dispatch=$native.dispatches[$i];$result=$native.results[$i]
             foreach($field in @('id','action','result')){Integer $r.$field};Flag $r.result_queued $true
@@ -281,7 +330,7 @@ function Get-MineComeHudStoneRelayEvidence($Session) {
         package_hash=$(if($Session.Preflight){$Session.Preflight.PakHash}else{$null});manifest_hash=$(if($Session.Preflight){$Session.Preflight.ManifestHash}else{$null})
         ready=$Session.Ready;exit_observed=$Session.ExitObserved;exit_code=$Session.ExitCode;cleanup_verified=$Session.CleanupVerified
         engine_mirroring_verified=$Session.EngineMirroringVerified;transport_auth_verified=$Session.TransportAuthVerified;visual_verified=$false;physical_block_input_verified=$false
-        intents=@($Session.Intents.ToArray());native=$Session.Native;receipt_audit=$Session.ReceiptAudit;receipt_audit_failure=$Session.ReceiptAuditFailure;failure=$Session.Failure;cleanup_failure=$Session.CleanupFailure;guest_verification_failure=$Session.GuestVerificationFailure
+        intents=@($Session.Intents.ToArray());input_disposition=$Session.InputDisposition;native=$Session.Native;receipt_audit=$Session.ReceiptAudit;receipt_audit_failure=$Session.ReceiptAuditFailure;failure=$Session.Failure;cleanup_failure=$Session.CleanupFailure;guest_verification_failure=$Session.GuestVerificationFailure
         kcd_launched=$false;kcd_stopped=$false;other_processes_stopped=$false;credentials_recorded=$false
     }
 }

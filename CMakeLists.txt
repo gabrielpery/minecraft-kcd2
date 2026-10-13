@@ -13,6 +13,11 @@ if(BUILD_TESTING)
       --module "${PROJECT_SOURCE_DIR}/kcd2/probes/hud_visibility_probe.lua"
       --tests "${PROJECT_SOURCE_DIR}/kcd2/tests/lua_hud_visibility_tests.lua")
     set_tests_properties(lua_hud_visibility_lifecycle PROPERTIES TIMEOUT 15)
+    add_test(NAME lua_aim_probe_contract COMMAND "${MINECOME_TEST_PYTHON}"
+      "${PROJECT_SOURCE_DIR}/kcd2/tests/run_lua_sink_tests.py" --lua-library "${MINECOME_LUA_LIBRARY}"
+      --module "${PROJECT_SOURCE_DIR}/kcd2/probes/aim_probe.lua"
+      --tests "${PROJECT_SOURCE_DIR}/kcd2/tests/lua_aim_probe_tests.lua")
+    set_tests_properties(lua_aim_probe_contract PROPERTIES TIMEOUT 15)
   endif()
 endif()
 option(MINECOME_BUILD_KCSE "Build the KCSE plugin using inspected local SDK headers" OFF)

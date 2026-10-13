@@ -1,6 +1,32 @@
 # MineCome progress — 2026-10-13
 
-**Selective camera capture: revision 3 installed; live camera verification in progress.** A separate
+**Camera movement with HUD controls: live verified in revision 3.** The user
+reports "it worked!" for camera movement before/after inventory, inventory cursor
+control and stone place/break. Run `70ed9e3b395d44a48993f9d59c89dac5` reaches its
+full 30-second activation deadline. Diagnostics confirm 2,704 pure helper-window
+motions passed and 276 nonzero DirectInput X/Y observations passed through.
+Three place/break cycles have Minecraft client/server and KCD engine evidence;
+220 UI events were applied. Java and relay exited 0, cleanup completed and the
+temporary FPS cap restored. The overall controller result remains failed because
+14 Lua-admitted intents produced 13 guest/native results; the native relay
+explicitly refused the final intent after peer disconnect. The verifier did not
+distinguish that undispatched refusal from a missing guest reply. The corrected
+verifier passes 330 relay and 1,009 controller checks plus a read-only replay of
+the unchanged live evidence. Explicit terminal refusals remain separate from
+completed Minecraft actions. The raw failed result is preserved. Free aiming
+and continuous gameplay remain unfinished.
+
+**Crosshair targeting groundwork: read-only host aim sample implemented and
+standalone verified.** The new separate Lua probe captures camera origin/forward
+and nearest host obstruction in one call. It checks every hit, distinguishes
+unavailable data from clear space, and makes no game-state changes. Fourteen
+mock-engine groups pass 1,533 checks; host receipt validation passes 343 checks.
+Its caller preserves source/log evidence and pins the existing tools process.
+No live ray sample, alignment handshake,
+vanilla aimed action or new wire capability is claimed. See the
+[aim sample contract](../protocol/PROTOCOL.md#read-only-host-aim-sample-implemented-no-aimed-request-enabled).
+
+**Selective capture implementation and earlier checks.** A separate
 API v2 renderer preserves DirectInput camera axes while capturing world buttons,
 then captures the full mouse for Minecraft inventory. Screen transitions drain
 old input and require matching UI acknowledgements and rendered screens before
@@ -43,7 +69,7 @@ runtime 6.8.0.5/addon bundle is staged; 544 profile checks per PowerShell versio
 and 1,008 controller checks pass. The exact revision 2 to 3 update preflight
 passes. The human-run restart verified a new 1,016-file save/profile backup and
 installed revision 3 unarmed. The fresh host loads the raw-owner addon and HUD
-shader; live preflight passes. Camera movement is not marked verified.
+shader; live preflight passes. The completed revision 3 result is recorded above.
 This still operates the fixed stone cell. Shared Java/C++ aiming geometry passes
 198/222 assertions against the same golden vectors, but no aiming protocol or
 live crosshair interaction has been enabled. See the

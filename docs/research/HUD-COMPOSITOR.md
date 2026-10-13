@@ -230,6 +230,48 @@ changed only the proxy and addon, leaving the installation initially unarmed.
 Fresh KCD PID 49612 loaded the raw-owner addon and compiled its HUD shader.
 The ready-world live preflight passes without arming or starting a process.
 
+**Revision 3 live camera result:** run `70ed9e3b395d44a48993f9d59c89dac5` completed
+its full 30,000 ms activation and ended with `activation_expired`, while foreground
+and image/ACK freshness remained valid. The user responded "it worked!" to the
+camera-before/after-inventory, inventory cursor and place/break check. Final
+diagnostics record 2,704 passed helper/raw motions and 276 nonzero DirectInput X/Y
+observations, all passed through. This establishes use of the helper route in KCD
+and successful camera motion under active selective ownership.
+
+The guest applied 220 UI events, including 200 pointer events. Three place/break
+cycles have client/server confirmations and three matching KCD spawn/removal pairs.
+The addon uploaded 580 frames, submitted 2,168 draws and dropped none. Java and
+relay exited 0; owned cleanup and restoration of the temporary FPS cap pass.
+The raw controller result nevertheless remains failed with
+`Relay/guest request count mismatch.` Fifteen observed clicks yielded fourteen
+Lua-admitted intents and one spacing refusal. The first thirteen guest/native
+results agree, including the final result recovered by the canonical audit. The
+relay explicitly rejected intent 14 with `no_ready_world_or_input_peer` after
+the guest's graceful GOODBYE; it was never dispatched to Minecraft. The verifier
+incorrectly expected a guest response for that refusal. This is a separate
+accounting issue; the original failed controller receipt remains unchanged.
+The preserved analysis and log snapshots are in
+`runtime/evidence/hud-input-20261013-173538-70ed9e3b395d44a48993f9d59c89dac5/live-analysis.json`.
+Across 128 fresh post-click KCD poses, camera direction spans 33.05 degrees while
+player position stays fixed. The user later closed KCD; its log records
+`WM_CLOSE` with exit code 0, not an observed game crash.
+
+The repaired verifier correlates every controller intent with one preceding
+native Lua record and exactly one dispatch or explicit terminal refusal. The
+refusal path requires the owned native session end, graceful peer GOODBYE,
+cleanup, an exact no-ready reason, no dispatch/result for that ID, and no later
+dispatch. It cannot substitute a refusal for an unanswered dispatched request.
+Malformed, duplicate, conflicting or missing evidence still fails. No native,
+Java, readiness, reset or gameplay-write behavior changed.
+
+The relay/controller suites pass 330/1,009 checks. A separate read-only replay
+of the actual revision 3 records passes with thirteen matching dispatched
+requests/results and one explicitly undispatched refusal, plus three places,
+three breaks and cleanup. Original raw files and their hashes remain unchanged:
+`runtime/evidence/hud-r3-terminal-refusal-replay-20261013-184649/replay-80dd606e31f94a739331d2dee1f132c6/verification.json`.
+This validates the accounting repair on recorded evidence; it is not another
+live test or a rewritten original result.
+
 ## Physical world click profile — 2026-10-13
 
 The new explicit `-WorldClicks` controller removes the timed demonstration and

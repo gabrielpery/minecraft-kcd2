@@ -29,11 +29,13 @@ function Valid-Log {
         'Official tools console binding verified; waiting for fresh in-game diagnostic log receipt',
         'KCD2_LOG prefix [MineComePose] {"schema":1,"player":{"x":1,"y":2,"z":3},"camera":{"x":1,"y":2,"z":4}}',
         'KCD2_LOG prefix [MineComePing] MC_CONNECTED_AUTHENTICATED',
+        'KCD2_LOG prefix [MineComeInput] {"schema":1,"request":7,"action":1}',
         'STONE_INPUT_DISPATCH request=7 action=1',
         'STONE_INPUT_RESULT request=7 action=1 result=1',
         'STONE_BEGIN_ACK session=1790000000000000',
         'KCD2_LOG prefix [MineComeBlock] {"schema":1,"session":1790000000000000,"sequence":10,"operation":1,"mc":{"x":-8,"y":-60,"z":2},"position":{"x":1,"y":2,"z":3},"result":"spawned","physics":false,"live_draw_verified":false}',
         'STONE_ENGINE_ACK session=1790000000000000 sequence=10 result=spawned',
+        'KCD2_LOG prefix [MineComeInput] {"schema":1,"request":8,"action":2}',
         'STONE_INPUT_DISPATCH request=8 action=2',
         'STONE_INPUT_RESULT request=8 action=2 result=1',
         'KCD2_LOG prefix [MineComeBlock] {"schema":1,"session":1790000000000000,"sequence":12,"operation":2,"mc":{"x":-8,"y":-60,"z":2},"position":{"x":1,"y":2,"z":3},"result":"removed","physics":false,"live_draw_verified":false}',
@@ -145,12 +147,77 @@ Check $s.EngineMirroringVerified 'Matching actual-guest/native evidence verifies
 # The worker accepted a final absent result immediately before GOODBYE. Its
 # canonical receipt survives even though the host poll never drained the queue.
 $last=New-Case;$last.Intents.Add([pscustomobject]@{ordinal=3;request_id=9L;action=2;accepted=$true;sent_utc_ms=2000L;failure=$null})
-Write-Log $last ((Valid-Log)+"STONE_INPUT_DISPATCH request=9 action=2`n")
+Write-Log $last ((Valid-Log)+'KCD2_LOG prefix [MineComeInput] {"schema":1,"request":9,"action":2}'+"`nSTONE_INPUT_DISPATCH request=9 action=2`n")
 Write-Audit $last ((Valid-Audit)+"400 STONE_INPUT_AUDIT schema=1 connection=1 reset=3 order=3 sequence=15 request=9 action=2 result=6`n401 session ended: graceful peer goodbye`n402 bridge stopped`n")
 Stop-MineComeHudStoneRelay $last;$g=Valid-Guest;$g.lab_evidence.stone_bridge.request_count=3
 $g.lab_evidence.stone_bridge.requests+=@([pscustomobject]@{id=9L;action=2;result=6;result_queued=$true})
 Assert-MineComeHudStoneRelayGuest $last $g
 Check ($last.EngineMirroringVerified -and $last.Native.results.Count -eq 3 -and $last.Native.polled_results.Count -eq 2) 'Final validated absent result survives graceful disconnect without inventing engine events'
+# Actual R3 boundary: Lua accepted a last edge, then native refused transport
+# dispatch after peer goodbye. This is accounted as not dispatched, not success.
+function Terminal-Log {
+    (Valid-Log).Replace('STONE_CLEANUP_ACK session=1790000000000000',(
+        'KCD2_LOG prefix [MineComeInput] {"schema":1,"request":9,"action":1}'+"`n"+
+        'STONE_SESSION_END reason=transport connection or bounded queue reset session=1790000000000000'+"`n"+
+        'STONE_INPUT_REJECTED reason=no_ready_world_or_input_peer request=9'+"`n"+
+        'STONE_CLEANUP_ACK session=1790000000000000'))
+}
+function Terminal-Audit {(Valid-Audit)+"400 session ended: graceful peer goodbye`n401 bridge stopped`n"}
+function New-TerminalCase {
+    $s=New-Case;$s.Intents.Add([pscustomobject]@{ordinal=3;request_id=9L;action=1;accepted=$true;sent_utc_ms=2000L;failure=$null});$s
+}
+$terminal=New-TerminalCase;Write-Log $terminal (Terminal-Log);Write-Audit $terminal (Terminal-Audit);Stop-MineComeHudStoneRelay $terminal
+Assert-MineComeHudStoneRelayGuest $terminal (Valid-Guest)
+Check ($terminal.EngineMirroringVerified -and $terminal.Native.results.Count -eq 2 -and $terminal.Native.dispatches.Count -eq 2 -and $terminal.Intents.Count -eq 3) 'Terminal refusal preserves exact dispatched/guest/canonical counts'
+Check ($terminal.InputDisposition.terminal_refusals.Count -eq 1 -and $terminal.InputDisposition.terminal_refusals[0].request_id -eq 9 -and $terminal.InputDisposition.terminal_refusals[0].action -eq 1 -and $terminal.InputDisposition.terminal_refusals[0].outcome -ceq 'not_dispatched') 'Terminal refusal is explicit separate evidence and never a successful guest action'
+foreach($case in @('missing_refusal','missing_source','duplicate_source','wrong_source_action','wrong_source_id','source_after_refusal','duplicate_refusal','unknown_refusal_id','dispatched_refusal','result_for_refusal','missing_goodbye','abnormal_disconnect','duplicate_goodbye','malformed_goodbye','backwards_goodbye','missing_session_end','malformed_session_end','duplicate_session_end','wrong_session','early_refusal','nonterminal_reason','malformed_refusal','unknown_reason','partial_refusal','duplicate_intent')){
+    $s=New-TerminalCase;$text=Terminal-Log;$journal=Terminal-Audit
+    $source='KCD2_LOG prefix [MineComeInput] {"schema":1,"request":9,"action":1}'
+    $refusal='STONE_INPUT_REJECTED reason=no_ready_world_or_input_peer request=9'
+    $end='STONE_SESSION_END reason=transport connection or bounded queue reset session=1790000000000000'
+    switch($case){
+        missing_refusal {$text=$text.Replace($refusal+"`n",'')}
+        missing_source {$text=$text.Replace($source+"`n",'')}
+        duplicate_source {$text+=$source+"`n"}
+        wrong_source_action {$text=$text.Replace($source,$source.Replace('"action":1','"action":2'))}
+        wrong_source_id {$text=$text.Replace($source,$source.Replace('"request":9','"request":10'))}
+        source_after_refusal {$text=$text.Replace($source+"`n",'')+$source+"`n"}
+        duplicate_refusal {$text+=$refusal+"`n"}
+        unknown_refusal_id {$text=$text.Replace($refusal,$refusal.Replace('request=9','request=10'))}
+        dispatched_refusal {$text+="STONE_INPUT_DISPATCH request=9 action=1`n"}
+        result_for_refusal {$journal=$journal.Replace('400 session ended:',"350 STONE_INPUT_AUDIT schema=1 connection=1 reset=3 order=3 sequence=15 request=9 action=1 result=2`n400 session ended:")}
+        missing_goodbye {$journal=Valid-Audit}
+        abnormal_disconnect {$journal=$journal.Replace('graceful peer goodbye','socket read failed')}
+        duplicate_goodbye {$journal+="402 session ended: graceful peer goodbye`n"}
+        malformed_goodbye {$journal=$journal.Replace('400 session ended: graceful peer goodbye','400 session ended:')}
+        backwards_goodbye {$journal=$journal.Replace('400 session ended','299 session ended')}
+        missing_session_end {$text=$text.Replace($end+"`n",'')}
+        malformed_session_end {$text=$text.Replace($end,$end+' malformed=true')}
+        duplicate_session_end {$text=$text.Replace($end,$end+"`n"+$end)}
+        wrong_session {$text=$text.Replace($end,$end.Replace('session=1790000000000000','session=1790000000000001'))}
+        early_refusal {$text=$text.Replace($refusal+"`n",'').Replace($end,$refusal+"`n"+$end)}
+        nonterminal_reason {$text=$text.Replace('reason=no_ready_world_or_input_peer','reason=stale_log_batch')}
+        malformed_refusal {$text=$text.Replace($refusal,$refusal+' action=1')}
+        unknown_reason {$text=$text.Replace('reason=no_ready_world_or_input_peer','reason=unknown')}
+        partial_refusal {$text=$text.Replace($refusal+"`n",'')+$refusal}
+        duplicate_intent {$s.Intents[2].request_id=8L}
+    }
+    Write-Log $s $text;Write-Audit $s $journal;Stop-MineComeHudStoneRelay $s
+    Reject {Assert-MineComeHudStoneRelayGuest $s (Valid-Guest)} "${case}: ambiguous or unproven terminal refusal rejected"
+    Check (-not $s.EngineMirroringVerified) 'Unproven terminal disposition cannot retain gameplay success'
+}
+# A refusal can only be a suffix: later forwarding is not terminal cancellation.
+$s=New-TerminalCase;$text=Terminal-Log
+$text=$text.Replace('STONE_INPUT_DISPATCH request=8 action=2',"STONE_SESSION_END reason=transport connection or bounded queue reset session=1790000000000000`nSTONE_INPUT_REJECTED reason=no_ready_world_or_input_peer request=8")
+$text=$text.Replace('STONE_INPUT_REJECTED reason=no_ready_world_or_input_peer request=9','STONE_INPUT_DISPATCH request=9 action=1')
+Write-Log $s $text;Write-Audit $s (Terminal-Audit);Stop-MineComeHudStoneRelay $s
+Reject {Get-MineComeHudStoneInputDisposition $s} 'A later dispatch cannot follow a terminal refusal'
+$partial=ConvertFrom-MineComeHudStoneRelayLog 'STONE_INPUT_REJECTED reason=no_ready_world_or_input_peer request=9'
+Check ($partial.dispatch_rejections.Count -eq 0) 'Partial live refusal cannot justify an absent guest request'
+$missingStdout=New-Case;Write-Log $missingStdout (Valid-Log);Stop-MineComeHudStoneRelay $missingStdout;Assert-MineComeHudStoneRelayGuest $missingStdout (Valid-Guest)
+[IO.File]::Move($missingStdout.Stdout,(Join-Path $missingStdout.Home 'relay-preserved.log'))
+$missingStdoutEvidence=Get-MineComeHudStoneRelayEvidence $missingStdout
+Check (-not $missingStdoutEvidence.engine_mirroring_verified -and $null -eq $missingStdoutEvidence.native -and $null -eq $missingStdoutEvidence.input_disposition -and $missingStdoutEvidence.receipt_audit_failure) 'Disappearing completed stdout cannot retain cached native or disposition proof'
 $old=New-Case;Write-Log $old (Valid-Log);Write-Audit $old "123 HELLO authenticated; protocol 1.1 session ready; peer role=minecraft`n200 stone input result accepted id=7`n300 stone input result accepted id=8`n"
 Stop-MineComeHudStoneRelay $old;Reject {Assert-MineComeHudStoneRelayGuest $old (Valid-Guest)} 'Old unversioned run cannot acquire retrospective audit proof'
 Check (-not $old.EngineMirroringVerified -and $old.CleanupVerified -and $old.ReceiptAuditFailure) 'Missing audit does not prevent cleanup and cannot prove gameplay'
@@ -164,7 +231,7 @@ Check (-not $missingEvidence.engine_mirroring_verified -and -not $missingEvidenc
 # block event. Successful actions still require the complete engine proof chain.
 foreach($code in 2..7){
     $declined=New-Case;$declined.Intents.Add([pscustomobject]@{ordinal=3;request_id=9L;action=1;accepted=$true;sent_utc_ms=2000L;failure=$null})
-    $text=(Valid-Log)+"STONE_INPUT_DISPATCH request=9 action=1`nSTONE_INPUT_RESULT request=9 action=1 result=$code`n"
+    $text=(Valid-Log)+'KCD2_LOG prefix [MineComeInput] {"schema":1,"request":9,"action":1}'+"`nSTONE_INPUT_DISPATCH request=9 action=1`nSTONE_INPUT_RESULT request=9 action=1 result=$code`n"
     Write-Audit $declined ((Valid-Audit)+"400 STONE_INPUT_AUDIT schema=1 connection=1 reset=3 order=3 sequence=15 request=9 action=1 result=$code`n")
     Write-Log $declined $text;Stop-MineComeHudStoneRelay $declined
     $g=Valid-Guest;$g.lab_evidence.stone_bridge.request_count=3

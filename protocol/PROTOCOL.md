@@ -279,3 +279,29 @@ handshake, exact sample/intent pairing, client/server selection agreement,
 host occlusion, and visual checks of centre-ray alignment on several block
 faces while turning/stepping. Existing orientation algebra tests and stone
 model bounds do not prove those camera timing, eye/feet or gameplay outcomes.
+
+### Read-only host aim sample implemented (no aimed request enabled)
+
+`kcd2/probes/aim_probe.lua` now samples the actual camera origin and normalized
+forward plus one `ent_all` obstruction ray in the same synchronous engine call.
+Its range is 4.5 units; it skips the player and uses a private, bounded hit table.
+All reported hits must have finite positions/distances consistent with the ray.
+The nearest valid hit is selected even when the binding returns unsorted hits.
+Missing bindings, malformed hits, a saturated buffer, changed player identity,
+clock rollback or a sample lasting over 0.25 seconds produce `unavailable`.
+Only a valid zero-hit result claims clear space. Engine time is not UTC.
+
+The separate `scripts/Test-KcdAimProbe.ps1` caller pins the existing tools process,
+loads an immutable source snapshot, verifies its unique function reference and
+requires a fresh matching engine receipt. It performs no block action, movement,
+input capture or game launch. Mock engine tests pass 14 groups/1,533 checks, and
+the strict host-side receipt validator passes 343 checks for numeric types,
+finite vectors, unit/scaled rays, timing, hit geometry and availability flags.
+The probe is not yet live verified. KCD was closed after the successful camera test.
+
+This establishes a host sample contract, not click/sample pairing or shared
+alignment. A future aimed request must capture this data with that click; it
+cannot reuse the most recent diagnostic sample. Alignment must be agreed before
+bootstrap, using the actual guest camera and sampled host camera for the first
+turn-only lab. Inverting the existing four-unit display offset would place the
+ray origin away from the actual Minecraft player and invalidate reach assumptions.

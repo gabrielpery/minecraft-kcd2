@@ -424,6 +424,7 @@ $auditLines=@(
 $nativeLines=@(
     'Official tools console binding verified; waiting for fresh in-game diagnostic log receipt',
     'KCD2_LOG prefix [MineComePose] {"schema":1,"player":{"x":1,"y":2,"z":3},"camera":{"x":1,"y":2,"z":4}}',
+    'KCD2_LOG prefix [MineComeInput] {"schema":1,"request":17,"action":1}',
     'STONE_INPUT_DISPATCH request=17 action=1',
     'STONE_INPUT_RESULT request=17 action=1 result=1',
     'STONE_BEGIN_ACK session=1790000000000000',
@@ -433,6 +434,7 @@ $nativeLines=@(
 $placeNative=ConvertFrom-MineComeHudStoneRelayLog (($nativeLines -join "`n")+"`n")
 Check (Test-HudStonePreviewEnginePlace $placeNative '17') 'Production parser output satisfies production engine preview gate'
 $nativeLines+=@(
+    'KCD2_LOG prefix [MineComeInput] {"schema":1,"request":18,"action":2}',
     'STONE_INPUT_DISPATCH request=18 action=2',
     'STONE_INPUT_RESULT request=18 action=2 result=1',
     'KCD2_LOG prefix [MineComeBlock] {"schema":1,"session":1790000000000000,"sequence":12,"operation":2,"mc":{"x":2,"y":64,"z":0},"position":{"x":1,"y":2,"z":3},"result":"removed","physics":false,"live_draw_verified":false}',
@@ -448,6 +450,20 @@ Assert-HudStoneLivePreview $guest
 Assert-MineComeHudStoneRelayGuest $session $guest
 Check $session.EngineMirroringVerified 'Same live guest passes controller and relay contracts'
 Check ($session.TransportAuthVerified -and $session.Native.events.Count -eq 2) 'Combined contract uses parsed authenticated relay evidence'
+# A physical edge admitted at shutdown may be explicitly refused before guest
+# dispatch. The same controller still requires actual confirmed place and break.
+$session.Intents.Add([pscustomobject]@{ordinal=3;request_id=19L;action=1;accepted=$true;sent_utc_ms=2L;failure=$null})
+$nativeText=($nativeLines -join "`n")+"`n"
+$nativeText=$nativeText.Replace('STONE_CLEANUP_ACK session=1790000000000000',(
+    'KCD2_LOG prefix [MineComeInput] {"schema":1,"request":19,"action":1}'+"`n"+
+    'STONE_SESSION_END reason=transport connection or bounded queue reset session=1790000000000000'+"`n"+
+    'STONE_INPUT_REJECTED reason=no_ready_world_or_input_peer request=19'+"`n"+
+    'STONE_CLEANUP_ACK session=1790000000000000'))
+[IO.File]::WriteAllText($session.Stdout,$nativeText)
+[IO.File]::WriteAllText((Join-Path $session.Home 'runtime/logs/tools-bridge.log'),($auditLines -join "`n")+"`n400 session ended: graceful peer goodbye`n")
+Assert-HudStoneLivePreview $guest
+Assert-MineComeHudStoneRelayGuest $session $guest
+Check ($session.EngineMirroringVerified -and $session.InputDisposition.terminal_refusals.Count -eq 1 -and $session.Native.results.Count -eq 2) 'Terminal refusal preserves both controller gameplay proof and exact guest result accounting'
 foreach($invalidResult in @('input_passed','input_failed','completed')){
     $guest=Guest-Proof;$guest.result=$invalidResult
     Reject {Assert-HudStoneLivePreview $guest} 'Controller accepted non-live terminal result'

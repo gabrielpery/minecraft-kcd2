@@ -81,16 +81,20 @@ check passed:** four clicks produced two confirmed cycles in both games, with
 the user's visual confirmation and normal cleanup. It intentionally
 locks KCD mouse look and controls one nearby cell for up to 30 seconds. Free
 aiming and continuous gameplay remain unfinished.
-A separate selective mouse profile is built and installed. Its live check preserved
-place/break and inventory control, but the user confirmed camera movement still
-failed. The second revision also preserves inventory and stone interaction in a
-completed live run, but camera look still fails. Diagnostics now point to the
-separate raw-input helper-window route. Revision 3 repairs that route using the
-actual registered helper and resolved capture owner; it is built, reviewed and
-installed, with live camera verification in progress.
+**Camera look now works alongside Minecraft inventory and stone controls.**
+The user confirms the revision 3 test worked; it completed its full 30-second
+activation, with 276 nonzero DirectInput motion observations passed through and
+three confirmed place/break cycles. The fix admits pure mouse motion through
+ReShade's registered helper-window route while preserving inventory capture.
+Normal cleanup and FPS restoration pass. The original controller result remains
+failed because it expected a Minecraft reply for a final request that the native
+relay explicitly refused after disconnect. The corrected verifier passes a replay
+of the unchanged live evidence. Earlier revisions' camera failures remain recorded.
 The verified camera-locked profile remains available.
 Shared aiming geometry is tested in Java and C++, but live targeting still uses
 the fixed cell until the alignment handshake and vanilla raycast are connected.
+The next host-side piece is implemented: a separate read-only camera/obstruction
+probe with tested Lua and receipt validation. Its live sample remains pending.
 Earlier tools launches crashed during world loading with the renderer unarmed and
 with its hook disabled. A subsequent explicit PowerShell 7 launch reached the world,
 confirmed by the user and a successful two-minute process/HTTP check, with the hook
