@@ -42,6 +42,13 @@ The reviewed native first-close diagnostic build is now
 installed and has supplied the live foreground-loss evidence above. See the
 implementation record in [HUD research](research/HUD-COMPOSITOR.md).
 
+A separate pinned ReShade 6.8.0 full-add-on source build now compiles with recorded
+local generator inputs. It is the prerequisite for extending ReShade's existing
+DirectInput hook to own inventory mouse input; that extension is not implemented
+yet. The running game's renderer remains unchanged. Future prepared packages also
+skip ReShade's persistent first-run tutorial prompt; its brief startup/loading
+splash remains enabled.
+
 **Current build: interactive one-cell stone controls live verified.** KCD console
 commands `minecome_place`/`minecome_break` now request real Minecraft vanilla
 actions through an opt-in minor1 protocol. Both real games now confirm placement

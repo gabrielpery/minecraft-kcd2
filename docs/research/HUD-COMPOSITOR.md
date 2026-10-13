@@ -63,6 +63,39 @@ exited with code 0, and guest presentation/window plus host FPS restoration
 passed. This preserves the earlier working path independently of the richer
 pointer fixture.
 
+## Private ReShade build prerequisite — 2026-10-13
+
+`scripts/Build-CustomReShade.ps1` now builds the pinned 6.8.0 Release/x64
+full-add-on baseline in an isolated workspace checkout. It preserves the original
+`external/reshade` reference and the installed proxy, rejects linked build paths,
+locks all 11 submodule commits, uses a private Python environment, and records
+commands, wheel hashes, generated inputs/outputs, tool versions and licenses.
+Output is explicitly labelled `6.8.0 UNOFFICIAL`; no tracked upstream hook code
+is changed. This is a compiled prerequisite for the DirectInput extension
+described in [KCD input research](KCD-INPUT.md), not an implemented ownership hook.
+
+The initial build compiled but GLAD fetched two platform headers from moving
+upstream branches. Enabling its reproducible mode then exposed an older bundled
+Vulkan XML without `VK_KHR_maintenance9`. The final script generates a narrow,
+recorded process-local resolver: the three XML inputs come from ReShade's pinned
+Khronos files, and platform headers come from the pinned GLAD package. There is
+no network fallback in this generation step. The script also refreshes and
+hash-checks the two extra headers that upstream GLAD preserves across its clean
+target; an intermediate build still retained cached headers until this was fixed.
+The source checkouts remain clean.
+Earlier attempt evidence is retained; the final build supersedes those outputs.
+
+Final evidence:
+`runtime/dependencies/reshade-minecome-6.8.0/evidence/20261013-144246-738fad0aba6d40429d81f011fcd6a1c6`.
+The output is 5,586,944 bytes, SHA256
+`61efb31523f38f3559c3382a55c0678ca2b8c4440706c772aed81e1d39207f5f`,
+version 6.8.0.1, built with VS2022 MSBuild/v143 and Windows SDK 10.0.26100.0.
+The evidence includes 28 license/notice files and all provenance hashes.
+Static inspection confirms x64, add-on registration and DirectInput8Create exports.
+The installed proxy and reference checkout are unchanged. No deployment or game
+launch occurred. Bit-for-bit repeat-build reproducibility and live behavior of
+this locally compiled binary have not been verified.
+
 ## ReShade first-run banner — 2026-10-13
 
 Future bundles now include `[OVERLAY] TutorialProgress=4`. In the pinned ReShade
