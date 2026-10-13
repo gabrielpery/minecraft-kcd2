@@ -15,7 +15,8 @@ $supportedAddonHashes=@('a9bb60999fb526df64b3c61975431aed7c0b85728dc21a30db91b41
     '819499b52971d5027745be24e136b4a428975d108870ee0f70c1edfdf60b69cb')
 $supportedStreamAddonHashes=@('d7ebc92b59f7971998f1eafb5afe433b5bc44b84a272bcfc9840c49e1d1e6fd8')
 $supportedInputAddonHashes=@('d7de884b798c6480efc24981ce409821192a7fcd56f6c2361ff32ec2755eefca',
-    '56fb1cca6806a1cca41c9e1875da56ec1895e9781d0251bf6153d880cbd0bb80')
+    '56fb1cca6806a1cca41c9e1875da56ec1895e9781d0251bf6153d880cbd0bb80',
+    'ef224499d2c5a331e5f8ee011761e4bced2a3709fb2ba3b6471aa598ea07ab74')
 $expected=@('dxgi.dll','ReShade.ini','MineComeHudPreset.ini','ReShade-LICENSE.txt',
     'minecome-hud/addons/MineComeHudCompositor.addon64','minecome-hud/shaders/MineComeHud.fx')
 $utf8=[Text.UTF8Encoding]::new($false,$true)

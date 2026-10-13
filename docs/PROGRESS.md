@@ -28,6 +28,12 @@ and mouse ownership. KCD menu/input exclusivity, mouse interaction, KCD HUD
 suppression and health integration remain unfinished. Earlier failed runs and
 their evidence are preserved below.
 
+The follow-on guest update now handles vanilla drag ownership, wheel sensitivity,
+and button releases across inventory closure. Its changed build passed the real
+31-event fixture again. A reviewed native build adds individual window/focus
+observations to the first-close receipt; it is staged but not installed in the
+still-running KCD process. See the implementation record below.
+
 **Current build: interactive one-cell stone controls live verified.** KCD console
 commands `minecome_place`/`minecome_break` now request real Minecraft vanilla
 actions through an opt-in minor1 protocol. Both real games now confirm placement
@@ -81,6 +87,7 @@ completed its movement/view proof; the new KCD capture path still awaits a live 
 | Continuous vanilla UI transport | Java21/JNA producer, bounded Win32 channel and native receiver built | 168 Java stream checks and 146 native checks pass; existing 36 snapshot checks still pass | Fresh real Minecraft world sent 344 nontransparent frames, four vanilla UI states, pause/resumption and closed marker to standalone receiver; no KCD compositor was armed |
 | Continuous KCD UI compositor | Separate exact-tools D3D12 add-on installed with aspect fit, persistent texture and fenced upload slots | Native contract/lifecycle review and checks pass | Latest live run uploaded 478 frames/submitted 2,001 draws with zero drops; user accepted HUD size. KCD's duplicate HUD remains |
 | Reverse HUD input and background presentation | Separate exact-identity input channel, bounded hidden/offscreen presentation and callback-based focus readiness built | Hidden fixtures pass all 31 events, nine slots, inventory open/close and server-confirmed swap | Ten physical 1/2/9/E/Escape press/release events acknowledged/applied; actual inventory open/close and user-accepted controls. Ownership lasted ~10.47 seconds; full duration, mouse and host exclusivity remain unverified |
+| Inventory pointer lifecycle | Single active drag button, screen-owned releases, vanilla wheel scaling and successful-application counter built | 34 new gesture checks and 353 input checks pass; changed guest passes real 31-event item-swap fixture | Live mouse forwarding remains disabled; drag/split/scroll and replacement-screen callback behavior need a richer real fixture |
 | Temporary host GPU-budget comparison | Shared opt-in Lua/PowerShell helper and live controller integration reviewed | 22 simulated-engine Lua cases and 98 assertions across 11 simulated-console scenarios pass; capped standalone fixture passed | Latest combined live run passed with verified −1→60→−1 restoration through requested End before expiry and timer cancellation |
 
 ## Current artifacts

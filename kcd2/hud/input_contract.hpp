@@ -50,6 +50,10 @@ public:
     bool consumed() const noexcept { return consumed_; }
     bool closed() const noexcept { return closed_; }
     Close close_reason() const noexcept { return reason_; }
+    bool activation_age(std::uint64_t now,std::uint64_t &elapsed) const noexcept {
+        if(!consumed_||now<began_)return false;
+        elapsed=now-began_;return true;
+    }
 private:
     Close reason_=Close::none;
     bool neutral_=false,previous_f8_=false,consumed_=false,closed_=false;

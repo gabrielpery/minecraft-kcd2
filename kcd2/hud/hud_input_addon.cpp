@@ -59,7 +59,19 @@ bool close_receipt(std::string_view run) {
          << ",\"composed\":" << predicate(1) << ",\"overlay_closed\":" << predicate(2)
          << ",\"focus_visible\":" << predicate(4) << ",\"ack_fresh\":" << predicate(32)
          << ",\"ack_snapshot_fresh\":" << predicate(64)
-         << ",\"authorized_keys_held\":" << value.held_keys << ",\"f8_held\":" << (value.f8?"true":"false") << '}';
+         << ",\"authorized_keys_held\":" << value.held_keys << ",\"f8_held\":" << (value.f8?"true":"false")
+         << ",\"window_checks_sampled\":" << value.window.checked << ",\"window_checks_failed\":" << value.window.failed
+         << ",\"runtime_window_matches\":" << value.window.value(ui::WindowCheck::runtime_handle)
+         << ",\"window_handle_valid\":" << value.window.value(ui::WindowCheck::valid_handle)
+         << ",\"window_process_owned\":" << value.window.value(ui::WindowCheck::owned_process)
+         << ",\"window_not_minimized\":" << value.window.value(ui::WindowCheck::not_minimized)
+         << ",\"window_visible\":" << value.window.value(ui::WindowCheck::visible)
+         << ",\"window_is_foreground\":" << value.window.value(ui::WindowCheck::foreground)
+         << ",\"foreground_pid\":";
+    if(value.window.foreground_pid_sampled)line << value.window.foreground_pid;else line << "null";
+    line << ",\"activation_elapsed_ms\":";
+    if(value.activation_age_valid)line << value.activation_age_ms;else line << "null";
+    line << '}';
     reshade::log::message(reshade::log::level::info,line.str().c_str());
     return true;
 }
@@ -268,9 +280,21 @@ bool owned_window(HWND window) {
     DWORD pid=0;
     return window && IsWindow(window) && GetWindowThreadProcessId(window,&pid) && pid == GetCurrentProcessId();
 }
-bool visible(api::effect_runtime *runtime, const RuntimeState &state) {
-    return reinterpret_cast<HWND>(runtime->get_hwnd()) == state.window && owned_window(state.window) &&
-        !IsIconic(state.window) && IsWindowVisible(state.window) && GetForegroundWindow() == state.window;
+bool visible(api::effect_runtime *runtime, const RuntimeState &state,ui::WindowSnapshot *details=nullptr,HWND *observed_foreground=nullptr) {
+    ui::WindowSnapshot discarded;
+    auto &snapshot=details?*details:discarded;
+    // Same predicates and short-circuit order as the previous visibility gate.
+    // PID lookup for a different foreground window is diagnostic-only, and is
+    // performed below only when the gate closes. No app titles are collected.
+    if(!snapshot.record(ui::WindowCheck::runtime_handle,reinterpret_cast<HWND>(runtime->get_hwnd())==state.window))return false;
+    if(!snapshot.record(ui::WindowCheck::valid_handle,state.window&&IsWindow(state.window)))return false;
+    DWORD pid=0;
+    if(!snapshot.record(ui::WindowCheck::owned_process,GetWindowThreadProcessId(state.window,&pid)&&pid==GetCurrentProcessId()))return false;
+    if(!snapshot.record(ui::WindowCheck::not_minimized,!IsIconic(state.window)))return false;
+    if(!snapshot.record(ui::WindowCheck::visible,IsWindowVisible(state.window)!=FALSE))return false;
+    const HWND foreground=GetForegroundWindow();
+    if(observed_foreground)*observed_foreground=foreground;
+    return snapshot.record(ui::WindowCheck::foreground,foreground==state.window);
 }
 void close_keyboard(api::effect_runtime *runtime,ui::CloseCause cause,const ui::CloseSnapshot *snapshot=nullptr) noexcept {
     if(service&&service->input_owner.load(std::memory_order_acquire)==runtime) {
@@ -288,9 +312,11 @@ void capture_keyboard(api::effect_runtime *runtime,RuntimeState &state,bool comp
     for(std::size_t i=0;i<keys.size();++i)if(runtime->is_key_down(keys[i]))held|=1u<<i;
     const auto now=st::steady_ms();
     const auto utc=st::utc_ms();const bool f8=runtime->is_key_down(VK_F8);
+    ui::WindowSnapshot window;HWND observed_foreground=nullptr;
+    const bool window_eligible=visible(runtime,state,&window,&observed_foreground);
     // Diagnostic bits mirror the existing eligibility predicates, with no
     // added grace or refresh: composed/overlay/focus/peer/ACK/observation/end.
-    const std::uint32_t failures=(!composed?1u:0u)|(state.reshade_overlay?2u:0u)|(!visible(runtime,state)?4u:0u)|
+    const std::uint32_t failures=(!composed?1u:0u)|(state.reshade_overlay?2u:0u)|(!window_eligible?4u:0u)|
         ((!peer->live||peer->state>=2)?8u:0u)|(peer->ack.state!=1?16u:0u)|(!ui::fresh(peer->ack.utc,utc)?32u:0u)|
         ((now<peer->observed||now-peer->observed>ui::fresh_ms)?64u:0u)|
         (input_force_close.load(std::memory_order_acquire)?128u:0u)|(service->terminal.load(std::memory_order_acquire)?256u:0u);
@@ -306,8 +332,16 @@ void capture_keyboard(api::effect_runtime *runtime,RuntimeState &state,bool comp
         }
         auto age=[&](std::uint64_t observed){return observed&&now>=observed?now-observed:~std::uint64_t{0};};
         const auto pub=service->publication.load(std::memory_order_acquire);
-        const ui::CloseSnapshot snapshot{cause,failures,composition_stage,held,f8,utc,peer->ack.utc,
+        ui::CloseSnapshot snapshot{cause,failures,composition_stage,held,f8,utc,peer->ack.utc,
             age(peer->observed),pub?age(pub->observation):~std::uint64_t{0},age(state.uploaded_observation),true};
+        snapshot.window=window;
+        // Resolve only the HWND from this gate's actual foreground query. A
+        // disappeared window leaves the PID unknown; no replacement is queried.
+        DWORD foreground_pid=0;
+        if(observed_foreground&&GetWindowThreadProcessId(observed_foreground,&foreground_pid)) {
+            snapshot.window.foreground_pid=foreground_pid;snapshot.window.foreground_pid_sampled=true;
+        }
+        snapshot.activation_age_valid=state.keyboard.activation_age(now,snapshot.activation_age_ms);
         close_keyboard(runtime,cause,&snapshot);return;
     }
     if(step==ui::KeyboardGate::Step::idle)return;

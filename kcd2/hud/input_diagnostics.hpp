@@ -7,12 +7,32 @@ enum class CloseCause : std::uint32_t {
     overlay_open,runtime_reload,runtime_destroy,runtime_lock_contention,callback_exception,
     mailbox_overflow,session_end,render_stale,worker_terminal
 };
+enum class WindowCheck : std::uint32_t {
+    runtime_handle=1,valid_handle=2,owned_process=4,not_minimized=8,visible=16,foreground=32
+};
+struct WindowSnapshot {
+    std::uint32_t checked=0,failed=0,foreground_pid=0;
+    bool foreground_pid_sampled=false;
+    bool record(WindowCheck check,bool passed) noexcept {
+        const auto bit=static_cast<std::uint32_t>(check);
+        checked|=bit;if(!passed)failed|=bit;return passed;
+    }
+    // Preserve short-circuit evidence: an unexecuted Win32 query is unknown,
+    // never a false result. These strings serialize directly as JSON values.
+    const char *value(WindowCheck check) const noexcept {
+        const auto bit=static_cast<std::uint32_t>(check);
+        return !(checked&bit)?"null":(failed&bit)?"false":"true";
+    }
+};
 struct CloseSnapshot {
     CloseCause cause=CloseCause::none;
     std::uint32_t eligibility_failures=0,composition_stage=0,held_keys=0;
     bool f8=false;
     std::uint64_t utc=0,ack_utc=0,ack_observed_age=0,publication_age=0,resident_age=0;
     bool eligibility_sampled=false;
+    WindowSnapshot window;
+    bool activation_age_valid=false;
+    std::uint64_t activation_age_ms=0;
 };
 // Exactly one immutable snapshot per module lifetime. The writing sentinel
 // prevents competing callbacks from racing plain fields. No wait/allocation.

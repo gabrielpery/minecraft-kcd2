@@ -11,46 +11,61 @@ import java.util.*;
 final class HudVanillaUiAdapter {
     private final Object world,player,server;
     private final boolean mouseAllowed;
-    private final Set<Integer> buttons=new HashSet<>(),keys=new HashSet<>();
+    private final Set<Integer> keys=new HashSet<>();
+    private final HudPointerState pointer=new HudPointerState();
+    private Screen pointerScreen;
     private double x=0.5,y=0.5;
     private boolean pointerKnown;
     HudVanillaUiAdapter(MinecraftClient client,boolean mouseAllowed){world=client.world;player=client.player;server=client.getServer();this.mouseAllowed=mouseAllowed;}
     static boolean inventory(Screen screen){return screen instanceof InventoryScreen || screen instanceof CreativeInventoryScreen;}
     private void requireOwned(MinecraftClient client){if(!client.isOnThread() || client.world!=world || client.player!=player || client.getServer()!=server || !client.isIntegratedServerRunning())throw new IllegalStateException("Vanilla UI owner/thread changed");}
     void apply(MinecraftClient client,HudInputProtocol.Event event){
-        requireOwned(client);Screen screen=client.currentScreen;
+        synchronizeScreen(client);Screen screen=client.currentScreen;
         if(screen!=null && !inventory(screen))throw new IllegalStateException("Unowned screen during HUD input");
         if(event.kind()<=2){
             int glfw=event.code()==0x1b?256:event.code();
             if(event.kind()==2){keys.remove(glfw);if(screen!=null)screen.keyReleased(glfw,0,0);return;}
             keys.add(glfw);
-            if(event.code()==0x45){if(screen==null)client.setScreen(new InventoryScreen(client.player));else screen.close();}
-            else if(event.code()==0x1b){if(screen!=null)screen.close();}
+            if(event.code()==0x45){if(screen==null)client.setScreen(new InventoryScreen(client.player));else closeInventory(screen);}
+            else if(event.code()==0x1b){if(screen!=null)closeInventory(screen);}
             else if(screen!=null)screen.keyPressed(glfw,0,0);
             else client.player.getInventory().selectedSlot=event.code()-0x31;
             return;
         }
         if(!mouseAllowed)throw new IllegalStateException("Live mouse forwarding is disabled");
+        if(event.kind()==5 && pointer.awaitingRelease(event.code())){pointer.release(event.code());return;}
         if(screen==null)throw new IllegalStateException("Pointer event without actual vanilla inventory");
         double oldX=logicalX(screen),oldY=logicalY(screen);x=event.x();y=event.y();pointerKnown=true;
         double nextX=logicalX(screen),nextY=logicalY(screen);screen.mouseMoved(nextX,nextY);
         switch(event.kind()){
-            case 3 -> {for(int button:buttons)screen.mouseDragged(nextX,nextY,button,nextX-oldX,nextY-oldY);}
-            case 4 -> {buttons.add(event.code());screen.mouseClicked(nextX,nextY,event.code());}
-            case 5 -> {buttons.remove(event.code());screen.mouseReleased(nextX,nextY,event.code());}
-            case 6 -> screen.mouseScrolled(nextX,nextY,0,event.value());
+            case 3 -> {int button=pointer.activeButton();if(button!=-1)screen.mouseDragged(nextX,nextY,button,nextX-oldX,nextY-oldY);}
+            case 4 -> {pointer.press(event.code());screen.mouseClicked(nextX,nextY,event.code());}
+            case 5 -> {pointer.release(event.code());screen.mouseReleased(nextX,nextY,event.code());}
+            case 6 -> screen.mouseScrolled(nextX,nextY,0,HudPointerState.wheel(event.value(),client.options.getDiscreteMouseScroll().getValue(),client.options.getMouseWheelSensitivity().getValue()));
             default -> throw new IllegalArgumentException("Unexpected UI input kind");
         }
     }
+    void synchronizeScreen(MinecraftClient client){
+        requireOwned(client);Screen current=client.currentScreen;
+        if(current==pointerScreen)return;
+        releasePointerScreen();pointerKnown=false;
+        pointerScreen=inventory(current)?current:null;
+    }
+    private void releasePointerScreen(){
+        var released=pointer.releaseScreen();Screen screen=pointerScreen;pointerScreen=null;
+        if(screen!=null)for(int button:released)screen.mouseReleased(logicalX(screen),logicalY(screen),button);
+    }
+    private void closeInventory(Screen screen){releasePointerScreen();pointerKnown=false;screen.close();}
     void releaseAndClose(MinecraftClient client){
-        if(!client.isOnThread() || client.world!=world || client.player!=player || client.getServer()!=server){buttons.clear();keys.clear();return;}
+        if(!client.isOnThread() || client.world!=world || client.player!=player || client.getServer()!=server){pointer.clear();pointerScreen=null;pointerKnown=false;keys.clear();return;}
         Screen screen=client.currentScreen;
-        if(inventory(screen)){
-            for(int button:buttons)screen.mouseReleased(logicalX(screen),logicalY(screen),button);
-            for(int key:keys)screen.keyReleased(key,0,0);
-            screen.close();
-        }
-        buttons.clear();keys.clear();
+        try{
+            releasePointerScreen();
+            if(inventory(screen)){
+                for(int key:keys)screen.keyReleased(key,0,0);
+                screen.close();
+            }
+        }finally{pointer.clear();pointerScreen=null;pointerKnown=false;keys.clear();}
     }
     private double logicalX(Screen screen){return Math.min(screen.width-0.001,x*screen.width);}
     private double logicalY(Screen screen){return Math.min(screen.height-0.001,y*screen.height);}

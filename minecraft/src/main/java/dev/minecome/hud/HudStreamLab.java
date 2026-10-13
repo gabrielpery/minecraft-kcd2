@@ -53,7 +53,7 @@ public final class HudStreamLab {
     private HudInputReader input;
     private HudVanillaUiAdapter ui;
     private final HudInputGate inputGate=new HudInputGate();
-    private long armedAt;
+    private long armedAt,inputEventsApplied;
     private boolean fixtureTargetsSent,selectedNineVerified,inventoryOpened,inventoryClosed,serverSwapVerified;
     private JsonObject inputEndingProof;
     private String inputFailure;
@@ -332,7 +332,7 @@ public final class HudStreamLab {
             if(offscreenPresentation){restoreOwnedWindow(client);inputEndingProof.add("window_restoration",windowRestoration.deepCopy());if(!windowRestoration.get("restored").getAsBoolean())throw new IllegalStateException("Owned window visibility restoration failed");}
             addOffscreenEvidence(inputEndingProof);
             if(!input.cleanupComplete())throw new IllegalStateException("Input handle cleanup failed");
-            String result=inputFailure!=null?"failed":inputFixture?"input_passed":(armedAt!=0 && inputGate.sequence()>0?"input_completed":"input_cancelled");
+            String result=inputFailure!=null?"failed":inputFixture?"input_passed":(armedAt!=0 && inputEventsApplied>0?"input_completed":"input_cancelled");
             terminalResult=result;output.finish(result,inputEndingProof);terminal=true;terminalAt=now;return;
         }
         if(input==null && output.publishedFrames()>0){
@@ -340,6 +340,7 @@ public final class HudStreamLab {
             input=new HudInputReader(wire);input.start();
         }
         if(input==null)return;
+        ui.synchronizeScreen(client);
         if(offscreenPresentation && (client.options.getMaxFps().getValue()!=OFFSCREEN_FPS || client.getWindow().getFramerateLimit()!=OFFSCREEN_FPS))throw new IllegalStateException("Owned offscreen frame cap changed");
         boolean inventory=HudVanillaUiAdapter.inventory(client.currentScreen);
         if(client.currentScreen!=null && !inventory)throw new IllegalStateException("Unexpected screen in owned UI lab");
@@ -375,7 +376,7 @@ public final class HudStreamLab {
                     observeHiddenWindow(client);
                     if(!hiddenClientUnfocused(client))throw new IllegalStateException("Owned window focus/visibility changed before input");
                 }
-                inputGate.apply(event,System.currentTimeMillis());ui.apply(client,event);
+                inputGate.apply(event,System.currentTimeMillis());ui.apply(client,event);inputEventsApplied++;
                 if(offscreenPresentation)hiddenUnfocusedEvents++;
                 if(offscreenTrial){if(client.isWindowFocused())offscreenFocusedEvents++;else offscreenUnfocusedEvents++;}
             }
@@ -396,12 +397,12 @@ public final class HudStreamLab {
     }
     private void finishInput(MinecraftClient client,long now,String reason){
         var proof=new JsonObject();proof.addProperty("input_fixture",inputFixture);proof.addProperty("input_armed",armedAt!=0);proof.addProperty("end_reason",reason);
-        proof.addProperty("host_armed",armedAt!=0);proof.addProperty("input_events_applied",inputGate.sequence());
+        proof.addProperty("host_armed",armedAt!=0);proof.addProperty("input_events_applied",inputEventsApplied);proof.addProperty("input_consumed_sequence",inputGate.sequence());
         proof.addProperty("input_delay_fixture",inputDelayFixture);proof.addProperty("withheld_ready_ack_ticks",withheldReadyTicks);proof.addProperty("prearm_ineligible_ticks",prearmIneligibleTicks);
         proof.addProperty("prearm_ack_delay_start_utc_ms",prearmDelayStartUtc);proof.addProperty("prearm_ack_delay_end_utc_ms",prearmDelayEndUtc);proof.addProperty("prearm_ack_delay_ms",prearmDelayEndUtc-prearmDelayStartUtc);
         proof.addProperty("captured_server_confirmed",capturedServerConfirmed);proof.addProperty("captured_server_pending",capturedServerPending);
         proof.addProperty("server_swap_verified",serverSwapVerified);proof.addProperty("inventory_opened",inventoryOpened);proof.addProperty("inventory_closed",inventoryClosed);proof.addProperty("selected_nine_verified",selectedNineVerified);
-        proof.addProperty("events_applied",inputGate.sequence());proof.addProperty("capture_width",layout.width());proof.addProperty("capture_height",layout.height());proof.addProperty("vanilla_gui_scale",layout.guiScale());
+        proof.addProperty("events_applied",inputEventsApplied);proof.addProperty("capture_width",layout.width());proof.addProperty("capture_height",layout.height());proof.addProperty("vanilla_gui_scale",layout.guiScale());
         proof.addProperty("new_world",true);proof.addProperty("real_creative_packets",true);proof.addProperty("normal_vanilla_render_path",true);proof.addProperty("normal_shutdown_requested",true);
         proof.add("final_client_slots",jsonSlots(slots(client.player.getInventory())));Observation observation=server.get();if(observation!=null)proof.add("final_server_slots",jsonSlots(observation.slots()));
         if(inputDelayFixture && inputFailure==null){
@@ -410,7 +411,7 @@ public final class HudStreamLab {
         }else stopInput(client);
         proof.addProperty("controls_released",inputGate.heldKeyCount()==0 && inputGate.heldButtonCount()==0);
         inputEndingProof=proof;terminalAt=now;
-        LOG.info("HUD_INPUT_TERMINAL run={} reason={} events={} serverSwapVerified={}",identity.run(),reason,inputGate.sequence(),serverSwapVerified);
+        LOG.info("HUD_INPUT_TERMINAL run={} reason={} events={} serverSwapVerified={}",identity.run(),reason,inputEventsApplied,serverSwapVerified);
     }
     private static boolean swapped(List<Slot> local){
         if(local.size()!=9)return false;

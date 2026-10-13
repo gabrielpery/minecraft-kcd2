@@ -12,6 +12,59 @@ close trigger. Full-session behavior, mouse ownership, KCD menu exclusivity,
 host HUD suppression and health integration remain unfinished. Detailed evidence
 and the earlier failed runs are recorded below.
 
+## Inventory pointer lifecycle and first-close diagnostics — 2026-10-13
+
+The guest now follows pinned Minecraft 1.21.1's single active drag button instead
+of dragging every held button. Closing or replacing inventory releases buttons
+against their original Screen; later physical ups are consumed without releasing
+a newly opened screen. Wheel events apply the actual discrete-scroll and mouse
+wheel sensitivity options before calling vanilla `mouseScrolled`. The consumed
+input sequence and successfully applied event count are recorded separately, so
+a rejected UI call cannot inflate the applied count. No new transport or live
+mouse flag was introduced.
+
+Independent source reviews passed for the guest and native changes. The guest's
+34 new pure gesture checks and 353 input checks pass; its remapped JAR is
+`f4d613b0d382bcb70df5ea2c39c49a39427fc94f6e81dc7086cc5e7b48233617`.
+The real 31-event fixture also passes in
+`runtime/evidence/hud-input-20261013-124127-3beccc22f27543c785251f91308bb54b`:
+203 published frames, all nine selections, actual Creative inventory open/close,
+and matching fresh client/server item swap. All 31 events were applied while the
+guest was hidden and unfocused; cleanup and normal exit passed. The temporary
+host cap comparison in
+`runtime/evidence/hud-gpu-budget-20261013-134126-ab67a4427623439bb7219cd76f5b0b47`
+verified restoration to the original uncapped setting. This fixture covers the
+existing click sequence; it does not claim real drag/split/scroll verification or
+KCD input exclusivity.
+
+The native first-close receipt now separates runtime HWND match, valid HWND,
+owned process, non-minimized state, visibility and foreground status. Skipped
+short-circuit observations are null, not false. Foreground PID is resolved only
+from the actual observed foreground HWND when closure occurs; no window titles
+are collected. The snapshot also records elapsed time since F8 activation.
+Ownership rules, single-session lifetime and 250 ms freshness limits are unchanged.
+The focused native contract/channel suite passed 294 checks, including slot/E/Esc
+ownership and immutable first-close context. Add-on SHA256
+`ef224499d2c5a331e5f8ee011761e4bced2a3709fb2ba3b6471aa598ea07ab74` is staged in
+`runtime/hud-compositor-input-close-diagnostics`, with its exact hash supported
+by the owned update script. The current KCD process still has the earlier waitfix
+build loaded; a normal close/update/restart is required for these diagnostics.
+
+Pointer capture must still address host input ownership, as the reference projects
+do. Pinned ReShade implementation returns client coordinates despite its header
+describing screen coordinates, and maps mouse indexes 0/1/2 to left/right/middle.
+Its DirectInput8 `GetDeviceState` suppression preserves X/Y/wheel axes. Thus public
+blocking alone does not establish camera/wheel isolation in KCD. EldenCraft also
+disables its exact live pad polling; SkyCraft filters its host player/menu consumers.
+Neither foreign engine hook can be copied into KCD. The paired KCD ownership API
+remains unresolved; see [the KCD input research](KCD-INPUT.md).
+
+Primary inspected sources:
+[ReShade coordinates](https://github.com/crosire/reshade/blob/18deaa52de0c425a78b329e9cb3c497281cd00ec/source/input_windows.cpp#L162-L169),
+[DirectInput8 suppression](https://github.com/crosire/reshade/blob/18deaa52de0c425a78b329e9cb3c497281cd00ec/source/windows/dinput8.cpp#L18-L70),
+[EldenCraft input ownership](https://github.com/SocketByte/EldenCraft/blob/ba7591cdde9fb16e17552cfe53546f44d0fd856e/native/src/input_capture.rs#L46-L94),
+[SkyCraft input ownership](https://github.com/chasmlol/SkyCraft/blob/bfcaf178524b92c2cdeb88e4ce0f13ef9ded6f32/skse/src/Input.cpp#L112-L247).
+
 ## Inspected implementations
 
 - [SkyCraft FrameExporter](https://github.com/chasmlol/SkyCraft/blob/bfcaf178524b92c2cdeb88e4ce0f13ef9ded6f32/fabric/src/client/java/dev/skycraft/client/FrameExporter.java)

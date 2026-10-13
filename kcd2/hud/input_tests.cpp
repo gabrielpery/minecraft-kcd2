@@ -75,10 +75,36 @@ void contract() {
     check(early.close_reason()==ui::KeyboardGate::Close::key_during_settle,"early key discriminated");
     ui::KeyboardGate again;again.update(true,false,0,100);again.update(true,true,0,101);again.update(true,false,0,102);
     check(again.update(true,true,0,103)==ui::KeyboardGate::Step::closed&&again.close_reason()==ui::KeyboardGate::Close::second_f8,"second F8 discriminated");
+    // Regression for the successful live sequence: E/Esc and slot changes are
+    // ordinary forwarded keys, not ownership-ending commands after settling.
+    ui::KeyboardGate inventory;std::uint64_t elapsed=999;
+    check(!inventory.activation_age(100,elapsed)&&elapsed==999,"unarmed activation age is unknown without mutation");
+    inventory.update(true,false,0,100);inventory.update(true,true,0,101);
+    inventory.update(true,false,0,102);inventory.update(true,false,0,103);
+    for(const auto keys:{1u,0u,1u<<8,0u,1u<<9,0u,1u<<10,0u})
+        check(inventory.update(true,false,keys,10474)==ui::KeyboardGate::Step::active,"slot E and Esc sequence keeps keyboard ownership");
+    check(inventory.activation_age(10474,elapsed)&&elapsed==10373,"activation age is elapsed since F8 not latest event");
+    check(!inventory.activation_age(100,elapsed),"regressed diagnostic clock remains unknown");
+    check(inventory.update(false,false,0,10475)==ui::KeyboardGate::Step::closed&&inventory.close_reason()==ui::KeyboardGate::Close::ineligible,"only failed eligibility closes post-inventory gate");
+    check(inventory.activation_age(10475,elapsed)&&elapsed==10374,"terminal diagnostic retains original activation time");
+    ui::WindowSnapshot window;
+    check(std::string_view(window.value(ui::WindowCheck::foreground))=="null","unobserved foreground is unknown not false");
+    for(const auto bit:{ui::WindowCheck::runtime_handle,ui::WindowCheck::valid_handle,ui::WindowCheck::owned_process,ui::WindowCheck::not_minimized,ui::WindowCheck::visible})
+        window.record(bit,true);
+    window.record(ui::WindowCheck::foreground,false);
+    check(window.checked==63&&window.failed==32,"foreground loss differs from valid owned visible host window");
+    check(std::string_view(window.value(ui::WindowCheck::foreground))=="false"&&std::string_view(window.value(ui::WindowCheck::owned_process))=="true","different foreground keeps actual owned process evidence");
+    ui::WindowSnapshot minimized;minimized.record(ui::WindowCheck::not_minimized,false);
+    check(std::string_view(minimized.value(ui::WindowCheck::not_minimized))=="false"&&std::string_view(minimized.value(ui::WindowCheck::visible))=="null","short-circuit minimization does not fabricate later visibility");
     ui::FirstClose first;ui::CloseSnapshot snapshot,outcome;
     check(!first.read(outcome),"close latch initially empty");snapshot.cause=ui::CloseCause::runtime_lock_contention;snapshot.utc=123;
     check(first.publish(snapshot),"first close captured");snapshot.cause=ui::CloseCause::session_end;snapshot.utc=456;
     check(!first.publish(snapshot)&&first.read(outcome)&&outcome.utc==123&&outcome.cause==ui::CloseCause::runtime_lock_contention,"later close cannot obscure first cause");
+    ui::FirstClose detailed; snapshot.window=window;snapshot.window.foreground_pid=42;snapshot.window.foreground_pid_sampled=true;
+    snapshot.activation_age_valid=true;snapshot.activation_age_ms=10473;
+    check(detailed.publish(snapshot),"detailed first-close context published");
+    snapshot.window.foreground_pid=99;snapshot.window.failed=0;snapshot.activation_age_ms=30000;
+    check(!detailed.publish(snapshot)&&detailed.read(outcome)&&outcome.window.failed==32&&outcome.window.foreground_pid==42&&outcome.window.foreground_pid_sampled&&outcome.activation_age_ms==10473,"later terminal evidence cannot overwrite first window or activation context");
     const auto j=ui::json::Parser("{\"value\":\"134999999999999999\",\"array\":[true,0.25],\"escaped\":\"C:\\\\x\"}").parse();
     check(j.at("value").integer()==134999999999999999ULL&&j.at("array").array[0].boolean()&&j.at("array").array[1].real()==.25f,"bounded JSON precise receipt");
     for(const auto text:{"{\"x\":1,\"x\":2}","{\"x\":01}","[1,]","{\"x\":NaN}","{} trailing","\"\\ud800\""}) {
