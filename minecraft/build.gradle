@@ -28,6 +28,8 @@ loom {
                 vmArgs '-Dminecome.hudStoneBridge=true'
             if (project.hasProperty('minecomeHudStoneFixture'))
                 vmArgs '-Dminecome.hudStoneFixture=true'
+            if (project.hasProperty('minecomeHudStoneLive'))
+                vmArgs '-Dminecome.hudStoneLive=true'
             if (project.hasProperty('minecomeHudStreamInputDelayFixture'))
                 vmArgs '-Dminecome.hudStreamInputDelayFixture=true'
             if (project.hasProperty('minecomeHudStreamBackgroundTrial'))
@@ -205,6 +207,12 @@ tasks.register('hudStoneProofTest', JavaExec) {
     dependsOn testClasses
     classpath = sourceSets.test.runtimeClasspath
     mainClass = 'dev.minecome.hud.HudStoneProofTests'
+}
+
+tasks.register('hudStoneModeTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'dev.minecome.hud.HudStoneModeTests'
 }
 
 tasks.register('hudEvidenceWriterTest', JavaExec) {

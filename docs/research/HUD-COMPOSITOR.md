@@ -15,6 +15,92 @@ restoration verified. The separate strict mouse profile has now completed a full
 host-HUD appearance, general input exclusivity and health integration remain unverified. Detailed evidence
 and the earlier failed runs are recorded below.
 
+## Combined live relay controller — 2026-10-13
+
+**Live result:** run `a80522b281a64a238e8d66a61dee7fbe` passed in official KCD PID
+49776. The user answered "i indeed saw both" to the combined hotbar/stone preview.
+Actual guest request IDs 1/2 each returned accepted and had fresh client/server
+confirmation (33/32 ms server ages). Minecraft cell `(2,-60,-10)` was mirrored at
+approximately KCD `(121.20,2045.23,56.29)`. Native session `1791906257712605`
+acknowledged spawn sequence429, removal sequence640 and final cleanup with zero
+owned/pending entities. The guest ended with air, no pending action and no failures.
+
+The guest published 577 genuine frames; KCD uploaded 559, submitted 2,330 draws and
+dropped zero uploads. Both physical `1` key edges were applied and acknowledged.
+No inventory pointer actions were requested or claimed. Native input ended after
+18.375 seconds when KCD lost foreground; ACKs remained fresh and the resident image
+was 47 ms old. The block cycle had already completed. This verifies the combined
+cycle and focus-loss cleanup, not a full thirty-second activation.
+
+The exact owned guest window remained hidden under `hidden_until_process_exit`,
+then the controller observed actual Java exit0. The relay also exited0 after its
+cleanup ACK. The temporary host FPS cap restored from60 to its original -1 and
+cancelled its timer. These are live shutdown diagnostics; no separate no-popup or
+inventory-smoothness judgment was requested. KCD remains running. Evidence,
+run-scoped native logs and the verbatim user report are under
+`runtime/evidence/hud-input-20261013-154322-a80522b281a64a238e8d66a61dee7fbe`.
+Machine-only receipts retain `visual_verified=false`; `live-analysis.json` records
+the separate user observation.
+
+The new explicit `-StoneLive` profile connects the existing `HudStoneBridge` in the
+HUD world to the original native official-tools relay. It requires Live mode,
+the mouse profile, offscreen presentation and the temporary 60 FPS host budget;
+fixture modes remain mutually exclusive. Java and readiness/arming metadata
+independently enforce those choices. The installed renderer is unchanged.
+
+`HudStoneRelay.ps1` checks the pinned KCD executable, process identity, loopback
+owner and staged Lua/stone package. It reloads a unique read-only source snapshot
+through the existing engine API and verifies the changed function and token/input
+contracts. The existing native relay starts with a new evidence-local home and
+random token, a bounded deadline and an owned stop file. It never starts or stops
+KCD. The same actual Minecraft instance produces UI pixels and block events.
+
+The controller waits for that run's physical F8 activation and the exact HUD save's
+authenticated stone readiness. After two seconds it calls the existing Lua
+`InteractiveIntent(1)` through the console API, without typing into the game.
+Both actual Minecraft confirmation and matching KCD spawn event/ACK must arrive.
+After ten seconds of confirmed dwell it sends the break intent. Dispatch stops
+after twenty seconds or observed HUD closure; the normal thirty-second input
+limit remains. The preview expects one accepted placement and one accepted break.
+It does not forward physical world mouse clicks or introduce new targeting.
+
+For this block preview, pressing `1` after F8 provides an actual UI event and keeps
+stone selected. Inventory mouse gestures are optional; zero pointer events do not
+claim mouse verification, and neutral pointer cleanup is still required. The
+ordinary mouse test continues to require real pointer events. Keep inventory
+closed and stone selected until the preview finishes.
+
+Completion correlates engine-generated request IDs, protocol results, actual
+client/server confirmations and native engine events for the same cell. It also
+requires authenticated protocol1.1 Minecraft-role transport, native begin/end
+acknowledgements, normal relay/Java exits and host FPS restoration. The relay is
+stopped in `finally` even after startup or arming failure; diagnostic failures do
+not skip the independent host HUD/FPS cleanup. Ambiguous console dispatch is
+recorded once and never retried. Partial engine or guest proof fails the run.
+
+Java compilation/remapping and 2,869 mode, lifecycle, stream and input checks pass.
+PowerShell checks pass 887 controller/shared relay cases, 206 relay lifecycle and
+receipt cases, 385 existing fixture cases and 45 window cleanup cases. The same
+live receipt is exercised through both production validators to keep their
+terminal and mode contracts aligned.
+The original native interactive relay also passes its simulated HTTP/engine/peer
+integration (`runtime/tools-stone-fixture-AgTAMz`). Those are build and standalone
+results; the separate combined live display evidence is recorded above.
+The built JAR SHA256 is
+`880a495c2243773ee807a1e2c7b59d6bdf50ec4a91ba2e3ac3b2f062bee77961`.
+
+The first actual Minecraft regression run
+`3ce29211ba0a4bdcb3cea6698fdcddf6` completed its first placement, then failed because
+the Node test peer read a step file while the native writer still held it. The
+Windows `EBUSY` collision now retries only pending-step reads within the existing
+hard deadline; malformed, oversized, consumed/replayed files and other errors
+still fail. All 136 Node checks pass, including transient and persistent contention.
+The failed receipt is preserved. The subsequent real run
+`27abc962974c423d91021a479407d440` passed all eight UI edges and six requests,
+including four client/server-confirmed changes, 209 genuine frames and normal
+shutdown. Its evidence is in
+`runtime/evidence/hud-input-20261013-153925-27abc962974c423d91021a479407d440`.
+
 ## Combined HUD and stone guest — 2026-10-13
 
 `HudStoneBridge` reuses the HUD lab's exact client world, player, integrated server

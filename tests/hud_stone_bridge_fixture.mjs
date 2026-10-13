@@ -153,6 +153,16 @@ function checkedFile(file, maximum, optional = false) {
   } finally { fs.closeSync(fd); }
 }
 
+export function readPendingStep(file) {
+  try { return checkedFile(file, MAX_JSON, true); }
+  catch (error) {
+    // Windows can expose the name before the native writer releases its handle.
+    // Retry only that sharing collision in the existing bounded polling loop.
+    if (error.code === 'EBUSY') return null;
+    throw error;
+  }
+}
+
 function logReady(directory) {
   const file = path.join(directory, 'client.log');
   let info;
@@ -282,7 +292,7 @@ export async function runFixture(directoryArgument, run, expiresArgument) {
         stepReceipts.push({...receipt, ...(active.event ? {block_event: active.event} : {})}); completed++; active = null;
       }
       if (ready && authenticated && !active && completed < 6) {
-        const name = `stone-step-${completed + 1}.json`, next = checkedFile(file(name), MAX_JSON, true);
+        const name = `stone-step-${completed + 1}.json`, next = readPendingStep(file(name));
         if (next) {
           let document;
           try { document = JSON.parse(utf8.decode(next.data)); } catch { fail('Malformed stone step JSON'); }

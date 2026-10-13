@@ -43,22 +43,28 @@ function Fresh {
         requests=$requests;confirmations=$confirmations;target=[pscustomobject]@{x=2;y=64;z=0}
     }
     return [pscustomobject]@{
-        Guest=[pscustomobject]@{run=$run;result='input_passed';save=$proof.save;ui_input_stone_bridge=$true;ui_input_stone_fixture=$true;lab_evidence=[pscustomobject]@{input_events_applied=8;input_consumed_sequence=8;stone_bridge=$proof;final_client_slots=$clientSlots;final_server_slots=$serverSlots}}
+        Guest=[pscustomobject]@{run=$run;result='input_passed';save=$proof.save;ui_input_stone_bridge=$true;ui_input_stone_fixture=$true;ui_input_stone_live=$false;lab_evidence=[pscustomobject]@{input_events_applied=8;input_consumed_sequence=8;stone_bridge=$proof;final_client_slots=$clientSlots;final_server_slots=$serverSlots}}
         Native=[pscustomobject]@{run=$run;result='passed';stone_fixture=$true;stone_fixture_verified=$true;stone_steps_completed=6;events_sent=8;all_events_acknowledged=$true}
         Peer=[pscustomobject]@{schema=1;run=$run;result='passed';peer_kind='standalone_protocol_fixture';steps=6;block_events=4;auth_verified=$true;synthetic_host_pose=$true;kcd_compositing_verified=$false;physical_input_verified=$false;guest_socket_closed=$true;received_poses=10;fixed_cell=@(2,64,0)}
     }
 }
 foreach($expected in @($false,$true)){
-    $mode=[pscustomobject]@{ui_input_stone_bridge=$expected;ui_input_stone_fixture=$expected}
+    $mode=[pscustomobject]@{ui_input_stone_bridge=$expected;ui_input_stone_fixture=$expected;ui_input_stone_live=$false}
     Assert-HudStoneMode $mode $expected;$script:checks++
     foreach($field in @('ui_input_stone_bridge','ui_input_stone_fixture')){
         foreach($invalid in @((-not $expected),[string]$expected,1,0,$null)){
-            $changed=[pscustomobject]@{ui_input_stone_bridge=$expected;ui_input_stone_fixture=$expected};$changed.$field=$invalid
+            $changed=[pscustomobject]@{ui_input_stone_bridge=$expected;ui_input_stone_fixture=$expected;ui_input_stone_live=$false};$changed.$field=$invalid
             Reject {Assert-HudStoneMode $changed $expected}
         }
-        $changed=[pscustomobject]@{ui_input_stone_bridge=$expected;ui_input_stone_fixture=$expected};$changed.PSObject.Properties.Remove($field)
+        $changed=[pscustomobject]@{ui_input_stone_bridge=$expected;ui_input_stone_fixture=$expected;ui_input_stone_live=$false};$changed.PSObject.Properties.Remove($field)
         Reject {Assert-HudStoneMode $changed $expected}
     }
+    foreach($invalid in @($true,'false',0,1,$null)){
+        $changed=[pscustomobject]@{ui_input_stone_bridge=$expected;ui_input_stone_fixture=$expected;ui_input_stone_live=$invalid}
+        Reject {Assert-HudStoneMode $changed $expected}
+    }
+    $changed=[pscustomobject]@{ui_input_stone_bridge=$expected;ui_input_stone_fixture=$expected}
+    Reject {Assert-HudStoneMode $changed $expected}
 }
 Accept (Fresh)
 foreach($side in @('Guest','Native','Peer')){

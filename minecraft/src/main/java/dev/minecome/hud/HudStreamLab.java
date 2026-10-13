@@ -43,7 +43,7 @@ public final class HudStreamLab {
     private final boolean mouseInputEnabled=HudMousePolicy.enabled(inputMode,inputFixture,liveMouse);
     private final boolean inputDelayFixture=Boolean.getBoolean("minecome.hudStreamInputDelayFixture");
     private final boolean inputPointerFixture=Boolean.getBoolean("minecome.hudStreamInputPointerFixture");
-    private final boolean stoneMode=Boolean.getBoolean("minecome.hudStoneBridge"),stoneFixture=Boolean.getBoolean("minecome.hudStoneFixture");
+    private final boolean stoneMode=Boolean.getBoolean("minecome.hudStoneBridge"),stoneFixture=Boolean.getBoolean("minecome.hudStoneFixture"),stoneLive=Boolean.getBoolean("minecome.hudStoneLive");
     private final boolean backgroundTrial=Boolean.getBoolean("minecome.hudStreamBackgroundTrial");
     private final boolean offscreenPresentation=Boolean.getBoolean("minecome.hudStreamOffscreenPresentation"),offscreenTrial=Boolean.getBoolean("minecome.hudStreamOffscreenTrial");
     private final long initializedAt=System.nanoTime();
@@ -119,9 +119,8 @@ public final class HudStreamLab {
         if(lab.backgroundTrial && (!lab.inputFixture || lab.inputDelayFixture))throw new IllegalArgumentException("Background trial requires input fixture without deliberate ACK delay");
         if(lab.offscreenPresentation && (!lab.inputMode || lab.backgroundTrial || lab.inputDelayFixture))throw new IllegalArgumentException("Offscreen presentation requires input lab without background A/B or delayed ACK trial");
         if(lab.offscreenTrial && (!lab.offscreenPresentation || !lab.inputFixture || lab.inputDelayFixture || lab.backgroundTrial))throw new IllegalArgumentException("Offscreen trial requires exclusive offscreen input fixture");
-        if(lab.stoneMode && (!lab.stoneFixture || !lab.inputMode || !lab.inputFixture || !lab.offscreenTrial || lab.inputPointerFixture || lab.inputDelayFixture || lab.backgroundTrial || lab.liveMouse))
-            throw new IllegalArgumentException("Combined HUD stone mode currently requires its separate offscreen standalone fixture");
-        if(lab.stoneFixture && !lab.stoneMode)throw new IllegalArgumentException("Stone fixture requires combined stone bridge");
+        HudStoneMode.require(lab.stoneMode,lab.stoneFixture,lab.stoneLive,lab.inputMode,lab.inputFixture,lab.offscreenPresentation,
+                lab.offscreenTrial,lab.inputPointerFixture,lab.inputDelayFixture,lab.backgroundTrial,lab.liveMouse);
         ClientTickEvents.START_CLIENT_TICK.register(lab::timingTick);
         ClientTickEvents.END_CLIENT_TICK.register(lab::tick);ServerTickEvents.END_SERVER_TICK.register(lab::observe);
         ClientLifecycleEvents.CLIENT_STOPPING.register(client->{

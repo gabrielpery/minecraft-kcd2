@@ -18,8 +18,26 @@ requests: two placements, two breaks, and placement refusals for dirt selection
 and an open inventory. All four changes had fresh client/server agreement; the
 target ended as air, inventory stayed unchanged and Java exited normally.
 The host peer was synthetic and KCD was closed. Live arming explicitly rejects
-this fixture; connecting the combined guest to the real KCD relay is unfinished.
+this fixture. The follow-on explicit `-StoneLive` controller now connects the same
+guest to the real relay and verifies owned cleanup; its combined live check passes below.
 See [combined guest evidence](research/HUD-COMPOSITOR.md#combined-hud-and-stone-guest--2026-10-13).
+
+**Combined live controller implemented and built:** after physical F8 activation,
+it sends one stone intent through KCD's existing console API, waits for both actual
+Minecraft confirmation and a KCD engine spawn acknowledgement, then requests a break
+after ten seconds. Exact process/session checks, an owned token, immutable deadline,
+matching guest/native receipts and graceful relay cleanup are required. A fresh
+standalone real-Minecraft regression passed after fixing a transient Windows file
+sharing collision in the test peer.
+
+**Combined live HUD and blocks verified:** run `a80522b281a64a238e8d66a61dee7fbe`
+passes, and the user confirmed seeing both the HUD and stone appearance/removal.
+The same guest's selected stone produced one client/server-confirmed place and
+break; KCD acknowledged spawn, removal and zero-owned cleanup in one session.
+The guest published 577 frames; KCD uploaded 559 and submitted 2,330 draws with no
+upload drops. Java and relay exited normally, and the temporary 60 FPS cap restored
+to -1. Focus loss ended input after 18.375 seconds, after the block cycle completed;
+this is not another full 30-second test. Physical world-click actions remain unfinished.
 
 **Current UI milestone: live Minecraft inventory mouse control inside KCD2.**
 The user confirms the physical test worked. All 639 events were acknowledged,
@@ -33,7 +51,8 @@ The user noticed the guest window reappearing and lag during shutdown; cleanup
 restored visibility before the seven-second save/exit path. The repair is now
 compiled and independently reviewed: the explicit live-mouse guest stays hidden
 through exit, with truthful cleanup evidence and actual Java exit verification.
-Its automated checks pass; the absence of a popup still awaits the next live run.
+Its automated checks and live hidden-window/process-exit diagnostics now pass in
+the combined stone run. A separate user judgment of no-popup behavior was not requested.
 
 **Inventory responsiveness:** mouse-enabled offscreen inventory now captures once
 per rendered frame under the existing 30 FPS guest cap. A real isolated Minecraft
@@ -42,8 +61,8 @@ inventory captures averaged 32.9 ms apart (about 30 Hz), while hotbar captures k
 their existing cadence. All 692 focused Java checks and review pass. There were
 no readback busy skips or fence-timeout polls; Minecraft exited normally. This is
 standalone evidence, not a KCD display-rate or end-to-end latency measurement.
-The next combined session still needs to confirm perceived smoothness and the
-earlier hidden-exit repair. See the dated evidence in
+The next inventory session still needs to confirm perceived smoothness. The
+combined stone run verifies hidden-exit diagnostics without opening inventory. See the dated evidence in
 [HUD research](research/HUD-COMPOSITOR.md#inventory-capture-cadence--2026-10-13).
 
 **Earlier keyboard milestone and accepted HUD size:** The user accepted the sizing in the earlier run
@@ -150,9 +169,9 @@ completed its movement/view proof; the new KCD capture path still awaits a live 
 | Continuous vanilla UI transport | Java21/JNA producer, bounded Win32 channel and native receiver built | 168 Java stream checks and 146 native checks pass; existing 36 snapshot checks still pass | Fresh real Minecraft world sent 344 nontransparent frames, four vanilla UI states, pause/resumption and closed marker to standalone receiver; no KCD compositor was armed |
 | Continuous KCD UI compositor | Separate exact-tools D3D12 add-on installed with aspect fit, persistent texture and fenced upload slots | Native contract/lifecycle review and checks pass | Latest live run uploaded 471 frames/submitted 1,973 draws with zero drops; earlier user-accepted HUD size preserved. KCD's duplicate HUD remains |
 | Reverse HUD input and background presentation | Separate exact-identity input channel, bounded hidden/offscreen presentation and callback-based focus readiness built | Hidden fixtures pass all 31 events, nine slots, inventory open/close and server-confirmed swap | Ten physical 1/2/9/E/Escape press/release events acknowledged/applied; user confirms controls worked with no KCD menu. The later mouse run completed the full 30 seconds; general host exclusivity remains unverified |
-| Render-driven inventory capture | Mouse-enabled offscreen inventory captures once per rendered frame with the existing 30 FPS cap; hotbar timer unchanged | 45 cadence checks plus 647 pointer/stream/input/cleanup checks pass; actual 43-event Minecraft fixture measured mean 32.9 ms inventory capture intervals with no PBO busy skips/timeouts | Updated capture cadence and hidden-exit behavior await the next combined KCD session |
+| Render-driven inventory capture | Mouse-enabled offscreen inventory captures once per rendered frame with the existing 30 FPS cap; hotbar timer unchanged | 45 cadence checks plus 647 pointer/stream/input/cleanup checks pass; actual 43-event Minecraft fixture measured mean 32.9 ms inventory capture intervals with no PBO busy skips/timeouts | Updated inventory cadence awaits a live inventory check; the combined stone run verifies hidden-exit diagnostics and normal Java exit |
 | Inventory pointer lifecycle | Single active drag button, screen-owned releases, vanilla wheel scaling and explicit live opt-in built | 45 pointer policy/state, 192 stream/receipt and 353 input checks pass; actual hidden 43-event fixture verifies splitting/drag/scroll/held-close at 11 stages | User-confirmed physical mouse interaction; 635 pointer events and actual click/drag/wheel callbacks applied |
-| Combined HUD and stone guest | Existing HUD world and selection drive vanilla stone interactions; Fabric/native fixture built | Actual Minecraft passed eight UI events, six authenticated requests, two placements/two breaks with client/server agreement and two exact placement refusals; unchanged inventory, restored cell and normal exit | Standalone synthetic host only; live combined relay and physical block controls remain unfinished |
+| Combined HUD and stone guest | Existing HUD world and selection drive vanilla stone interactions; explicit live relay controller and guest profile built | Actual Minecraft passed eight UI events, six authenticated requests, two placements/two breaks with client/server agreement and two exact placement refusals; unchanged inventory, restored cell and normal exit. Live controller lifecycle/receipt tests and native relay integration pass separately | User confirmed combined HUD and stone appearance/removal. One real client/server place/break matched KCD spawn/remove/cleanup, with normal Java/relay exit and restored FPS. Physical block controls remain unfinished |
 | Host inventory mouse capture | Original pinned ReShade hook, API, add-on and cursor shader built; exact bundle installed | 56 native capture/SDK adapter checks, 95 forwarding/diagnostic checks, 338 input checks and both FX compilations pass; 23 profile/rollback checks pass in PS5.1 and PS7 | Full 30-second live activation, 1,535 immediate suppressions/drains and zero drain failures; final drain completion/general exclusivity not independently verified |
 | Temporary host GPU-budget comparison | Shared opt-in Lua/PowerShell helper and live controller integration reviewed | 22 simulated-engine Lua cases and 98 assertions across 11 simulated-console scenarios pass; capped standalone fixture passed | Latest combined live run passed with verified −1→60→−1 restoration through requested End before expiry and timer cancellation |
 | Bounded host HUD suppression | Opt-in `-HideHostHud` in the Live input lab; documented whole-HUD CVar, engine-timer writes and independent finally restoration | 29 simulated-engine Lua cases and 397 controller checks pass, including both HUD/FPS cleanup after failure | Actual tools `wh_ui_ShowHud` readback passes 1→0→1 and timer cancellation. Combined visual scope, subtitles/dialogue behavior and health integration remain unverified |

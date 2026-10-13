@@ -2,11 +2,12 @@
 # Original bounded stream arm. Input mode still requires a physical F8 latch.
 # No game launch, movement or process injection.
 [CmdletBinding()]
-param([string]$ReadyManifest, [string]$BundleDirectory, [switch]$PreflightOnly, [switch]$InputMode, [switch]$OffscreenPresentation, [switch]$LiveMouse)
+param([string]$ReadyManifest, [string]$BundleDirectory, [switch]$PreflightOnly, [switch]$InputMode, [switch]$OffscreenPresentation, [switch]$LiveMouse, [switch]$StoneLive)
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 if($OffscreenPresentation -and -not $InputMode){throw 'Offscreen presentation requires explicit input mode.'}
 if($LiveMouse -and (-not $InputMode -or -not $OffscreenPresentation)){throw 'Live mouse requires explicit input mode and offscreen presentation.'}
+if($StoneLive -and (-not $LiveMouse -or -not $InputMode -or -not $OffscreenPresentation)){throw 'Combined stone arming requires the explicit live mouse profile.'}
 . (Join-Path $PSScriptRoot 'KcdToolsProbeHelpers.ps1')
 $root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $runtimeRoot=Join-Path $root 'runtime'
@@ -88,8 +89,10 @@ if($InputMode){
     if($ready.PSObject.Properties.Name -notcontains 'ui_input_offscreen_presentation' -or $ready.ui_input_offscreen_presentation -isnot [bool] -or $ready.ui_input_offscreen_presentation -ne [bool]$OffscreenPresentation){throw 'Offscreen presentation requires matching explicit input mode.'}
     if($ready.PSObject.Properties.Name -notcontains 'ui_input_pointer_fixture' -or $ready.ui_input_pointer_fixture -isnot [bool] -or $ready.ui_input_pointer_fixture -ne $false){throw 'Pointer fixture cannot arm live KCD input.'}
     if($ready.PSObject.Properties.Name -notcontains 'ui_input_live_mouse' -or $ready.ui_input_live_mouse -isnot [bool] -or $ready.ui_input_live_mouse -ne [bool]$LiveMouse){throw 'Live mouse requires matching explicit guest readiness.'}
-    foreach($field in @('ui_input_stone_bridge','ui_input_stone_fixture')){
-        if($ready.PSObject.Properties.Name -contains $field -and ($ready.$field -isnot [bool] -or $ready.$field -ne $false)){throw 'Combined HUD stone fixture cannot arm live KCD input.'}
+    foreach($field in @('ui_input_stone_bridge','ui_input_stone_fixture','ui_input_stone_live')){
+        $expectedStone=$field -ne 'ui_input_stone_fixture' -and [bool]$StoneLive
+        if($ready.PSObject.Properties.Name -notcontains $field){if($StoneLive){throw 'Live stone readiness marker missing.'};continue}
+        if($ready.$field -isnot [bool] -or $ready.$field -ne $expectedStone){throw 'Combined HUD stone readiness does not match explicit live mode.'}
     }
 }
 elseif($ready.PSObject.Properties.Name -contains 'ui_input_protocol'){throw 'Input producer requires explicit InputMode.'}
@@ -108,6 +111,7 @@ $hash=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).T
 $evidenceDirectory=[IO.Path]::GetDirectoryName($ReadyManifest)
 $receipt=[ordered]@{schema=1;kind='minecome_hud_stream_arm_v1';run=$ready.run;game_pid=$context.GamePid;game_start_filetime=$start;producer_pid=$ready.producer_pid;producer_start_filetime=$ready.producer_start_filetime;expires_utc_ms=$ready.expires_utc_ms;arm_path=$armPath;arm_sha256=$hash;bundle=$BundleDirectory;addon_sha256=$addonRecord.sha256;visual_verified=$false;interactive_inventory_verified=$false;game_launched=$false}
 $receipt.live_mouse=[bool]$LiveMouse
+$receipt.stone_live=[bool]$StoneLive
 $receiptPath=Join-Path $evidenceDirectory 'stream-arming.json'
 if(Test-Path -LiteralPath $receiptPath) {throw 'Existing stream arm receipt preserved.'}
 $receipt | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $receiptPath -Encoding utf8NoBOM

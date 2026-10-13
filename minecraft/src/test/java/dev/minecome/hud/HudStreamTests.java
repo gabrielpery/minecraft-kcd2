@@ -77,6 +77,7 @@ public final class HudStreamTests {
         }finally{p.close();p.awaitFinished(3000);api.UnmapViewOfFile(view);api.CloseHandle(mutex);api.CloseHandle(map);}
         var noMapping=api.OpenFileMapping(WinNT.FILE_MAP_READ,false,liveId.mappingName());check(noMapping==null,"all mapping handles released");if(noMapping!=null)api.CloseHandle(noMapping);
         mouseModeReceipts(root,parent);
+        stoneModeReceipts(root,parent);
         System.out.println("HudStreamTests: "+checks+" checks passed; original Win32 transport fixture, no games launched; evidence="+parent);
     }
     private static void mouseModeReceipts(Path root,Path parent)throws Exception {
@@ -92,6 +93,7 @@ public final class HudStreamTests {
                     var ready=JsonParser.parseString(Files.readString(parent.resolve(child+"/stream-ready.json"))).getAsJsonObject();
                     check(ready.get("ui_input_live_mouse").getAsJsonPrimitive().isBoolean() && ready.get("ui_input_live_mouse").getAsBoolean()==live,"ready receipt records explicit live mouse mode");
                     check(ready.get("ui_input_fixture").getAsBoolean()==(mode==2),"fixture identity stays separate from live opt-in");
+                    check(!ready.get("ui_input_stone_live").getAsBoolean() && !ready.get("ui_input_stone_bridge").getAsBoolean(),"ordinary input does not opt into stone live mode");
                     producer.finish("fixture",null);check(producer.awaitFinished(3000) && producer.failure()==null,"transport-only mode check closes normally");
                     var terminal=JsonParser.parseString(Files.readString(parent.resolve(child+"/stream-result.json"))).getAsJsonObject();
                     check(terminal.get("ui_input_live_mouse").getAsBoolean()==live && terminal.get("result").getAsString().equals("fixture"),"terminal keeps mode without claiming actual game input");
@@ -103,5 +105,34 @@ public final class HudStreamTests {
             rejects(()->new HudStreamProducer(root,parent.resolve("invalid-fixture"),id,save,false,2),"forced live mouse rejects fixture producer");
             check(!Files.exists(parent.resolve("invalid-ordinary")) && !Files.exists(parent.resolve("invalid-fixture")),"invalid forced modes create no output/session");
         }finally{if(previous==null)System.clearProperty("minecome.hudStreamLiveMouse");else System.setProperty("minecome.hudStreamLiveMouse",previous);}
+    }
+    private static void stoneModeReceipts(Path root,Path parent)throws Exception {
+        String[] properties={"minecome.hudStoneBridge","minecome.hudStoneFixture","minecome.hudStoneLive","minecome.hudStreamLiveMouse","minecome.hudStreamOffscreenPresentation","minecome.hudStreamOffscreenTrial"};
+        var previous=new HashMap<String,String>();for(String key:properties)previous.put(key,System.getProperty(key));
+        try{
+            for(boolean live:new boolean[]{false,true}){
+                for(String key:properties)System.clearProperty(key);
+                System.setProperty("minecome.hudStoneBridge","true");System.setProperty("minecome.hudStreamOffscreenPresentation","true");
+                System.setProperty(live?"minecome.hudStoneLive":"minecome.hudStoneFixture","true");
+                System.setProperty(live?"minecome.hudStreamLiveMouse":"minecome.hudStreamOffscreenTrial","true");
+                String child=live?"stone-live-mode":"stone-fixture-mode";
+                var id=new HudStreamProducer.Identity(UUID.randomUUID().toString().replace("-",""),123,123456789,System.currentTimeMillis()+10_000);
+                var producer=new HudStreamProducer(root,parent.resolve(child),id,"MineCome-HudStream-"+UUID.randomUUID(),false,live?1:2);
+                try{
+                    producer.start();waitFor(producer::isReady,"stone mode transport ready");
+                    var ready=JsonParser.parseString(Files.readString(parent.resolve(child+"/stream-ready.json"))).getAsJsonObject();
+                    check(ready.get("ui_input_stone_bridge").getAsBoolean(),"stone bridge opt-in emitted");
+                    check(ready.get("ui_input_stone_live").getAsJsonPrimitive().isBoolean() && ready.get("ui_input_stone_live").getAsBoolean()==live,"live stone mode remains explicit");
+                    check(ready.get("ui_input_stone_fixture").getAsBoolean()!=live && ready.get("ui_input_fixture").getAsBoolean()!=live,"standalone identity remains separate");
+                    producer.finish("fixture",null);check(producer.awaitFinished(3000) && producer.failure()==null,"stone marker transport closes without claiming games");
+                    var terminal=JsonParser.parseString(Files.readString(parent.resolve(child+"/stream-result.json"))).getAsJsonObject();
+                    check(terminal.get("ui_input_stone_live").getAsBoolean()==live && terminal.get("result").getAsString().equals("fixture"),"terminal retains stone marker");
+                }finally{producer.close();producer.awaitFinished(3000);}
+            }
+            System.setProperty("minecome.hudStoneFixture","true");
+            var id=new HudStreamProducer.Identity(UUID.randomUUID().toString().replace("-",""),123,123456789,System.currentTimeMillis()+10_000);
+            rejects(()->new HudStreamProducer(root,parent.resolve("invalid-stone-mixed"),id,"MineCome-HudStream-"+UUID.randomUUID(),false,1),"mixed fixture/live stone producer refused");
+            check(!Files.exists(parent.resolve("invalid-stone-mixed")),"mixed stone modes create no output or session");
+        }finally{for(String key:properties){if(previous.get(key)==null)System.clearProperty(key);else System.setProperty(key,previous.get(key));}}
     }
 }

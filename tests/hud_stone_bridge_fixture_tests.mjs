@@ -6,7 +6,7 @@ import os from 'node:os';
 import net from 'node:net';
 import {randomBytes} from 'node:crypto';
 import {encodeFrame, FrameReader, parseHello, syntheticPose, validatePose, parseBlockEvent, parseResult,
-  validateStep, StepTracker, runFixture} from './hud_stone_bridge_fixture.mjs';
+  validateStep, StepTracker, runFixture, readPendingStep} from './hud_stone_bridge_fixture.mjs';
 
 let checks = 0;
 const check = (value, message) => { assert.ok(value, message); checks++; };
@@ -92,7 +92,17 @@ rejects(() => broken.ready(4001), /deadline/, 'accepted request deadline bounded
 // Exercise file publication, authentication, fragmented sockets, six steps and orderly shutdown.
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'minecome-stone-peer-tests-'));
 let client, fixtureTask;
+const originalOpen = fs.openSync;
+let busyReads = 0;
 try {
+  // Inject the exact transient Windows failure on the real fixture's pending step
+  // path. No other file reads are affected and the ordinary deadline is retained.
+  fs.openSync = function(file, ...args) {
+    if (file === path.join(temp, 'stone-step-2.json') && args[0] === (fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0)) && busyReads < 3) {
+      busyReads++; throw Object.assign(new Error('Injected writer sharing collision'), {code: 'EBUSY'});
+    }
+    return originalOpen.call(fs, file, ...args);
+  };
   const expires = Date.now() + 15000;
   const fixture = runFixture(temp, run, String(expires)); fixtureTask = fixture;
   let fixtureFailure; fixture.catch(error => { fixtureFailure = error; });
@@ -149,6 +159,7 @@ try {
   }
   client.end(encodeFrame(7, tx++));
   const summary = await fixture;
+  equal(busyReads, 3, 'pending step sharing collisions retried before the same six-step run completes');
   equal(summary.steps, 6, 'all steps finished'); equal(summary.block_events, 4, 'exactly four actual block event packets');
   check(summary.received_poses > 0 && hostPoses > 0, 'bidirectional validated poses');
   const receipt = await waitFor('stone-peer-result.json');
@@ -157,6 +168,7 @@ try {
   check(receipt.synthetic_host_pose && !receipt.kcd_compositing_verified && !receipt.physical_input_verified, 'receipt does not overclaim game/input evidence');
   equal(receipt.fixed_cell, [2, 60, 3], 'same target throughout');
 } finally {
+  fs.openSync = originalOpen;
   client?.destroy();
   if (!fs.existsSync(path.join(temp, 'stone-peer-result.json'))) fs.writeFileSync(path.join(temp, 'stone-peer-stop.request'), 'test cleanup');
   await fixtureTask?.catch(() => {});
@@ -195,12 +207,42 @@ async function failureCase(name, act, expected, lifetime = 5000) {
     fs.rmSync(resolved, {recursive: true, force: true});
   }
 }
+// A busy pending step is retryable; malformed content, non-sharing errors and
+// consumed-step mutation remain fatal rather than being treated as not ready.
+for (const code of ['EACCES', 'EPERM', 'EIO']) {
+  fs.openSync = () => { throw Object.assign(new Error(`Injected ${code}`), {code}); };
+  const file = new URL('../minecraft/gradle.properties', import.meta.url);
+  try { rejects(() => readPendingStep(file), new RegExp(code), 'non-sharing read error remains fatal'); }
+  finally { fs.openSync = originalOpen; }
+}
 await failureCase('bad authentication', ({connection}) => connection.write(encodeFrame(1, 1n, hello(token))), /authentication/);
 await failureCase('changed run identity', ({directory, connection, credential}) => {
   fs.writeFileSync(path.join(directory, 'client.log'), 'HUD_STONE_READY');
   fs.writeFileSync(path.join(directory, 'stone-step-1.json'), JSON.stringify({...step(1, 1, 1), run: 'c'.repeat(32)}));
   connection.write(encodeFrame(1, 1n, hello(credential)));
 }, /run-bound/);
+await failureCase('malformed step JSON', ({directory, connection, credential}) => {
+  fs.writeFileSync(path.join(directory, 'client.log'), 'HUD_STONE_READY');
+  fs.writeFileSync(path.join(directory, 'stone-step-1.json'), '{');
+  connection.write(encodeFrame(1, 1n, hello(credential)));
+}, /Malformed/);
+await failureCase('oversized step', ({directory, connection, credential}) => {
+  fs.writeFileSync(path.join(directory, 'client.log'), 'HUD_STONE_READY');
+  fs.writeFileSync(path.join(directory, 'stone-step-1.json'), ' '.repeat(4097));
+  connection.write(encodeFrame(1, 1n, hello(credential)));
+}, /bounded/);
+try {
+  fs.openSync = function(file, ...args) {
+    if (typeof file === 'string' && file.endsWith('stone-step-1.json') && args[0] === (fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0)))
+      throw Object.assign(new Error('Injected persistent sharing collision'), {code: 'EBUSY'});
+    return originalOpen.call(fs, file, ...args);
+  };
+  await failureCase('busy step hard expiry', ({directory, connection, credential}) => {
+    fs.writeFileSync(path.join(directory, 'client.log'), 'HUD_STONE_READY');
+    fs.writeFileSync(path.join(directory, 'stone-step-1.json'), JSON.stringify(step(1, 1, 1)));
+    connection.write(encodeFrame(1, 1n, hello(credential)));
+  }, /hard expiry/, 300);
+} finally { fs.openSync = originalOpen; }
 await failureCase('stop request', ({directory}) => fs.writeFileSync(path.join(directory, 'stone-peer-stop.request'), ''), /stop requested/);
 await failureCase('hard expiry', null, /hard expiry/, 200);
 console.log(`PASS: ${checks} stone protocol fixture checks (synthetic harness only; no KCD or physical input claim).`);

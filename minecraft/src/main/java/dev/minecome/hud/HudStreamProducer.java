@@ -36,7 +36,7 @@ public final class HudStreamProducer implements AutoCloseable {
     private final String save;
     private final boolean genuine;
     private final int inputMode;
-    private final boolean inputDelayFixture,inputPointerFixture,liveMouse,stoneBridge,stoneFixture;
+    private final boolean inputDelayFixture,inputPointerFixture,liveMouse,stoneBridge,stoneFixture,stoneLive;
     private final boolean backgroundTrial;
     private final boolean offscreenPresentation,offscreenTrial;
     private final AtomicReference<Frame> latest=new AtomicReference<>();
@@ -65,10 +65,13 @@ public final class HudStreamProducer implements AutoCloseable {
         liveMouse=Boolean.getBoolean("minecome.hudStreamLiveMouse");HudMousePolicy.enabled(inputMode!=0,inputMode==2,liveMouse);
         inputDelayFixture=inputMode==2 && Boolean.getBoolean("minecome.hudStreamInputDelayFixture");
         inputPointerFixture=inputMode==2 && Boolean.getBoolean("minecome.hudStreamInputPointerFixture");
-        stoneBridge=Boolean.getBoolean("minecome.hudStoneBridge");stoneFixture=Boolean.getBoolean("minecome.hudStoneFixture");
+        stoneBridge=Boolean.getBoolean("minecome.hudStoneBridge");stoneFixture=Boolean.getBoolean("minecome.hudStoneFixture");stoneLive=Boolean.getBoolean("minecome.hudStoneLive");
         backgroundTrial=inputMode==2 && Boolean.getBoolean("minecome.hudStreamBackgroundTrial");
         offscreenPresentation=inputMode!=0 && Boolean.getBoolean("minecome.hudStreamOffscreenPresentation");
         offscreenTrial=inputMode==2 && Boolean.getBoolean("minecome.hudStreamOffscreenTrial");
+        HudStoneMode.require(stoneBridge,stoneFixture,stoneLive,inputMode!=0,inputMode==2,offscreenPresentation,
+                Boolean.getBoolean("minecome.hudStreamOffscreenTrial"),Boolean.getBoolean("minecome.hudStreamInputPointerFixture"),
+                Boolean.getBoolean("minecome.hudStreamInputDelayFixture"),Boolean.getBoolean("minecome.hudStreamBackgroundTrial"),liveMouse);
     }
     public synchronized void start() {
         if(worker!=null)throw new IllegalStateException("HUD stream cannot restart");
@@ -130,7 +133,7 @@ public final class HudStreamProducer implements AutoCloseable {
         r.addProperty("target_start_filetime",Long.toUnsignedString(identity.targetStart()));r.addProperty("expires_utc_ms",identity.expiresUtcMs());
         r.addProperty("mapping",identity.mappingName());r.addProperty("mapping_name",identity.mappingName());r.addProperty("mutex_name",identity.mutexName());r.addProperty("mapping_bytes",MAPPING_BYTES);
         r.addProperty("save",save);r.addProperty("source_kind",genuine?"minecraft_vanilla_ui_stream_v1":"standalone_transport_fixture");
-        if(inputMode!=0){r.addProperty("ui_input_protocol",1);r.addProperty("ui_input_live_mouse",liveMouse);r.addProperty("ui_input_fixture",inputMode==2);r.addProperty("ui_input_delay_fixture",inputDelayFixture);r.addProperty("ui_input_pointer_fixture",inputPointerFixture);r.addProperty("ui_input_stone_bridge",stoneBridge);r.addProperty("ui_input_stone_fixture",stoneFixture);r.addProperty("ui_input_background_trial",backgroundTrial);r.addProperty("ui_input_offscreen_presentation",offscreenPresentation);r.addProperty("ui_input_offscreen_trial",offscreenTrial);}return r;
+        if(inputMode!=0){r.addProperty("ui_input_protocol",1);r.addProperty("ui_input_live_mouse",liveMouse);r.addProperty("ui_input_fixture",inputMode==2);r.addProperty("ui_input_delay_fixture",inputDelayFixture);r.addProperty("ui_input_pointer_fixture",inputPointerFixture);r.addProperty("ui_input_stone_bridge",stoneBridge);r.addProperty("ui_input_stone_fixture",stoneFixture);r.addProperty("ui_input_stone_live",stoneLive);r.addProperty("ui_input_background_trial",backgroundTrial);r.addProperty("ui_input_offscreen_presentation",offscreenPresentation);r.addProperty("ui_input_offscreen_trial",offscreenTrial);}return r;
     }
     private void run() {
         Kernel32 api=null;WinNT.HANDLE mapping=null,mutex=null;Pointer view=null;
@@ -209,6 +212,7 @@ public final class HudStreamProducer implements AutoCloseable {
                 if(!genuine || inputMode==0 || published.get()<5 || !states.contains("hotbar"))throw new IOException("Input stream vanilla proof incomplete");
                 var inputProof=finalEvidence.get();
                 if(inputProof==null || !inputProof.get("host_armed").getAsBoolean() || inputProof.get("input_events_applied").getAsLong()<=0)throw new IOException("Input stream was never armed/applied");
+                if(stoneLive)HudStoneProof.requireLive(inputProof);
                 if(result.equals("input_passed")){
                     var proof=finalEvidence.get();
                     if(inputMode!=2 || proof==null)throw new IOException("Input fixture proof absent");
