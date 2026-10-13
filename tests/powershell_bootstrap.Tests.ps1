@@ -13,12 +13,14 @@ param(
     [string]$GameRoot,
     [string]$Level,
     [string]$JavaHome = 'default-jdk',
+    [string]$BundleDirectory,
     [switch]$PreflightOnly,
     [switch]$WithoutMods
 )
 $ErrorActionPreference = 'Stop'
 $receipt = [ordered]@{
     java_home = $JavaHome
+    bundle_directory = $BundleDirectory
     level = $Level
     preflight_only = [bool]$PreflightOnly
     without_mods = [bool]$WithoutMods
@@ -42,6 +44,7 @@ $exit = Invoke-MineComePowerShell7 -ScriptPath $childPath -BoundParameters @{
     GameRoot = $directory
     Level = $level
     JavaHome = $javaPath
+    BundleDirectory = 'C:\Fixture bundle\literal & $()'
     PreflightOnly = $true
     WithoutMods = $false
     NotAForwardedOption = 'must remain omitted'
@@ -49,6 +52,7 @@ $exit = Invoke-MineComePowerShell7 -ScriptPath $childPath -BoundParameters @{
 $receipt = Get-Content -LiteralPath (Join-Path $directory 'child.json') -Raw | ConvertFrom-Json
 Assert-Bootstrap ($exit -eq 0) 'success and unknown option omitted'
 Assert-Bootstrap ($receipt.java_home -ceq $javaPath) 'explicit JavaHome preserved'
+Assert-Bootstrap ($receipt.bundle_directory -ceq 'C:\Fixture bundle\literal & $()') 'explicit BundleDirectory preserved'
 Assert-Bootstrap ($receipt.level -ceq $level) 'literal Level preserved'
 Assert-Bootstrap ($receipt.preflight_only -eq $true) 'true switch preserved'
 Assert-Bootstrap ($receipt.without_mods -eq $false) 'false switch preserved'

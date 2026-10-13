@@ -4,7 +4,7 @@
 [CmdletBinding()]
 param(
     [ValidateSet('Fixture','Live')][string]$Mode='Fixture',
-    [string]$JavaHome,[string]$BundleDirectory,[switch]$PreflightOnly,[switch]$DelayFixture,[switch]$BackgroundTrial,[switch]$OffscreenPresentation,[switch]$OffscreenTrial,[switch]$HostGpuBudget,[switch]$HideHostHud,[switch]$PointerFixture,[switch]$LiveMouse,[switch]$StoneFixture,[switch]$StoneLive,[switch]$WorldClicks,[switch]$SelectiveMouse,
+    [string]$JavaHome,[string]$BundleDirectory,[switch]$PreflightOnly,[switch]$DelayFixture,[switch]$BackgroundTrial,[switch]$OffscreenPresentation,[switch]$OffscreenTrial,[switch]$HostGpuBudget,[switch]$HideHostHud,[switch]$PointerFixture,[switch]$LiveMouse,[switch]$StoneFixture,[switch]$StoneLive,[switch]$WorldClicks,[switch]$SelectiveMouse,[switch]$AimedStone,
     [ValidateSet(1,2,3)][int]$SelectiveRevision=1,
     [ValidateRange(320,1920)][int]$Width=1280,
     [ValidateRange(240,1080)][int]$Height=720,
@@ -35,14 +35,19 @@ function Read-Receipt([string]$Path){
 function Assert-LiveMouseReceipt([object]$Receipt,[bool]$Expected){
     if($Receipt.PSObject.Properties.Name -notcontains 'ui_input_live_mouse' -or $Receipt.ui_input_live_mouse -isnot [bool] -or $Receipt.ui_input_live_mouse -ne $Expected){throw 'UI producer/result live-mouse mode mismatch.'}
 }
-function Assert-HudStoneMode([object]$Receipt,[bool]$Expected,[bool]$LiveExpected=$false){
+function Assert-HudStoneMode([object]$Receipt,[bool]$Expected,[bool]$LiveExpected=$false,[bool]$AimedExpected=$false){
     if($Expected -and $LiveExpected){throw 'Live and fixture stone modes are mutually exclusive.'}
+    if($AimedExpected -and (-not $LiveExpected -or $Expected)){throw 'Aimed stone requires the explicit live bridge.'}
     $values=@{ui_input_stone_bridge=($Expected -or $LiveExpected);ui_input_stone_fixture=$Expected;ui_input_stone_live=$LiveExpected}
     foreach($field in $values.Keys){
         if($Receipt.PSObject.Properties.Name -notcontains $field -or $Receipt.$field -isnot [bool] -or $Receipt.$field -ne $values[$field]){throw 'Combined stone mode mismatch.'}
     }
+    if($Receipt.PSObject.Properties.Name -contains 'ui_input_aimed_stone_bridge'){
+        if($Receipt.ui_input_aimed_stone_bridge -isnot [bool] -or $Receipt.ui_input_aimed_stone_bridge -ne $AimedExpected){throw 'Aimed stone readiness does not match the explicit controller mode.'}
+    }elseif($AimedExpected){throw 'Aimed stone readiness marker missing.'}
 }
-function Assert-HudStoneConfiguration([string]$Mode,[bool]$StoneFixture,[bool]$StoneLive,[bool]$LiveMouse,[bool]$OffscreenPresentation,[bool]$OffscreenTrial,[bool]$HostGpuBudget,[bool]$PointerFixture,[bool]$DelayFixture,[bool]$BackgroundTrial,[bool]$HideHostHud,[bool]$WorldClicks=$false,[bool]$SelectiveMouse=$false,[ValidateSet(1,2,3)][int]$SelectiveRevision=1){
+function Assert-HudStoneConfiguration([string]$Mode,[bool]$StoneFixture,[bool]$StoneLive,[bool]$LiveMouse,[bool]$OffscreenPresentation,[bool]$OffscreenTrial,[bool]$HostGpuBudget,[bool]$PointerFixture,[bool]$DelayFixture,[bool]$BackgroundTrial,[bool]$HideHostHud,[bool]$WorldClicks=$false,[bool]$SelectiveMouse=$false,[ValidateSet(1,2,3)][int]$SelectiveRevision=1,[bool]$AimedStone=$false){
+    if($AimedStone -and (-not $StoneLive -or -not $WorldClicks -or -not $SelectiveMouse -or $SelectiveRevision -ne 3)){throw 'AimedStone requires StoneLive, WorldClicks and the SelectiveMouse revision3 capped profile.'}
     if($SelectiveRevision -ge 2 -and -not $SelectiveMouse){throw 'A selective revision requires an explicit SelectiveMouse session.'}
     if($SelectiveMouse -and -not $WorldClicks){throw 'SelectiveMouse requires the explicit WorldClicks session and its separate capture profile.'}
     if($WorldClicks -and -not $StoneLive){throw 'WorldClicks requires the explicit capped StoneLive session.'}
@@ -225,6 +230,66 @@ function Assert-HudStoneFixture([object]$Guest,[object]$Native,[object]$Peer,[st
         }
     }
 }
+function Initialize-HudAimedWorldClicks($State,$Session){
+    if($State.Run -cne $Session.Run){throw 'Aimed reader and relay runs differ.'}
+    $path=Assert-MineComeHudStonePath $Session.Stdout
+    $stream=[IO.FileStream]::new($path,[IO.FileMode]::Open,[IO.FileAccess]::Read,([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
+    try{
+        $reader=[pscustomobject]@{Path=$path;Identity=(Get-MineComeHudWorldFileIdentity $stream);Offset=0L;ReadBytes=0L;Pending=[byte[]]@();DiscardInitialFragment=$false}
+    }finally{$stream.Dispose()}
+    $State | Add-Member NoteProperty AimedLedger (New-MineComeAimedClickLedger $State.Run)
+    $State | Add-Member NoteProperty PermitReader $reader
+}
+function Get-HudAimedCurrentDecline($State,$Session,$Click,$Selection){
+    $reason=Get-MineComeHudWorldCurrentDecline $State $Session $Click
+    if($reason){return $reason}
+    $now=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+    if($now -lt $Selection.installed_utc_ms -or $now -lt $Click.utc_ms){return 'clock_rollback'}
+    if($now-$Selection.installed_utc_ms -gt 350){return 'permit_dispatch_expired'}
+    if($now-$Click.utc_ms -gt 250){return 'stale_edge'}
+    return $null
+}
+function Update-HudAimedPermitLedger($State){
+    foreach($line in @(Read-MineComeHudWorldClickLines $State.PermitReader)){Add-MineComeAimedPermitLine $State.AimedLedger $line}
+}
+function Invoke-HudAimedWorldClicks($State,$Session){
+    if($State.Failure){throw 'Aimed world-click reader is already failed; input will not be retried.'}
+    try{
+        if($State.Run -cne $Session.Run -or $State.Context.GamePid -ne $Session.Context.GamePid -or $State.Context.GameStartedUtc -ne $Session.Context.GameStartedUtc){throw 'Aimed world-click relay owner differs.'}
+        # Read acknowledgements first. Selection still requires their native
+        # installation timestamp to precede the physical edge strictly.
+        Update-HudAimedPermitLedger $State
+        foreach($line in @(Read-MineComeHudWorldClickLines $State)){
+            $click=ConvertFrom-MineComeHudWorldClick $line $State.Run $State.Sequence
+            if($null -eq $click){continue}
+            $State.Sequence=$click.sequence
+            $record=[pscustomobject]@{sequence=$click.sequence;utc_ms=$click.utc_ms;action=$click.action;observed_utc_ms=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds();status='pending';reason=$null;intent_ordinal=0;request_id=0L;arena_id=$null;permit_id=$null;installed_utc_ms=0L}
+            $State.Clicks.Add($record)
+            # Admission consumes every sequence, including foreground/lease
+            # refusals; a selected permit is spent even if dispatch then fails.
+            $selection=Select-MineComeAimedClickPermit $State.AimedLedger $click $record.observed_utc_ms
+            if(-not $selection.accepted){$record.status='declined';$record.reason=$selection.reason;continue}
+            $record.arena_id=$selection.arena;$record.permit_id=$selection.permit;$record.installed_utc_ms=$selection.installed_utc_ms
+            $reason=Get-HudAimedCurrentDecline $State $Session $click $selection
+            if($reason){$record.status='declined';$record.reason=$reason;continue}
+            $receipt=Send-MineComeHudAimedIntent $Session $selection $click -BeforeDispatch {Get-HudAimedCurrentDecline $State $Session $click $selection}
+            if(-not $receipt.accepted){$record.status='declined';$record.reason=$receipt.reason;continue}
+            $record.status='sent';$record.intent_ordinal=$receipt.ordinal;$record.request_id=$receipt.request_id
+        }
+    }catch{$State.Failure=$_.Exception.Message;if($State.Clicks.Count -gt 0 -and $State.Clicks[-1].status -ceq 'pending'){$State.Clicks[-1].status='failed';$State.Clicks[-1].reason=$State.Failure};throw}
+}
+function Assert-HudAimedWorldClicks($State,$Session){
+    Assert-MineComeHudWorldClicks $State $Session
+    if($State.AimedLedger.Failed -or $State.AimedLedger.LastClick -ne $State.Sequence){throw 'Aimed physical-edge ledger did not complete.'}
+    $sent=@($State.Clicks | Where-Object status -CEQ 'sent')
+    for($i=0;$i -lt $sent.Count;$i++){
+        $click=$sent[$i];$intent=$Session.Intents[$i]
+        if([string]$click.arena_id -cne [string]$intent.arena_id -or [string]$click.permit_id -cne [string]$intent.permit_id -or
+           $click.sequence -ne $intent.sequence -or $click.sequence -ne $intent.request_id -or
+           $click.utc_ms -ne $intent.edge_utc_ms -or $click.installed_utc_ms -ne $intent.installed_utc_ms -or
+           $click.installed_utc_ms -ge $click.utc_ms){throw 'Aimed physical edge differs from its original installed permit.'}
+    }
+}
 function Assert-LiveMouseGuestProof([object]$Proof,[bool]$RequirePointer=$true){
     if($Proof.live_mouse -isnot [bool] -or $Proof.live_mouse -ne $true -or ($Proof.pointer_events_applied -isnot [long] -and $Proof.pointer_events_applied -isnot [int]) -or $Proof.pointer_events_applied -lt 0 -or ($RequirePointer -and $Proof.pointer_events_applied -eq 0) -or $Proof.pointer_events_applied -gt $Proof.input_events_applied){throw 'Live mouse needs valid successfully applied guest pointer evidence.'}
     $neutral=$Proof.pointer_adapter_after_cleanup
@@ -262,7 +327,7 @@ function Start-Child([string]$Executable,[string[]]$Arguments){
     return [Diagnostics.Process]::Start($start)
 }
 $null=Assert-Unlinked $evidenceRoot
-Assert-HudStoneConfiguration $Mode ([bool]$StoneFixture) ([bool]$StoneLive) ([bool]$LiveMouse) ([bool]$OffscreenPresentation) ([bool]$OffscreenTrial) ([bool]$HostGpuBudget) ([bool]$PointerFixture) ([bool]$DelayFixture) ([bool]$BackgroundTrial) ([bool]$HideHostHud) ([bool]$WorldClicks) ([bool]$SelectiveMouse) $SelectiveRevision
+Assert-HudStoneConfiguration $Mode ([bool]$StoneFixture) ([bool]$StoneLive) ([bool]$LiveMouse) ([bool]$OffscreenPresentation) ([bool]$OffscreenTrial) ([bool]$HostGpuBudget) ([bool]$PointerFixture) ([bool]$DelayFixture) ([bool]$BackgroundTrial) ([bool]$HideHostHud) ([bool]$WorldClicks) ([bool]$SelectiveMouse) $SelectiveRevision ([bool]$AimedStone)
 if($LiveMouse -and ($Mode -ne 'Live' -or -not $HostGpuBudget -or -not $OffscreenPresentation -or $PointerFixture -or $DelayFixture -or $BackgroundTrial -or $OffscreenTrial)){throw 'LiveMouse requires Live mode, HostGpuBudget and OffscreenPresentation, with all fixture modes disabled.'}
 if($DelayFixture -and $Mode -ne 'Fixture'){throw 'Controlled input delays require the standalone fixture.'}
 if($PointerFixture -and ($Mode -ne 'Fixture' -or $DelayFixture -or $BackgroundTrial)){throw 'PointerFixture requires standalone Fixture mode without delay/background trials.'}
@@ -297,10 +362,11 @@ if($Mode -eq 'Fixture'){
     if($HideHostHud){. (Join-Path $PSScriptRoot 'HudVisibility.ps1')}
     if($StoneLive){. (Join-Path $PSScriptRoot 'HudStoneRelay.ps1')}
     if($WorldClicks){. (Join-Path $PSScriptRoot 'HudWorldClicks.ps1')}
+    if($AimedStone){. (Join-Path $PSScriptRoot 'AimedWorldClicks.ps1');. (Join-Path $PSScriptRoot 'HudAimedRelay.ps1')}
     $context=Get-MineComeProbeContext
     if($StoneLive){$null=Test-MineComeHudStoneRelayPreflight $context}
     if(-not $BundleDirectory){$BundleDirectory=Join-Path $root $(if($SelectiveMouse -and $SelectiveRevision -eq 3){'runtime/hud-compositor-selective-r3'}elseif($SelectiveMouse -and $SelectiveRevision -eq 2){'runtime/hud-compositor-selective-r2'}elseif($SelectiveMouse){'runtime/hud-compositor-selective'}elseif($WorldClicks){'runtime/hud-compositor-world'}elseif($LiveMouse){'runtime/hud-compositor-mouse'}else{'runtime/hud-compositor-input-waitfix'})}
-    & (Join-Path $PSScriptRoot 'Arm-HudStream.ps1') -InputMode -LiveMouse:$LiveMouse -StoneLive:$StoneLive -WorldClicks:$WorldClicks -SelectiveMouse:$SelectiveMouse -SelectiveRevision $SelectiveRevision -BundleDirectory $BundleDirectory -OffscreenPresentation:$OffscreenPresentation -PreflightOnly
+    & (Join-Path $PSScriptRoot 'Arm-HudStream.ps1') -InputMode -LiveMouse:$LiveMouse -StoneLive:$StoneLive -WorldClicks:$WorldClicks -SelectiveMouse:$SelectiveMouse -SelectiveRevision $SelectiveRevision -AimedStone:$AimedStone -BundleDirectory $BundleDirectory -OffscreenPresentation:$OffscreenPresentation -PreflightOnly
 }
 if($PreflightOnly){Write-Output "HUD_INPUT_PREFLIGHT_PASS mode=$Mode no_process_started=true";return}
 $run=[guid]::NewGuid().ToString('N')
@@ -322,8 +388,12 @@ $liveMouseGuestVerified=$false;$pointerEventsApplied=0
 $hostHudSession=$null;$hostHudEvidence=$null
 try{
     if($StoneLive){
-        $stoneRelay=New-MineComeHudStoneRelay $context $directory $run $expires
-        Start-MineComeHudStoneRelay $stoneRelay
+        if($AimedStone){$stoneRelay=New-MineComeHudAimedRelay $context $directory $run $expires;Start-MineComeHudAimedRelay $stoneRelay}
+        else{$stoneRelay=New-MineComeHudStoneRelay $context $directory $run $expires;Start-MineComeHudStoneRelay $stoneRelay}
+    }
+    if($AimedStone){
+        $worldClickState=New-MineComeHudWorldClicks $context (Join-Path ([IO.Path]::GetDirectoryName($context.GamePath)) 'ReShade.log') $run
+        Initialize-HudAimedWorldClicks $worldClickState $stoneRelay
     }
     if($StoneFixture){
         $stonePeer=Start-Child $stoneNode @((Join-Path $root 'tests/hud_stone_bridge_fixture.mjs'),$directory,$run,[string]$expires)
@@ -362,6 +432,7 @@ try{
     if($PointerFixture){$arguments+='-InputPointerFixture'}
     if($StoneFixture){$arguments+=@('-StoneFixture','-StoneTokenFile',(Join-Path $directory 'stone-bridge.token'),'-StonePort',[string]$stoneReady.port)}
     if($StoneLive){$arguments+=@('-StoneLive','-StoneTokenFile',$stoneRelay.TokenFile,'-StonePort',[string]$stoneRelay.Port)}
+    if($AimedStone){$arguments+='-AimedStone'}
     if($DelayFixture){$arguments+='-InputDelayFixture'}
     if($BackgroundTrial){$arguments+='-InputBackgroundTrial'}
     if($OffscreenPresentation){$arguments+='-OffscreenPresentation'}
@@ -373,10 +444,11 @@ try{
         if($fixture -and $fixture.HasExited){throw 'Fixture exited before Minecraft readiness.'}
         if([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() -ge $expires-45000){throw 'UI startup deadline reached.'}
         if($Mode -eq 'Live'){Assert-MineComeProbeContext $context}
+        if($AimedStone){Update-HudAimedPermitLedger $worldClickState}
         Start-Sleep -Milliseconds 100
     }
     $ready=Read-Receipt $readyPath
-    Assert-HudStoneMode $ready ([bool]$StoneFixture) ([bool]$StoneLive)
+    Assert-HudStoneMode $ready ([bool]$StoneFixture) ([bool]$StoneLive) ([bool]$AimedStone)
     if($StoneLive){$stonePreview.Save=[string]$ready.save}
     Assert-LiveMouseReceipt $ready ([bool]$LiveMouse)
     if($ready.PSObject.Properties.Name -notcontains 'ui_input_fixture' -or $ready.ui_input_fixture -isnot [bool] -or $ready.ui_input_fixture -ne ($Mode -eq 'Fixture')){throw 'UI producer fixture/live mode mismatch.'}
@@ -405,9 +477,9 @@ try{
         Start-MineComeHudVisibility $hostHudSession
         Write-Output "HUD_HOST_VISIBILITY_APPLIED run=$($hostHudSession.Probe.Run) original_hud=$($hostHudSession.Applied.original_hud) temporary_hud=0 expiry_ms=120000"
     }
-    if($WorldClicks){$worldClickState=New-MineComeHudWorldClicks $context (Join-Path ([IO.Path]::GetDirectoryName($context.GamePath)) 'ReShade.log') $run}
+    if($WorldClicks -and -not $AimedStone){$worldClickState=New-MineComeHudWorldClicks $context (Join-Path ([IO.Path]::GetDirectoryName($context.GamePath)) 'ReShade.log') $run}
     if($Mode -eq 'Live'){
-        $armEvidence=& (Join-Path $PSScriptRoot 'Arm-HudStream.ps1') -InputMode -LiveMouse:$LiveMouse -StoneLive:$StoneLive -WorldClicks:$WorldClicks -SelectiveMouse:$SelectiveMouse -SelectiveRevision $SelectiveRevision -BundleDirectory $BundleDirectory -OffscreenPresentation:$OffscreenPresentation -ReadyManifest $readyPath
+        $armEvidence=& (Join-Path $PSScriptRoot 'Arm-HudStream.ps1') -InputMode -LiveMouse:$LiveMouse -StoneLive:$StoneLive -WorldClicks:$WorldClicks -SelectiveMouse:$SelectiveMouse -SelectiveRevision $SelectiveRevision -AimedStone:$AimedStone -BundleDirectory $BundleDirectory -OffscreenPresentation:$OffscreenPresentation -ReadyManifest $readyPath
         Assert-HudSelectiveArm $armEvidence ([bool]$SelectiveMouse) $SelectiveRevision
         $selectiveArmVerified=[bool]$SelectiveMouse
     }
@@ -417,11 +489,13 @@ try{
         if($stoneRelay -and -not $producer.HasExited){
             $now=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
             if(-not $WorldClicks -or $now-$relayHealthCheckedAt -ge 200){
-                Assert-MineComeHudStoneRelay $stoneRelay;$relayHealthCheckedAt=$now
+                if($AimedStone){Assert-MineComeHudAimedRelay $stoneRelay}else{Assert-MineComeHudStoneRelay $stoneRelay}
+                $relayHealthCheckedAt=$now
             }
             # Each physical dispatch repeats exact relay checks itself. Polling
             # the edge log more frequently need not reread full relay evidence.
-            if($WorldClicks){Invoke-MineComeHudWorldClicks $worldClickState $stoneRelay}
+            if($AimedStone){Invoke-HudAimedWorldClicks $worldClickState $stoneRelay}
+            elseif($WorldClicks){Invoke-MineComeHudWorldClicks $worldClickState $stoneRelay}
             else{
                 $enginePlaced=Test-HudStonePreviewEnginePlace $stoneRelay.Native $stonePreview.PlaceRequestId
                 $action=Get-HudStonePreviewAction $stonePreview (Read-HudPreviewClientLog (Join-Path $directory 'client.log')) $run ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()) $enginePlaced
@@ -437,7 +511,7 @@ try{
     $producerExitObserved=$producer.HasExited;$producerExitCode=$producer.ExitCode
     if($client.ExitCode -ne 0 -or $producerExitCode -ne 0 -or ($fixture -and $fixture.ExitCode -ne 0)){throw 'UI client, actual Java producer or native fixture reported failure.'}
     $guest=Read-Receipt (Join-Path $directory 'capture/stream-result.json')
-    Assert-HudStoneMode $guest ([bool]$StoneFixture) ([bool]$StoneLive)
+    Assert-HudStoneMode $guest ([bool]$StoneFixture) ([bool]$StoneLive) ([bool]$AimedStone)
     Assert-LiveMouseReceipt $guest ([bool]$LiveMouse)
     if($guest.PSObject.Properties.Name -notcontains 'ui_input_fixture' -or $guest.ui_input_fixture -isnot [bool] -or $guest.ui_input_fixture -ne ($Mode -eq 'Fixture')){throw 'UI result fixture/live mode mismatch.'}
     if($guest.PSObject.Properties.Name -notcontains 'ui_input_pointer_fixture' -or $guest.ui_input_pointer_fixture -isnot [bool] -or $guest.ui_input_pointer_fixture -ne [bool]$PointerFixture){throw 'UI result pointer-fixture mode mismatch.'}
@@ -506,7 +580,11 @@ try{
         }
     }else{
         if($guest.result -cne 'input_completed'){throw 'Live UI session did not complete cleanly.'}
-        if($WorldClicks){Assert-HudWorldClickGuest $guest}
+        if($AimedStone){
+            # Full aimed proof and canonical relay correlation follow shutdown.
+            if($guest.lab_evidence.aimed_stone_bridge -isnot [bool] -or -not $guest.lab_evidence.aimed_stone_bridge -or $guest.lab_evidence.stone_bridge.kind -cne 'minecome_hud_aimed_stone_bridge_v1'){throw 'Live aimed guest completion proof missing.'}
+        }
+        elseif($WorldClicks){Assert-HudWorldClickGuest $guest}
         elseif($StoneLive){Assert-HudStoneLivePreview $guest}
         if($LiveMouse){
             $pointerEventsApplied=Assert-LiveMouseGuestProof $guest.lab_evidence (-not [bool]$StoneLive)
@@ -521,18 +599,32 @@ finally{
     try{
         if($stoneRelay){
             try{
-                Stop-MineComeHudStoneRelay $stoneRelay
-                if($bodyPassed){Assert-MineComeHudStoneRelayGuest $stoneRelay $guest}
-                if($bodyPassed -and $WorldClicks){Assert-MineComeHudWorldClicks $worldClickState $stoneRelay}
-                $stoneRelayEvidence=Get-MineComeHudStoneRelayEvidence $stoneRelay
+                if($AimedStone){
+                    Stop-MineComeHudAimedRelay $stoneRelay
+                    if($bodyPassed){Assert-MineComeHudAimedRelayGuest $stoneRelay $guest;Assert-HudAimedWorldClicks $worldClickState $stoneRelay}
+                    $stoneRelayEvidence=Get-MineComeHudAimedRelayEvidence $stoneRelay
+                }else{
+                    Stop-MineComeHudStoneRelay $stoneRelay
+                    if($bodyPassed){Assert-MineComeHudStoneRelayGuest $stoneRelay $guest}
+                    if($bodyPassed -and $WorldClicks){Assert-MineComeHudWorldClicks $worldClickState $stoneRelay}
+                    $stoneRelayEvidence=Get-MineComeHudStoneRelayEvidence $stoneRelay
+                }
                 if($stoneRelayEvidence.failure){throw $stoneRelayEvidence.failure}
             }catch{
                 $passed=$false;if(-not $failure){$failure=$_.Exception.Message}
-                try{$stoneRelayEvidence=Get-MineComeHudStoneRelayEvidence $stoneRelay}catch{$stoneRelayEvidence=@{failure=$_.Exception.Message;engine_mirroring_verified=$false;cleanup_verified=$false}}
+                try{$stoneRelayEvidence=if($AimedStone){Get-MineComeHudAimedRelayEvidence $stoneRelay}else{Get-MineComeHudStoneRelayEvidence $stoneRelay}}catch{$stoneRelayEvidence=@{failure=$_.Exception.Message;engine_mirroring_verified=$false;cleanup_verified=$false}}
             }
         }
         if($worldClickState){
-            try{$worldClickEvidence=Get-MineComeHudWorldClickEvidence $worldClickState $stoneRelay}
+            try{
+                $worldClickEvidence=Get-MineComeHudWorldClickEvidence $worldClickState $stoneRelay
+                if($AimedStone){
+                    $worldClickEvidence.kind='minecome_hud_aimed_world_clicks_v1'
+                    $worldClickEvidence.aimed_ledger_failed=$worldClickState.AimedLedger.Failed
+                    $worldClickEvidence.permit_ack_bytes_read=$worldClickState.PermitReader.ReadBytes
+                    $worldClickEvidence.camera_sample_timing='engine_callback_after_physical_edge'
+                }
+            }
             catch{$passed=$false;if(-not $failure){$failure=$_.Exception.Message}}
         }
         if($StoneLive -and -not $stoneRelay){$passed=$false}
@@ -556,7 +648,7 @@ finally{
             }
         }
         if($HostGpuBudget -and -not $hostBudgetSession){$passed=$false}
-        [ordered]@{schema=1;kind='minecome_hud_input_controller_v1';run=$run;mode=$Mode;stone_fixture=[bool]$StoneFixture;stone_live=[bool]$StoneLive;world_clicks_requested=[bool]$WorldClicks;world_clicks=$worldClickEvidence;selective_mouse_requested=[bool]$SelectiveMouse;selective_mouse_enabled=$selectiveArmVerified;selective_revision_requested=$(if($SelectiveMouse){$SelectiveRevision}else{0});stone_live_preview=$(if($WorldClicks){$null}else{$stonePreview});stone_relay=$stoneRelayEvidence;stone_protocol_peer=$stonePeerResult;pointer_fixture=[bool]$PointerFixture;delay_fixture=[bool]$DelayFixture;background_trial=[bool]$BackgroundTrial;offscreen_presentation=[bool]$OffscreenPresentation;offscreen_trial=[bool]$OffscreenTrial;host_gpu_budget_requested=[bool]$HostGpuBudget;host_gpu_budget=$hostBudgetEvidence;host_hud_hidden_requested=[bool]$HideHostHud;host_hud_visibility=$hostHudEvidence;body_passed=$bodyPassed;result=$(if($passed){'passed'}else{'failed'});failure=$failure;evidence=$directory;target_pid=$targetPid;target_start_filetime=$targetStart;fixture_sha256=$fixtureHash;compositor_armed=[bool]$armEvidence;width=$Width;height=$Height;gui_scale=$GuiScale;kcd_launched=$false;kcd_stopped=$false;host_input_exclusivity_verified=$false;live_mouse_requested=[bool]$LiveMouse;live_mouse_enabled=[bool]($LiveMouse -and $armEvidence);live_mouse_guest_verified=$liveMouseGuestVerified;live_mouse_guest_pass=[bool]($LiveMouse -and $liveMouseGuestVerified -and $passed);pointer_events_applied=$pointerEventsApplied;live_mouse_visual_verified=$false;producer_exit_observed=$producerExitObserved;producer_exit_code=$producerExitCode;created_utc_ms=$expires-180000;expires_utc_ms=$expires} | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $directory 'verification.json') -Encoding utf8NoBOM
+        [ordered]@{schema=1;kind='minecome_hud_input_controller_v1';run=$run;mode=$Mode;stone_fixture=[bool]$StoneFixture;stone_live=[bool]$StoneLive;aimed_stone_requested=[bool]$AimedStone;world_clicks_requested=[bool]$WorldClicks;world_clicks=$worldClickEvidence;selective_mouse_requested=[bool]$SelectiveMouse;selective_mouse_enabled=$selectiveArmVerified;selective_revision_requested=$(if($SelectiveMouse){$SelectiveRevision}else{0});stone_live_preview=$(if($WorldClicks){$null}else{$stonePreview});stone_relay=$stoneRelayEvidence;stone_protocol_peer=$stonePeerResult;pointer_fixture=[bool]$PointerFixture;delay_fixture=[bool]$DelayFixture;background_trial=[bool]$BackgroundTrial;offscreen_presentation=[bool]$OffscreenPresentation;offscreen_trial=[bool]$OffscreenTrial;host_gpu_budget_requested=[bool]$HostGpuBudget;host_gpu_budget=$hostBudgetEvidence;host_hud_hidden_requested=[bool]$HideHostHud;host_hud_visibility=$hostHudEvidence;body_passed=$bodyPassed;result=$(if($passed){'passed'}else{'failed'});failure=$failure;evidence=$directory;target_pid=$targetPid;target_start_filetime=$targetStart;fixture_sha256=$fixtureHash;compositor_armed=[bool]$armEvidence;width=$Width;height=$Height;gui_scale=$GuiScale;kcd_launched=$false;kcd_stopped=$false;host_input_exclusivity_verified=$false;live_mouse_requested=[bool]$LiveMouse;live_mouse_enabled=[bool]($LiveMouse -and $armEvidence);live_mouse_guest_verified=$liveMouseGuestVerified;live_mouse_guest_pass=[bool]($LiveMouse -and $liveMouseGuestVerified -and $passed);pointer_events_applied=$pointerEventsApplied;live_mouse_visual_verified=$false;producer_exit_observed=$producerExitObserved;producer_exit_code=$producerExitCode;created_utc_ms=$expires-180000;expires_utc_ms=$expires} | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $directory 'verification.json') -Encoding utf8NoBOM
     }finally{
         if($stonePeer){
             if(-not $stonePeer.HasExited){[IO.File]::WriteAllText((Join-Path $directory 'stone-peer-stop.request'),'Controller cleanup');$null=$stonePeer.WaitForExit(3000)}

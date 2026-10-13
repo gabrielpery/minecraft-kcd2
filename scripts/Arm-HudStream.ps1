@@ -2,7 +2,7 @@
 # Original bounded stream arm. Input mode still requires a physical F8 latch.
 # No game launch, movement or process injection.
 [CmdletBinding()]
-param([string]$ReadyManifest, [string]$BundleDirectory, [switch]$PreflightOnly, [switch]$InputMode, [switch]$OffscreenPresentation, [switch]$LiveMouse, [switch]$StoneLive, [switch]$WorldClicks, [switch]$SelectiveMouse, [ValidateSet(1,2,3)][int]$SelectiveRevision=1)
+param([string]$ReadyManifest, [string]$BundleDirectory, [switch]$PreflightOnly, [switch]$InputMode, [switch]$OffscreenPresentation, [switch]$LiveMouse, [switch]$StoneLive, [switch]$WorldClicks, [switch]$SelectiveMouse, [ValidateSet(1,2,3)][int]$SelectiveRevision=1, [switch]$AimedStone)
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 if($OffscreenPresentation -and -not $InputMode){throw 'Offscreen presentation requires explicit input mode.'}
@@ -11,6 +11,12 @@ if($StoneLive -and (-not $LiveMouse -or -not $InputMode -or -not $OffscreenPrese
 if($WorldClicks -and (-not $LiveMouse -or -not $StoneLive)){throw 'World clicks require explicit LiveMouse and StoneLive modes.'}
 if($SelectiveMouse -and (-not $WorldClicks -or -not $LiveMouse)){throw 'Selective mouse requires explicit LiveMouse and WorldClicks modes.'}
 if($SelectiveRevision -ge 2 -and -not $SelectiveMouse){throw 'A selective revision arming requires explicit SelectiveMouse mode.'}
+if($AimedStone -and (-not $StoneLive -or -not $WorldClicks -or -not $SelectiveMouse -or $SelectiveRevision -ne 3)){throw 'Aimed stone arming requires the explicit live revision3 world-click profile.'}
+function Assert-HudAimedArmMode($Ready,[bool]$AimedExpected){
+    if($Ready.PSObject.Properties.Name -contains 'ui_input_aimed_stone_bridge'){
+        if($Ready.ui_input_aimed_stone_bridge -isnot [bool] -or $Ready.ui_input_aimed_stone_bridge -ne $AimedExpected){throw 'Aimed stone guest does not match the explicitly requested arming mode.'}
+    }elseif($AimedExpected){throw 'Aimed stone guest readiness marker missing.'}
+}
 . (Join-Path $PSScriptRoot 'KcdToolsProbeHelpers.ps1')
 $root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $runtimeRoot=Join-Path $root 'runtime'
@@ -97,6 +103,7 @@ if($InputMode){
         if($ready.PSObject.Properties.Name -notcontains $field){if($StoneLive){throw 'Live stone readiness marker missing.'};continue}
         if($ready.$field -isnot [bool] -or $ready.$field -ne $expectedStone){throw 'Combined HUD stone readiness does not match explicit live mode.'}
     }
+    Assert-HudAimedArmMode $ready ([bool]$AimedStone)
 }
 elseif($ready.PSObject.Properties.Name -contains 'ui_input_protocol'){throw 'Input producer requires explicit InputMode.'}
 $start=$context.GameStartedUtc.ToFileTimeUtc().ToString()
@@ -115,6 +122,7 @@ $evidenceDirectory=[IO.Path]::GetDirectoryName($ReadyManifest)
 $receipt=[ordered]@{schema=1;kind='minecome_hud_stream_arm_v1';run=$ready.run;game_pid=$context.GamePid;game_start_filetime=$start;producer_pid=$ready.producer_pid;producer_start_filetime=$ready.producer_start_filetime;expires_utc_ms=$ready.expires_utc_ms;arm_path=$armPath;arm_sha256=$hash;bundle=$BundleDirectory;addon_sha256=$addonRecord.sha256;visual_verified=$false;interactive_inventory_verified=$false;game_launched=$false}
 $receipt.live_mouse=[bool]$LiveMouse
 $receipt.stone_live=[bool]$StoneLive
+$receipt.aimed_stone=[bool]$AimedStone
 $receipt.world_clicks=[bool]$WorldClicks
 $receipt.selective_mouse=[bool]$SelectiveMouse
 if($SelectiveRevision -ge 2){$receipt.selective_revision=$SelectiveRevision}

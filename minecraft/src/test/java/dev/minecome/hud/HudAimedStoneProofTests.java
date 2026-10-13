@@ -60,6 +60,7 @@ public final class HudAimedStoneProofTests {
     private static void mutate(Consumer<JsonObject> edit)throws IOException {var p=valid();edit.accept(p);reject(p);}
     public static void main(String[] args)throws Exception {
         var p=valid();HudAimedStoneProof.requireLive(p);checks++;
+        HudAimedStoneProof.requireBridge(stone(p));checks++;
         if(!HudAimedStoneProof.hasConfirmedLiveInteraction(p))throw new AssertionError("Confirmed network action lost");checks++;
         mutate(v->v.addProperty("aimed_stone_bridge",false));
         mutate(v->stone(v).addProperty("kind","minecome_hud_stone_bridge_v1"));

@@ -13,8 +13,9 @@ KCD2 1.5.5 development game. Retail 1.5.6 support remains gated below. Actual
 Minecraft aiming passes isolated automatic tests, including an aimed break from
 the native C++ host through the new optional protocol. That host supplies synthetic
 coordinates. The optional KCD relay, Lua intent capture, permit selector and aimed
-HUD guest are now implemented, but the live controller does not enable them yet.
-They still need an integrated KCD crosshair test. Continuous shared movement, general block rendering,
+HUD guest are connected through an explicit bounded controller. The actual HUD
+adapter also passes an automatic Minecraft run with a synthetic host. They still
+need an integrated KCD crosshair test. Continuous shared movement, general block rendering,
 persistence, survival integration and multiplayer remain unfinished.
 
 Earlier failures below are retained for diagnosis. The latest verification status

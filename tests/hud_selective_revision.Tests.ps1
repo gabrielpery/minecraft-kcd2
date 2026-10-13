@@ -5,6 +5,7 @@ Set-StrictMode -Version Latest
 $root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 . (Join-Path $root 'scripts/HudMouseProfile.ps1')
 $script:checks=0
+$AimedStone=$false
 function Check([bool]$Value,[string]$Message){$script:checks++;if(-not $Value){throw $Message}}
 function Reject([scriptblock]$Action,[string]$Message){$failed=$false;try{& $Action}catch{$failed=$true};Check $failed $Message}
 function Parse-Script([string]$Name){

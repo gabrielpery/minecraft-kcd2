@@ -18,7 +18,7 @@ The public repository contains source, build scripts and development procedures.
 | Minecraft stone in KCD2 | Actual Minecraft-derived stone appears and disappears in the official KCD2 development world after vanilla placement/breaking. |
 | Hotbar and Creative inventory | Minecraft's real UI is composited inside KCD2. Physical slot selection, inventory opening/closing, clicks, dragging and scrolling have passed live tests. |
 | Camera and block controls together | KCD camera look works outside inventory and stays still inside it. Right-click/place and left-click/break work in one fixed nearby cell during a bounded live session. |
-| Minecraft aiming | The actual-game lab passes 22 targeting and cancellation scenarios. A second lab verifies agreed coordinate alignment and an aimed break sent from the native C++ host into real Minecraft, with client/server confirmation and cleanup. Host rays are synthetic; live KCD crosshair targeting remains unfinished. |
+| Minecraft aiming | Actual-game labs pass 22 targeting/cancellation scenarios and aimed breaks through both the native bridge and production HUD adapter, with client/server confirmation and cleanup. The opt-in live controller is implemented; host rays in the automatic labs are synthetic, and actual KCD crosshair targeting still needs verification. |
 | Movement groundwork | Separate labs verify Minecraft walking/jumping on sampled KCD ground, physical input forwarding, and a short KCD player-following test. These are not yet one continuous movement system. |
 
 Live checks above use the **official KCD2 1.5.5 development build**. The native
@@ -73,7 +73,7 @@ before deployment, and do not load newer retail saves in the older development g
 - [Architecture](docs/ARCHITECTURE.md) and [wire protocol](protocol/PROTOCOL.md)
 - [Standalone Minecraft aiming lab](minecraft/README.md#standalone-aimed-stone-lab)
 - [Native-to-Minecraft aiming lab](minecraft/README.md#aimed-stone-network-lab)
-- [Aimed controls implementation and remaining integration](docs/research/AIMED-CONTROLS.md)
+- [Aimed controls and bounded live test](docs/research/AIMED-CONTROLS.md)
 - [KCD stone display and console controls](kcd2/TOOLS-TEST.md)
 - [HUD compositor and physical controls](docs/research/HUD-COMPOSITOR.md)
 - [Sampled-ground movement labs](kcd2/MOVEMENT-LAB.md)

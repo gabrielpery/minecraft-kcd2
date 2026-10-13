@@ -4,6 +4,7 @@ $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 $root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $script:checks=0
+$AimedStone=$false
 function Check([bool]$Value,[string]$Message){$script:checks++;if(-not $Value){throw $Message}}
 function Reject([scriptblock]$Action,[string]$Message='Invalid live stone evidence accepted'){
     $rejected=$false;try{& $Action}catch{$rejected=$true}

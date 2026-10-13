@@ -17,6 +17,7 @@ param(
     [switch]$InputPointerFixture,
     [switch]$StoneFixture,
     [switch]$StoneLive,
+    [switch]$AimedStone,
     [string]$StoneTokenFile,
     [ValidateRange(1,65535)][int]$StonePort=38765,
     [switch]$InputDelayFixture,
@@ -35,6 +36,7 @@ $env:GRADLE_USER_HOME=Join-Path $minecraft '.gradle-user-home'
 $producerDirectory=Join-Path $EvidenceDirectory 'capture'
 $exitCode=1
 try {
+    if($AimedStone -and (-not $StoneLive -or $StoneFixture)){throw 'Aimed stone requires the explicit live stone profile.'}
     if($StoneFixture -and ($StoneLive -or -not $InputFixture -or -not $InputOffscreenTrial -or $LiveMouse -or $InputPointerFixture -or $InputDelayFixture -or $InputBackgroundTrial -or -not $StoneTokenFile)){throw 'Stone fixture requires separate offscreen input fixture and explicit token.'}
     if($StoneLive -and ($StoneFixture -or -not $InputMode -or -not $LiveMouse -or -not $OffscreenPresentation -or $InputFixture -or $InputOffscreenTrial -or $InputPointerFixture -or $InputDelayFixture -or $InputBackgroundTrial -or -not $StoneTokenFile)){throw 'Live stone bridge requires the explicit live mouse profile and its owned relay token.'}
     if(-not $StoneFixture -and -not $StoneLive -and ($StoneTokenFile -or $PSBoundParameters.ContainsKey('StonePort'))){throw 'Stone connection arguments require an explicit stone mode.'}
@@ -52,6 +54,7 @@ try {
     if($InputPointerFixture){$arguments+='-PminecomeHudStreamInputPointerFixture'}
     if($StoneFixture){$arguments+=@('-PminecomeHudStoneBridge','-PminecomeHudStoneFixture',"-PminecomeTokenFile=$StoneTokenFile","-PminecomePort=$StonePort")}
     if($StoneLive){$arguments+=@('-PminecomeHudStoneBridge','-PminecomeHudStoneLive',"-PminecomeTokenFile=$StoneTokenFile","-PminecomePort=$StonePort")}
+    if($AimedStone){$arguments+='-PminecomeHudAimedStoneBridge'}
     if($InputDelayFixture){$arguments+='-PminecomeHudStreamInputDelayFixture'}
     if($InputBackgroundTrial){$arguments+='-PminecomeHudStreamBackgroundTrial'}
     if($OffscreenPresentation){$arguments+='-PminecomeHudStreamOffscreenPresentation'}

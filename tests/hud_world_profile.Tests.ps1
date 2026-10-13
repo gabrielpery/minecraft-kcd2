@@ -5,6 +5,7 @@ Set-StrictMode -Version Latest
 $root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 . (Join-Path $root 'scripts/HudMouseProfile.ps1')
 $script:checks=0
+$AimedStone=$false
 function Check([bool]$Value,[string]$Message){$script:checks++;if(-not $Value){throw $Message}}
 function Reject([scriptblock]$Action,[string]$Message){$failed=$false;try{& $Action}catch{$failed=$true};Check $failed $Message}
 function Parse-Script([string]$Relative){
@@ -84,7 +85,7 @@ foreach($statement in $arm.EndBlock.Statements){
     if($statement -is [Management.Automation.Language.IfStatementAst]){$guardText+=$statement.Extent.Text}
     elseif($guardText.Count){break}
 }
-Check ($guardText.Count -eq 6) 'All arm configuration guards isolated'
+Check ($guardText.Count -eq 7) 'All arm configuration guards isolated'
 $SelectiveMouse=$false
 $SelectiveRevision=1
 $guards=[scriptblock]::Create($guardText -join "`n")

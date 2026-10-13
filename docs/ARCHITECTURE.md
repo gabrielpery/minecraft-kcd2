@@ -99,9 +99,13 @@ bootstrap, a permit-bound network break, separate result/removal events and fina
 client/server air with normal process exits. An explicit tools-host aimed mode
 now maps replicas through that same agreement and connects original guest permits
 to Lua camera/obstruction captures. It passes simulated-engine integration checks.
-The separate aimed HUD guest and physical-edge selector are implemented; a bounded
-live controller and actual KCD crosshair verification remain unfinished. Existing
-HUD and minor1 controls retain their fixed-cell path. See
+The opt-in bounded controller joins the aimed HUD guest and physical-edge selector,
+then correlates original permits, guest results and engine acknowledgements. Its
+click path checks ownership and the exact permit receipt without replaying the
+growing JSON history; full correlation runs at shutdown. The actual HUD adapter
+passes an automatic Minecraft run with a synthetic host. Actual KCD crosshair
+verification remains outstanding. Existing HUD and minor1 controls retain their
+fixed-cell path. See
 [aimed controls](research/AIMED-CONTROLS.md) and the
 [minor2 contract](../protocol/PROTOCOL.md#optional-minor2-aimed-stone-arena).
 

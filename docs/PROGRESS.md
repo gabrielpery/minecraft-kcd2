@@ -1,13 +1,60 @@
 # MineCome progress — 2026-10-13
 
-**Aimed host controls: implemented and compiled; live controller still pending.**
+**Bounded aimed HUD controller: implemented; actual HUD adapter verified in
+Minecraft. Actual KCD crosshair verification is next.** `Start-AimedHudLab.ps1`
+selects the existing selective revision3 renderer, offscreen presentation and
+temporary 60 FPS host cap. Its explicit mode routes physical click edges through
+the original acknowledged Minecraft permit and validates separate guest, native
+and engine receipts. Legacy fixed-cell defaults are preserved. Both the controller
+and direct arming helper reject mismatched guest/profile combinations. No KCD
+launch, renderer installation or frozen bundle replacement occurred for this work.
+
+Actual Minecraft run `621e1eaf8c7d4de3970637fdfdc9667d`, in
+`runtime/evidence/hud-aimed-bridge-20261013-201501-621e1eaf8c7d4de3970637fdfdc9667d`,
+passes on its first attempt. A fresh `MineCome-HudStream-UUID` save exercises the
+production `HudAimedStoneBridge`: one vanilla bootstrap placement, one aimed
+network break, independent client/server confirmation, matching native result and
+block events, then independently observed final air. It ends with zero owned
+stones or pending work, restored options, a persisted save and normal
+Java/wrapper/native exits. Source and native hashes stayed stable through the run.
+Arming and host rays are synthetic; the fixture neither renders the HUD nor
+connects to KCD or verifies physical input.
+The final PowerShell validator also passes a read-only replay of this unchanged
+receipt plus 20 tamper rejections. Its original snapshot and evidence remain
+preserved; this validation required no repeat game run.
+
+The Minecraft build/remap passes, including 3,819 protocol checks, aimed mode/proof
+checks (9/49), and existing HUD gate/proof/mode checks (51/227/2,048). Controller
+coverage passes 68 aimed cases and 1,009 legacy cases; the aimed relay passes 73.
+Mouse/world/selective/revision profile regressions pass (23/110/142/269), with the
+latter three also checked under PowerShell 5.1. The PowerShell bootstrap preserves
+explicit Java/bundle paths and passes nine cases under both PowerShell versions.
+
+Review found that replaying the growing relay JSON journal could take roughly
+442 ms, exceeding the 250 ms physical-edge limit. Dispatch now checks ownership
+and the exact original permit acknowledgement, followed immediately by foreground
+and freshness checks. Full historical correlation runs outside that path. The
+representative 289 KB journal test takes approximately 23 ms when warmed; external
+ownership/HTTP calls are mocked, so this is not an end-to-end live latency claim.
+Original native/guest permit expiry remains enforced. Native shutdown now waits
+for both replica cleanup and the separate input-gate end acknowledgement; its
+simulated-engine integration passes with the second acknowledgement delayed.
+
+The next live check keeps the player still, turns to the seed stone and breaks it
+with the crosshair. The seed lies along world +X, independently of the initial
+camera direction. Automatic reseeding and rapid inventory changes during a
+pending block action remain outside this first check. Commands and limits are in
+[aimed controls](research/AIMED-CONTROLS.md).
+
+**Earlier aimed host-control milestone: implemented and compiled before the
+bounded live controller above.**
 The explicit tools-host aimed mode maps replicas through the exact acknowledged
 arena, waits for the engine bootstrap receipt, then installs original Minecraft
 permits in a separate Lua gate. A physical-click selector admits only an unused
 permit acknowledged before that click. Lua samples camera and obstruction in the
 same callback; native validation retains the original permit age and generation.
 The new aimed HUD adapter uses actual Arena actions and a separate readiness/proof
-contract. The existing live controller and fixed-cell controls remain unchanged.
+contract. At this stage the existing live controller and fixed-cell controls were unchanged.
 No KCD launch, add-on installation or frozen live-bundle replacement occurred.
 
 The native Release build and all **30 CTest suites pass**, including existing
@@ -31,9 +78,9 @@ placements, four confirmed breaks, final air, zero ownership/pending work,
 restored options and normal Java/wrapper exits. Source hashes are stable.
 The updated receipt validator passes 37 checks in both PowerShell versions.
 
-Next is the bounded controller joining these components and validating the
-distinct guest, native and engine receipts, followed by actual KCD crosshair
-verification. Two limits remain explicit: replica cleanup does not prove the
+The later bounded controller joining these components and validating the
+distinct guest, native and engine receipts is recorded above; actual KCD crosshair
+verification remains outstanding. Two limits remain explicit: replica cleanup does not prove the
 separate Lua input gate ended, and changing the selected slot/stack after vanilla
 dispatch but before authoritative confirmation can end the experimental HUD
 session under the existing Arena contract. See [aimed controls](research/AIMED-CONTROLS.md).
@@ -52,7 +99,7 @@ immutable arena agreement, expiring single-use guest permits, aimed requests and
 explicit client/server-confirmed results. Both sides validate current session,
 fresh camera poses, bounds and ownership. The host acknowledges the alignment
 only after the consumer acknowledges previous-session cleanup. Existing minor0/1
-callers retain their behavior; the live controller does not enable minor2 yet.
+callers retain their behavior; the live controller did not enable minor2 at this stage.
 
 Run `e78ba82a6d23467eba714c1a82871983`, in
 `runtime/evidence/aimed-bridge-20261013-193528-e78ba82a6d23467eba714c1a82871983`,

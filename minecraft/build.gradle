@@ -10,6 +10,13 @@ loom {
         client {
             programArgs '--username', 'MineComeLab'
             vmArgs '--enable-native-access=ALL-UNNAMED'
+            if (project.hasProperty('minecomeHudAimedBridgeLab'))
+                vmArgs '-Dminecome.hudAimedBridgeLab=true'
+            for (String suffix : ['Run','Directory','TokenFile']) {
+                String key = 'minecomeHudAimedBridge' + suffix
+                if (project.hasProperty(key))
+                    vmArgs "-Dminecome.hudAimedBridge${suffix}=${project.property(key)}"
+            }
             if (project.hasProperty('minecomeAimedBridgeLab'))
                 vmArgs '-Dminecome.aimedBridgeLab=true'
             for (String suffix : ['Run','Directory','TokenFile']) {

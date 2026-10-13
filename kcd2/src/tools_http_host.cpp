@@ -296,6 +296,7 @@ class AimedInputRelay {
 public:
     AimedInputRelay(minecome::Bridge& bridge,ToolsHttp& http,StoneConsumer& stones,std::function<void(const std::string&)> record,std::string run)
         :bridge_(bridge),http_(http),stones_(stones),record_(std::move(record)),run_(std::move(run)) {}
+    bool cleanup_complete() const {return phase_==Phase::waiting||(phase_==Phase::ended&&end_acknowledged_);}
     void end(const char* reason) {
         if(phase_==Phase::waiting||phase_==Phase::ended) return;
         phase_=Phase::ended;installed_.clear();
@@ -582,7 +583,7 @@ int wmain(int argc,wchar_t** argv) {
         if(stones) {
             stones->end("relay shutting down");
             const auto cleanup_deadline=Clock::now()+2s;
-            while(!stones->idle()&&Clock::now()<cleanup_deadline) {
+            while((!stones->idle()||(aimed_inputs&&!aimed_inputs->cleanup_complete()))&&Clock::now()<cleanup_deadline) {
                 // Read-only sampling supplies the next log separator: KCD can
                 // leave its final End receipt without a terminating newline.
                 try {http.command("#MineCome.SamplePose()");} catch(const std::exception&) {}
@@ -597,6 +598,7 @@ int wmain(int argc,wchar_t** argv) {
             }
             record("Stone engine acknowledgements: placed="+std::to_string(stones->spawned)+" removed="+std::to_string(stones->removed)+" rejected="+std::to_string(stones->rejected)
                 +" cleanup_ack="+(stones->idle()?"true":"false; Lua lease remains responsible"));
+            if(aimed_inputs) record(std::string("Aimed input cleanup acknowledgement: ")+(aimed_inputs->cleanup_complete()?"true":"false; Lua lease remains responsible"));
         }
         bridge.stop();
         record("Fresh live camera samples="+std::to_string(samples)+" world/player samples="+std::to_string(world_samples)

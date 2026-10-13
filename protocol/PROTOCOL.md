@@ -197,9 +197,11 @@ synthetic C++ host; its automatic two-process run passes an exact arena ACK,
 confirmed bootstrap, aimed network break, separate removal/result and cleanup.
 The tools-host's explicit `--aimed-stone --aimed-run <run>` mode now uses the
 extension and the agreed replica alignment. Its Lua permit/capture route passes
-simulated-engine integration tests. The aimed HUD guest and physical-edge permit
-selector are implemented, but the existing live controller does not enable them
-yet. See [aimed controls](../docs/research/AIMED-CONTROLS.md).
+simulated-engine integration tests. The explicit bounded aimed controller joins
+the HUD guest and physical-edge permit selector. An actual Minecraft fixture
+verifies the production HUD adapter against a synthetic native host; actual KCD
+crosshair verification is still outstanding. See
+[aimed controls](../docs/research/AIMED-CONTROLS.md).
 
 The implemented minor1 fixed-cell request remains unchanged. `AimGeometry`
 (Java) and `aim_geometry.hpp` (C++) contain pure alignment and reference-ray

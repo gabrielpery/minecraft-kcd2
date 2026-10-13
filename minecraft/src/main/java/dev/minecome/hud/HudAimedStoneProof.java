@@ -14,6 +14,11 @@ final class HudAimedStoneProof {
         flag(proof,"live_mouse",true);flag(proof,"host_armed",true);
         long input=count(proof,"input_events_applied");equal(input,count(proof,"input_consumed_sequence"),"UI consumption");
         var stone=object(proof,"stone_bridge");
+        requireBridge(stone);
+        if(input==0 && count(stone,"confirmed_network_actions")==0)throw invalid("No consumed UI input or confirmed network interaction");
+    }
+    /** Shared adapter semantics only; this does not establish physical arming, UI input or KCD rendering. */
+    static void requireBridge(JsonObject stone)throws IOException {
         text(stone,"kind","minecome_hud_aimed_stone_bridge_v1");equal(count(stone,"schema"),1,"schema");
         equal(count(stone,"protocol_minor"),2,"protocol minor");
         if(count(stone,"session")==0)throw invalid("Unauthenticated aimed bridge");
@@ -78,7 +83,6 @@ final class HudAimedStoneProof {
             if(!observed.inside(minimum,maximum) || !observedOwned.add(observed))throw invalid("Invalid/duplicate owned cell");
         }
         if(!observedOwned.equals(replayedOwned))throw invalid("Component owned cells disagree with confirmed transitions");
-        if(input==0 && network==0)throw invalid("No consumed UI input or confirmed network interaction");
     }
     static boolean hasConfirmedLiveInteraction(JsonObject proof){
         if(proof==null)return false;

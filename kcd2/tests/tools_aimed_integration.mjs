@@ -54,7 +54,8 @@ const server=http.createServer((request,response)=>{
     const now=clock();installations.set(permit[3],now);
     if(!refusePermitAck)log('[MineComeAimPermit]',{schema:1,run,arena:'1',permit:permit[3],result:'installed',engine_time:now,expires_engine_time:Math.fround(now+.5)});
   }
-  if(command===`#MineCome.EndAimedInput('${run}','1')`)log('[MineComeAimSession]',{schema:1,run,arena:'1',event:'end',result:'ended',engine_time:clock(),expires_engine_time:null});
+  // Deliberately arrive after the independent stone cleanup receipt.
+  if(command===`#MineCome.EndAimedInput('${run}','1')`)setTimeout(()=>log('[MineComeAimSession]',{schema:1,run,arena:'1',event:'end',result:'ended',engine_time:clock(),expires_engine_time:null}),350);
   response.end('HTTP dispatch acknowledgement only');
 });
 await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
@@ -143,6 +144,9 @@ try{
   if(installations.has(unacknowledged.permit)){capture(unacknowledged,4);await delay(150);assert.equal(requests.length,2,'unacknowledged permit cannot dispatch');}
   fs.writeFileSync(stopFile,'Owned synthetic fixture stop');const code=await finished;assert.equal(code,0,output);
   assert.equal(owned.size,0);assert.ok(output.includes('cleanup_ack=true'));assert.ok(commands.includes(`#MineCome.EndAimedInput('${run}','1')`));
+  assert.ok(output.includes('AIM_INPUT_END_ACK run='+run+' arena=1'),'late input gate ACK must be read after stone cleanup');
+  assert.ok(output.indexOf('STONE_CLEANUP_ACK')<output.indexOf('AIM_INPUT_END_ACK'));
+  assert.ok(output.includes('Aimed input cleanup acknowledgement: true'));
   fs.writeFileSync(path.join(root,'verification.json'),JSON.stringify({schema:1,result:'passed',synthetic_engine:true,synthetic_minecraft_peer:true,kcd_connected:false,requests:requests.length,engine_cleanup:true},null,2));
   console.log('TOOLS_AIMED_INTEGRATION_PASS synthetic_engine=true synthetic_minecraft_peer=true requests=2 cleanup=true');
 }finally{

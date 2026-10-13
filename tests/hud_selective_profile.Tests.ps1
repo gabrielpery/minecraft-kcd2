@@ -6,6 +6,7 @@ $root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 . (Join-Path $root 'scripts/HudMouseProfile.ps1')
 $script:checks=0
 $SelectiveRevision=1
+$AimedStone=$false
 function Check([bool]$Value,[string]$Message){$script:checks++;if(-not $Value){throw $Message}}
 function Reject([scriptblock]$Action,[string]$Message){$failed=$false;try{& $Action}catch{$failed=$true};Check $failed $Message}
 function Parse-Script([string]$Relative){
@@ -112,7 +113,7 @@ foreach($ast in @($arm,$update,$disable)){
         if($statement -is [Management.Automation.Language.IfStatementAst]){$guards+=$statement.Extent.Text}
         elseif($guards.Count){break}
     }
-    Check ($guards.Count -eq $(if($ast -eq $arm){6}else{3})) 'Initial pure configuration guards found'
+    Check ($guards.Count -eq $(if($ast -eq $arm){7}else{3})) 'Initial pure configuration guards found'
     $guard=[scriptblock]::Create($guards -join "`n")
     foreach($world in @($false,$true)){
         foreach($mouse in @($false,$true)){

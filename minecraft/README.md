@@ -239,9 +239,13 @@ passes 37 direct/JSON/tamper checks with `tests/aimed_stone_receipt.Tests.ps1` u
 both PowerShell 5.1 and 7. No live aimed protocol capability is enabled by this run.
 
 The optional `minecomeHudAimedStoneBridge` development property selects a separate
-minor2 HUD guest with its own readiness and proof contracts. It has compiled and
-passed contract checks; the existing live HUD controller does not enable it yet.
-See [aimed controls](../docs/research/AIMED-CONTROLS.md) for the integration boundary.
+minor2 HUD guest with its own readiness and proof contracts. The explicit
+`Start-AimedHudLab.ps1` controller now selects it. `Start-HudAimedBridgeLab.ps1`
+automatically checks the production adapter in a fresh Minecraft world against
+a synthetic C++ host: bootstrap, aimed break, client/server confirmation and
+final air pass with normal process exits. This fixture does not render the HUD
+or exercise KCD input. See [aimed controls](../docs/research/AIMED-CONTROLS.md)
+for commands and the remaining live crosshair verification.
 
 ## Aimed-stone network lab
 
