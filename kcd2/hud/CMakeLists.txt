@@ -123,6 +123,13 @@ add_custom_command(TARGET minecome_hud_input_compositor POST_BUILD
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/shaders/MineComeHud.fx"
         "$<TARGET_FILE_DIR:minecome_hud_input_compositor>/MineComeHud.fx")
 if(BUILD_TESTING)
+    add_executable(minecome_hud_stone_fixture_tests input_stone_fixture_tests.cpp)
+    target_link_libraries(minecome_hud_stone_fixture_tests PRIVATE minecome_hud_input)
+    if(MSVC)
+        set_target_properties(minecome_hud_stone_fixture_tests PROPERTIES MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+        target_compile_options(minecome_hud_stone_fixture_tests PRIVATE /W4 /permissive- /utf-8 /EHsc)
+    endif()
+    add_test(NAME hud_stone_fixture_receipts COMMAND minecome_hud_stone_fixture_tests)
     add_executable(minecome_hud_input_tests input_tests.cpp)
     target_link_libraries(minecome_hud_input_tests PRIVATE minecome_hud_input)
     if(MSVC)

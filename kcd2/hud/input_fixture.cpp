@@ -4,6 +4,7 @@
 #include "input_background_trial.hpp"
 #include "input_offscreen_trial.hpp"
 #include "input_pointer_fixture.hpp"
+#include "input_stone_fixture.hpp"
 #include <filesystem>
 #include <iostream>
 #include <set>
@@ -17,9 +18,9 @@ void save(const std::wstring &path,const std::string &text) {
     DWORD written=0;
     if(!file||!WriteFile(file.value,text.data(),static_cast<DWORD>(text.size()),&written,nullptr)||written!=text.size()||!FlushFileBuffers(file.value))throw std::runtime_error("receipt_create_failed");
 }
-ui::json::Value read(const std::wstring &path,HANDLE stop) {
+ui::json::Value read(const std::wstring &path,HANDLE stop,std::size_t limit=65536) {
     std::vector<std::uint8_t> bytes;
-    if(!st::read_file(path,65536,stop,&bytes,nullptr))throw std::runtime_error("receipt_read_failed");
+    if(!st::read_file(path,limit,stop,&bytes,nullptr))throw std::runtime_error("receipt_read_failed");
     return ui::json::Parser(std::string_view(reinterpret_cast<const char *>(bytes.data()),bytes.size())).parse();
 }
 bool exists(const std::wstring &path) {const DWORD attrs=GetFileAttributesW(path.c_str());return attrs!=INVALID_FILE_ATTRIBUTES&&!(attrs&(FILE_ATTRIBUTE_DIRECTORY|FILE_ATTRIBUTE_REPARSE_POINT));}
@@ -29,6 +30,7 @@ int wmain(int argc,wchar_t **argv) {
     bool opened=false,closed=false,guest_closed=false,passed=false,background=false,background_completed=false;
     bool offscreen=false,offscreen_completed=false,unfocused_events_verified=false,pointer_fixture=false;
     bool pointer_verified=false;std::uint32_t pointer_receipts=0;float pointer_initial_scroll=0;
+    bool stone_fixture=false,stone_verified=false;std::uint32_t stone_steps_completed=0;
     ui::BackgroundTrial background_summary;
     ui::OffscreenTrial offscreen_summary;
     std::uint64_t longest_fresh_pair_ms=0;
@@ -36,8 +38,12 @@ int wmain(int argc,wchar_t **argv) {
     try {
         std::map<std::wstring,std::wstring> args;
         for(int i=1;i<argc;i+=2)if(i+1>=argc||!args.emplace(argv[i],argv[i+1]).second)throw std::runtime_error("arguments");
-        for(const auto &[key,value]:args){(void)value;if(key!=L"--run"&&key!=L"--expires"&&key!=L"--ready-output"&&key!=L"--guest-ready"&&key!=L"--output"&&key!=L"--prearm-delay-ms"&&key!=L"--background-trial"&&key!=L"--offscreen-trial"&&key!=L"--pointer-fixture")throw std::runtime_error("arguments");}
-        if(args.size()<5||args.size()>9)throw std::runtime_error("arguments");
+        for(const auto &[key,value]:args){(void)value;if(key!=L"--run"&&key!=L"--expires"&&key!=L"--ready-output"&&key!=L"--guest-ready"&&key!=L"--output"&&key!=L"--prearm-delay-ms"&&key!=L"--background-trial"&&key!=L"--offscreen-trial"&&key!=L"--pointer-fixture"&&key!=L"--stone-fixture")throw std::runtime_error("arguments");}
+        if(args.size()<5||args.size()>10)throw std::runtime_error("arguments");
+        if(args.contains(L"--stone-fixture")) {
+            if(args.at(L"--stone-fixture")!=L"1")throw std::runtime_error("stone_fixture_argument");
+            stone_fixture=true;
+        }
         if(args.contains(L"--pointer-fixture")) {
             if(args.at(L"--pointer-fixture")!=L"1")throw std::runtime_error("pointer_fixture_argument");
             pointer_fixture=true;
@@ -55,7 +61,8 @@ int wmain(int argc,wchar_t **argv) {
             const auto delay=std::from_chars(value.data(),value.data()+value.size(),delay_ms);
             if(delay.ec!=std::errc{}||delay.ptr!=value.data()+value.size()||delay_ms>5000)throw std::runtime_error("prearm_delay");
         }
-        if((background&&delay_ms)||(offscreen&&(background||delay_ms))||(pointer_fixture&&(background||delay_ms)))throw std::runtime_error("fixture_modes_conflict");
+        if((background&&delay_ms)||(offscreen&&(background||delay_ms))||(pointer_fixture&&(background||delay_ms))||
+           (stone_fixture&&(pointer_fixture||background||args.contains(L"--prearm-delay-ms"))))throw std::runtime_error("fixture_modes_conflict");
         output=args.at(L"--output");for(auto c:args.at(L"--run")){if(c>127)throw std::runtime_error("run");run+=static_cast<char>(c);}
         std::string expiry;for(auto c:args.at(L"--expires")){if(c<L'0'||c>L'9')throw std::runtime_error("expiry");expiry+=static_cast<char>(c);}
         std::uint64_t expires=0;const auto parsed=std::from_chars(expiry.data(),expiry.data()+expiry.size(),expires);
@@ -69,6 +76,7 @@ int wmain(int argc,wchar_t **argv) {
         ready << "{\"schema\":1,\"kind\":\"minecome_hud_input_fixture_ready_v1\",\"run\":\"" << run
               << "\",\"host_pid\":" << id.target_pid << ",\"host_start_filetime\":\"" << id.target_start
               << "\",\"expires_utc_ms\":" << expires << ",\"pointer_fixture\":" << (pointer_fixture?"true":"false")
+              << ",\"stone_fixture\":" << (stone_fixture?"true":"false")
               << ",\"physical_host_input\":false,\"kcd_compositing_verified\":false}\n";
         save(args.at(L"--ready-output"),ready.str());
         auto alive=[&] {return st::utc_ms()<expires&&st::steady_ms()>=begun&&st::steady_ms()<deadline;};
@@ -83,6 +91,8 @@ int wmain(int argc,wchar_t **argv) {
             guest.at("ui_input_offscreen_presentation").boolean()!=offscreen)throw std::runtime_error("guest_ready_identity");
         const auto pointer_mode=guest.object.find("ui_input_pointer_fixture");
         if((pointer_mode!=guest.object.end()&&pointer_mode->second.boolean())!=pointer_fixture)throw std::runtime_error("guest_pointer_mode");
+        const auto stone_mode=guest.object.find("ui_input_stone_fixture");
+        if((stone_mode!=guest.object.end()&&stone_mode->second.boolean())!=stone_fixture)throw std::runtime_error("guest_stone_mode");
         const auto producer_pid=guest.at("producer_pid").integer();if(!producer_pid||producer_pid>0xffffffffULL)throw std::runtime_error("guest_pid");
         id.producer_pid=static_cast<std::uint32_t>(producer_pid);id.producer_start=guest.at("producer_start_filetime").integer();
         st::Handle producer(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION|SYNCHRONIZE,FALSE,id.producer_pid));
@@ -148,6 +158,47 @@ int wmain(int argc,wchar_t **argv) {
                 pump();if(writer.status().state==2||st::steady_ms()-wait_started>2000)throw std::runtime_error("event_ack_timeout");Sleep(2);
             }
         };
+        if(stone_fixture) {
+            // The UI fixture only chooses slots/screens. The separately owned
+            // loopback peer issues each real bridge request after its immutable
+            // coordination receipt; no gameplay or OS input is invented here.
+            const auto coordination=std::filesystem::path(args.at(L"--guest-ready")).parent_path().parent_path();
+            auto stone_pump=[&] {
+                pump();
+                if(writer.status().state!=1||!writer.ready()||!images.fresh()||!ui::fresh(image_capture,st::utc_ms()))
+                    throw std::runtime_error("stone_fresh_pair_required");
+            };
+            auto state=[&](std::uint32_t screen,std::uint32_t slot) {
+                const auto started=st::steady_ms();
+                do {
+                    stone_pump();
+                    if(writer.status().ack.sequence==sent&&writer.status().ack.screen==screen&&writer.status().ack.selected==slot) {
+                        selected.insert(slot);return;
+                    }
+                    if(st::steady_ms()-started>=2000)throw std::runtime_error("stone_ui_state_timeout");
+                    Sleep(2);
+                } while(true);
+            };
+            auto step=[&](std::size_t index) {
+                stone_pump();
+                const auto suffix=std::to_wstring(index+1)+L".json";
+                save((coordination/(L"stone-step-"+suffix)).wstring(),ui::stone_step_request(id,index));
+                const auto result_path=(coordination/(L"stone-result-"+suffix)).wstring();
+                const auto started=st::steady_ms();
+                while(!exists(result_path)) {
+                    stone_pump();
+                    if(st::steady_ms()-started>=5000)throw std::runtime_error("stone_peer_result_timeout");
+                    Sleep(5);
+                }
+                stone_pump();ui::validate_stone_result(read(result_path,stop.value,4096),id,index);
+                ++stone_steps_completed;
+            };
+            state(0,0);step(0);
+            emit(ui::Kind::key_down,0x32);emit(ui::Kind::key_up,0x32);state(0,1);step(1);step(2);
+            emit(ui::Kind::key_down,0x31);emit(ui::Kind::key_up,0x31);
+            emit(ui::Kind::key_down,0x45);emit(ui::Kind::key_up,0x45);state(1,0);opened=true;step(3);
+            emit(ui::Kind::key_down,0x1b);emit(ui::Kind::key_up,0x1b);state(0,0);closed=true;step(4);step(5);
+        } else {
         for(std::uint32_t key=0x31;key<=0x39;++key) {
             emit(ui::Kind::key_down,key);
             if(writer.status().ack.selected!=key-0x31)throw std::runtime_error("selected_slot_ack");
@@ -214,6 +265,7 @@ int wmain(int argc,wchar_t **argv) {
         emit(ui::Kind::key_down,0x1b);emit(ui::Kind::key_up,0x1b);
         if(writer.status().ack.screen!=0)throw std::runtime_error("inventory_close_ack");closed=true;
         }
+        }
         writer.finish("fixture_complete");
         const auto close_started=st::steady_ms();
         while(writer.status().ack.state!=2) {
@@ -222,15 +274,18 @@ int wmain(int argc,wchar_t **argv) {
         }
         close_wait_ms=st::steady_ms()-close_started;
         if(delay_ms&&close_wait_ms<400)throw std::runtime_error("closed_ack_delay_not_observed");
-        guest_closed=true;passed=writer.status().ack.sequence==sent&&selected.size()==9;reason=passed?"guest_closed_all_events_acked":"ack_incomplete";
+        guest_closed=true;passed=writer.status().ack.sequence==sent&&
+            (stone_fixture?(sent==ui::stone_fixture_events&&selected.size()==2&&opened&&closed&&stone_steps_completed==6):selected.size()==9);
+        reason=passed?"guest_closed_all_events_acked":"ack_incomplete";
         // The image receiver remains bound to this exact target process. Keep it
         // alive until Minecraft exits naturally and allow its final close read.
         while(WaitForSingleObject(producer.value,0)==WAIT_TIMEOUT&&alive())Sleep(20);
         if(WaitForSingleObject(producer.value,0)==WAIT_TIMEOUT){passed=false;reason="guest_exit_timeout";}
-        if((offscreen||pointer_fixture)&&passed) {
+        if((offscreen||pointer_fixture||stone_fixture)&&passed) {
             const auto final_path=(std::filesystem::path(args.at(L"--guest-ready")).parent_path()/L"stream-result.json").wstring();
             const auto result=read(final_path,stop.value);
-            if(offscreen){ui::validate_offscreen_final(result,id,sent,pointer_fixture?ui::pointer_fixture_events:31);unfocused_events_verified=true;}
+            if(stone_fixture){ui::validate_stone_final(result,id,sent,offscreen);stone_verified=true;unfocused_events_verified=offscreen;}
+            else if(offscreen){ui::validate_offscreen_final(result,id,sent,pointer_fixture?ui::pointer_fixture_events:31);unfocused_events_verified=true;}
             if(pointer_fixture){ui::validate_pointer_final(result,id,sent,pointer_initial_scroll);pointer_verified=true;}
         }
         Sleep(2000);
@@ -250,6 +305,9 @@ int wmain(int argc,wchar_t **argv) {
                << ",\"pointer_fixture\":" << (pointer_fixture?"true":"false")
                << ",\"pointer_gestures_verified\":" << (pointer_verified?"true":"false")
                << ",\"pointer_phase_receipts\":" << pointer_receipts
+               << ",\"stone_fixture\":" << (stone_fixture?"true":"false")
+               << ",\"stone_steps_completed\":" << stone_steps_completed
+               << ",\"stone_fixture_verified\":" << (stone_verified?"true":"false")
                << ",\"prearm_delay_fixture\":" << (delay_ms?"true":"false") << ",\"max_prearm_ack_age_ms\":" << max_ack_age
                << ",\"prearm_stale_observations\":" << stale_observations << ",\"prearm_recoveries\":" << recoveries
                << ",\"closed_ack_wait_ms\":" << close_wait_ms

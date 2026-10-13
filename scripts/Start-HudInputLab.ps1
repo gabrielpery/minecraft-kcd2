@@ -4,7 +4,7 @@
 [CmdletBinding()]
 param(
     [ValidateSet('Fixture','Live')][string]$Mode='Fixture',
-    [string]$JavaHome,[string]$BundleDirectory,[switch]$PreflightOnly,[switch]$DelayFixture,[switch]$BackgroundTrial,[switch]$OffscreenPresentation,[switch]$OffscreenTrial,[switch]$HostGpuBudget,[switch]$HideHostHud,[switch]$PointerFixture,[switch]$LiveMouse,
+    [string]$JavaHome,[string]$BundleDirectory,[switch]$PreflightOnly,[switch]$DelayFixture,[switch]$BackgroundTrial,[switch]$OffscreenPresentation,[switch]$OffscreenTrial,[switch]$HostGpuBudget,[switch]$HideHostHud,[switch]$PointerFixture,[switch]$LiveMouse,[switch]$StoneFixture,
     [ValidateRange(320,1920)][int]$Width=1280,
     [ValidateRange(240,1080)][int]$Height=720,
     [ValidateRange(1,4)][int]$GuiScale=2
@@ -16,6 +16,7 @@ $minecraft=Join-Path $root 'minecraft'
 $evidenceRoot=Join-Path $root 'runtime/evidence'
 $fixturePath=Join-Path $root 'build/hud-input-offscreen-20261012/kcd2/hud/input/Release/minecome_hud_input_fixture.exe'
 if($PointerFixture){$fixturePath=Join-Path $root 'build/hud-input-pointer-nullfix-20261013/kcd2/hud/input/Release/minecome_hud_input_fixture.exe'}
+if($StoneFixture){$fixturePath=Join-Path $root 'build/hud-stone-20261013/kcd2/hud/input/Release/minecome_hud_input_fixture.exe'}
 function Assert-Unlinked([string]$Path){
     $full=[IO.Path]::GetFullPath($Path);$cursor=$full
     while($cursor){
@@ -32,6 +33,68 @@ function Read-Receipt([string]$Path){
 }
 function Assert-LiveMouseReceipt([object]$Receipt,[bool]$Expected){
     if($Receipt.PSObject.Properties.Name -notcontains 'ui_input_live_mouse' -or $Receipt.ui_input_live_mouse -isnot [bool] -or $Receipt.ui_input_live_mouse -ne $Expected){throw 'UI producer/result live-mouse mode mismatch.'}
+}
+function Assert-HudStoneMode([object]$Receipt,[bool]$Expected){
+    foreach($field in @('ui_input_stone_bridge','ui_input_stone_fixture')){
+        if($Receipt.PSObject.Properties.Name -notcontains $field -or $Receipt.$field -isnot [bool] -or $Receipt.$field -ne $Expected){throw 'Combined stone fixture mode mismatch.'}
+    }
+}
+function Assert-HudStoneFixture([object]$Guest,[object]$Native,[object]$Peer,[string]$Run){
+    function Number($Value,[long]$Expected){if(($Value -isnot [int] -and $Value -isnot [long]) -or $Value -ne $Expected){throw 'Stone fixture numeric evidence mismatch.'}}
+    function Flag($Value,[bool]$Expected){if($Value -isnot [bool] -or $Value -ne $Expected){throw 'Stone fixture Boolean evidence mismatch.'}}
+    Assert-HudStoneMode $Guest $true
+    if($Guest.run -cne $Run -or $Native.run -cne $Run -or $Peer.run -cne $Run -or $Guest.result -cne 'input_passed' -or $Native.result -cne 'passed' -or $Peer.result -cne 'passed'){throw 'Stone fixture result/run mismatch.'}
+    Flag $Native.stone_fixture $true;Flag $Native.stone_fixture_verified $true;Number $Native.stone_steps_completed 6
+    Number $Native.events_sent 8;Flag $Native.all_events_acknowledged $true
+    Number $Guest.lab_evidence.input_events_applied 8;Number $Guest.lab_evidence.input_consumed_sequence 8
+    $proof=$Guest.lab_evidence.stone_bridge
+    Number $Peer.schema 1;Number $Peer.steps 6;Number $Peer.block_events 4
+    if($Peer.peer_kind -cne 'standalone_protocol_fixture'){throw 'Stone fixture peer type mismatch.'}
+    foreach($name in @('auth_verified','synthetic_host_pose','guest_socket_closed')){Flag $Peer.$name $true}
+    foreach($name in @('kcd_compositing_verified','physical_input_verified')){Flag $Peer.$name $false}
+    if(($Peer.received_poses -isnot [int] -and $Peer.received_poses -isnot [long]) -or $Peer.received_poses -lt 1){throw 'Stone fixture received no actual Minecraft poses.'}
+    $cell=@($Peer.fixed_cell);if($cell.Count -ne 3){throw 'Stone fixture lacks its fixed target.'}
+    $coordinates=@('x','y','z')
+    for($i=0;$i -lt 3;$i++){
+        $coordinate=$proof.target.($coordinates[$i]);if(($coordinate -isnot [int] -and $coordinate -isnot [long]) -or $coordinate -lt [int]::MinValue -or $coordinate -gt [int]::MaxValue){throw 'Stone target coordinate invalid.'}
+        Number $cell[$i] $coordinate
+    }
+    if($proof.kind -cne 'minecome_hud_stone_bridge_v1' -or $proof.save -cne $Guest.save){throw 'Stone fixture did not use the owned HUD save.'}
+    foreach($name in @('baseline_confirmed','closed','vanilla_dispatch_inventory_unchanged')){Flag $proof.$name $true}
+    foreach($name in @('failed','pending','confirmed_cell_stone','inventory_mutated','camera_mutated','engine_mirroring_verified','visual_verified')){Flag $proof.$name $false}
+    foreach($name in @('cancelled_pending','stale_results','busy_results','omitted_requests','omitted_confirmations')){Number $proof.$name 0}
+    Number $proof.request_count 6;Number $proof.accepted_dispatches 4;Number $proof.unavailable_results 2
+    Number $proof.confirmed_actions 4;Number $proof.confirmed_places 2;Number $proof.confirmed_breaks 2;Number $proof.block_events_queued 4
+    $requests=@($proof.requests);$confirmations=@($proof.confirmations)
+    if($requests.Count -ne 6 -or $confirmations.Count -ne 4){throw 'Stone fixture action records incomplete.'}
+    $actions=@(1,2,1,1,1,2);$results=@(1,1,2,2,1,1);$slots=@(0,1,1,0,0,0)
+    $reasons=@('permitted','permitted','selected_item_not_stone','screen_open','permitted','permitted')
+    for($i=0;$i -lt 6;$i++){
+        $request=$requests[$i];Number $request.id ($i+1);Number $request.action $actions[$i];Number $request.result $results[$i];Number $request.selected_slot $slots[$i]
+        $expectedItem=if($slots[$i] -eq 0){'minecraft:stone'}else{'minecraft:dirt'}
+        if($request.selected_item -cne $expectedItem){throw 'Stone fixture used a different selected item.'}
+        Number $request.selected_count $(if($slots[$i] -eq 0){64}else{32})
+        Flag $request.result_queued $true;Flag $request.actions_enabled $true;Flag $request.screen_open ($i -eq 3)
+        if($request.gate.reason -cne $reasons[$i]){throw 'Stone request completed for a different reason.'}
+        Number $request.gate.transport_result 0
+    }
+    $ids=@(1,2,5,6)
+    for($i=0;$i -lt 4;$i++){
+        $confirmation=$confirmations[$i];$request=$requests[$ids[$i]-1]
+        Number $confirmation.id $ids[$i];Number $confirmation.action $request.action
+        Number $confirmation.selected_slot $request.selected_slot;Number $confirmation.selected_count $request.selected_count
+        if($confirmation.selected_item -cne $request.selected_item){throw 'Stone confirmation item differs from actual dispatch.'}
+        Flag $confirmation.client_and_server $true;Flag $confirmation.inventory_mutated $false
+        if(($confirmation.server_age_ms -isnot [int] -and $confirmation.server_age_ms -isnot [long]) -or $confirmation.server_age_ms -lt 0 -or $confirmation.server_age_ms -gt 250){throw 'Stone confirmation server observation stale.'}
+    }
+    $items=@('stone','dirt','cobblestone','oak_planks','stick','apple','torch','diamond','iron_pickaxe');$counts=@(64,32,16,8,3,2,12,1,1)
+    foreach($side in @('final_client_slots','final_server_slots')){
+        $inventory=@($Guest.lab_evidence.$side);if($inventory.Count -ne 9){throw 'Stone fixture final inventory incomplete.'}
+        for($i=0;$i -lt 9;$i++){
+            Number $inventory[$i].slot $i;Number $inventory[$i].count $counts[$i]
+            if($inventory[$i].item -cne ('minecraft:'+$items[$i])){throw 'Stone actions changed the inventory.'}
+        }
+    }
 }
 function Assert-LiveMouseGuestProof([object]$Proof){
     if($Proof.live_mouse -isnot [bool] -or $Proof.live_mouse -ne $true -or ($Proof.pointer_events_applied -isnot [long] -and $Proof.pointer_events_applied -isnot [int]) -or $Proof.pointer_events_applied -le 0 -or $Proof.pointer_events_applied -gt $Proof.input_events_applied){throw 'Live mouse needs actual successfully applied guest pointer events.'}
@@ -70,6 +133,7 @@ function Start-Child([string]$Executable,[string[]]$Arguments){
     return [Diagnostics.Process]::Start($start)
 }
 $null=Assert-Unlinked $evidenceRoot
+if($StoneFixture -and ($Mode -ne 'Fixture' -or -not $OffscreenTrial -or $PointerFixture -or $LiveMouse -or $DelayFixture -or $BackgroundTrial -or $HostGpuBudget -or $HideHostHud)){throw 'StoneFixture requires its separate standalone OffscreenTrial without other fixture/live modes.'}
 if($LiveMouse -and ($Mode -ne 'Live' -or -not $HostGpuBudget -or -not $OffscreenPresentation -or $PointerFixture -or $DelayFixture -or $BackgroundTrial -or $OffscreenTrial)){throw 'LiveMouse requires Live mode, HostGpuBudget and OffscreenPresentation, with all fixture modes disabled.'}
 if($DelayFixture -and $Mode -ne 'Fixture'){throw 'Controlled input delays require the standalone fixture.'}
 if($PointerFixture -and ($Mode -ne 'Fixture' -or $DelayFixture -or $BackgroundTrial)){throw 'PointerFixture requires standalone Fixture mode without delay/background trials.'}
@@ -97,6 +161,7 @@ if($Mode -eq 'Fixture'){
     $null=Assert-Unlinked $fixturePath
     if(-not(Test-Path -LiteralPath $fixturePath -PathType Leaf)){throw 'Build the separate HUD input fixture first.'}
     $fixtureHash=(Get-FileHash -LiteralPath $fixturePath).Hash.ToLowerInvariant()
+    if($StoneFixture){$stoneNode=Get-Command node.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1 -ExpandProperty Source}
 }else{
     . (Join-Path $PSScriptRoot 'KcdToolsProbeHelpers.ps1')
     if($HostGpuBudget){. (Join-Path $PSScriptRoot 'HudGpuBudget.ps1')}
@@ -116,10 +181,22 @@ $fixtureReady=Join-Path $directory 'fixture-ready.json'
 $fixtureResult=Join-Path $directory 'fixture-result.json'
 $fixture=$null;$client=$null;$producer=$null;$armEvidence=$null;$failure=$null;$passed=$false;$targetPid=0;$targetStart='';$guest=$null
 $producerExitObserved=$false;$producerExitCode=$null
+$stonePeer=$null;$stoneReady=$null;$stonePeerResult=$null
 $bodyPassed=$false;$hostBudgetSession=$null;$hostBudgetEvidence=$null
 $liveMouseGuestVerified=$false;$pointerEventsApplied=0
 $hostHudSession=$null;$hostHudEvidence=$null
 try{
+    if($StoneFixture){
+        $stonePeer=Start-Child $stoneNode @((Join-Path $root 'tests/hud_stone_bridge_fixture.mjs'),$directory,$run,[string]$expires)
+        $stoneReadyPath=Join-Path $directory 'stone-peer-ready.json';$stoneDeadline=[DateTime]::UtcNow.AddSeconds(5)
+        while(-not(Test-Path -LiteralPath $stoneReadyPath)){
+            if($stonePeer.HasExited -or [DateTime]::UtcNow -ge $stoneDeadline){throw 'Standalone stone peer did not become ready.'}
+            Start-Sleep -Milliseconds 50
+        }
+        $stoneReady=Read-Receipt $stoneReadyPath
+        if($stoneReady.schema -ne 1 -or $stoneReady.run -cne $run -or $stoneReady.pid -ne $stonePeer.Id -or $stoneReady.expires_utc_ms -ne $expires -or $stoneReady.peer_kind -cne 'standalone_protocol_fixture' -or $stoneReady.port -lt 1 -or $stoneReady.port -gt 65535){throw 'Standalone stone peer identity mismatch.'}
+        $null=Assert-Unlinked (Join-Path $directory 'stone-bridge.token')
+    }
     if($Mode -eq 'Fixture'){
         if((Get-FileHash -LiteralPath $fixturePath).Hash -ine $fixtureHash){throw 'Fixture changed before launch.'}
         $fixtureArguments=@('--run',$run,'--expires',[string]$expires,'--ready-output',$fixtureReady,'--guest-ready',$readyPath,'--output',$fixtureResult)
@@ -127,6 +204,7 @@ try{
         if($BackgroundTrial){$fixtureArguments+=@('--background-trial','1')}
         if($OffscreenTrial){$fixtureArguments+=@('--offscreen-trial','1')}
         if($PointerFixture){$fixtureArguments+=@('--pointer-fixture','1')}
+        if($StoneFixture){$fixtureArguments+=@('--stone-fixture','1')}
         $fixture=Start-Child $fixturePath $fixtureArguments
         $readyDeadline=[DateTime]::UtcNow.AddSeconds(10)
         while(-not(Test-Path -LiteralPath $fixtureReady)){
@@ -136,12 +214,14 @@ try{
         $nativeReady=Read-Receipt $fixtureReady
         if($nativeReady.schema -ne 1 -or $nativeReady.kind -cne 'minecome_hud_input_fixture_ready_v1' -or $nativeReady.run -cne $run -or $nativeReady.host_pid -ne $fixture.Id -or [string]$nativeReady.host_start_filetime -cne $fixture.StartTime.ToUniversalTime().ToFileTimeUtc().ToString() -or $nativeReady.expires_utc_ms -ne $expires){throw 'Fixture process readiness mismatch.'}
         if($PointerFixture -and ($nativeReady.PSObject.Properties.Name -notcontains 'pointer_fixture' -or $nativeReady.pointer_fixture -isnot [bool] -or -not $nativeReady.pointer_fixture)){throw 'Native pointer fixture readiness mismatch.'}
+        if($StoneFixture -and ($nativeReady.PSObject.Properties.Name -notcontains 'stone_fixture' -or $nativeReady.stone_fixture -isnot [bool] -or -not $nativeReady.stone_fixture)){throw 'Native stone fixture readiness mismatch.'}
         $targetPid=$fixture.Id;$targetStart=[string]$nativeReady.host_start_filetime
     }else{$targetPid=$context.GamePid;$targetStart=$context.GameStartedUtc.ToFileTimeUtc().ToString()}
     $arguments=@('-NoProfile','-File',(Join-Path $PSScriptRoot 'Run-HudStreamClient.ps1'),'-EvidenceDirectory',$directory,'-Run',$run,'-TargetPid',[string]$targetPid,'-TargetStart',$targetStart,'-ExpiresUtcMs',[string]$expires,'-JavaHome',$JavaHome,'-Width',[string]$Width,'-Height',[string]$Height,'-GuiScale',[string]$GuiScale,'-InputMode')
     if($Mode -eq 'Fixture'){$arguments+='-InputFixture'}
     if($LiveMouse){$arguments+='-LiveMouse'}
     if($PointerFixture){$arguments+='-InputPointerFixture'}
+    if($StoneFixture){$arguments+=@('-StoneFixture','-StoneTokenFile',(Join-Path $directory 'stone-bridge.token'),'-StonePort',[string]$stoneReady.port)}
     if($DelayFixture){$arguments+='-InputDelayFixture'}
     if($BackgroundTrial){$arguments+='-InputBackgroundTrial'}
     if($OffscreenPresentation){$arguments+='-OffscreenPresentation'}
@@ -156,6 +236,7 @@ try{
         Start-Sleep -Milliseconds 100
     }
     $ready=Read-Receipt $readyPath
+    Assert-HudStoneMode $ready ([bool]$StoneFixture)
     Assert-LiveMouseReceipt $ready ([bool]$LiveMouse)
     if($ready.PSObject.Properties.Name -notcontains 'ui_input_fixture' -or $ready.ui_input_fixture -isnot [bool] -or $ready.ui_input_fixture -ne ($Mode -eq 'Fixture')){throw 'UI producer fixture/live mode mismatch.'}
     if($ready.PSObject.Properties.Name -notcontains 'ui_input_pointer_fixture' -or $ready.ui_input_pointer_fixture -isnot [bool] -or $ready.ui_input_pointer_fixture -ne [bool]$PointerFixture){throw 'UI producer pointer-fixture mode mismatch.'}
@@ -185,13 +266,14 @@ try{
     }
     if($Mode -eq 'Live'){$armEvidence=& (Join-Path $PSScriptRoot 'Arm-HudStream.ps1') -InputMode -LiveMouse:$LiveMouse -BundleDirectory $BundleDirectory -OffscreenPresentation:$OffscreenPresentation -ReadyManifest $readyPath}
     Write-Output "HUD_INPUT_READY mode=$Mode run=$run"
-    while(-not $client.HasExited -or -not $producer.HasExited -or ($fixture -and -not $fixture.HasExited)){
+    while(-not $client.HasExited -or -not $producer.HasExited -or ($fixture -and -not $fixture.HasExited) -or ($stonePeer -and -not $stonePeer.HasExited)){
         if([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() -ge $expires+15000){throw 'UI shutdown deadline reached; any remaining processes are preserved.'}
         Start-Sleep -Milliseconds 200
     }
     $producerExitObserved=$producer.HasExited;$producerExitCode=$producer.ExitCode
     if($client.ExitCode -ne 0 -or $producerExitCode -ne 0 -or ($fixture -and $fixture.ExitCode -ne 0)){throw 'UI client, actual Java producer or native fixture reported failure.'}
     $guest=Read-Receipt (Join-Path $directory 'capture/stream-result.json')
+    Assert-HudStoneMode $guest ([bool]$StoneFixture)
     Assert-LiveMouseReceipt $guest ([bool]$LiveMouse)
     if($guest.PSObject.Properties.Name -notcontains 'ui_input_fixture' -or $guest.ui_input_fixture -isnot [bool] -or $guest.ui_input_fixture -ne ($Mode -eq 'Fixture')){throw 'UI result fixture/live mode mismatch.'}
     if($guest.PSObject.Properties.Name -notcontains 'ui_input_pointer_fixture' -or $guest.ui_input_pointer_fixture -isnot [bool] -or $guest.ui_input_pointer_fixture -ne [bool]$PointerFixture){throw 'UI result pointer-fixture mode mismatch.'}
@@ -218,8 +300,8 @@ try{
     }
     if($Mode -eq 'Fixture'){
         $native=Read-Receipt $fixtureResult
-        if($native.run -cne $run -or $native.kind -cne 'minecome_hud_input_fixture_result_v1' -or $native.result -cne 'passed' -or $guest.result -cne 'input_passed' -or $guest.lab_evidence.input_fixture -ne $true -or $guest.lab_evidence.inventory_opened -ne $true -or $guest.lab_evidence.inventory_closed -ne $true -or $guest.lab_evidence.selected_nine_verified -ne $true){throw 'Real vanilla UI fixture evidence incomplete.'}
-        $expectedEvents=if($PointerFixture){43}else{31}
+        if($native.run -cne $run -or $native.kind -cne 'minecome_hud_input_fixture_result_v1' -or $native.result -cne 'passed' -or $guest.result -cne 'input_passed' -or $guest.lab_evidence.input_fixture -ne $true -or $guest.lab_evidence.inventory_opened -ne $true -or $guest.lab_evidence.inventory_closed -ne $true -or (-not $StoneFixture -and $guest.lab_evidence.selected_nine_verified -ne $true)){throw 'Real vanilla UI fixture evidence incomplete.'}
+        $expectedEvents=if($StoneFixture){8}elseif($PointerFixture){43}else{31}
         if($PointerFixture){
             if($native.pointer_fixture -isnot [bool] -or $native.pointer_fixture -ne $true -or $native.pointer_gestures_verified -isnot [bool] -or $native.pointer_gestures_verified -ne $true -or $guest.lab_evidence.pointer_fixture -isnot [bool] -or $guest.lab_evidence.pointer_fixture -ne $true){throw 'Pointer fixture confirmation missing.'}
             $pointer=$guest.lab_evidence.pointer_evidence
@@ -227,6 +309,10 @@ try{
                 if($pointer.PSObject.Properties.Name -notcontains $name -or $pointer.$name -isnot [bool] -or $pointer.$name -ne $true){throw "Real pointer evidence missing: $name"}
             }
             if($pointer.expected_events -ne $expectedEvents -or $native.events_sent -ne $expectedEvents -or $native.pointer_phase_receipts -ne 11 -or @($pointer.stages).Count -ne 11 -or $guest.lab_evidence.input_events_applied -ne $expectedEvents -or $guest.lab_evidence.input_consumed_sequence -ne $expectedEvents){throw 'Pointer gesture sequence did not complete exactly.'}
+        }elseif($StoneFixture){
+            if($stonePeer.ExitCode -ne 0){throw 'Standalone stone protocol peer reported failure.'}
+            $stonePeerResult=Read-Receipt (Join-Path $directory 'stone-peer-result.json')
+            Assert-HudStoneFixture $guest $native $stonePeerResult $run
         }elseif($guest.lab_evidence.server_swap_verified -ne $true){throw 'Real vanilla item-swap evidence missing.'}
         if($DelayFixture -and ($native.prearm_delay_fixture -ne $true -or $native.max_prearm_ack_age_ms -le 250 -or $native.prearm_recoveries -lt 1)){throw 'Controlled prearm delay/recovery was not observed.'}
         if($DelayFixture -and ($guest.lab_evidence.input_delay_fixture -ne $true -or $guest.lab_evidence.withheld_ready_ack_ticks -lt 1 -or $guest.lab_evidence.prearm_ack_delay_ms -le 250 -or $guest.lab_evidence.closed_ack_delay_ms -le 250)){throw 'Actual client-tick startup/closure delays were not observed.'}
@@ -287,8 +373,14 @@ finally{
             }
         }
         if($HostGpuBudget -and -not $hostBudgetSession){$passed=$false}
-        [ordered]@{schema=1;kind='minecome_hud_input_controller_v1';run=$run;mode=$Mode;pointer_fixture=[bool]$PointerFixture;delay_fixture=[bool]$DelayFixture;background_trial=[bool]$BackgroundTrial;offscreen_presentation=[bool]$OffscreenPresentation;offscreen_trial=[bool]$OffscreenTrial;host_gpu_budget_requested=[bool]$HostGpuBudget;host_gpu_budget=$hostBudgetEvidence;host_hud_hidden_requested=[bool]$HideHostHud;host_hud_visibility=$hostHudEvidence;body_passed=$bodyPassed;result=$(if($passed){'passed'}else{'failed'});failure=$failure;evidence=$directory;target_pid=$targetPid;target_start_filetime=$targetStart;fixture_sha256=$fixtureHash;compositor_armed=[bool]$armEvidence;width=$Width;height=$Height;gui_scale=$GuiScale;kcd_launched=$false;kcd_stopped=$false;host_input_exclusivity_verified=$false;live_mouse_requested=[bool]$LiveMouse;live_mouse_enabled=[bool]($LiveMouse -and $armEvidence);live_mouse_guest_verified=$liveMouseGuestVerified;live_mouse_guest_pass=[bool]($LiveMouse -and $liveMouseGuestVerified -and $passed);pointer_events_applied=$pointerEventsApplied;live_mouse_visual_verified=$false;producer_exit_observed=$producerExitObserved;producer_exit_code=$producerExitCode;created_utc_ms=$expires-180000;expires_utc_ms=$expires} | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $directory 'verification.json') -Encoding utf8NoBOM
-    }finally{if($producer){$producer.Dispose()};if($client){$client.Dispose()};if($fixture){$fixture.Dispose()}}
+        [ordered]@{schema=1;kind='minecome_hud_input_controller_v1';run=$run;mode=$Mode;stone_fixture=[bool]$StoneFixture;stone_protocol_peer=$stonePeerResult;pointer_fixture=[bool]$PointerFixture;delay_fixture=[bool]$DelayFixture;background_trial=[bool]$BackgroundTrial;offscreen_presentation=[bool]$OffscreenPresentation;offscreen_trial=[bool]$OffscreenTrial;host_gpu_budget_requested=[bool]$HostGpuBudget;host_gpu_budget=$hostBudgetEvidence;host_hud_hidden_requested=[bool]$HideHostHud;host_hud_visibility=$hostHudEvidence;body_passed=$bodyPassed;result=$(if($passed){'passed'}else{'failed'});failure=$failure;evidence=$directory;target_pid=$targetPid;target_start_filetime=$targetStart;fixture_sha256=$fixtureHash;compositor_armed=[bool]$armEvidence;width=$Width;height=$Height;gui_scale=$GuiScale;kcd_launched=$false;kcd_stopped=$false;host_input_exclusivity_verified=$false;live_mouse_requested=[bool]$LiveMouse;live_mouse_enabled=[bool]($LiveMouse -and $armEvidence);live_mouse_guest_verified=$liveMouseGuestVerified;live_mouse_guest_pass=[bool]($LiveMouse -and $liveMouseGuestVerified -and $passed);pointer_events_applied=$pointerEventsApplied;live_mouse_visual_verified=$false;producer_exit_observed=$producerExitObserved;producer_exit_code=$producerExitCode;created_utc_ms=$expires-180000;expires_utc_ms=$expires} | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $directory 'verification.json') -Encoding utf8NoBOM
+    }finally{
+        if($stonePeer){
+            if(-not $stonePeer.HasExited){[IO.File]::WriteAllText((Join-Path $directory 'stone-peer-stop.request'),'Controller cleanup');$null=$stonePeer.WaitForExit(3000)}
+            $stonePeer.Dispose()
+        }
+        if($producer){$producer.Dispose()};if($client){$client.Dispose()};if($fixture){$fixture.Dispose()}
+    }
 }
 if(-not $passed){throw $(if($failure){$failure}else{'UI session did not pass.'})}
 Write-Output "HUD_INPUT_COMPLETED mode=$Mode run=$run actual_minecraft=true host_input_exclusivity_verified=false"

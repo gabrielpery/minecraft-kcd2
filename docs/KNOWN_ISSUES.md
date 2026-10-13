@@ -50,6 +50,11 @@ Never load newer retail1.5.6 saves into this older1.5.5 development game. Backup
 
 - General input forwarding, full collision export, NPC/combat synchronization,
   mining terrain and persistence are not implemented.
+- HUD selection and stone actions now share an actual Minecraft world in a
+  standalone fixture. Placement requires selected stone and a closed inventory;
+  client/server-confirmed placement and breaking pass in one fixed cell. This
+  combined mode is not yet connected to the live KCD relay, and live arming
+  refuses its fixture markers. General targeting and other block types remain unfinished.
 - Physical W/Space/mouse forwarding and starting-camera alignment now pass in the
   isolated4×4m Minecraft lab. Fifteen delayed samples were discarded during the
   successful run; low-latency sustained control is not yet established. KCD still
@@ -141,7 +146,10 @@ confirms the static HUD is visible inside KCD2. Continuous UI transport now pass
 with real Minecraft and a standalone native receiver; a subsequent user report
 also confirms the continuous HUD visible inside KCD2. Later physical 1/2/9 and
 E/Escape checks verify slot selection and inventory opening/closing, with no KCD
-menu reported. Live mouse interaction remains unfinished.
+menu reported. A later full 30-second live mouse run passed clicks, dragging and
+scrolling, with user confirmation. The guest window reappeared during shutdown;
+the hidden-through-exit repair and faster inventory capture have automated evidence
+but still await a combined live check.
 The subsequent bounded user-run diagnostic captured exit code 250 (`0x000000FA`)
 after 28.462 seconds. Six complete module snapshots omitted ReShade and the add-on;
 available system commit remained above 5.37 GB in all 28 memory samples. The meaning
@@ -189,10 +197,12 @@ claim of a completely nonblocking render path. Expiry hides the layer; owned GPU
 resources remain until safe runtime reset/unload cleanup. HDR, GPU sharing, held
 hands, survival HUD coverage and crafting remain outside this lab. The separate
 reverse-input fixture now performs real vanilla slot clicks and verifies a stack
-swap on the integrated server. Its first live mode forwards only 1-9, E and Escape
+swap on the integrated server. Its original keyboard-only live mode forwards 1-9, E and Escape
 after an F8 latch, for at most 30 seconds. Physical KCD key blocking remains
 unverified. ReShade's DirectInput8 polling path preserves mouse axes, so this mode
-does not forward mouse input or claim camera suppression. Generic KCD menus and
+does not forward mouse input or claim camera suppression. The separate live mouse
+profile now forwards actual inventory mouse actions with a bounded ownership lease;
+general host input exclusivity and its final native drain remain unverified. Generic KCD menus and
 cutscenes are not detected; this bounded check requires a fresh world with menus
 and console closed. The original KCD HUD and health systems remain active.
 

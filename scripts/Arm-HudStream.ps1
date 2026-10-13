@@ -88,6 +88,9 @@ if($InputMode){
     if($ready.PSObject.Properties.Name -notcontains 'ui_input_offscreen_presentation' -or $ready.ui_input_offscreen_presentation -isnot [bool] -or $ready.ui_input_offscreen_presentation -ne [bool]$OffscreenPresentation){throw 'Offscreen presentation requires matching explicit input mode.'}
     if($ready.PSObject.Properties.Name -notcontains 'ui_input_pointer_fixture' -or $ready.ui_input_pointer_fixture -isnot [bool] -or $ready.ui_input_pointer_fixture -ne $false){throw 'Pointer fixture cannot arm live KCD input.'}
     if($ready.PSObject.Properties.Name -notcontains 'ui_input_live_mouse' -or $ready.ui_input_live_mouse -isnot [bool] -or $ready.ui_input_live_mouse -ne [bool]$LiveMouse){throw 'Live mouse requires matching explicit guest readiness.'}
+    foreach($field in @('ui_input_stone_bridge','ui_input_stone_fixture')){
+        if($ready.PSObject.Properties.Name -contains $field -and ($ready.$field -isnot [bool] -or $ready.$field -ne $false)){throw 'Combined HUD stone fixture cannot arm live KCD input.'}
+    }
 }
 elseif($ready.PSObject.Properties.Name -contains 'ui_input_protocol'){throw 'Input producer requires explicit InputMode.'}
 $start=$context.GameStartedUtc.ToFileTimeUtc().ToString()

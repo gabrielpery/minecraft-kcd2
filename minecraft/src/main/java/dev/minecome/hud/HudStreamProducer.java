@@ -36,7 +36,7 @@ public final class HudStreamProducer implements AutoCloseable {
     private final String save;
     private final boolean genuine;
     private final int inputMode;
-    private final boolean inputDelayFixture,inputPointerFixture,liveMouse;
+    private final boolean inputDelayFixture,inputPointerFixture,liveMouse,stoneBridge,stoneFixture;
     private final boolean backgroundTrial;
     private final boolean offscreenPresentation,offscreenTrial;
     private final AtomicReference<Frame> latest=new AtomicReference<>();
@@ -65,6 +65,7 @@ public final class HudStreamProducer implements AutoCloseable {
         liveMouse=Boolean.getBoolean("minecome.hudStreamLiveMouse");HudMousePolicy.enabled(inputMode!=0,inputMode==2,liveMouse);
         inputDelayFixture=inputMode==2 && Boolean.getBoolean("minecome.hudStreamInputDelayFixture");
         inputPointerFixture=inputMode==2 && Boolean.getBoolean("minecome.hudStreamInputPointerFixture");
+        stoneBridge=Boolean.getBoolean("minecome.hudStoneBridge");stoneFixture=Boolean.getBoolean("minecome.hudStoneFixture");
         backgroundTrial=inputMode==2 && Boolean.getBoolean("minecome.hudStreamBackgroundTrial");
         offscreenPresentation=inputMode!=0 && Boolean.getBoolean("minecome.hudStreamOffscreenPresentation");
         offscreenTrial=inputMode==2 && Boolean.getBoolean("minecome.hudStreamOffscreenTrial");
@@ -129,7 +130,7 @@ public final class HudStreamProducer implements AutoCloseable {
         r.addProperty("target_start_filetime",Long.toUnsignedString(identity.targetStart()));r.addProperty("expires_utc_ms",identity.expiresUtcMs());
         r.addProperty("mapping",identity.mappingName());r.addProperty("mapping_name",identity.mappingName());r.addProperty("mutex_name",identity.mutexName());r.addProperty("mapping_bytes",MAPPING_BYTES);
         r.addProperty("save",save);r.addProperty("source_kind",genuine?"minecraft_vanilla_ui_stream_v1":"standalone_transport_fixture");
-        if(inputMode!=0){r.addProperty("ui_input_protocol",1);r.addProperty("ui_input_live_mouse",liveMouse);r.addProperty("ui_input_fixture",inputMode==2);r.addProperty("ui_input_delay_fixture",inputDelayFixture);r.addProperty("ui_input_pointer_fixture",inputPointerFixture);r.addProperty("ui_input_background_trial",backgroundTrial);r.addProperty("ui_input_offscreen_presentation",offscreenPresentation);r.addProperty("ui_input_offscreen_trial",offscreenTrial);}return r;
+        if(inputMode!=0){r.addProperty("ui_input_protocol",1);r.addProperty("ui_input_live_mouse",liveMouse);r.addProperty("ui_input_fixture",inputMode==2);r.addProperty("ui_input_delay_fixture",inputDelayFixture);r.addProperty("ui_input_pointer_fixture",inputPointerFixture);r.addProperty("ui_input_stone_bridge",stoneBridge);r.addProperty("ui_input_stone_fixture",stoneFixture);r.addProperty("ui_input_background_trial",backgroundTrial);r.addProperty("ui_input_offscreen_presentation",offscreenPresentation);r.addProperty("ui_input_offscreen_trial",offscreenTrial);}return r;
     }
     private void run() {
         Kernel32 api=null;WinNT.HANDLE mapping=null,mutex=null;Pointer view=null;
@@ -212,8 +213,11 @@ public final class HudStreamProducer implements AutoCloseable {
                     var proof=finalEvidence.get();
                     if(inputMode!=2 || proof==null)throw new IOException("Input fixture proof absent");
                     for(String key:List.of("input_fixture","inventory_opened","inventory_closed","selected_nine_verified","host_armed"))
-                        if(!proof.has(key) || !proof.get(key).getAsBoolean())throw new IOException("Input fixture proof missing: "+key);
-                    if(inputPointerFixture){
+                        if(!(stoneFixture && key.equals("selected_nine_verified")) && (!proof.has(key) || !proof.get(key).getAsBoolean()))throw new IOException("Input fixture proof missing: "+key);
+                    if(stoneFixture){
+                        if(!stoneBridge || inputPointerFixture || !offscreenTrial)throw new IOException("Combined stone fixture mode mismatch");
+                        HudStoneProof.require(proof);
+                    }else if(inputPointerFixture){
                         var pointer=proof.getAsJsonObject("pointer_evidence");
                         if(!proof.get("pointer_fixture").getAsBoolean() || pointer==null || proof.get("input_events_applied").getAsLong()!=43 || pointer.get("applied_sequence").getAsLong()!=43 || !"complete".equals(pointer.get("stage").getAsString()) || pointer.getAsJsonArray("stages").size()!=11)
                             throw new IOException("Pointer fixture complete phase absent");
@@ -222,7 +226,7 @@ public final class HudStreamProducer implements AutoCloseable {
                     }else if(!proof.has("server_swap_verified") || !proof.get("server_swap_verified").getAsBoolean())throw new IOException("Input fixture swap proof absent");
                     if(offscreenTrial){
                         var trial=proof.getAsJsonObject("offscreen_trial");var events=proof.getAsJsonObject("offscreen_trial_events");
-                        if(trial==null || !trial.get("completed").getAsBoolean() || events==null || events.get("unfocused_events_applied").getAsLong()!=(inputPointerFixture?43:31) || events.get("focused_events_applied").getAsLong()!=0 || events.get("focus_interruptions").getAsLong()!=0)
+                        if(trial==null || !trial.get("completed").getAsBoolean() || events==null || events.get("unfocused_events_applied").getAsLong()!=(stoneFixture?8:inputPointerFixture?43:31) || events.get("focused_events_applied").getAsLong()!=0 || events.get("focus_interruptions").getAsLong()!=0)
                             throw new IOException("Offscreen fixture lacks all expected genuinely unfocused applications");
                     }
                 }

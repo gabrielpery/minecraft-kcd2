@@ -15,6 +15,9 @@ param(
     [switch]$LiveMouse,
     [switch]$InputFixture,
     [switch]$InputPointerFixture,
+    [switch]$StoneFixture,
+    [string]$StoneTokenFile,
+    [ValidateRange(1,65535)][int]$StonePort=38765,
     [switch]$InputDelayFixture,
     [switch]$InputBackgroundTrial,
     [switch]$OffscreenPresentation,
@@ -31,6 +34,8 @@ $env:GRADLE_USER_HOME=Join-Path $minecraft '.gradle-user-home'
 $producerDirectory=Join-Path $EvidenceDirectory 'capture'
 $exitCode=1
 try {
+    if($StoneFixture -and (-not $InputFixture -or -not $InputOffscreenTrial -or $LiveMouse -or $InputPointerFixture -or $InputDelayFixture -or $InputBackgroundTrial -or -not $StoneTokenFile)){throw 'Stone fixture requires separate offscreen input fixture and explicit token.'}
+    if(-not $StoneFixture -and ($StoneTokenFile -or $PSBoundParameters.ContainsKey('StonePort'))){throw 'Stone connection arguments require explicit standalone fixture.'}
     if($LiveMouse -and (-not $InputMode -or $InputFixture -or $InputPointerFixture -or $InputDelayFixture -or $InputBackgroundTrial -or $InputOffscreenTrial -or -not $OffscreenPresentation)){throw 'Live mouse requires non-fixture input mode with OffscreenPresentation.'}
     if($InputFixture -and -not $InputMode){throw 'Input fixture requires the separate UI input mode.'}
     if($InputPointerFixture -and (-not $InputFixture -or $InputDelayFixture -or $InputBackgroundTrial)){throw 'Pointer fixture requires standalone input without delay/background trials.'}
@@ -43,6 +48,7 @@ try {
     if($LiveMouse){$arguments+='-PminecomeHudStreamLiveMouse'}
     if($InputFixture){$arguments+='-PminecomeHudStreamInputFixture'}
     if($InputPointerFixture){$arguments+='-PminecomeHudStreamInputPointerFixture'}
+    if($StoneFixture){$arguments+=@('-PminecomeHudStoneBridge','-PminecomeHudStoneFixture',"-PminecomeTokenFile=$StoneTokenFile","-PminecomePort=$StonePort")}
     if($InputDelayFixture){$arguments+='-PminecomeHudStreamInputDelayFixture'}
     if($InputBackgroundTrial){$arguments+='-PminecomeHudStreamBackgroundTrial'}
     if($OffscreenPresentation){$arguments+='-PminecomeHudStreamOffscreenPresentation'}

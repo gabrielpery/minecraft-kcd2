@@ -43,6 +43,7 @@ public final class HudStreamLab {
     private final boolean mouseInputEnabled=HudMousePolicy.enabled(inputMode,inputFixture,liveMouse);
     private final boolean inputDelayFixture=Boolean.getBoolean("minecome.hudStreamInputDelayFixture");
     private final boolean inputPointerFixture=Boolean.getBoolean("minecome.hudStreamInputPointerFixture");
+    private final boolean stoneMode=Boolean.getBoolean("minecome.hudStoneBridge"),stoneFixture=Boolean.getBoolean("minecome.hudStoneFixture");
     private final boolean backgroundTrial=Boolean.getBoolean("minecome.hudStreamBackgroundTrial");
     private final boolean offscreenPresentation=Boolean.getBoolean("minecome.hudStreamOffscreenPresentation"),offscreenTrial=Boolean.getBoolean("minecome.hudStreamOffscreenTrial");
     private final long initializedAt=System.nanoTime();
@@ -57,6 +58,8 @@ public final class HudStreamLab {
     private HudInputReader input;
     private HudVanillaUiAdapter ui;
     private HudPointerFixture pointerFixture;
+    private HudStoneBridge stoneBridge;
+    private boolean stoneActionsEnabled;
     private final HudInputGate inputGate=new HudInputGate();
     private long armedAt,inputEventsApplied,pointerEventsApplied;
     private boolean fixtureTargetsSent,selectedNineVerified,inventoryOpened,inventoryClosed,serverSwapVerified;
@@ -116,6 +119,9 @@ public final class HudStreamLab {
         if(lab.backgroundTrial && (!lab.inputFixture || lab.inputDelayFixture))throw new IllegalArgumentException("Background trial requires input fixture without deliberate ACK delay");
         if(lab.offscreenPresentation && (!lab.inputMode || lab.backgroundTrial || lab.inputDelayFixture))throw new IllegalArgumentException("Offscreen presentation requires input lab without background A/B or delayed ACK trial");
         if(lab.offscreenTrial && (!lab.offscreenPresentation || !lab.inputFixture || lab.inputDelayFixture || lab.backgroundTrial))throw new IllegalArgumentException("Offscreen trial requires exclusive offscreen input fixture");
+        if(lab.stoneMode && (!lab.stoneFixture || !lab.inputMode || !lab.inputFixture || !lab.offscreenTrial || lab.inputPointerFixture || lab.inputDelayFixture || lab.backgroundTrial || lab.liveMouse))
+            throw new IllegalArgumentException("Combined HUD stone mode currently requires its separate offscreen standalone fixture");
+        if(lab.stoneFixture && !lab.stoneMode)throw new IllegalArgumentException("Stone fixture requires combined stone bridge");
         ClientTickEvents.START_CLIENT_TICK.register(lab::timingTick);
         ClientTickEvents.END_CLIENT_TICK.register(lab::tick);ServerTickEvents.END_SERVER_TICK.register(lab::observe);
         ClientLifecycleEvents.CLIENT_STOPPING.register(client->{
@@ -279,6 +285,7 @@ public final class HudStreamLab {
             output=new HudStreamProducer(project,outputDirectory,identity,save,true,inputMode?(inputFixture?2:1):0);output.start();
             if(inputMode)ui=new HudVanillaUiAdapter(client,mouseInputEnabled);
             if(inputPointerFixture)pointerFixture=new HudPointerFixture();
+            if(stoneMode)stoneBridge=new HudStoneBridge(Path.of(required("minecome.tokenFile")));
             if(backgroundTrial || offscreenPresentation)timing=new HudRenderTiming(Thread.currentThread(),RenderSystem::isFrozenAtPollEvents);
         }
         if(output.failure()!=null){fail(client,"HUD stream worker: "+output.failure());return;}
@@ -296,7 +303,14 @@ public final class HudStreamLab {
             if(streamAt==0){streamAt=now;LOG.info("HUD_STREAM_READY run={} save={} realCreativePackets=true inputMode={}",identity.run(),save,inputMode);}
             long elapsed=now-streamAt;
             if(inputMode){
-                try{if(backgroundTrial && !backgroundComplete)backgroundTrialTick(client,now);if(offscreenTrial)offscreenTrialTick(client,now);inputTick(client,now);}catch(Exception e){fail(client,"HUD input: "+e.getMessage());return;}
+                try{
+                    if(backgroundTrial && !backgroundComplete)backgroundTrialTick(client,now);if(offscreenTrial)offscreenTrialTick(client,now);
+                    inputTick(client,now);
+                    if(stoneBridge!=null && inputEndingProof==null && !terminal){
+                        stoneBridge.tick(client,stoneActionsEnabled);
+                        if(stoneBridge.failed())throw new IllegalStateException("Combined stone bridge: "+stoneBridge.failure());
+                    }
+                }catch(Exception e){fail(client,"HUD input: "+e.getMessage());return;}
             }else{
             if(publicationPaused(now) && pauseStartedUtc==0){pauseStartedUtc=System.currentTimeMillis();LOG.info("HUD_STREAM_PUBLICATION_PAUSED run={}",identity.run());}
             if(pauseStartedUtc!=0 && pauseEndedUtc==0 && elapsed>=11_800_000_000L){pauseEndedUtc=System.currentTimeMillis();LOG.info("HUD_STREAM_PUBLICATION_RESUMED run={}",identity.run());}
@@ -325,6 +339,7 @@ public final class HudStreamLab {
         }
     }
     private void inputTick(MinecraftClient client,long now){
+        stoneActionsEnabled=false;
         if(timing!=null)timing.inputTick(now);
         if(lastInputTickAt!=0)maxInputTickGapMs=Math.max(maxInputTickGapMs,(now-lastInputTickAt)/1_000_000);
         lastInputTickAt=now;
@@ -362,7 +377,7 @@ public final class HudStreamLab {
         }
         if(inventory){
             inventoryOpened=true;
-            if(inputFixture && !inputPointerFixture && !fixtureTargetsSent){output.offerFixtureTargets(ui.fixtureTargets(client));fixtureTargetsSent=true;}
+            if(inputFixture && !inputPointerFixture && !stoneFixture && !fixtureTargetsSent){output.offerFixtureTargets(ui.fixtureTargets(client));fixtureTargetsSent=true;}
         }else if(inventoryOpened)inventoryClosed=true;
         if(input.isClosed()){
             String reason=input.reason();
@@ -401,6 +416,7 @@ public final class HudStreamLab {
                 pointerFixture.observe(client,ui,inputEventsApplied,age,confirmed,current==null?new JsonArray():jsonSlots(current.slots()),output);
             }
             if(now-armedAt>=30_000_000_000L){finishInput(client,now,"activation_30s_complete");return;}
+            stoneActionsEnabled=true;
         }else if(now-streamAt>=((backgroundTrial||offscreenTrial)?100_000_000_000L:60_000_000_000L)){finishInput(client,now,(backgroundTrial||offscreenTrial)?"waiting_100s_complete":"waiting_60s_complete");return;}
         // While waiting we own no controls. Old image/heartbeat/ticks make us
         // ineligible; only a later real fresh client tick can restore readiness.
@@ -432,6 +448,7 @@ public final class HudStreamLab {
             if(ui!=null)ui.releaseAndClose(client);inputGate.releaseAll();input.close();
             delayedCloseAckAt=now+500_000_000L;closeDelayStartUtc=System.currentTimeMillis();
         }else stopInput(client);
+        if(stoneBridge!=null)proof.add("stone_bridge",stoneBridge.evidence());
         if(ui!=null)proof.add("pointer_adapter_after_cleanup",ui.pointerDiagnostics());
         proof.addProperty("controls_released",inputGate.heldKeyCount()==0 && inputGate.heldButtonCount()==0);
         inputEndingProof=proof;terminalAt=now;
@@ -443,6 +460,7 @@ public final class HudStreamLab {
         return true;
     }
     private void stopInput(MinecraftClient client){
+        stoneActionsEnabled=false;if(stoneBridge!=null)stoneBridge.close();
         if(ui!=null)ui.releaseAndClose(client);inputGate.releaseAll();
         if(input!=null){publishClosedAck(client);input.close();}
     }
@@ -637,6 +655,7 @@ public final class HudStreamLab {
         stopping=true;restoreBlend();
         if(output!=null){
             var evidence=inputEndingProof==null?new JsonObject():inputEndingProof.deepCopy();evidence.addProperty("failure",reason);evidence.add("capture_pipeline",captureDiagnostics());evidence.add("publication_at_failure",output.diagnostics());
+            if(stoneBridge!=null)evidence.add("stone_bridge",stoneBridge.evidence());
             if(input!=null){evidence.add("input_timing",input.diagnostics());evidence.addProperty("input_handles_closed",input.cleanupComplete());evidence.addProperty("closed_acknowledgement_published",input.closedAcknowledgementPublished());evidence.addProperty("input_cleanup_finished",input.isFinished());}
             if(timing!=null){timing.close();evidence.add("render_timing",timing.overall());}
             if(backgroundTrial)evidence.add("background_trial",backgroundEvidence());

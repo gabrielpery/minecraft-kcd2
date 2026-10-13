@@ -67,6 +67,11 @@ a fresh automatic Minecraft run measured about 30 captures per second and passed
 all 43 pointer actions. Combined KCD smoothness and the shutdown-window repair
 still await the next live session. General gameplay input ownership remains unfinished. See
 [the HUD compositor](docs/research/HUD-COMPOSITOR.md).
+**HUD and block actions now share one real Minecraft world in the standalone lab.**
+The selected hotbar item controls vanilla stone placement; dirt selection and an
+open inventory prevent placement. An automatic run verified two placements and
+two breaks on both the client and integrated server, genuine HUD frames and normal
+shutdown. Connecting this combined mode to the live KCD relay remains the next step.
 Earlier tools launches crashed during world loading with the renderer unarmed and
 with its hook disabled. A subsequent explicit PowerShell 7 launch reached the world,
 confirmed by the user and a successful two-minute process/HTTP check, with the hook

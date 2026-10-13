@@ -24,6 +24,10 @@ loom {
                 vmArgs '-Dminecome.hudStreamInputFixture=true'
             if (project.hasProperty('minecomeHudStreamInputPointerFixture'))
                 vmArgs '-Dminecome.hudStreamInputPointerFixture=true'
+            if (project.hasProperty('minecomeHudStoneBridge'))
+                vmArgs '-Dminecome.hudStoneBridge=true'
+            if (project.hasProperty('minecomeHudStoneFixture'))
+                vmArgs '-Dminecome.hudStoneFixture=true'
             if (project.hasProperty('minecomeHudStreamInputDelayFixture'))
                 vmArgs '-Dminecome.hudStreamInputDelayFixture=true'
             if (project.hasProperty('minecomeHudStreamBackgroundTrial'))
@@ -189,6 +193,18 @@ tasks.register('hudCaptureCadenceTest', JavaExec) {
     dependsOn testClasses
     classpath = sourceSets.test.runtimeClasspath
     mainClass = 'dev.minecome.hud.HudCaptureCadenceTests'
+}
+
+tasks.register('hudStoneGateTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'dev.minecome.hud.HudStoneGateTests'
+}
+
+tasks.register('hudStoneProofTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'dev.minecome.hud.HudStoneProofTests'
 }
 
 tasks.register('hudEvidenceWriterTest', JavaExec) {

@@ -15,6 +15,74 @@ restoration verified. The separate strict mouse profile has now completed a full
 host-HUD appearance, general input exclusivity and health integration remain unverified. Detailed evidence
 and the earlier failed runs are recorded below.
 
+## Combined HUD and stone guest — 2026-10-13
+
+`HudStoneBridge` reuses the HUD lab's exact client world, player, integrated server
+and save. The existing authenticated minor1 bridge sends real Minecraft poses
+and accepts stone requests. The bridge owns one cell beside the player; it creates
+no second world and does not change inventory or camera. UI events apply before
+block requests in the same client tick, so selection and screen state govern the
+actual vanilla interaction. Breaking remains valid with dirt selected in Creative.
+
+Dispatch requires fresh armed HUD state, no open screen/overlay, a loaded reachable
+cell, solid support and a matching authoritative server observation. Placement
+also requires selected stone and matching server slot/item/count. Vanilla
+`interactBlock`/`attackBlock` execute on the client thread. A block event follows
+only after fresh client and integrated-server agreement. Ownership changes,
+transport loss or unexpected cell changes close the bridge. Pending actions and
+diagnostic records are bounded; final proof requires no outstanding action and
+the cell restored to air.
+
+This first combined mode is deliberately standalone: `Start-HudInputLab.ps1
+-Mode Fixture -OffscreenTrial -StoneFixture` starts an isolated Minecraft instance,
+a native reverse-UI fixture and an explicitly synthetic localhost protocol host.
+The peer uses a fresh token, bounded run-scoped receipts and an immutable expiry;
+it maintains synthetic host poses until the real guest closes. Live arming rejects
+the stone-fixture markers. The installed KCD renderer and live mouse profile are
+unchanged. Connecting the combined guest to the actual KCD relay, general block
+targeting and physical world clicks remain unfinished.
+
+Run `11f348f356984192a50f20d858d3ba30` passed with evidence under
+`runtime/evidence/hud-input-20261013-151830-11f348f356984192a50f20d858d3ba30`:
+
+| Step | Real guest state | Request and verified result |
+|---|---|---|
+| 1 | Stone selected, inventory closed | Place accepted; client/server stone |
+| 2 | Dirt selected, inventory closed | Break accepted; client/server air |
+| 3 | Dirt selected, inventory closed | Place refused: `selected_item_not_stone` |
+| 4 | Stone selected, inventory open | Place refused: `screen_open` |
+| 5 | Stone selected, inventory closed | Place accepted; client/server stone |
+| 6 | Stone selected, inventory closed | Break accepted; client/server air |
+
+All eight UI key edges were acknowledged and applied in the hidden, unfocused
+guest. Four block events matched the fixed cell `(-8,-60,2)`; server observation
+ages were 33, 67, 34 and 66 ms. All nine inventory stacks matched their original
+client/server contents. The guest published 209 genuine frames and the native
+receiver received 208, with zero mailbox replacements, PBO busy skips or fence
+timeout polls. Maximum readback age was 54 ms, client tick gap 111 ms and own-image
+age 108 ms. The closed ACK took 47 ms. Guest, native fixture, protocol peer and
+controller all passed; the actual Java process exited normally with code 0.
+KCD was closed, so these results do not establish host composition or physical input.
+
+The build passes 51 gate checks, 74 terminal-proof checks and 692 existing focused
+Java checks (817 total). Native fixture checks pass 181 new plus 338 existing
+cases; the protocol peer passes 120 checks. All 373 PowerShell receipt checks pass, validating the
+exact request reasons, selected items, server observations, unchanged inventory
+and explicit standalone scope. Independent implementation review passed.
+The built JAR SHA256 is
+`d0e1cb000b33856bbb76cb7ae38ca93d1a5f7393864747f7be245c86f9b4af5f`;
+the native input fixture SHA256 is
+`1feab52b14dc608622a8b2256d915a3a47264b4b2588d2055fac66a77a4cb35c`.
+
+Two earlier actual runs remain failed receipts. Run
+`0e64fe9b04254508905be8aa081e64f3` refused its first request before any block change.
+Inspection found a snapshot/clock-ordering race; observations are now acquired
+before their age is measured, retaining strict negative-age and freshness checks.
+That original receipt did not identify the exact failing predicate. Run
+`99c035f3db434934837f84bc90d98b60` completed the block sequence but failed the old
+terminal requirement to select all nine slots. A separate `HudStoneProof` validator
+now checks the combined sequence without weakening the existing inventory fixtures.
+
 ## Inventory capture cadence — 2026-10-13
 
 The 50 ms capture minimum combined with the 30 FPS guest cap skipped alternate
