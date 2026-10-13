@@ -1,6 +1,6 @@
 # MineCome progress — 2026-10-13
 
-**Selective camera capture: revision 2 live interaction passes; camera still blocked.** A separate
+**Selective camera capture: revision 3 installed; live camera verification in progress.** A separate
 API v2 renderer preserves DirectInput camera axes while capturing world buttons,
 then captures the full mouse for Minecraft inventory. Screen transitions drain
 old input and require matching UI acknowledgements and rendered screens before
@@ -33,8 +33,17 @@ controller and confirms one place/break cycle plus 97 UI events, with normal
 cleanup and restored FPS. The user confirms inventory and stone interaction,
 but camera look still fails. The new counters show 1,333 passed window-movement
 messages and zero nonzero DirectInput X/Y observations. The registered raw-input
-helper-window path is the next source-backed repair target; its use by KCD is
-not yet directly established. Camera movement is not marked verified.
+helper-window path is a source-backed repair target; its use by KCD is
+not yet directly established. The user confirms normal KCD camera movement
+returns after Minecraft closes. Revision 3 now binds the helper exception to
+the same-call resolved owner and successful mouse registration while retaining
+foreground, lease, mode and pure-relative-motion checks. It passes independent
+review, 138 focused native checks and a fresh pinned runtime build. The separate
+runtime 6.8.0.5/addon bundle is staged; 544 profile checks per PowerShell version
+and 1,008 controller checks pass. The exact revision 2 to 3 update preflight
+passes. The human-run restart verified a new 1,016-file save/profile backup and
+installed revision 3 unarmed. The fresh host loads the raw-owner addon and HUD
+shader; live preflight passes. Camera movement is not marked verified.
 This still operates the fixed stone cell. Shared Java/C++ aiming geometry passes
 198/222 assertions against the same golden vectors, but no aiming protocol or
 live crosshair interaction has been enabled. See the

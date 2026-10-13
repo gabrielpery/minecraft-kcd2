@@ -184,6 +184,51 @@ path, consistent with starvation before DirectInput, but the current logs do not
 prove that KCD used it. The next repair will bind any helper exception to that
 same-call resolved owner, actual registration, process ownership and the existing
 pure-relative-packet/foreground/lease/mode gates.
+The user separately confirms normal KCD camera movement returned once Minecraft
+closed, localizing the observed blockage to active HUD ownership.
+
+**Revision 3 source/build result:** the separate raw-owner addon and pinned
+runtime 6.8.0.5 are built, reviewed and staged. At the existing upstream message
+decision, the exception uses the actual resolved input window from that call.
+A successful UsagePage 1/Usage 2 registration must name the same-process helper;
+failed registration calls preserve the prior witness, while removal, retargeting
+and ambiguous registration modes invalidate it. The window-map lock covers both
+witness lookup and the foreground/lease/settled-buttons decision. Only immutable
+pure relative XY packets pass; full inventory capture and button filtering remain.
+No game engine method or offset was added, and frozen revisions 1/2 are unchanged.
+
+Capture API 2 and the prior motion diagnostics remain intact. A separate 48-byte
+raw diagnostics API counts mouse packets, registered helper candidates, passed
+helper moves and owner/packet rejections. These are process totals sampled by the
+addon worker, not exact snapshots at queued event time. The addon requires this
+export before starting. Callback paths perform no logging or file IO.
+
+The focused policy/adapter/production-wrapper suite passes 138 checks. The clean
+upstream patch check and independent source review pass. The first runtime build
+completed in 64.1 seconds, with all six source/generated/protected/installed-proxy
+guards true:
+`runtime/dependencies/reshade-selective-r3-6.8.0/evidence/20261013-183014-23bebae6fa4a425a8ea96be7d2f60b6a/verification.json`.
+Runtime SHA256 is `4d38a46f495709a6e08051ab04d114f109dba7ff1915fe7ba4dd9fa08bbe4623`;
+addon SHA256 is `9d3c51e5cff6214d0e31ee9214b7ed7c96292f986474e117f3535f9be68df030`.
+
+`config/hud-selective-profile-r3.json` and explicit `-SelectiveRevision 3`
+select the new six-file bundle; revision 1 remains the default. Both PowerShell
+5.1 and 7 pass 544 profile checks each (revision 269, Selective 142, World 110,
+Mouse 23), and the controller suite passes 1,008. The read-only update preflight
+accepts the exact frozen revision 2 predecessor and identifies only the proxy and
+addon as changed. Build/profile evidence is recorded at
+`runtime/evidence/hud-selective-r3-profile-20261013-173249-38531fa572fa4ae992a28496754ac205/verification.json`.
+The prepared human-run restart backs up saves and archives the exact prior arm
+receipt before disabling revision 2 and installing revision 3 unarmed. This is
+source/build/staging evidence only; the next live run must establish whether KCD
+uses the helper route and whether camera movement works.
+
+The human-run restart completed a verified 1,016-file save/profile backup at
+`runtime/backups/20261013-183332/backup.json`. Update
+`runtime/evidence/hud-update-20261013-173341-4f16de1f8a1b455ab46a15c497c8915d/update.json`
+changed only the proxy and addon, leaving the installation initially unarmed.
+Fresh KCD PID 49612 loaded the raw-owner addon and compiled its HUD shader.
+The ready-world live preflight passes without arming or starting a process.
 
 ## Physical world click profile — 2026-10-13
 

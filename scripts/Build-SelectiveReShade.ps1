@@ -9,7 +9,7 @@ param(
     [string]$WindowsSdkVersion='10.0.26100.0',
     [string]$PlatformToolset='v143',
     [string]$VisualStudioVersion='17.0',
-    [ValidateSet(1,2)][int]$SelectiveRevision=1,
+    [ValidateSet(1,2,3)][int]$SelectiveRevision=1,
     [switch]$PrepareOnly
 )
 $ErrorActionPreference='Stop'
@@ -18,26 +18,31 @@ $pin='18deaa52de0c425a78b329e9cb3c497281cd00ec'
 $reference=Join-Path $root 'external/reshade'
 $pristine=Join-Path $root 'runtime/dependencies/reshade-minecome-6.8.0/source'
 $pristineScript=Join-Path $PSScriptRoot 'Build-CustomReShade.ps1'
-$workspace=Join-Path $root $(if($SelectiveRevision -eq 2){'runtime/dependencies/reshade-selective-r2-6.8.0'}else{'runtime/dependencies/reshade-selective-6.8.0'})
+$workspace=Join-Path $root $(if($SelectiveRevision -eq 3){'runtime/dependencies/reshade-selective-r3-6.8.0'}elseif($SelectiveRevision -eq 2){'runtime/dependencies/reshade-selective-r2-6.8.0'}else{'runtime/dependencies/reshade-selective-6.8.0'})
 $id=[Guid]::NewGuid().ToString('N')
 $source=Join-Path $workspace ('source-'+$id.Substring(0,12))
 $run=Join-Path $workspace ('evidence/'+(Get-Date -Format 'yyyyMMdd-HHmmss')+'-'+$id)
 $proxy='C:/Program Files (x86)/Steam/steamapps/common/KCD2Mod/Bin/Win64ReleaseSteamLTO_DLL/dxgi.dll'
-$patchName=if($SelectiveRevision -eq 2){'selective-motion-r2.patch'}else{'selective-capture.patch'}
+$patchName=if($SelectiveRevision -eq 3){'selective-motion-r3.patch'}elseif($SelectiveRevision -eq 2){'selective-motion-r2.patch'}else{'selective-capture.patch'}
 $patch=Join-Path $root ('kcd2/reshade/'+$patchName)
 $copies=[ordered]@{
     'kcd2/hud/selective_capture_api.hpp'='source/windows/selective_capture_api.hpp'
     'kcd2/hud/selective_capture_policy.hpp'='source/windows/selective_capture_policy.hpp'
     'kcd2/reshade/selective_capture_adapter.hpp'='source/windows/selective_capture_adapter.hpp'
 }
-if($SelectiveRevision -eq 2){
+if($SelectiveRevision -ge 2){
     $copies['kcd2/reshade/motion_capture_adapter.hpp']='source/windows/motion_capture_adapter.hpp'
     $copies['kcd2/hud/motion_policy.hpp']='source/windows/motion_policy.hpp'
     $copies['kcd2/hud/motion_diagnostics_api.hpp']='source/windows/motion_diagnostics_api.hpp'
 }
+if($SelectiveRevision -eq 3){
+    $copies['kcd2/reshade/raw_motion_capture_adapter.hpp']='source/windows/raw_motion_capture_adapter.hpp'
+    $copies['kcd2/hud/raw_motion_policy.hpp']='source/windows/raw_motion_policy.hpp'
+    $copies['kcd2/hud/raw_motion_diagnostics_api.hpp']='source/windows/raw_motion_diagnostics_api.hpp'
+}
 $commands=[Collections.Generic.List[object]]::new()
 $result=[ordered]@{schema=1;kind='minecome_selective_reshade_build_v2';upstream='https://github.com/crosire/reshade';commit=$pin;configuration='Release';platform='x64';mouse_capture_api=2;source=$source;evidence=$run;status='failed';failure=$null;game_launched=$false;deployed=$false;hook_changes=$true;created_utc=[DateTime]::UtcNow.ToString('o');bit_reproducibility_verified=$false}
-if($SelectiveRevision -eq 2){$result.selective_revision=2}
+if($SelectiveRevision -ge 2){$result.selective_revision=$SelectiveRevision}
 function Assert-PlainPath([string]$Path) {
     $cursor=[IO.Path]::GetFullPath($Path)
     while($cursor){
@@ -120,7 +125,7 @@ try {
     if((($result.patched_paths | Sort-Object) -join '|') -cne (($allowedPaths | Sort-Object) -join '|')){throw 'The patch must change only dinput8.cpp, input_windows.cpp and the exact separately hashed headers.'}
     $result.patched_files=@($result.patched_paths | ForEach-Object {$path=Relative-Path $source $_;[ordered]@{path=$_;sha256=Hash $path;includes=@(Select-String -LiteralPath $path -Pattern '^\s*#include\s' | ForEach-Object {$_.Line.Trim()})}})
     $version=Relative-Path $source 'res/version.h'
-    $versionBuild=if($SelectiveRevision -eq 2){4}else{3}
+    $versionBuild=if($SelectiveRevision -eq 3){5}elseif($SelectiveRevision -eq 2){4}else{3}
     $versionFull='6.8.0.'+$versionBuild
     @('#pragma once','',('#define VERSION_FULL '+$versionFull),'#define VERSION_MAJOR 6','#define VERSION_MINOR 8','#define VERSION_REVISION 0',('#define VERSION_BUILD '+$versionBuild),'',('#define VERSION_STRING_FILE "'+$versionFull+'"'),'#define VERSION_STRING_PRODUCT "6.8.0 MINECOME SELECTIVE UNOFFICIAL"') | Set-Content -LiteralPath $version -Encoding ascii
     if($PrepareOnly){$result.status='prepared'}
@@ -133,12 +138,13 @@ try {
         $env:PIP_NO_INDEX='1';$env:PYTHONPATH=$null;$env:PYTHONHOME=$null
         Push-Location $source
         try {Run $MSBuild @('ReShade.vcxproj','/m:4','/t:Build','/p:Configuration=Release','/p:Platform=x64',('/p:PlatformToolset='+$PlatformToolset),('/p:VisualStudioVersion='+$VisualStudioVersion),('/p:WindowsTargetPlatformVersion='+$WindowsSdkVersion),('/p:SolutionDir='+$source+'\'),'/p:BuildingSetupTool=true','/p:GladReproducible=true',('/p:ForceImportBeforeCppTargets='+$guard),('/bl:'+(Join-Path $run 'build.binlog')),'/v:minimal') 'build'} finally {Pop-Location}
-        $output=Join-Path $run $(if($SelectiveRevision -eq 2){'ReShade64-minecome-selective-r2-6.8.0.dll'}else{'ReShade64-minecome-selective-6.8.0.dll'})
+        $output=Join-Path $run $(if($SelectiveRevision -eq 3){'ReShade64-minecome-selective-r3-6.8.0.dll'}elseif($SelectiveRevision -eq 2){'ReShade64-minecome-selective-r2-6.8.0.dll'}else{'ReShade64-minecome-selective-6.8.0.dll'})
         Copy-Item -LiteralPath (Relative-Path $source 'bin/x64/Release/ReShade64.dll') -Destination $output
         Run $DumpBin @('/headers','/exports',$output) 'pe-headers-exports'
         $pe=Get-Content -LiteralPath (Join-Path $run 'pe-headers-exports.log') -Raw
         foreach($required in @('8664 machine (x64)','ReShadeRegisterAddon','ReShadeRegisterEvent','DirectInput8Create','MineComeGetSelectiveMouseCaptureApi')){if(-not $pe.Contains($required)){throw "Expected PE header/export missing: $required"}}
-        if($SelectiveRevision -eq 2 -and -not $pe.Contains('MineComeReadMotionDiagnostics')){throw 'Expected revision 2 motion diagnostics export missing.'}
+        if($SelectiveRevision -ge 2 -and -not $pe.Contains('MineComeReadMotionDiagnostics')){throw 'Expected motion diagnostics export missing.'}
+        if($SelectiveRevision -eq 3 -and -not $pe.Contains('MineComeReadRawMotionDiagnostics')){throw 'Expected raw motion diagnostics export missing.'}
         $result.output=$output;$result.output_sha256=Hash $output;$result.output_bytes=(Get-Item -LiteralPath $output).Length;$result.version=(Get-Item -LiteralPath $output).VersionInfo.FileVersion
         $result.msbuild=$MSBuild;$result.msbuild_version=(Get-Item -LiteralPath $MSBuild).VersionInfo.FileVersion;$result.dumpbin=$DumpBin;$result.sdk=$WindowsSdkVersion;$result.toolset=$PlatformToolset
         $result.generated_outputs_unchanged=$true

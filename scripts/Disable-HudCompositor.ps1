@@ -2,15 +2,15 @@
 # Original reversible tools-only rollback. Never starts/stops a game or deletes a file.
 # Keeps the pinned proxy as dxgi.dll.minecome-disabled; configs, addon, shaders and logs remain.
 [CmdletBinding()]
-param([string]$BundleDirectory, [switch]$Preview, [switch]$LiveMouse, [switch]$WorldClicks, [switch]$SelectiveMouse, [ValidateSet(1,2)][int]$SelectiveRevision=1)
+param([string]$BundleDirectory, [switch]$Preview, [switch]$LiveMouse, [switch]$WorldClicks, [switch]$SelectiveMouse, [ValidateSet(1,2,3)][int]$SelectiveRevision=1)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 if($WorldClicks -and -not $LiveMouse){throw 'World rollback requires explicit LiveMouse and WorldClicks.'}
 if($SelectiveMouse -and (-not $WorldClicks -or -not $LiveMouse)){throw 'Selective rollback requires explicit LiveMouse and WorldClicks modes.'}
-if($SelectiveRevision -eq 2 -and -not $SelectiveMouse){throw 'Selective revision 2 rollback requires explicit SelectiveMouse mode.'}
+if($SelectiveRevision -ge 2 -and -not $SelectiveMouse){throw 'A selective revision rollback requires explicit SelectiveMouse mode.'}
 $projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $runtimeRoot = Join-Path $projectRoot 'runtime'
-if (-not $BundleDirectory) { $BundleDirectory = Join-Path $runtimeRoot $(if($SelectiveMouse -and $SelectiveRevision -eq 2){'hud-compositor-selective-r2'}elseif($SelectiveMouse){'hud-compositor-selective'}elseif($WorldClicks){'hud-compositor-world'}elseif($LiveMouse){'hud-compositor-mouse'}else{'hud-compositor'}) }
+if (-not $BundleDirectory) { $BundleDirectory = Join-Path $runtimeRoot $(if($SelectiveMouse -and $SelectiveRevision -eq 3){'hud-compositor-selective-r3'}elseif($SelectiveMouse -and $SelectiveRevision -eq 2){'hud-compositor-selective-r2'}elseif($SelectiveMouse){'hud-compositor-selective'}elseif($WorldClicks){'hud-compositor-world'}elseif($LiveMouse){'hud-compositor-mouse'}else{'hud-compositor'}) }
 $BundleDirectory = [IO.Path]::GetFullPath($BundleDirectory)
 $exeHash = 'a32d077e6b54e5cd0c5a5f3194f473779706ff266a711e4745ccdb598843340a'
 $proxyHash = '0cee63f9c9f13f3ac909c5b4903f4dbb4b719a7ab3b4f13b0deaf83c814b94f7'

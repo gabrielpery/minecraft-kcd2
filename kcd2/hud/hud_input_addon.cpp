@@ -22,6 +22,9 @@
 #ifdef MINECOME_HUD_MOTION_FILTER
 #include "motion_diagnostics_api.hpp"
 #endif
+#ifdef MINECOME_HUD_RAW_OWNER_FILTER
+#include "raw_motion_diagnostics_api.hpp"
+#endif
 #ifdef MINECOME_HUD_LIVE_MOUSE
 #ifdef MINECOME_HUD_SELECTIVE_MOUSE
 #include "selective_capture_api.hpp"
@@ -56,6 +59,10 @@ namespace ui = minecome::hud::input;
 #ifdef MINECOME_HUD_MOTION_FILTER
 namespace motion = minecome::motion;
 motion::ReadDiagnostics motion_diagnostics=nullptr;
+#endif
+#ifdef MINECOME_HUD_RAW_OWNER_FILTER
+namespace raw_motion = minecome::raw_motion;
+raw_motion::ReadDiagnostics raw_motion_diagnostics=nullptr;
 #endif
 #ifdef MINECOME_HUD_WORLD_CLICKS
 namespace world = minecome::hud::world;
@@ -93,6 +100,16 @@ void write_mouse_receipt(const mouse::Notice &notice,std::string_view run) {
         <<",\"window_moves_passed\":"<<routes.window_moves_passed<<",\"raw_moves_passed\":"<<routes.raw_moves_passed
         <<",\"raw_mixed_blocked\":"<<routes.raw_mixed_blocked<<",\"raw_buffer_blocked\":"<<routes.raw_buffer_blocked
         <<",\"hook_motion_blocked\":"<<routes.hook_motion_blocked;
+#endif
+#ifdef MINECOME_HUD_RAW_OWNER_FILTER
+    raw_motion::Snapshot raw_routes;
+    const bool raw_sampled=raw_motion_diagnostics&&raw_motion_diagnostics(&raw_routes);
+    line<<",\"raw_routes_sampled\":"<<(raw_sampled?"true":"false");
+    if(raw_sampled)line<<",\"mouse_raw_packets_seen\":"<<raw_routes.mouse_raw_packets_seen
+        <<",\"registered_helper_candidates\":"<<raw_routes.registered_helper_candidates
+        <<",\"helper_moves_passed\":"<<raw_routes.helper_moves_passed
+        <<",\"route_owner_rejected\":"<<raw_routes.route_owner_rejected
+        <<",\"packet_rejected\":"<<raw_routes.packet_rejected;
 #endif
     line<<",\"live_verified\":false}";
     reshade::log::message(reshade::log::level::info,line.str().c_str());
@@ -905,7 +922,10 @@ void on_begin(api::effect_runtime *runtime, api::command_list *commands, api::re
     } catch (...) { fail(state,5); hide(runtime,state); }
 }
 } // namespace
-#ifdef MINECOME_HUD_MOTION_FILTER
+#ifdef MINECOME_HUD_RAW_OWNER_FILTER
+extern "C" __declspec(dllexport) const char *NAME="MineCome bounded Minecraft raw owner lab";
+extern "C" __declspec(dllexport) const char *DESCRIPTION="Exact KCD2 tools/D3D12 genuine HUD; registered helper motion follows the resolved capture owner; full inventory capture, one F8 activation, at most 30 seconds and sixteen clicks. Fixed-cell stone target.";
+#elif defined(MINECOME_HUD_MOTION_FILTER)
 extern "C" __declspec(dllexport) const char *NAME="MineCome bounded Minecraft motion filter lab";
 extern "C" __declspec(dllexport) const char *DESCRIPTION="Exact KCD2 tools/D3D12 genuine HUD; selective DI capture and button-free movement messages; full inventory capture, one F8 activation, at most 30 seconds and sixteen clicks. Fixed-cell stone target.";
 #elif defined(MINECOME_HUD_SELECTIVE_MOUSE)
@@ -941,6 +961,12 @@ extern "C" __declspec(dllexport) bool AddonInit(HMODULE addon, HMODULE reshade_m
         motion::Snapshot routes;
         if(!motion_diagnostics||!motion_diagnostics(&routes)||routes.version!=motion::api_version||routes.size!=sizeof(routes))
             throw std::runtime_error("motion_diagnostics_runtime_required");
+#endif
+#ifdef MINECOME_HUD_RAW_OWNER_FILTER
+        raw_motion_diagnostics=reinterpret_cast<raw_motion::ReadDiagnostics>(GetProcAddress(reshade_module,"MineComeReadRawMotionDiagnostics"));
+        raw_motion::Snapshot raw_routes;
+        if(!raw_motion_diagnostics||!raw_motion_diagnostics(&raw_routes)||raw_routes.version!=raw_motion::api_version||raw_routes.size!=sizeof(raw_routes))
+            throw std::runtime_error("raw_motion_diagnostics_runtime_required");
 #endif
         service=new Service(addon);
         if (!service->stop || service->config.empty()) throw std::runtime_error("service_init");

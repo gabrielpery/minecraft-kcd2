@@ -85,7 +85,9 @@ A separate selective mouse profile is built and installed. Its live check preser
 place/break and inventory control, but the user confirmed camera movement still
 failed. The second revision also preserves inventory and stone interaction in a
 completed live run, but camera look still fails. Diagnostics now point to the
-separate raw-input helper-window route; its repair is the next step.
+separate raw-input helper-window route. Revision 3 repairs that route using the
+actual registered helper and resolved capture owner; it is built, reviewed and
+installed, with live camera verification in progress.
 The verified camera-locked profile remains available.
 Shared aiming geometry is tested in Java and C++, but live targeting still uses
 the fixed cell until the alignment handshake and vanilla raycast are connected.
