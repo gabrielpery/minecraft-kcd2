@@ -10,6 +10,11 @@ The final native adapter passes 775 checks; Selective/World/Mouse profile suites
 pass 142/110/23 under both PowerShell 5.1 and 7. The pinned custom runtime build
 passed source/provenance checks. Installation changed only the owned proxy and
 addon after a verified 1,013-file save/profile backup, and remains unarmed.
+The first live attempt loaded the runtime and received frames, then stopped
+before F8 because the controller misread an ordered-dictionary arm receipt.
+That controller-only fix now passes 1,008 checks, including direct and JSON
+receipt representations. No selective camera or click behavior was exercised;
+a fresh host session is required for the repaired check.
 This still operates the fixed stone cell. Shared Java/C++ aiming geometry passes
 198/222 assertions against the same golden vectors, but no aiming protocol or
 live crosshair interaction has been enabled. See the

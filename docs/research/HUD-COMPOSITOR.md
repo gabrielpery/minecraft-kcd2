@@ -79,6 +79,19 @@ records replacement of only `dxgi.dll` and the addon, with exact old-file backup
 and an unarmed enabled installation. No game was launched or stopped. The user
 restart and a combined camera/inventory/world-click check are still pending.
 
+**First live attempt, controller failure:** run
+`0c9c4120403d46b195216db3a25c91ab` loaded the selective addon in KCD PID 36872
+and received three HUD frames (15 draws). Before F8, a controller check treated
+the direct ordered-dictionary arm receipt as a JSON object and rejected its
+otherwise correct Boolean `selective_mouse` field. Zero UI/world actions were
+sent; the native runtime recorded guest closure, so camera behavior was not
+tested. Relay exit0/cleanup and restoration of the temporary FPS cap pass.
+Minecraft logged normal world saving, but the controller's early-failure path
+did not record the producer exit code; no crash or exit-code claim is inferred.
+The receipt reader now handles dictionaries and JSON objects with identical
+strict Boolean checks; its regression suite passes 1,008 assertions. This needs
+no binary update, but the consumed one-session renderer requires a host restart.
+
 ## Physical world click profile — 2026-10-13
 
 The new explicit `-WorldClicks` controller removes the timed demonstration and

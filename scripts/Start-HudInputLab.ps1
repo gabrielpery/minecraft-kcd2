@@ -48,7 +48,10 @@ function Assert-HudStoneConfiguration([string]$Mode,[bool]$StoneFixture,[bool]$S
     if($StoneLive -and ($StoneFixture -or $Mode -ne 'Live' -or -not $LiveMouse -or -not $OffscreenPresentation -or -not $HostGpuBudget -or $OffscreenTrial -or $PointerFixture -or $DelayFixture -or $BackgroundTrial)){throw 'StoneLive requires the capped live mouse profile without fixture modes.'}
 }
 function Assert-HudSelectiveArm($Receipt,[bool]$Expected){
-    if($Receipt.PSObject.Properties.Name -notcontains 'selective_mouse' -or $Receipt.selective_mouse -isnot [bool] -or $Receipt.selective_mouse -ne $Expected){throw 'Selective mouse arming receipt does not match the requested capture mode.'}
+    # Arm-HudStream returns an ordered dictionary directly; stored JSON reads
+    # as PSCustomObject. Validate keys in both representations without coercion.
+    $fields=if($Receipt -is [Collections.IDictionary]){@($Receipt.Keys)}else{@($Receipt.PSObject.Properties.Name)}
+    if($fields -notcontains 'selective_mouse' -or $Receipt.selective_mouse -isnot [bool] -or $Receipt.selective_mouse -ne $Expected){throw 'Selective mouse arming receipt does not match the requested capture mode.'}
 }
 function Assert-HudWorldClickGuest($Guest){
     Assert-HudStoneMode $Guest $false $true

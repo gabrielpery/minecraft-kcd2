@@ -84,9 +84,19 @@ foreach($incompatible in @('StoneFixture','OffscreenTrial','PointerFixture','Del
 }
 $config=Live-Configuration;$config.WorldClicks=$true;$config.SelectiveMouse=$true;$config.Mode='Fixture';Reject {Assert-HudStoneConfiguration @config} 'Selective capture cannot target a standalone fixture'
 foreach($expected in @($false,$true)){
-    Assert-HudSelectiveArm ([pscustomobject]@{selective_mouse=$expected}) $expected;Check $true 'Explicit matching capture arm receipt accepted'
-    foreach($invalid in @((-not $expected),'true','false',0,1,$null)){Reject {Assert-HudSelectiveArm ([pscustomobject]@{selective_mouse=$invalid}) $expected} 'Mismatched/untyped selective arm receipt rejected'}
-    Reject {Assert-HudSelectiveArm ([pscustomobject]@{}) $expected} 'Missing selective provenance rejected'
+    foreach($representation in @('direct','hashtable','json')){
+        # Preserve Arm-HudStream's actual pipeline shape for the direct case.
+        $makeReceipt={param($value,$missing=$false)
+            $receipt=[ordered]@{schema=1;kind='minecome_hud_stream_arm_v1'}
+            if(-not $missing){$receipt.selective_mouse=$value}
+            if($representation -eq 'json'){return ($receipt|ConvertTo-Json|ConvertFrom-Json)}
+            if($representation -eq 'hashtable'){$receipt=@{};if(-not $missing){$receipt.selective_mouse=$value}}
+            Write-Output $receipt
+        }
+        Assert-HudSelectiveArm (& $makeReceipt $expected) $expected;Check $true 'Matching direct/stored capture arm receipt accepted'
+        foreach($invalid in @((-not $expected),'true','false',0,1,$null)){Reject {Assert-HudSelectiveArm (& $makeReceipt $invalid) $expected} 'Mismatched/untyped selective arm receipt rejected'}
+        Reject {Assert-HudSelectiveArm (& $makeReceipt $null $true) $expected} 'Missing selective provenance rejected'
+    }
 }
 $bundleNode=$controller.Find({param($n)$n -is [Management.Automation.Language.IfStatementAst] -and $n.Extent.Text.StartsWith('if(-not $BundleDirectory)') -and $n.Extent.Text.Contains('runtime/hud-compositor-selective')},$true)
 Check ($null -ne $bundleNode) 'Controller has an explicit separate selective bundle default'
