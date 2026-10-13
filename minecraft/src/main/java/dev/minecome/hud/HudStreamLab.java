@@ -357,7 +357,8 @@ public final class HudStreamLab {
             if(offscreenPresentation){restoreOwnedWindow(client);inputEndingProof.add("window_restoration",windowRestoration.deepCopy());if(!windowRestoration.get("cleanup_succeeded").getAsBoolean())throw new IllegalStateException("Owned window terminal cleanup failed");}
             addOffscreenEvidence(inputEndingProof);
             if(!input.cleanupComplete())throw new IllegalStateException("Input handle cleanup failed");
-            String result=inputFailure!=null?"failed":inputFixture?"input_passed":(armedAt!=0 && inputEventsApplied>0?"input_completed":"input_cancelled");
+            boolean interacted=inputEventsApplied>0 || (stoneLive && HudStoneProof.hasConfirmedLiveInteraction(inputEndingProof));
+            String result=inputFailure!=null?"failed":inputFixture?"input_passed":(armedAt!=0 && interacted?"input_completed":"input_cancelled");
             terminalResult=result;output.finish(result,inputEndingProof);terminal=true;terminalAt=now;return;
         }
         if(input==null && output.publishedFrames()>0){

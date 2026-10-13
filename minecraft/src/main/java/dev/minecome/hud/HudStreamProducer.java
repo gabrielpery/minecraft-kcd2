@@ -211,7 +211,8 @@ public final class HudStreamProducer implements AutoCloseable {
             if(result.equals("input_passed") || result.equals("input_completed")){
                 if(!genuine || inputMode==0 || published.get()<5 || !states.contains("hotbar"))throw new IOException("Input stream vanilla proof incomplete");
                 var inputProof=finalEvidence.get();
-                if(inputProof==null || !inputProof.get("host_armed").getAsBoolean() || inputProof.get("input_events_applied").getAsLong()<=0)throw new IOException("Input stream was never armed/applied");
+                if(inputProof==null || !inputProof.get("host_armed").getAsBoolean() ||
+                        (inputProof.get("input_events_applied").getAsLong()<=0 && !(stoneLive && HudStoneProof.hasConfirmedLiveInteraction(inputProof))))throw new IOException("Input stream was never armed/applied");
                 if(stoneLive)HudStoneProof.requireLive(inputProof);
                 if(result.equals("input_passed")){
                     var proof=finalEvidence.get();

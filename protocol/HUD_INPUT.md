@@ -81,7 +81,7 @@ Neither grace restores input ownership. Acknowledgements
 come from the client tick, never fabricated by the worker. An idle ready tick
 advances time but not sequence.
 
-The live first slice is keyboard-only. An F8 edge arms only an already visible,
+An F8 edge arms only an already visible,
 freshly composed stream with a fresh ready guest and neutral tracked keys. The
 native renderer requests next-frame blocking before accepting later UI keys.
 Focus loss, ReShade overlay, stale peer, stream closure, reset or 30 seconds after
@@ -89,8 +89,35 @@ arming ends ownership and stops requesting blocking. The F8 opener itself can
 reach KCD. The game must be in its fresh test world with menus/console closed;
 generic KCD menu/cutscene ownership is not yet established.
 
-Mouse records exist for the standalone actual-Minecraft fixture. Live mouse
-forwarding is disabled until KCD camera/input exclusivity and cursor visibility
-are verified. ReShade6.8 DirectInput8 GetDeviceState preserves mouse axes while
-blocking buttons; its public block call alone does not prove camera suppression.
-Gamepad input and host physics are outside this bounded keyboard lab.
+The separate live mouse profile forwards these pointer records only to actual
+vanilla inventory screens. Its pinned custom ReShade build adds a renewable
+100 ms strict mouse lease; state, buffered and peek paths suppress mouse input
+and drain on release. The public ReShade block call alone is insufficient.
+Inventory screen transitions require the guest ACK and uploaded image to agree
+before pointer ownership resumes. Two neutral captured frames prevent held
+buttons from carrying into another screen. Live inventory interaction passed;
+general host input exclusivity and final native drain completion remain separate
+qualifications in `docs/PROGRESS.md`.
+
+The explicit World profile adds **no new UI wire kinds**. With the inventory
+closed, fresh right/left presses become place/break intents for the existing
+authenticated stone protocol. A bounded native queue passes run-tagged records
+to the controller through ReShade's worker log:
+
+```text
+[MineComeWorldInput] {"schema":1,"run":"<32 lowercase hex>","sequence":1,"utc_ms":<capture time>,"action":1}
+```
+
+The controller starts reading at the log's current end before arming, validates
+the file identity and exact run/sequence, and declines expired or too-rapid
+clicks. At most 16 presses can be emitted. It checks the captured KCD process
+and foreground immediately before dispatch; ambiguous dispatches are never
+retried. Each dispatched click is correlated with the Lua request ID, guest
+result, client/server block confirmation and KCD engine acknowledgement.
+An input ACK alone is never block confirmation.
+
+World mode retains the strict mouse lease throughout the 30-second activation,
+including the closed inventory: **KCD camera movement is intentionally frozen**.
+The target remains the verified nearby cell; this is not crosshair targeting.
+Gamepad input, normal mouse look, host physics and arbitrary block types remain
+outside this bounded check. The frozen mouse-only profile remains available.

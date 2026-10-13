@@ -64,6 +64,7 @@ Check ($parsed.fresh_world -and $parsed.authenticated -and $parsed.begin_session
 Check ($parsed.results.Count -eq 2 -and $parsed.dispatches.Count -eq 2 -and $parsed.engine_acks.Count -eq 2 -and $parsed.events.Count -eq 2) 'Complete native action chain parsed'
 Check ($parsed.results[0].request_id -ceq 7L -and $parsed.events[0].session -ceq 1790000000000000L) 'Exact numeric request/session retained'
 Check ($parsed.summary.placed -eq 1 -and $parsed.summary.removed -eq 1 -and $parsed.summary.cleanup_ack) 'Actual shutdown summary parsed'
+foreach($code in 1..7){$r=ConvertFrom-MineComeHudStoneRelayLog "STONE_INPUT_RESULT request=7 action=1 result=$code`n";Check ($r.results.Count -eq 1 -and $r.results[0].result -eq $code) 'All valid physical-click protocol results retained'}
 $partial=ConvertFrom-MineComeHudStoneRelayLog ((Valid-Log).TrimEnd("`r","`n"))
 Check ($null -eq $partial.summary) 'Unterminated terminal receipt cannot prove cleanup'
 $partial=ConvertFrom-MineComeHudStoneRelayLog ('STONE_BEGIN_ACK session=123')
@@ -78,6 +79,17 @@ Check ($s.ExitObserved -and $s.ExitCode -eq 0 -and $s.CleanupVerified -and $s.Pr
 Check (Test-Path -LiteralPath $s.StopFile) 'Graceful stop uses owned stop file'
 Assert-MineComeHudStoneRelayGuest $s (Valid-Guest)
 Check $s.EngineMirroringVerified 'Matching actual-guest/native evidence verifies engine mirroring'
+# An authentic occupied/absent/other vanilla refusal has a request/result, but no
+# block event. Successful actions still require the complete engine proof chain.
+foreach($code in 2..7){
+    $declined=New-Case;$declined.Intents.Add([pscustomobject]@{ordinal=3;request_id=9L;action=1;accepted=$true;sent_utc_ms=2000L;failure=$null})
+    $text=(Valid-Log)+"STONE_INPUT_DISPATCH request=9 action=1`nSTONE_INPUT_RESULT request=9 action=1 result=$code`n"
+    Write-Log $declined $text;Stop-MineComeHudStoneRelay $declined
+    $g=Valid-Guest;$g.lab_evidence.stone_bridge.request_count=3
+    $g.lab_evidence.stone_bridge.requests+=@([pscustomobject]@{id=9L;action=1;result=$code;result_queued=$true})
+    Assert-MineComeHudStoneRelayGuest $declined $g
+    Check $declined.EngineMirroringVerified 'Normal guest refusal does not invent or require an engine block event'
+}
 $evidence=Get-MineComeHudStoneRelayEvidence $s
 Check (-not $evidence.visual_verified -and -not $evidence.physical_block_input_verified -and -not $evidence.kcd_launched -and -not $evidence.kcd_stopped -and -not $evidence.credentials_recorded) 'Evidence never invents physical, visual, game launch or credential claims'
 Stop-MineComeHudStoneRelay $s;Check ($s.Process.WaitCalls -eq 1) 'Stop is idempotent'
@@ -177,4 +189,10 @@ foreach($case in @('success','refused','invalid_id','ambiguous','transport_failu
         }
     }
 }
+$s=New-Case;$s.Intents.Clear();$s.Context=$context.PSObject.Copy();$gameLog=Join-Path $s.Home 'admission-game.log';[IO.File]::WriteAllText($gameLog,'');$s.Context|Add-Member NoteProperty GameLog $gameLog
+$script:sentCommands=[Collections.Generic.List[string]]::new();$script:intentCase='success'
+$r=Send-MineComeHudStoneIntent $s -Action 1 -BeforeDispatch {'stale_edge'}
+Check (-not $r.accepted -and $r.declined -and $r.reason -ceq 'stale_edge' -and $s.Intents.Count -eq 0 -and $script:sentCommands.Count -eq 0 -and $null -eq $s.Failure) 'Physical admission decline sends nothing and preserves healthy relay'
+$r=Send-MineComeHudStoneIntent $s -Action 1 -BeforeDispatch {$null}
+Check ($r.accepted -and $r.request_id -eq 11 -and $s.Intents.Count -eq 1) 'Healthy relay can dispatch a later newly admitted physical edge'
 Write-Output "HUD_STONE_RELAY_TEST_PASS checks=$script:checks simulated_receipts_only=true no_game_actions=true evidence=$testRoot"

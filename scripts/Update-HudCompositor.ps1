@@ -2,17 +2,18 @@
 # Original tools-only update of the owned, disabled MineCome HUD installation.
 # Does not start/stop a game. Preflight is read-only, including when the game is open.
 [CmdletBinding()]
-param([string]$BundleDirectory, [string]$PreviousBundleDirectory, [switch]$PreflightOnly, [switch]$LiveMouse)
+param([string]$BundleDirectory, [string]$PreviousBundleDirectory, [switch]$PreflightOnly, [switch]$LiveMouse, [switch]$WorldClicks)
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
+if($WorldClicks -and -not $LiveMouse){throw 'World clicks update requires explicit LiveMouse mode.'}
 $projectRoot=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $runtimeRoot=Join-Path $projectRoot 'runtime'
-if(-not $BundleDirectory){$BundleDirectory=Join-Path $runtimeRoot $(if($LiveMouse){'hud-compositor-mouse'}else{'hud-compositor-resetfix'})}
-if(-not $PreviousBundleDirectory){$PreviousBundleDirectory=Join-Path $runtimeRoot 'hud-compositor'}
+if(-not $BundleDirectory){$BundleDirectory=Join-Path $runtimeRoot $(if($WorldClicks){'hud-compositor-world'}elseif($LiveMouse){'hud-compositor-mouse'}else{'hud-compositor-resetfix'})}
+if(-not $PreviousBundleDirectory){$PreviousBundleDirectory=Join-Path $runtimeRoot $(if($WorldClicks){'hud-compositor-mouse'}else{'hud-compositor'})}
 $exeHash='a32d077e6b54e5cd0c5a5f3194f473779706ff266a711e4745ccdb598843340a'
 $proxyHash='0cee63f9c9f13f3ac909c5b4903f4dbb4b719a7ab3b4f13b0deaf83c814b94f7'
 $previousProxyHash=$proxyHash
-if($LiveMouse){. (Join-Path $PSScriptRoot 'HudMouseProfile.ps1');$mouseProfile=Get-MineComeMouseProfile;$proxyHash=$mouseProfile.runtime_sha256}
+if($LiveMouse){. (Join-Path $PSScriptRoot 'HudMouseProfile.ps1');$mouseProfile=Get-MineComeMouseProfile -WorldClicks:$WorldClicks;$proxyHash=$mouseProfile.runtime_sha256}
 $supportedAddonHashes=@('a9bb60999fb526df64b3c61975431aed7c0b85728dc21a30db91b41bfccea484',
     '819499b52971d5027745be24e136b4a428975d108870ee0f70c1edfdf60b69cb')
 $supportedStreamAddonHashes=@('d7ebc92b59f7971998f1eafb5afe433b5bc44b84a272bcfc9840c49e1d1e6fd8')
@@ -120,9 +121,15 @@ $oldReceiptPath=Join-Path $PreviousBundleDirectory 'installed.json';$old=Read-Js
 if($old.schema-ne 1 -or $old.kind-cne'minecome_hud_install_v1' -or $old.exe_sha256-ine $exeHash -or
    -not ([IO.Path]::GetFullPath($old.target_exe).Equals($gameExe,[StringComparison]::OrdinalIgnoreCase)) -or
    -not ([IO.Path]::GetFullPath($old.bundle).Equals($PreviousBundleDirectory,[StringComparison]::OrdinalIgnoreCase)) -or @($old.files).Count-ne 6){throw 'Previous receipt does not own this exact six-file tools installation.'}
+if($WorldClicks){
+    $previousManifest=Read-Json (Join-Path $PreviousBundleDirectory 'bundle.json')
+    $previousMouseProfile=Get-MineComeMouseProfile
+    Assert-MineComeMouseInstalledBundle $previousManifest $old $previousMouseProfile
+    $previousProxyHash=$previousMouseProfile.runtime_sha256
+}
 $newManifestPath=Join-Path $BundleDirectory 'bundle.json';$manifest=Read-Json $newManifestPath
-if($LiveMouse){Assert-MineComeMouseBundle $manifest $mouseProfile}
-elseif($manifest.PSObject.Properties.Name -contains 'mouse_capture_api'){throw 'Mouse update requires explicit LiveMouse mode.'}
+if($LiveMouse){Assert-MineComeMouseBundle $manifest $mouseProfile -WorldClicks:$WorldClicks}
+elseif($manifest.PSObject.Properties.Name -contains 'mouse_capture_api' -or $manifest.PSObject.Properties.Name -contains 'world_clicks'){throw 'Mouse/world update requires its explicit mode.'}
 if($manifest.schema-ne 1 -or $manifest.kind-cne'minecome_hud_compositor_bundle_v1' -or $manifest.tools_only-ne$true -or @($manifest.files).Count-ne 6 -or
    $manifest.runtime.version-cne'6.8.0' -or $manifest.runtime.full_addon_support-ne$true -or $manifest.runtime.reshade64_sha256-cne $proxyHash){throw 'Unexpected pinned ReShade6.8.0 update bundle.'}
 $inputBundle=$LiveMouse -or $manifest.arm_config_relative_path-ceq'minecome-hud/addons/MineComeHudInput.ini'
@@ -139,7 +146,7 @@ $disabledPresent=Test-Path -LiteralPath $disabledProxy -PathType Leaf
 if($activePresent -and ($disabledPresent -or -not $PreflightOnly)){throw 'Update requires the active owned proxy to be disabled first; preserved all paths.'}
 if(-not $activePresent -and -not $disabledPresent){throw 'Owned proxy is missing.'}
 $armPath=Assert-Unlinked (Join-Path $bin $manifest.arm_config_relative_path)
-$allArmPaths=@('MineComeHud.ini','MineComeHudStream.ini','MineComeHudInput.ini','MineComeHudMouse.ini') | ForEach-Object {Assert-Unlinked (Join-Path $bin ('minecome-hud/addons/'+$_))}
+$allArmPaths=@('MineComeHud.ini','MineComeHudStream.ini','MineComeHudInput.ini','MineComeHudMouse.ini','MineComeHudWorld.ini') | ForEach-Object {Assert-Unlinked (Join-Path $bin ('minecome-hud/addons/'+$_))}
 $existingArms=@($allArmPaths | Where-Object {Test-Path -LiteralPath $_})
 if($existingArms.Count -and -not $PreflightOnly){throw 'Existing HUD arm configuration preserved. Update requires an unarmed installation.'}
 $installedPath=Assert-InRuntime (Join-Path $BundleDirectory 'installed.json')

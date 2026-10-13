@@ -61,7 +61,7 @@ function ConvertFrom-MineComeHudStoneRelayLog([string]$Text) {
         if($line -match '^STONE_BEGIN_ACK session=([1-9][0-9]{0,15})$'){$begins.Add($Matches[1])}
         elseif($line -match '^STONE_CLEANUP_ACK session=([1-9][0-9]{0,15})$'){$ends.Add($Matches[1])}
         elseif($line -match '^STONE_INPUT_DISPATCH request=([1-9][0-9]{0,15}) action=([12])$'){$dispatches.Add([pscustomobject]@{request_id=[long]$Matches[1];action=[int]$Matches[2]})}
-        elseif($line -match '^STONE_INPUT_RESULT request=([1-9][0-9]{0,15}) action=([12]) result=([1-4])$'){$results.Add([pscustomobject]@{request_id=[long]$Matches[1];action=[int]$Matches[2];result=[int]$Matches[3]})}
+        elseif($line -match '^STONE_INPUT_RESULT request=([1-9][0-9]{0,15}) action=([12]) result=([1-7])$'){$results.Add([pscustomobject]@{request_id=[long]$Matches[1];action=[int]$Matches[2];result=[int]$Matches[3]})}
         elseif($line -match '^STONE_ENGINE_ACK session=([1-9][0-9]{0,15}) sequence=([1-9][0-9]{0,15}) result=(spawned|already_present|removed|absent)$'){$acks.Add([pscustomobject]@{session=$Matches[1];sequence=$Matches[2];result=$Matches[3]})}
         elseif($line -match '^KCD2_LOG .*\[MineComeBlock\] (\{[^\r\n]*\})$'){
             $r=$Matches[1] | ConvertFrom-Json -Depth 8
@@ -128,10 +128,14 @@ function Start-MineComeHudStoneRelay($Session) {
         if(-not $Session.Ready){throw 'No fresh engine player/camera receipt from the owned relay.'}
     }catch{$Session.Failure=$_.Exception.Message;throw}
 }
-function Send-MineComeHudStoneIntent($Session,[ValidateSet(1,2)][int]$Action) {
+function Send-MineComeHudStoneIntent($Session,[ValidateSet(1,2)][int]$Action,[scriptblock]$BeforeDispatch) {
     Assert-MineComeHudStoneRelay $Session
     $now=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
     if($Session.Intents.Count -ge 16 -or $now-$Session.LastIntentUtcMs -lt 300){throw 'HUD stone intent capacity or spacing limit reached.'}
+    # Physical callers recheck edge age and current foreground after relay health
+    # checks. A normal admission decline owns no intent and never poisons a relay.
+    if($BeforeDispatch){$decline=& $BeforeDispatch;if($decline){return [pscustomobject]@{accepted=$false;declined=$true;reason=[string]$decline}}}
+    $now=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
     $ordinal=$Session.Intents.Count+1;$offset=(Get-Item -LiteralPath $Session.Context.GameLog).Length
     $record=[pscustomobject]@{ordinal=$ordinal;request_id=0L;action=$Action;accepted=$false;sent_utc_ms=$now;failure=$null}
     $Session.Intents.Add($record);$Session.LastIntentUtcMs=$now
@@ -175,6 +179,7 @@ function Assert-MineComeHudStoneRelayGuest($Session,$Guest) {
         for($i=0;$i -lt $requests.Count;$i++){
             $r=$requests[$i];$intent=$intents[$i];$dispatch=$native.dispatches[$i];$result=$native.results[$i]
             foreach($field in @('id','action','result')){Integer $r.$field};Flag $r.result_queued $true
+            if($r.id -lt 1 -or $r.id -gt 9007199254740991 -or $r.action -notin @(1,2) -or $r.result -lt 1 -or $r.result -gt 7){throw 'Guest stone request fields exceed protocol bounds.'}
             if(-not $intent.accepted -or $r.id -ne $intent.request_id -or $r.action -ne $intent.action -or $r.result_queued -ne $true -or $dispatch.request_id -ne $r.id -or $dispatch.action -ne $r.action -or $result.request_id -ne $r.id -or $result.action -ne $r.action -or $result.result -ne $r.result){throw 'Relay intent/dispatch/result does not match the same guest request.'}
         }
         $accepted=@($requests | Where-Object result -eq 1)

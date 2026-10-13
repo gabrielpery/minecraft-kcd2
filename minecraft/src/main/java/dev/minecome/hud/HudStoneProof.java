@@ -20,7 +20,7 @@ final class HudStoneProof {
     static void requireLive(JsonObject proof)throws IOException {
         flag(proof,"input_fixture",false);flag(proof,"live_mouse",true);flag(proof,"host_armed",true);
         long applied=count(proof,"input_events_applied");
-        if(applied==0 || applied!=count(proof,"input_consumed_sequence"))throw new IOException("Live stone input consumption incomplete");
+        if(applied!=count(proof,"input_consumed_sequence"))throw new IOException("Live stone input consumption incomplete");
         var field=proof.get("stone_bridge");
         if(field==null || !field.isJsonObject())throw new IOException("Live stone bridge proof missing");
         var stone=field.getAsJsonObject();
@@ -29,6 +29,7 @@ final class HudStoneProof {
         number(stone,"cancelled_pending",0);
         if(count(stone,"session")==0)throw new IOException("Live stone bridge was never authenticated");
         long requests=count(stone,"request_count"),accepted=count(stone,"accepted_dispatches"),confirmed=count(stone,"confirmed_actions");
+        if(applied==0 && confirmed==0)throw new IOException("Live stone stream has no consumed UI input or confirmed block action");
         long placed=count(stone,"confirmed_places"),broken=count(stone,"confirmed_breaks");
         if(accepted>requests || accepted!=confirmed || confirmed!=count(stone,"block_events_queued") || placed>confirmed || broken!=confirmed-placed)
             throw new IOException("Live stone dispatch/confirmation totals differ");
@@ -40,6 +41,15 @@ final class HudStoneProof {
         }
         if(count(stone,"omitted_requests")>requests || count(stone,"omitted_confirmations")>confirmed)
             throw new IOException("Live stone omitted diagnostics exceed totals");
+    }
+
+    /** Physical world clicks travel through the stone transport, not the UI ring. */
+    static boolean hasConfirmedLiveInteraction(JsonObject proof) {
+        if(proof==null)return false;
+        try {
+            requireLive(proof);
+            return count(proof.getAsJsonObject("stone_bridge"),"confirmed_actions")>0;
+        }catch(IOException invalid){return false;}
     }
 
     private static boolean bool(JsonObject value,String key)throws IOException {

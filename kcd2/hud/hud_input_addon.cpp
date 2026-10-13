@@ -24,6 +24,9 @@
 #include "mouse_diagnostics.hpp"
 #include "mouse_forwarding.hpp"
 #endif
+#ifdef MINECOME_HUD_WORLD_CLICKS
+#include "world_click.hpp"
+#endif
 #include "hud_contract.hpp"
 #include <reshade.hpp>
 #include <algorithm>
@@ -41,6 +44,9 @@ namespace api = reshade::api;
 namespace hud = minecome::hud;
 namespace st = minecome::hud::stream;
 namespace ui = minecome::hud::input;
+#ifdef MINECOME_HUD_WORLD_CLICKS
+namespace world = minecome::hud::world;
+#endif
 #ifdef MINECOME_HUD_LIVE_MOUSE
 namespace mouse = minecome::mouse;
 const mouse::Api *mouse_api=nullptr;
@@ -145,6 +151,10 @@ struct Service {
     std::atomic<std::shared_ptr<const st::Frame>> publication;
     std::atomic<std::shared_ptr<const ui::Status>> input_status;
     ui::Mailbox input_mailbox;
+#ifdef MINECOME_HUD_WORLD_CLICKS
+    world::Queue world_clicks;
+    world::Click pending_click;
+#endif
     std::atomic<unsigned> input_request{0}; // 0 waiting, 1 arm, 2 close.
     std::atomic<std::uint64_t> last_input_render{0};
     std::atomic<api::effect_runtime *> input_owner{nullptr};
@@ -153,13 +163,58 @@ struct Service {
     explicit Service(HMODULE module) {
         const auto path = st::module_path(module); const auto slash = path.find_last_of(L"/\\");
         if (slash != path.npos) config = path.substr(0,slash+1)+
-#ifdef MINECOME_HUD_LIVE_MOUSE
+#ifdef MINECOME_HUD_WORLD_CLICKS
+            L"MineComeHudWorld.ini";
+#elif defined(MINECOME_HUD_LIVE_MOUSE)
             L"MineComeHudMouse.ini";
 #else
             L"MineComeHudInput.ini";
 #endif
     }
     bool stopping() const { return !stop || WaitForSingleObject(stop.value,0) != WAIT_TIMEOUT; }
+#ifdef MINECOME_HUD_WORLD_CLICKS
+    void drain_world_clicks(const Session &accepted,ui::Writer &inputs) {
+        // Worker-only formatting/log IO. No record may outlive the current
+        // activation, image, ACK or original physical capture freshness.
+        for(unsigned i=0;i<world::max_clicks;++i){
+            if(!pending_click.sequence&&!world_clicks.pop(pending_click))return;
+            const auto now=st::steady_ms(),utc=st::utc_ms();const auto &peer=inputs.status();
+            const auto frame=publication.load(std::memory_order_acquire);
+            const auto rendered=last_input_render.load(std::memory_order_acquire);
+            const bool closed=stopping()||terminal.load(std::memory_order_acquire)||input_force_close.load(std::memory_order_acquire)||
+                input_request.load(std::memory_order_acquire)==2||peer.state!=1;
+            // HUD freshness is 250 ms, but strict mouse ownership expires at
+            // 100 ms. Re-query its exact captured owner/generation here; a
+            // render stall must not emit after that shorter lease has expired.
+            mouse::Snapshot capture;
+            const auto capture_result=closed?mouse::Result::unavailable:mouse_api->query(pending_click.window,pending_click.token,&capture);
+            const bool captured=world::capture_matches(pending_click,capture_result==mouse::Result::ok&&(capture.flags&mouse::active),capture.token,capture.generation);
+            const bool live=!closed&&accepted.live(utc,now)&&peer.live&&peer.ack.state==1&&ui::fresh(peer.ack.utc,utc)&&
+                now>=peer.observed&&now-peer.observed<=ui::fresh_ms&&rendered&&now>=rendered&&now-rendered<=ui::fresh_ms&&
+                frame&&st::uploaded_fresh(frame->observation,now)&&captured&&!world_clicks.overflowed();
+            const auto outcome=world::delivery(pending_click,live,utc,peer.ack.sequence,peer.ack.screen);
+            if(outcome==world::Delivery::wait)return;
+            if(outcome==world::Delivery::drop){
+                pending_click={};
+                // Never silently skip an in-session sequence and emit later
+                // clicks. Closed-session records are discarded without IO.
+                if(!closed){
+                    record_close(ui::CloseCause::mouse_transition);input_force_close.store(true,std::memory_order_release);
+                    inputs.finish("world_click_delivery_failed");
+                    receipt("world_click","delivery_failed",accepted.identity.run);
+                }
+                continue;
+            }
+            std::ostringstream line;
+            line<<"[MineComeWorldInput] {\"schema\":1,\"run\":\""<<accepted.identity.run<<"\",\"sequence\":"<<pending_click.sequence
+                <<",\"utc_ms\":"<<pending_click.utc<<",\"action\":"<<pending_click.action<<'}';
+            // Re-check asynchronous closure immediately before publication.
+            if(!input_force_close.load(std::memory_order_acquire)&&!terminal.load(std::memory_order_acquire)&&!stopping())
+                reshade::log::message(reshade::log::level::info,line.str().c_str());
+            pending_click={};
+        }
+    }
+#endif
     void end(std::string_view why, std::string_view run) {
         if(input_has_started.load(std::memory_order_acquire))record_close(ui::CloseCause::session_end);
         input_force_close.store(true,std::memory_order_release);
@@ -219,7 +274,11 @@ struct Service {
 #endif
                     const auto now=st::steady_ms();
                     const auto last_render=last_input_render.load(std::memory_order_acquire);
-                    if(input_force_close.load(std::memory_order_acquire)||input_request.load(std::memory_order_acquire)==2||input_mailbox.overflowed()) {
+                    if(input_force_close.load(std::memory_order_acquire)||input_request.load(std::memory_order_acquire)==2||input_mailbox.overflowed()
+#ifdef MINECOME_HUD_WORLD_CLICKS
+                        ||world_clicks.overflowed()
+#endif
+                        ) {
                         if(input_mailbox.overflowed())record_close(ui::CloseCause::mailbox_overflow);
                         inputs.finish("ownership_closed");
                     } else if(inputs.status().state==1&&(!last_render||now<last_render||now-last_render>ui::fresh_ms)) {
@@ -276,6 +335,9 @@ struct Service {
                     publication.store(std::move(next),std::memory_order_release);
                     if (!first) { receipt("frame","first_received",identity.run); first=true; }
                 }
+#ifdef MINECOME_HUD_WORLD_CLICKS
+                if(input_created)drain_world_clicks(*accepted,inputs);
+#endif
                 const auto renderer=renderer_error.load(std::memory_order_relaxed);
                 if (renderer && renderer != last_renderer_error) {
                     receipt("renderer","failure_"+std::to_string(renderer),identity.run); last_renderer_error=renderer;
@@ -324,6 +386,9 @@ struct RuntimeState {
     std::uint32_t target_width=0,target_height=0,uploaded_screen=0;
     std::uint64_t forwarded_events=0,transition_sequence=0,mouse_generation=0;
     bool transition=false,transition_screen=false,mouse_leased=false,mouse_capability_reported=false;
+#ifdef MINECOME_HUD_WORLD_CLICKS
+    world::Gate world_click;
+#endif
 #endif
 };
 std::mutex runtimes_mutex;
@@ -438,10 +503,24 @@ void capture_keyboard(api::effect_runtime *runtime,RuntimeState &state,bool comp
     // Public ReShade request affects the following frame. The gate waits two
     // fully neutral frames before forwarding UI edges. F8 itself may reach KCD.
     runtime->block_input_next_frame();
+#ifdef MINECOME_HUD_WORLD_CLICKS
+    // Deliberate bounded-lab policy: strict v1 capture freezes the complete
+    // KCD mouse while world clicks or inventory own input. It is acquired
+    // during neutral settling and kept across screen transitions.
+    mouse::Snapshot world_capture;
+    const auto capture_result=mouse_api->request(reinterpret_cast<std::uintptr_t>(state.window),reinterpret_cast<std::uintptr_t>(runtime),100,&world_capture);
+    if(capture_result==mouse::Result::draining&&!state.mouse_leased)return;
+    if(capture_result!=mouse::Result::ok||!(world_capture.flags&mouse::active)||
+        (state.mouse_leased&&world_capture.generation!=state.mouse_generation)){
+        mouse_receipt("world_mouse_request_failed",capture_result,world_capture);close_keyboard(runtime,ui::CloseCause::mouse_capture);release_mouse(runtime,state);return;
+    }
+    if(!state.mouse_leased){state.mouse_generation=world_capture.generation;state.mouse_leased=true;mouse_receipt("world_mouse_acquired",capture_result,world_capture);}
+#endif
     if(step!=ui::KeyboardGate::Step::active||peer->state!=1)return;
 #ifdef MINECOME_HUD_LIVE_MOUSE
     if(state.transition&&peer->ack.sequence>=state.transition_sequence&&peer->ack.screen==static_cast<unsigned>(state.transition_screen)&&state.uploaded_screen==peer->ack.screen)
         state.transition=false;
+#ifndef MINECOME_HUD_WORLD_CLICKS
     if(state.mouse_leased){ // Also covers the bounded close-screen ACK interval.
         mouse::Snapshot renewed;
         const auto result=mouse_api->request(reinterpret_cast<std::uintptr_t>(state.window),reinterpret_cast<std::uintptr_t>(runtime),100,&renewed);
@@ -450,12 +529,16 @@ void capture_keyboard(api::effect_runtime *runtime,RuntimeState &state,bool comp
         }
     }
 #endif
+#endif
     const auto changed=held^state.previous_keys;
     for(std::size_t i=0;i<keys.size();++i)if(changed&(1u<<i)) {
         const ui::Event event{st::utc_ms(),(held&(1u<<i))?ui::Kind::key_down:ui::Kind::key_up,keys[i],0,0,0};
 #ifdef MINECOME_HUD_LIVE_MOUSE
         const bool toggle=event.kind==ui::Kind::key_down&&(keys[i]==0x45||keys[i]==0x1b);
         if(toggle){
+#ifdef MINECOME_HUD_WORLD_CLICKS
+            state.world_click.suspend();
+#endif
             if(state.transition){close_keyboard(runtime,ui::CloseCause::mouse_transition);release_mouse(runtime,state);return;}
             ui::PointerBatch releases;state.pointer.close(utc,releases);
             if(!queue_pointer(state,releases)){close_keyboard(runtime,ui::CloseCause::mailbox_overflow);release_mouse(runtime,state);return;}
@@ -468,16 +551,31 @@ void capture_keyboard(api::effect_runtime *runtime,RuntimeState &state,bool comp
     }
     state.previous_keys=held;
 #ifdef MINECOME_HUD_LIVE_MOUSE
-    if(state.transition)return;
+    if(state.transition){
+#ifdef MINECOME_HUD_WORLD_CLICKS
+        state.world_click.suspend();
+#endif
+        return;
+    }
     if(peer->ack.screen==0){
         ui::PointerBatch releases;state.pointer.close(utc,releases);
         if(releases.count){close_keyboard(runtime,ui::CloseCause::mouse_transition);release_mouse(runtime,state);return;}
         // Closing inventory while dragging releases the guest first. Keep the
         // bounded native lease until the physical buttons are neutral so a
         // still-held click cannot become a KCD attack on screen close.
+#ifdef MINECOME_HUD_WORLD_CLICKS
+        auto click=state.world_click.update(state.uploaded_screen==0&&state.mouse_leased,mouse_buttons,utc,now,state.forwarded_events);
+        if(state.world_click.failure()!=world::Gate::Failure::none){close_keyboard(runtime,ui::CloseCause::mouse_transition);release_mouse(runtime,state);return;}
+        click.window=reinterpret_cast<std::uintptr_t>(state.window);click.token=reinterpret_cast<std::uintptr_t>(runtime);click.generation=state.mouse_generation;
+        if(click.sequence&&!service->world_clicks.push(click)){close_keyboard(runtime,ui::CloseCause::mailbox_overflow);release_mouse(runtime,state);return;}
+#else
         if(!mouse_buttons)release_mouse(runtime,state);
+#endif
         return;
     }
+#ifdef MINECOME_HUD_WORLD_CLICKS
+    state.world_click.suspend();
+#endif
     if(state.uploaded_screen!=1)return;
     if(!state.mouse_leased){
         mouse::Snapshot capture;
@@ -725,7 +823,10 @@ void on_begin(api::effect_runtime *runtime, api::command_list *commands, api::re
     } catch (...) { fail(state,5); hide(runtime,state); }
 }
 } // namespace
-#ifdef MINECOME_HUD_LIVE_MOUSE
+#ifdef MINECOME_HUD_WORLD_CLICKS
+extern "C" __declspec(dllexport) const char *NAME="MineCome bounded Minecraft world click lab";
+extern "C" __declspec(dllexport) const char *DESCRIPTION="Exact KCD2 tools/D3D12 genuine HUD; left break/right place intents and inventory mouse; strict capture freezes KCD look, one F8 activation, at most 30 seconds and sixteen clicks.";
+#elif defined(MINECOME_HUD_LIVE_MOUSE)
 extern "C" __declspec(dllexport) const char *NAME="MineCome bounded Minecraft mouse UI lab";
 extern "C" __declspec(dllexport) const char *DESCRIPTION="Exact KCD2 tools/D3D12 genuine UI stream; inventory cursor, left/right clicks, drag and wheel with strict capture; one F8 activation, at most 30 seconds.";
 #else

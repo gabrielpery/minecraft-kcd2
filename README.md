@@ -75,8 +75,12 @@ two breaks on both the client and integrated server, genuine HUD frames and norm
 shutdown. An explicit live controller now connects this same guest to the existing
 KCD relay, with a bounded automatic place/break preview after F8. **The combined
 live check passed:** the user saw the hotbar and stone appear/disappear together;
-both games confirmed the operations and cleanup. Physical world-click placement
-remains unfinished.
+both games confirmed the operations and cleanup. A separate World profile now
+connects right-click/place and left-click/break to that same relay. **The physical
+check passed:** four clicks produced two confirmed cycles in both games, with
+the user's visual confirmation and normal cleanup. It intentionally
+locks KCD mouse look and controls one nearby cell for up to 30 seconds. Free
+aiming and continuous gameplay remain unfinished.
 Earlier tools launches crashed during world loading with the renderer unarmed and
 with its hook disabled. A subsequent explicit PowerShell 7 launch reached the world,
 confirmed by the user and a successful two-minute process/HTTP check, with the hook

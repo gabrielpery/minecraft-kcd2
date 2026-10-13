@@ -1,5 +1,20 @@
 # MineCome progress — 2026-10-13
 
+**Physical world clicks: implemented, built and live verified.** Run
+`62b35872e09d44a3b6b3a5474131e24e` passed four physical clicks and two
+place/break cycles, with the user's report: "it worked fine." Both games confirmed
+the operations, final air and cleanup; Java/relay exited 0 and the temporary host
+FPS cap restored to -1. No keyboard or inventory events were needed. Focus loss
+ended activation after 13.719 seconds, so this is not a full 30-second endurance
+or inventory-transition check. The separate World profile maps fresh right/left
+presses to the existing authenticated place/break relay. It uses the actual
+selected Minecraft stone stack and client/server confirmations, with no timed
+placement sequence. Inventory transitions retain button ownership; held presses
+cannot become world actions. The existing mouse-only profile is preserved.
+The bounded check intentionally freezes KCD mouse look for up to 30 seconds and
+still targets one verified nearby cell. Free aiming, arbitrary blocks and normal
+continuous play remain unfinished. See the [World profile record](research/HUD-COMPOSITOR.md#physical-world-click-profile--2026-10-13).
+
 **A real Minecraft stone block is now visible in a loaded KCD2 development world.**
 The user's 2026-10-11 screenshot and matching game logs verify this first live display,
 alongside communication between both real games. A second user-provided screenshot
@@ -37,7 +52,8 @@ break; KCD acknowledged spawn, removal and zero-owned cleanup in one session.
 The guest published 577 frames; KCD uploaded 559 and submitted 2,330 draws with no
 upload drops. Java and relay exited normally, and the temporary 60 FPS cap restored
 to -1. Focus loss ended input after 18.375 seconds, after the block cycle completed;
-this is not another full 30-second test. Physical world-click actions remain unfinished.
+this is not another full 30-second test. Physical world-click evidence is recorded
+in the newer milestone above.
 
 **Current UI milestone: live Minecraft inventory mouse control inside KCD2.**
 The user confirms the physical test worked. All 639 events were acknowledged,

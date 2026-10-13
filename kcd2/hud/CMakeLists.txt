@@ -111,6 +111,32 @@ endif()
 add_custom_command(TARGET minecome_hud_mouse_compositor POST_BUILD
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/shaders/MineComeMouseHud.fx"
     "$<TARGET_FILE_DIR:minecome_hud_mouse_compositor>/MineComeHud.fx")
+
+# Physical world-button experiment is opt-in and has its own arm filename and
+# output. It retains strict API v1 capture (including camera axes) for its lease.
+add_library(minecome_hud_world_compositor SHARED hud_input_addon.cpp)
+target_link_libraries(minecome_hud_world_compositor PRIVATE minecome_hud_input user32)
+target_include_directories(minecome_hud_world_compositor PRIVATE "${MINECOME_RESHADE_ROOT}/include")
+target_compile_definitions(minecome_hud_world_compositor PRIVATE MINECOME_HUD_UI_INPUT=1 MINECOME_HUD_LIVE_MOUSE=1 MINECOME_HUD_WORLD_CLICKS=1)
+set_target_properties(minecome_hud_world_compositor PROPERTIES OUTPUT_NAME "MineComeHudCompositor" PREFIX "" SUFFIX ".addon64"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/world" ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/world"
+    PDB_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/world")
+if(MSVC)
+    set_target_properties(minecome_hud_world_compositor PROPERTIES MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    target_compile_options(minecome_hud_world_compositor PRIVATE /W4 /permissive- /utf-8 /EHsc)
+endif()
+add_custom_command(TARGET minecome_hud_world_compositor POST_BUILD
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/shaders/MineComeMouseHud.fx"
+    "$<TARGET_FILE_DIR:minecome_hud_world_compositor>/MineComeHud.fx")
+if(BUILD_TESTING)
+    add_executable(minecome_hud_world_click_tests world_click_tests.cpp)
+    target_compile_features(minecome_hud_world_click_tests PRIVATE cxx_std_20)
+    if(MSVC)
+        set_target_properties(minecome_hud_world_click_tests PROPERTIES MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+        target_compile_options(minecome_hud_world_click_tests PRIVATE /W4 /permissive- /utf-8 /EHsc)
+    endif()
+    add_test(NAME hud_world_click_policy_and_queue COMMAND minecome_hud_world_click_tests)
+endif()
 if(BUILD_TESTING)
     add_executable(minecome_hud_mouse_forwarding_tests mouse_forwarding_tests.cpp)
     target_link_libraries(minecome_hud_mouse_forwarding_tests PRIVATE minecome_hud_input)

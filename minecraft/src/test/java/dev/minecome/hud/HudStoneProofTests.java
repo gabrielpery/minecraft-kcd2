@@ -68,6 +68,26 @@ public final class HudStoneProofTests {
         proof=live(20,20,1);proof.getAsJsonObject("stone_bridge").addProperty("omitted_requests",25);proof.getAsJsonObject("stone_bridge").addProperty("omitted_confirmations",24);
         HudStoneProof.requireLive(proof);checks++; // Bounded diagnostics may omit records; totals stay truthful.
     }
+    private static void worldClickCompletion()throws IOException {
+        for(var proof:new JsonObject[]{live(1,0,0),live(1,1,0),live(2,2,2)}){
+            proof.addProperty("input_events_applied",0);proof.addProperty("input_consumed_sequence",0);
+            HudStoneProof.requireLive(proof);checks++;
+            if(!HudStoneProof.hasConfirmedLiveInteraction(proof))throw new AssertionError("Confirmed live world action was cancelled");checks++;
+        }
+        var idle=live(0,0,0);idle.addProperty("input_events_applied",0);idle.addProperty("input_consumed_sequence",0);rejectLive(idle);
+        var declined=live(0,0,2);declined.addProperty("input_events_applied",0);declined.addProperty("input_consumed_sequence",0);rejectLive(declined);
+        for(var proof:new JsonObject[]{null,valid(),idle,declined,live(0,0,0)}){
+            if(HudStoneProof.hasConfirmedLiveInteraction(proof))throw new AssertionError("Flag/idle/refused actions cannot certify world interaction");checks++;
+        }
+        for(String field:new String[]{"pending","failed","inventory_mutated","camera_mutated"}){
+            var proof=live(1,1,0);proof.addProperty("input_events_applied",0);proof.addProperty("input_consumed_sequence",0);proof.getAsJsonObject("stone_bridge").addProperty(field,true);
+            if(HudStoneProof.hasConfirmedLiveInteraction(proof))throw new AssertionError("Incomplete world action proof accepted");checks++;
+        }
+        for(String field:new String[]{"host_armed","live_mouse"}){
+            var proof=live(1,1,0);proof.addProperty(field,false);
+            if(HudStoneProof.hasConfirmedLiveInteraction(proof))throw new AssertionError("Unarmed/non-live proof accepted");checks++;
+        }
+    }
     public static void main(String[] args)throws IOException {
         HudStoneProof.require(valid());checks++;
         // Different fixture contracts are not interchangeable.
@@ -81,6 +101,7 @@ public final class HudStoneProofTests {
         }
         proof=valid();proof.addProperty("input_consumed_sequence",7);reject(proof);
         liveContracts();
+        worldClickCompletion();
         System.out.println("HudStoneProofTests: "+checks+" checks passed.");
     }
 }

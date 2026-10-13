@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "kind": "minecome_hud_world_profile_v1",
+  "upstream_commit": "18deaa52de0c425a78b329e9cb3c497281cd00ec",
+  "mouse_capture_api": 1,
+  "runtime_sha256": "1798af0815f1e3ad6b7ba86d0a065181158dbaaf0dcaf600ea2981642217118f",
+  "addon_sha256": "8d65235dcb59bf0f27300164c46ecb357983513d41150df69055b21614265cdb",
+  "shader_sha256": "ba09f039fbcd616200456f7f79a1fca913bbbe3e8bf672576dc5098c1c25d0b6",
+  "build_receipt_sha256": "4a90c9c3d48ec0e57997eef04b6b852c1571183827c68cba93fe6f62c25877d1",
+  "patch_sha256": "6310a9f5aef1548ddefafacece34f8bd07f63822534034e09772311a70e5b4aa",
+  "api_sha256": "821b9839a56b397d34b273c3555e19c9b3e1e1e124bf76708d8fba1387e2c9bd"
+}

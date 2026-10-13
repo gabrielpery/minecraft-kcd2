@@ -34,7 +34,7 @@ $bin=Assert-Unlinked (Join-Path $tools[0].install_path 'Bin/Win64ReleaseSteamLTO
 $gameExe=Assert-Unlinked (Join-Path $bin 'KingdomCome.exe')
 if((Get-FileHash -LiteralPath $gameExe).Hash -ine $exeHash){throw 'Exact tools executable changed.'}
 $arm=Assert-Unlinked $receipt.arm_path
-$allowed=@('MineComeHud.ini','MineComeHudStream.ini','MineComeHudInput.ini','MineComeHudMouse.ini') | ForEach-Object {[IO.Path]::GetFullPath((Join-Path $bin ('minecome-hud/addons/'+$_)))}
+$allowed=@('MineComeHud.ini','MineComeHudStream.ini','MineComeHudInput.ini','MineComeHudMouse.ini','MineComeHudWorld.ini') | ForEach-Object {[IO.Path]::GetFullPath((Join-Path $bin ('minecome-hud/addons/'+$_)))}
 if(-not @($allowed | Where-Object {$_.Equals($arm,[StringComparison]::OrdinalIgnoreCase)}).Count){throw 'Receipt arm path is outside the exact tools addon directory.'}
 $directory=[IO.Path]::GetDirectoryName($ReceiptPath)
 $archive=Assert-Unlinked (Join-Path $directory ([IO.Path]::GetFileNameWithoutExtension($arm)+'.expired.ini'))

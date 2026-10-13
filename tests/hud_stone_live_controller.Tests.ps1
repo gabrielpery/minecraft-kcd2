@@ -26,7 +26,17 @@ $controller=Parse-Production 'scripts/Start-HudInputLab.ps1'
 . (Get-ProductionFunction $controller 'Get-HudStonePreviewAction')
 . (Get-ProductionFunction $controller 'Test-HudStonePreviewEnginePlace')
 . (Get-ProductionFunction $controller 'Assert-HudStoneLivePreview')
+. (Get-ProductionFunction $controller 'Assert-HudWorldClickGuest')
+. (Get-ProductionFunction $controller 'Assert-HudLiveArming')
 . (Get-ProductionFunction $controller 'Assert-LiveMouseGuestProof')
+
+$arming=[pscustomobject]@{host_armed=$true;input_events_applied=0}
+Assert-HudLiveArming $arming $true;Check $true 'World actions can complete without any UI key events'
+Reject {Assert-HudLiveArming $arming $false} 'Ordinary UI mode accepted no UI actions'
+$arming.input_events_applied=2;Assert-HudLiveArming $arming $false;Check $true 'Ordinary UI activity remains accepted'
+foreach($invalid in @(-1,'0',$true,$null)){$arming.input_events_applied=$invalid;Reject {Assert-HudLiveArming $arming $true} 'Invalid world UI count accepted'}
+$arming.input_events_applied=0
+foreach($invalid in @($false,'true',1,$null)){$arming.host_armed=$invalid;Reject {Assert-HudLiveArming $arming $true} 'World actions accepted without genuine arming'}
 
 # Neither marker can be inferred: all three explicit Boolean fields must agree
 # with the requested ordinary, fixture, or live mode.
@@ -61,6 +71,8 @@ function Live-Configuration {
     @{Mode='Live';StoneFixture=$false;StoneLive=$true;LiveMouse=$true;OffscreenPresentation=$true;OffscreenTrial=$false;HostGpuBudget=$true;PointerFixture=$false;DelayFixture=$false;BackgroundTrial=$false;HideHostHud=$false}
 }
 $config=Live-Configuration;Assert-HudStoneConfiguration @config;Check $true 'Capped live mouse stone mode accepted'
+$config=Live-Configuration;$config.WorldClicks=$true;Assert-HudStoneConfiguration @config;Check $true 'Explicit world clicks accepted with combined live prerequisites'
+$config=Live-Configuration;$config.WorldClicks=$true;$config.StoneLive=$false;Reject {Assert-HudStoneConfiguration @config} 'World clicks without the real combined relay accepted'
 $config=Live-Configuration;$config.HideHostHud=$true;Assert-HudStoneConfiguration @config;Check $true 'Optional host HUD visibility accepted'
 foreach($required in @('LiveMouse','OffscreenPresentation','HostGpuBudget')){
     $config=Live-Configuration;$config[$required]=$false
@@ -227,6 +239,25 @@ function Guest-Proof {
     }}}
 }
 $guest=Guest-Proof;Assert-HudStoneLivePreview $guest;Check $true 'One completed real guest placement/removal cycle accepted'
+$guest=Guest-Proof;Assert-HudWorldClickGuest $guest;Check $true 'Physical mode accepts a completed cycle before separate input/relay correlation'
+foreach($field in @('confirmed_places','confirmed_breaks')){
+    foreach($invalid in @(0,9,-1,'1',1.0,$true,$null)){
+        $guest=Guest-Proof;$guest.lab_evidence.stone_bridge.$field=$invalid;Reject {Assert-HudWorldClickGuest $guest} 'Physical mode accepted invalid action totals'
+    }
+}
+$guest=Guest-Proof;$guest.lab_evidence.stone_bridge.confirmed_places=2;Reject {Assert-HudWorldClickGuest $guest} 'Unmatched placement accepted'
+$guest=Guest-Proof;$guest.lab_evidence.stone_bridge.confirmed_places=2;$guest.lab_evidence.stone_bridge.confirmed_breaks=2;Reject {Assert-HudWorldClickGuest $guest} 'Fabricated action totals accepted'
+foreach($field in @('baseline_confirmed','closed','vanilla_dispatch_inventory_unchanged','failed','pending','confirmed_cell_stone','inventory_mutated','camera_mutated','engine_mirroring_verified','visual_verified')){
+    $guest=Guest-Proof;$guest.lab_evidence.stone_bridge.$field=(-not $guest.lab_evidence.stone_bridge.$field);Reject {Assert-HudWorldClickGuest $guest} 'Physical mode accepted dirty guest completion'
+}
+foreach($result in @(0,8,'1',1.0,$null)){
+    $guest=Guest-Proof;$guest.lab_evidence.stone_bridge.requests[0].result=$result;Reject {Assert-HudWorldClickGuest $guest} 'Physical mode accepted unknown result'
+}
+$guest=Guest-Proof;$guest.lab_evidence.stone_bridge.requests[0].selected_item='minecraft:dirt';Reject {Assert-HudWorldClickGuest $guest} 'Physical placement accepted non-stone selection'
+foreach($result in 2..7){
+    $guest=Guest-Proof;$decline=[pscustomobject]@{result=$result;action=1};$guest.lab_evidence.stone_bridge.requests+=,$decline
+    Assert-HudWorldClickGuest $guest;Check $true 'Physical mode allows a refused extra click alongside a completed cycle'
+}
 foreach($field in @('baseline_confirmed','closed','vanilla_dispatch_inventory_unchanged','failed','pending','confirmed_cell_stone','inventory_mutated','camera_mutated','engine_mirroring_verified','visual_verified')){
     $guest=Guest-Proof;$guest.lab_evidence.stone_bridge.$field=(-not $guest.lab_evidence.stone_bridge.$field);Reject {Assert-HudStoneLivePreview $guest} 'Incomplete or dirty guest proof accepted'
     foreach($invalid in @('true','false',0,1,$null)){

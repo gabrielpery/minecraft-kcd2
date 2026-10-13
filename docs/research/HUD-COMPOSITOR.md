@@ -15,6 +15,81 @@ restoration verified. The separate strict mouse profile has now completed a full
 host-HUD appearance, general input exclusivity and health integration remain unverified. Detailed evidence
 and the earlier failed runs are recorded below.
 
+## Physical world click profile — 2026-10-13
+
+The new explicit `-WorldClicks` controller removes the timed demonstration and
+admits physical right/left presses as place/break requests. It requires the same
+actual HUD guest, `-Mode Live -LiveMouse -StoneLive -OffscreenPresentation
+-HostGpuBudget`, and the separately pinned World renderer. The original mouse
+profile and prior successful combined preview remain preserved.
+
+The render callback samples fresh button edges into a fixed queue, with two
+neutral captured frames before entering world controls. Inventory transitions
+still require matching guest ACK and uploaded screen. The worker checks the
+same active mouse lease/window/token/generation, live image and UI acknowledgement
+before emitting a bounded run-tagged record. It waits for preceding hotbar key
+events to be acknowledged. A stale queued edge closes activation instead of
+skipping its sequence. At most sixteen presses are emitted per activation.
+
+The controller pins ReShade.log's file identity and starting offset before
+arming, retains partial UTF-8 lines, and validates exact run and sequence.
+Expired, too-rapid and out-of-focus edges are explicitly declined. Each admitted
+edge is linked to its Lua request ID and the existing guest/native confirmation
+chain; ambiguous commands are never retried. Occupied/absent/vanilla-failed
+results are now retained alongside the existing transport refusals. An input
+acknowledgement is not evidence of a changed block.
+
+This first mode deliberately holds the existing full mouse-capture lease while
+the inventory is closed, freezing KCD mouse look. It controls the verified nearby
+cell; it does not raycast or implement free crosshair targeting. The 30-second
+limit, exact official-tools executable gate and focus-loss shutdown remain.
+
+Native policy/queue, mouse forwarding, UI channel and strict capture checks pass
+623 assertions. The World profile/mode/old-install ownership checks pass 110
+under both PowerShell 5.1 and 7; the original mouse checks still pass 23.
+Native addon SHA256:
+`8d65235dcb59bf0f27300164c46ecb357983513d41150df69055b21614265cdb`.
+The existing proxy, shader and mouse ABI are unchanged.
+
+Controller checks pass 939 assertions; click-reader/relay checks pass 85/221 and
+the existing window cleanup checks pass 45. Java stone-proof/stream checks pass
+227/209 and `remapJar` succeeds. A completion fix recognizes actual confirmed
+live block actions when no hotbar key was pressed; the mode flag alone cannot
+turn an idle, refused or failed session into success. The rebuilt JAR SHA256 is
+`316fee561768ac33a51ca012ee5e4b2655010ce8d6e5e61ae2369d9f6764755d`.
+
+After verifying a backup of 1,012 save/profile files, the previous receipt-owned
+expired arm was archived. The six-file ownership preflight passed; only the
+addon changed in the installed World bundle. Installation is unarmed and recorded
+at `runtime/evidence/hud-update-20261013-160448-76f8582832284464b12ae8336241d5fb`.
+No game was launched or stopped during installation.
+
+**Live result:** run `62b35872e09d44a3b6b3a5474131e24e` passed against official
+KCD PID 45788. The user answered "it worked fine." Four native click records
+with actions place/break/place/break matched Lua requests 1–4, four successful
+guest dispatches and client/server confirmations (66/66/67/66 ms server ages).
+The selected slot stayed 0 with 64 stone. KCD session `1791907693381701` spawned
+and removed the same cell `(4,-60,2)` twice near `(122.05,2045.23,56.29)`.
+Final air, no pending/cancelled requests or inventory mutation, engine cleanup,
+normal Java/relay exit0 and restoration of the temporary FPS cap to -1 all pass.
+
+This live run exercised **zero UI key or inventory pointer events**, verifying
+that confirmed physical world actions can complete independently. It published
+575 genuine frames; KCD uploaded 557 and submitted 2,325 draws with zero drops.
+Strict capture recorded 854 immediate-state suppressions and 854 drains, with
+zero drain failures. No buffered/peek calls were exercised, and the release
+receipt still marked final drain pending; general input exclusivity remains a
+separate claim. Inventory transitions and rejected clicks were not live retested.
+
+The native first-close record identifies foreground loss after 13.719 seconds,
+with fresh ACK/image state. This was a protective closure, not a crash or the
+30-second timer. The bounded one-cell interaction is verified; normal mouse
+look, crosshair targeting and continuous play remain unfinished.
+Evidence, exact-run native log and separate user observation are preserved at
+`runtime/evidence/hud-input-20261013-160712-62b35872e09d44a3b6b3a5474131e24e`.
+Raw machine receipts retain their conservative visual/physical claim flags;
+`live-analysis.json` records the combined correlation and direct user report.
+
 ## Combined live relay controller — 2026-10-13
 
 **Live result:** run `a80522b281a64a238e8d66a61dee7fbe` passed in official KCD PID
@@ -36,7 +111,7 @@ The exact owned guest window remained hidden under `hidden_until_process_exit`,
 then the controller observed actual Java exit0. The relay also exited0 after its
 cleanup ACK. The temporary host FPS cap restored from60 to its original -1 and
 cancelled its timer. These are live shutdown diagnostics; no separate no-popup or
-inventory-smoothness judgment was requested. KCD remains running. Evidence,
+inventory-smoothness judgment was requested. KCD was left running after that test. Evidence,
 run-scoped native logs and the verbatim user report are under
 `runtime/evidence/hud-input-20261013-154322-a80522b281a64a238e8d66a61dee7fbe`.
 Machine-only receipts retain `visual_verified=false`; `live-analysis.json` records
