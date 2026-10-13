@@ -411,8 +411,8 @@ observing post-read completion. These coarse CPU poll observations locate the
 long wait before the pixel transfer; they are not GPU timer measurements or
 proof of the underlying scheduling cause. The real closed ACK/handle cleanup,
 restoration to enabled VSync/120 FPS, normal save and exit all completed. Possible
-host GPU contention remains under investigation. GPU readback stability is still
-unresolved, and neither standalone run adds live KCD input, sizing or exclusivity
+host GPU contention remained under investigation at this stage. Neither
+standalone run adds live KCD input, sizing or exclusivity
 proof. Detailed measurements and full evidence paths are in `docs/PROGRESS.md`.
 
 ## Host frame-cap comparison
@@ -471,6 +471,124 @@ establish a fix for the background backlog. Guest evidence is at
 `runtime/evidence/hud-input-20261013-114534-6c7341981e1344a2ae437816ae60403d`.
 
 The same waitfix installation remains unarmed. Automatic hiding of the owned
-guest window is being implemented to remove the manual focus handoff, but has
-no verification result yet. A valid unfocused comparison and physical
-hotbar/inventory control remain pending.
+guest window was then implemented to remove the manual focus handoff. Its first
+trial is recorded below; a valid comparison and physical hotbar/inventory control
+remain pending.
+
+## Hidden-window readiness correction
+
+Run `6d5b5e35855643f29a86824c671b3c10`, at
+`runtime/evidence/hud-input-20261013-115450-6d5b5e35855643f29a86824c671b3c10`,
+verified the owned guest window was hidden (`visible_after_hide=false`). The raw
+GLFW focus query still reported true after hiding, whereas Minecraft's actual
+callback-driven focus state was false. Tick diagnostics recorded 2,003 unfocused
+and zero focused ticks. The hidden-phase timer wrongly required the raw query to
+clear, so it never completed and input never armed. After the 100-second waiting
+limit the controller reported failure: 1,496 real frames were published/received,
+but no input events were sent or applied.
+
+Waiting-phase maxima were 75 ms for client tick gaps, 38 ms for readback age,
+48 ms for published capture age and 91.8 ms for publication gaps. These are
+diagnostic observations without input-sequence proof.
+
+Actual cleanup restored the original visibility and focus-on-show setting without
+requesting focus, restored enabled VSync/120 FPS, published the real closed ACK,
+released the handles and completed normal exit 0. This establishes hide/restore
+behavior only; it does not verify inventory interaction or resolve the prior GPU
+backlog.
+
+The inspected [GLFW 3.4 Win32 implementation](https://github.com/glfw/glfw/blob/3.4/src/win32_window.c#L1803-L1806)
+queries `GetActiveWindow`, whose [documented scope](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getactivewindow)
+is the calling thread's message queue. That is distinct from the global foreground
+window. The bundled native DLL was verified as GLFW 3.4.0 Win32 WGL within
+LWJGL 3.3.3. The implemented and reviewed correction uses the real Minecraft focus
+callback plus observed hidden visibility for the trial gate, retaining the raw
+query as diagnostic evidence. No focus state is fabricated and no freshness
+timeout is relaxed.
+
+## Hidden background fixture verified
+
+Run `ec8509f6af394e11a3e9ba5c8b062e5a`, at
+`runtime/evidence/hud-input-20261013-120534-ec8509f6af394e11a3e9ba5c8b062e5a`,
+passes with the corrected build. The owned window was genuinely focused before
+hiding, then emitted one real focus-loss callback. Its 12,058 ms readiness phase
+contained 241 unfocused ticks and zero focused ticks; framebuffer dimensions were
+preserved. The complete run recorded 276 hidden/unfocused ticks and applied all
+31 events while hidden and unfocused, with no focus interruptions or focused/
+visible event applications.
+
+All nine hotbar slots, actual Creative inventory opening/closing and the
+integrated-server-confirmed stack swap passed. The guest published 205 genuine
+frames; the receiver saw 204 and acknowledged every event plus the real closed
+marker. Maximum own-image age was 155 ms and readback completion age 125 ms,
+with zero fence-timeout polls. Original enabled-VSync/120 FPS settings, visibility
+and focus-on-show behavior were restored, with no focus request and complete
+handle cleanup.
+
+`host-settings.log` records KCD uncapped at `sys_MaxFPS=-1`, with `r_VSync=0`.
+The 60 FPS host cap was not needed for this successful bounded run, but KCD's
+foreground status was not independently recorded. This is standalone background
+input/rendering proof under the existing 250 ms gates; it neither establishes
+general GPU stability nor demonstrates physical keyboard delivery or live KCD
+compositing.
+
+## Hidden live attempt remains unsuccessful
+
+The subsequent live run `e63eeea7a7a54655b6871d8369993970`, at
+`runtime/evidence/hud-input-20261013-120701-e63eeea7a7a54655b6871d8369993970`,
+armed the unchanged waitfix add-on in KCD PID 46236. F8 activated both native and
+guest ownership, but zero UI events were applied before stale own-image
+publication closed the session. Minecraft published 534 frames; maximum image
+age reached 466 ms, and the failure snapshot had all three pre-read fences
+pending, with maximum observed age 469 ms. No server-stale capture skip was
+recorded. The hidden-window work has not resolved this live GPU backlog.
+
+The user saw a black Minecraft window appear and close, with no response to the
+remaining keys. Logs and receipts establish the normal failure shutdown path,
+exit 0, actual closed ACK, complete handle/control cleanup and restoration of
+visibility, focus-on-show and enabled-VSync/120 FPS settings without requesting
+focus. The controller retained failure; KCD stayed outside its launch/stop scope.
+
+The subsequent temporary 60 FPS host-cap comparison is recorded below. Physical
+keyboard delivery, accepted GUI size and host-input exclusivity remain unverified.
+The standalone pass above is preserved with its narrower recorded conditions.
+
+## Capped hidden comparison completed
+
+Host run `febe0c161705407f9995f4207894bcd4`, at
+`runtime/evidence/hud-gpu-budget-20261013-130919-febe0c161705407f9995f4207894bcd4`,
+records a passed fixture, verified restoration and `comparison_valid=true`.
+The actual cap changed from −1 to 60 and was restored to −1 through the requested
+End before expiry, with its timer cancelled. The installed add-on was unchanged.
+
+Paired guest run `60ce70cb803543d1a4decb5dbc2f8926`, at
+`runtime/evidence/hud-input-20261013-120919-60ce70cb803543d1a4decb5dbc2f8926`,
+passed all 31 hidden/unfocused events, all nine slots, inventory opening/closing
+and the authoritative stack swap. Its 12,029 ms preparation phase had 241
+unfocused ticks; the complete run recorded 276. It published 202 genuine frames
+and the receiver saw 201. Maximum own-image age was 131 ms and readback completion
+age 43 ms, with zero fence-timeout polls. Real closed ACK, handles, settings and
+visibility restoration all passed, followed by normal exit 0.
+
+The user was told to keep KCD in front, but host foreground state was not
+independently recorded. This is successful capped standalone input/rendering and
+rollback evidence, not a live compositor check or proof that the cap resolves
+the preceding KCD-focused failure.
+
+The explicit live option is implemented through shared `scripts/HudGpuBudget.ps1`:
+after Minecraft readiness and exact Java process validation, it applies the
+unchanged 60 FPS/120-second lease before arming. `finally` restores and checks the
+original cap; final success requires budget validity, separately from `body_passed`.
+The helper passes 98 assertions across 11 simulated-console scenarios and an
+actual −1→60→−1 check, recorded at
+`runtime/evidence/hud-gpu-budget-20261013-131823-a11a2771df5c4b8789e69dbbe6ce5f17/budget-verification.json`.
+
+After a fresh KCD restart, the opt-in command is:
+
+```powershell
+& 'C:/Users/xephi/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/powershell/pwsh.exe' -NoProfile -File 'C:/Users/xephi/Documents/ChatGPT/New project/MineCome/scripts/Start-HudInputLab.ps1' -Mode Live -OffscreenPresentation -HostGpuBudget
+```
+
+Final independent controller review passed; the combined live physical-key test is
+pending. The current KCD process has consumed its arm; the restart uses the same
+installed waitfix add-on. This controller change requires no new native or JAR build.

@@ -25,22 +25,28 @@ Minecraft server confirmation. The smaller capture layout is standalone verified
 physical KCD inventory input, satisfactory live sizing, KCD HUD suppression and
 health integration remain unfinished.
 
-The latest standalone background-input trials remove the measured desktop swap
-stall, but still fail the unchanged image-freshness gate because GPU readback
-fences remain pending. A 30 FPS cap and omission of unused desktop draws/clears
-did not resolve that backlog. The latest completed unfocused trial applied 4 of 5 sent events
-before closing safely. Paired fences locate the long wait before the readback
-command, while the underlying GPU scheduling cause remains unproven. Presentation
-settings were restored; no new physical KCD input or sizing proof was gained.
+**Hidden background inventory fixture now passes.** The latest actual Minecraft
+run verified 31 events, all nine slots, inventory opening/closing and an
+integrated-server-confirmed stack swap while its owned window remained hidden
+and genuinely unfocused. It published 205 real HUD frames with the unchanged
+250 ms freshness limits and restored visibility, presentation settings and all
+handles. KCD remained uncapped (`sys_MaxFPS=-1`, `r_VSync=0`); a 60 FPS host cap
+was not needed for this pass, although KCD foreground status was not recorded.
+The subsequent live KCD attempt still failed after F8: no UI events were applied,
+the maximum own-image age reached 466 ms and pre-read GPU fences were pending.
+The hidden-window changes therefore do not yet resolve the live GPU stall.
+Physical KCD keyboard delivery, live sizing and host exclusivity remain unverified.
 
 A bounded host frame-cap comparison is implemented and independently reviewed;
-22 real-Lua cases with simulated engine bindings pass. After an initial closed-game
-preflight stop, an actual run applied 60 FPS and verified automatic restoration to
-the original uncapped value. The comparison itself is invalid: Minecraft recorded
-2,003 focused ticks and zero unfocused ticks, so no input events were sent. The
-new user-started KCD process is PID 46236; the installed waitfix add-on is unchanged
-and unarmed. Automatic hiding of the owned guest window is being implemented to
-remove the manual focus handoff; it has no verification result yet.
+22 real-Lua cases with simulated engine bindings pass. The latest actual 60 FPS
+host-cap comparison also passed the complete 31-event hidden fixture, then
+restored the original uncapped value through the requested End before expiry.
+The user was told to keep KCD in front, but host foreground state was not recorded,
+and this fixture did not arm the live compositor. The opt-in live cap is now
+implemented, with 98 focused PowerShell assertions and an actual apply/restore
+check passing. Final independent controller review passed; the combined physical-key
+test remains pending. The unchanged installed add-on has consumed its arm in KCD
+PID 46236, so the next live check requires a normal KCD restart.
 
 **Current build: interactive one-cell stone controls live verified.** KCD console
 commands `minecome_place`/`minecome_break` now request real Minecraft vanilla
@@ -94,8 +100,8 @@ completed its movement/view proof; the new KCD capture path still awaits a live 
 | Static Minecraft UI composition | Actual vanilla capture and original ReShade D3D12 add-on built | 36 Java capture checks; reset and aspect-fit contracts pass | User confirmed HUD visible in KCD2; logs record all three snapshot submissions and lease expiry |
 | Continuous vanilla UI transport | Java21/JNA producer, bounded Win32 channel and native receiver built | 168 Java stream checks and 146 native checks pass; existing 36 snapshot checks still pass | Fresh real Minecraft world sent 344 nontransparent frames, four vanilla UI states, pause/resumption and closed marker to standalone receiver; no KCD compositor was armed |
 | Continuous KCD UI compositor | Separate exact-tools D3D12 add-on installed with aspect fit, persistent texture and fenced upload slots | Native contract/lifecycle review and checks pass | Live upload of 200 fresh frames and user-confirmed HUD visibility; GUI too large, duplicate host HUD and physical inventory interaction remain |
-| Reverse HUD input and background presentation | Separate exact-identity input channel, bounded offscreen presentation and paired fence diagnostics built | Earlier real-Minecraft 31-event fixture and delayed-ACK regression passed; latest offscreen 30 FPS fixture failed with pre-read fences pending after 4 applied events, with normal cleanup/settings restoration | F8 ownership was observed in KCD, but physical hotbar/inventory keys, host exclusivity and satisfactory sizing remain unverified |
-| Temporary host GPU-budget comparison | Opt-in Lua CVar/timer probe and exact-process PowerShell wrapper implemented and independently reviewed | 22 real-Lua cases with simulated engine bindings pass, including expiry, restoration and ownership failures | Actual 60 FPS cap and automatic restoration to −1 verified; comparison invalid because the guest never lost focus and applied no input events |
+| Reverse HUD input and background presentation | Separate exact-identity input channel, bounded hidden/offscreen presentation and callback-based focus readiness built | Hidden uncapped-host fixture passed 31 unfocused events, all nine slots, inventory open/close and server-confirmed swap; 205 real frames published, full settings/visibility/handle restoration | Latest hidden live run acquired F8 ownership but failed with stale images and zero UI events; physical inventory input, host exclusivity and satisfactory sizing remain unverified |
+| Temporary host GPU-budget comparison | Opt-in Lua CVar/timer probe and exact-process PowerShell wrapper implemented and independently reviewed | 22 real-Lua cases with simulated engine bindings pass, including expiry, restoration and ownership failures | Latest capped hidden fixture passed 31 events with 202 published frames; requested End restored −1 before expiry and comparison_valid=true. KCD foreground was not independently recorded; no live compositor proof |
 
 ## Current artifacts
 
@@ -1662,7 +1668,135 @@ The frozen 22-case source/test review receipt is
 `runtime/evidence/hud-gpu-budget-native-frozen-b8c6c066d2d44500a62fda949f75f6b7/verification.json`.
 
 The installed waitfix add-on remains unchanged and unarmed; this comparison did
-not launch or stop KCD. Automatic hiding of the owned guest window is now being
-implemented to establish the required background condition without a timed user
-handoff. That change is not yet verified. No new physical keyboard, inventory,
+not launch or stop KCD. At this point automatic hiding of the owned guest window
+was being implemented to establish the required background condition without a
+timed user handoff. Its first trial follows below. No new physical keyboard, inventory,
 sizing or host-input exclusivity proof is claimed.
+
+### 2026-10-13: owned window hidden, readiness blocked by the wrong focus check
+
+The first hidden-window fixture,
+`runtime/evidence/hud-input-20261013-115450-6d5b5e35855643f29a86824c671b3c10`,
+verified `visible_after_hide=false` for the owned Minecraft window. Its raw GLFW
+focus query reported true after hiding, while Minecraft's genuine focus state
+was false: actual tick diagnostics recorded zero focused and 2,003 unfocused
+ticks. The hidden-phase readiness condition nevertheless required the raw query
+to become false, so its timer never completed. Input never armed and zero events
+were sent or applied. The controller correctly retained failure after the
+100-second waiting limit, with 1,496 genuine HUD frames published and received.
+
+During that waiting phase the maximum client tick gap was 75 ms, readback age
+38 ms, published capture age 48 ms and publication gap 91.8 ms. Those observations
+are useful diagnostics, but the blocked gate prevented testing the input sequence.
+
+The real closed ACK and all image/input handle cleanup succeeded. The guest
+restored enabled VSync and 120 FPS in options and the Window, restored the
+original visible/focus-on-show settings without requesting focus, and exited
+normally with code 0. This verifies the bounded hide/restore path, not a successful
+background inventory sequence or a resolution of GPU starvation. KCD was neither
+armed, launched nor stopped by the fixture.
+
+[GLFW 3.4's Win32 focus query](https://github.com/glfw/glfw/blob/3.4/src/win32_window.c#L1803-L1806)
+compares against `GetActiveWindow`. Microsoft's
+[API documentation](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getactivewindow)
+defines that result within the calling thread's message queue and distinguishes
+the global foreground window. The exact bundled version was then verified as
+GLFW 3.4.0 Win32 WGL within LWJGL 3.3.3. The narrow readiness correction uses the
+genuine Minecraft focus callback together with verified hidden visibility and
+retains the raw GLFW value as a diagnostic. It does not fabricate focus or change
+the 250 ms freshness limits. Its completed standalone result follows.
+
+### 2026-10-13: hidden, unfocused inventory fixture passes with KCD uncapped
+
+The corrected, independently reviewed build has remapped JAR SHA256
+`AB16828D0BF7C747D80A41DA6C99EFABBC0D85BF6BDE0CD8D8DD710E4B37EDB3`.
+Actual fixture `ec8509f6af394e11a3e9ba5c8b062e5a` passes under
+`runtime/evidence/hud-input-20261013-120534-ec8509f6af394e11a3e9ba5c8b062e5a`.
+The host-settings receipt records KCD `sys_MaxFPS=-1` and `r_VSync=0`;
+this successful trial did not require the temporary 60 FPS host cap. KCD's
+foreground status was not independently recorded, so this does not establish the
+same GPU scheduling conditions as a KCD-focused live test.
+
+Minecraft was focused before its owned window was hidden. One genuine focus-loss
+callback followed, and the 12,058 ms readiness phase recorded 241 unfocused ticks
+and zero focused ticks, with unchanged framebuffer dimensions. Across the run,
+276 ticks and all 31 applied events were hidden and unfocused, with no visible or
+focused event applications. The native fixture acknowledged all 31 events,
+observed all nine slots and inventory opening/closing; final integrated-server
+proof confirms the stack swap.
+
+The guest published 205 genuine HUD frames and the native receiver received 204.
+Maximum own-image age was 155 ms and readback completion age 125 ms, with zero
+fence-timeout polls. The existing 250 ms gates were unchanged. This is a successful
+bounded background fixture, not a general GPU performance guarantee.
+
+Real closed ACK, input/image handle cleanup and original enabled-VSync/120 FPS
+option/Window restoration all passed. Original visibility and focus-on-show
+settings were restored with focus disabled during showing and no focus request;
+the client remained unfocused. The controller did not arm KCD, launch or stop it.
+The installed waitfix add-on remains unchanged. The following separate live
+check tests actual KCD-focused keyboard delivery; GUI sizing and host-input
+exclusivity remain unverified.
+
+### 2026-10-13: hidden live attempt still closes on stale GPU images
+
+Live run `e63eeea7a7a54655b6871d8369993970`, at
+`runtime/evidence/hud-input-20261013-120701-e63eeea7a7a54655b6871d8369993970`,
+targeted the existing KCD PID 46236 and armed the installed waitfix compositor.
+Both native and Minecraft ownership activated after F8, but no UI events were
+applied. The guest reported stale own-image publication, and the controller
+correctly recorded failure after 534 published frames. Maximum observed own-image
+age was 466 ms; the failure snapshot shows the publisher awaiting a frame with
+all three pre-read fences pending. Their maximum observed age was 469 ms, while
+current server observation age was only 3 ms and no server-stale captures were
+skipped. Hidden presentation has therefore not resolved the live GPU backlog.
+
+The user reported that Minecraft appeared as a black window and then closed,
+and the remaining keys did not work. The receipts show the controlled failure
+cleanup and normal exit 0: real closed ACK, controls/handles released, visibility
+and focus-on-show restored without requesting focus, and enabled VSync/120 FPS
+restored in both options and the Window. KCD was neither launched nor stopped.
+This run adds no physical hotbar/inventory, sizing or host-exclusivity proof.
+
+The following diagnostic repeats the standalone hidden fixture under the bounded
+60 FPS host cap. The preceding standalone pass remains valid within its recorded
+conditions, without establishing live KCD GPU stability.
+
+### 2026-10-13: capped hidden fixture passes with verified requested restoration
+
+Host-budget run `febe0c161705407f9995f4207894bcd4` completed with
+`fixture_passed=true`, `restoration_verified=true` and `comparison_valid=true`.
+It changed KCD PID 46236 from `sys_MaxFPS=-1` to 60, then restored −1 through
+`requested_end` before the 120-second lease expired; timer cancellation passed.
+Receipts are at
+`runtime/evidence/hud-gpu-budget-20261013-130919-febe0c161705407f9995f4207894bcd4`.
+
+Its paired fixture, at
+`runtime/evidence/hud-input-20261013-120919-60ce70cb803543d1a4decb5dbc2f8926`,
+passes all 31 hidden/unfocused events, all nine slots, inventory opening/closing
+and the integrated-server-confirmed stack swap. The 12,029 ms preparation phase
+had 241 unfocused ticks and zero focused ticks; the complete run had 276 hidden/
+unfocused ticks. Minecraft published 202 genuine frames and the receiver saw 201.
+Maximum own-image age was 131 ms and readback completion age 43 ms, with zero
+fence-timeout polls. Real closed ACK, handle cleanup, visibility/focus-on-show and
+enabled-VSync/120 FPS restoration all passed, followed by normal exit 0.
+
+The user was instructed to keep KCD in front, but no independent host-foreground
+record was collected. This is a valid capped standalone fixture and restoration
+result, not live compositing or proof that the cap fixes the earlier KCD-focused
+failure. No physical inventory keys or host-input exclusivity are established.
+
+The explicit `Start-HudInputLab.ps1 -Mode Live -OffscreenPresentation -HostGpuBudget`
+option is now implemented. It applies the unchanged 60 FPS/120-second Lua lease
+after Minecraft readiness and exact Java process validation, before compositor
+arming. Shared `scripts/HudGpuBudget.ps1` also serves the fixture wrapper. Its
+`finally` path checks restoration/readback; overall success requires a valid
+budget, with `body_passed` recorded separately from that final verdict.
+
+`tests/hud_gpu_budget.Tests.ps1` passes 98 assertions across 11 simulated-console
+scenarios. The extracted helper also passed an actual −1→60→−1 check in KCD PID
+46236, with cap, restoration and budget validity all true:
+`runtime/evidence/hud-gpu-budget-20261013-131823-a11a2771df5c4b8789e69dbbe6ce5f17/budget-verification.json`.
+Final independent controller review passed; the combined live physical-key test remains
+pending. No native add-on or Minecraft JAR changed for this controller work.
+The spent arm requires a normal KCD restart with the unchanged waitfix installation.

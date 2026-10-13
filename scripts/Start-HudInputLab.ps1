@@ -4,7 +4,7 @@
 [CmdletBinding()]
 param(
     [ValidateSet('Fixture','Live')][string]$Mode='Fixture',
-    [string]$JavaHome,[string]$BundleDirectory,[switch]$PreflightOnly,[switch]$DelayFixture,[switch]$BackgroundTrial,[switch]$OffscreenPresentation,[switch]$OffscreenTrial,
+    [string]$JavaHome,[string]$BundleDirectory,[switch]$PreflightOnly,[switch]$DelayFixture,[switch]$BackgroundTrial,[switch]$OffscreenPresentation,[switch]$OffscreenTrial,[switch]$HostGpuBudget,
     [ValidateRange(320,1920)][int]$Width=1280,
     [ValidateRange(240,1080)][int]$Height=720,
     [ValidateRange(1,4)][int]$GuiScale=2
@@ -41,6 +41,7 @@ if($DelayFixture -and $Mode -ne 'Fixture'){throw 'Controlled input delays requir
 if($BackgroundTrial -and ($Mode -ne 'Fixture' -or $DelayFixture)){throw 'Background timing requires a standalone fixture without synthetic delays.'}
 if($OffscreenTrial -and $Mode -ne 'Fixture'){throw 'Offscreen timing requires a standalone fixture.'}
 if($OffscreenTrial){$OffscreenPresentation=$true}
+if($HostGpuBudget -and ($Mode -ne 'Live' -or -not $OffscreenPresentation)){throw 'HostGpuBudget requires Live mode with OffscreenPresentation.'}
 if($OffscreenPresentation -and ($BackgroundTrial -or $DelayFixture)){throw 'Offscreen presentation cannot be combined with the baseline comparison or deliberate delays.'}
 if($OffscreenPresentation -and $Mode -eq 'Fixture' -and -not $OffscreenTrial){throw 'Use OffscreenTrial to verify standalone offscreen presentation.'}
 if($Width -lt 320*$GuiScale -or $Height -lt 240*$GuiScale){throw 'UI layout needs at least320x240 logical pixels.'}
@@ -62,6 +63,7 @@ if($Mode -eq 'Fixture'){
     $fixtureHash=(Get-FileHash -LiteralPath $fixturePath).Hash.ToLowerInvariant()
 }else{
     . (Join-Path $PSScriptRoot 'KcdToolsProbeHelpers.ps1')
+    if($HostGpuBudget){. (Join-Path $PSScriptRoot 'HudGpuBudget.ps1')}
     $context=Get-MineComeProbeContext
     if(-not $BundleDirectory){$BundleDirectory=Join-Path $root 'runtime/hud-compositor-input-waitfix'}
     & (Join-Path $PSScriptRoot 'Arm-HudStream.ps1') -InputMode -BundleDirectory $BundleDirectory -OffscreenPresentation:$OffscreenPresentation -PreflightOnly
@@ -76,6 +78,7 @@ $readyPath=Join-Path $directory 'capture/stream-ready.json'
 $fixtureReady=Join-Path $directory 'fixture-ready.json'
 $fixtureResult=Join-Path $directory 'fixture-result.json'
 $fixture=$null;$client=$null;$armEvidence=$null;$failure=$null;$passed=$false;$targetPid=0;$targetStart='';$guest=$null
+$bodyPassed=$false;$hostBudgetSession=$null;$hostBudgetEvidence=$null
 try{
     if($Mode -eq 'Fixture'){
         if((Get-FileHash -LiteralPath $fixturePath).Hash -ine $fixtureHash){throw 'Fixture changed before launch.'}
@@ -119,6 +122,13 @@ try{
     try{
         if($producer.StartTime.ToUniversalTime().ToFileTimeUtc().ToString() -cne [string]$ready.producer_start_filetime -or -not $producer.Path.Equals((Join-Path $JavaHome 'bin/java.exe'),[StringComparison]::OrdinalIgnoreCase)){throw 'Actual Minecraft process identity mismatch.'}
     }finally{$producer.Dispose()}
+    if($HostGpuBudget){
+        # Retain the cleanup handle before Begin can mutate the already-running host.
+        # Guest startup consumes none of this unchanged 120-second engine lease.
+        $hostBudgetSession=New-MineComeHudGpuBudget $context
+        Start-MineComeHudGpuBudget $hostBudgetSession
+        Write-Output "HUD_GPU_BUDGET_APPLIED run=$($hostBudgetSession.Probe.Run) original_fps=$($hostBudgetSession.Applied.original_fps) temporary_fps=60 expiry_ms=120000"
+    }
     if($Mode -eq 'Live'){$armEvidence=& (Join-Path $PSScriptRoot 'Arm-HudStream.ps1') -InputMode -BundleDirectory $BundleDirectory -OffscreenPresentation:$OffscreenPresentation -ReadyManifest $readyPath}
     Write-Output "HUD_INPUT_READY mode=$Mode run=$run"
     while(-not $client.HasExited -or ($fixture -and -not $fixture.HasExited)){
@@ -142,6 +152,12 @@ try{
         $restored=$guest.lab_evidence.presentation_restoration
         if($restored.restored -ne $true -or $restored.option_vsync -ne $restored.original_vsync -or $restored.actual_window_vsync -ne $restored.original_window_vsync -or $restored.option_max_fps -ne $restored.original_max_fps -or $restored.actual_window_max_fps -ne $restored.original_window_max_fps -or $restored.explicit_options_file_write -ne $false){throw 'Offscreen presentation settings were not restored.'}
         if($presentation.desktop_blits_skipped -lt 1 -or $presentation.desktop_clears_skipped -lt 1 -or $presentation.active_guest_fps_limit -ne 30 -or $presentation.frame_limit_applied -ne $true){throw 'Owned offscreen GPU workload reduction was not applied.'}
+        $hidden=$guest.lab_evidence.offscreen_window
+        $visibility=$guest.lab_evidence.window_restoration
+        if($hidden.hide_requested -ne $true -or $hidden.hide_verified -ne $true -or $hidden.visible_after_hide -ne $false -or $hidden.hidden_unfocused_ticks -lt 1){throw 'Owned Minecraft window was not verified hidden and unfocused.'}
+        if($hidden.focus_authority -cne 'minecraft_window_focus_callback' -or $hidden.focus_ready_observed -ne $true -or $hidden.client_focused_when_ready -ne $false -or $hidden.focus_ready_utc_ms -le 0){throw 'Hidden Minecraft readiness lacks genuine client focus evidence.'}
+        if($hidden.client_focused_before_hide -eq $true -and $hidden.focus_loss_callbacks_after_hide -lt 1){throw 'Initially focused Minecraft did not receive a real focus-loss callback.'}
+        if($visibility.restored -ne $true -or $visibility.original_visible -ne $visibility.actual_visible -or $visibility.original_focus_on_show -ne $visibility.actual_focus_on_show -or $visibility.focus_requested -ne $false){throw 'Owned Minecraft visibility was not restored without requesting focus.'}
     }
     if($Mode -eq 'Fixture'){
         $native=Read-Receipt $fixtureResult
@@ -155,6 +171,8 @@ try{
             $trialEvents=$guest.lab_evidence.offscreen_trial_events
             if($trial.completed -ne $true -or $trial.presentation_suppressed -ne $true -or $trial.duration_ms -lt 12000 -or $trial.focused_ticks -ne 0 -or $trial.unfocused_ticks -lt 1 -or $trial.skipped_swaps -lt 1 -or $guest.lab_evidence.render_timing.sampler_stopped -ne $true){throw 'Actual offscreen background observation or worker cleanup missing.'}
             if($trial.window_max_fps -ne 30){throw 'Owned offscreen rendering cap was not applied.'}
+            if($trial.window_visible -ne $false -or $trial.window_client_focused -ne $false -or $trial.focus_authority -cne 'minecraft_window_focus_callback' -or $trial.framebuffer_size_preserved -ne $true){throw 'Hidden Minecraft framebuffer was not preserved.'}
+            if($hidden.hidden_unfocused_events_applied -ne 31 -or $hidden.visible_events_applied -ne 0 -or $hidden.focused_events_applied -ne 0){throw 'UI events were not all applied in the hidden unfocused guest.'}
             if($trialEvents.unfocused_events_applied -ne 31 -or $trialEvents.focused_events_applied -ne 0 -or $trialEvents.focus_interruptions -ne 0){throw 'UI events were not all applied while unfocused.'}
         }
         if($BackgroundTrial){
@@ -175,10 +193,21 @@ try{
         if($guest.lab_evidence.host_armed -ne $true -or $guest.lab_evidence.input_events_applied -lt 1){throw 'Live UI session closed without observed arming and applied input.'}
         Assert-MineComeProbeContext $context
     }
-    $passed=$true
-    Write-Output "HUD_INPUT_COMPLETED mode=$Mode run=$run actual_minecraft=true host_input_exclusivity_verified=false"
-}catch{$failure=$_.Exception.Message;throw}
+    $bodyPassed=$true;$passed=$true
+}catch{$failure=$_.Exception.Message}
 finally{
-    [ordered]@{schema=1;kind='minecome_hud_input_controller_v1';run=$run;mode=$Mode;delay_fixture=[bool]$DelayFixture;background_trial=[bool]$BackgroundTrial;offscreen_presentation=[bool]$OffscreenPresentation;offscreen_trial=[bool]$OffscreenTrial;result=$(if($passed){'passed'}else{'failed'});failure=$failure;evidence=$directory;target_pid=$targetPid;target_start_filetime=$targetStart;fixture_sha256=$fixtureHash;compositor_armed=[bool]$armEvidence;width=$Width;height=$Height;gui_scale=$GuiScale;kcd_launched=$false;kcd_stopped=$false;host_input_exclusivity_verified=$false;live_mouse_enabled=$false;created_utc_ms=$expires-180000;expires_utc_ms=$expires} | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $directory 'verification.json') -Encoding utf8NoBOM
-    if($client){$client.Dispose()};if($fixture){$fixture.Dispose()}
+    try{
+        if($hostBudgetSession){
+            try{Stop-MineComeHudGpuBudget $hostBudgetSession}catch{$passed=$false;if(-not $failure){$failure=$_.Exception.Message}}
+            $hostBudgetEvidence=Get-MineComeHudGpuBudgetEvidence $hostBudgetSession
+            if(-not $hostBudgetSession.BudgetValid -or $hostBudgetSession.Failure){
+                $passed=$false
+                if(-not $failure){$failure=if($hostBudgetSession.Failure){$hostBudgetSession.Failure}else{'Temporary host GPU budget was not verified through restoration.'}}
+            }
+        }
+        if($HostGpuBudget -and -not $hostBudgetSession){$passed=$false}
+        [ordered]@{schema=1;kind='minecome_hud_input_controller_v1';run=$run;mode=$Mode;delay_fixture=[bool]$DelayFixture;background_trial=[bool]$BackgroundTrial;offscreen_presentation=[bool]$OffscreenPresentation;offscreen_trial=[bool]$OffscreenTrial;host_gpu_budget_requested=[bool]$HostGpuBudget;host_gpu_budget=$hostBudgetEvidence;body_passed=$bodyPassed;result=$(if($passed){'passed'}else{'failed'});failure=$failure;evidence=$directory;target_pid=$targetPid;target_start_filetime=$targetStart;fixture_sha256=$fixtureHash;compositor_armed=[bool]$armEvidence;width=$Width;height=$Height;gui_scale=$GuiScale;kcd_launched=$false;kcd_stopped=$false;host_input_exclusivity_verified=$false;live_mouse_enabled=$false;created_utc_ms=$expires-180000;expires_utc_ms=$expires} | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $directory 'verification.json') -Encoding utf8NoBOM
+    }finally{if($client){$client.Dispose()};if($fixture){$fixture.Dispose()}}
 }
+if(-not $passed){throw $(if($failure){$failure}else{'UI session did not pass.'})}
+Write-Output "HUD_INPUT_COMPLETED mode=$Mode run=$run actual_minecraft=true host_input_exclusivity_verified=false"
