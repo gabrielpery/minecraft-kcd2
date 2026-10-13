@@ -5,6 +5,7 @@
 param(
     [ValidateSet('Fixture','Live')][string]$Mode='Fixture',
     [string]$JavaHome,[string]$BundleDirectory,[switch]$PreflightOnly,[switch]$DelayFixture,[switch]$BackgroundTrial,[switch]$OffscreenPresentation,[switch]$OffscreenTrial,[switch]$HostGpuBudget,[switch]$HideHostHud,[switch]$PointerFixture,[switch]$LiveMouse,[switch]$StoneFixture,[switch]$StoneLive,[switch]$WorldClicks,[switch]$SelectiveMouse,
+    [ValidateSet(1,2)][int]$SelectiveRevision=1,
     [ValidateRange(320,1920)][int]$Width=1280,
     [ValidateRange(240,1080)][int]$Height=720,
     [ValidateRange(1,4)][int]$GuiScale=2
@@ -41,17 +42,23 @@ function Assert-HudStoneMode([object]$Receipt,[bool]$Expected,[bool]$LiveExpecte
         if($Receipt.PSObject.Properties.Name -notcontains $field -or $Receipt.$field -isnot [bool] -or $Receipt.$field -ne $values[$field]){throw 'Combined stone mode mismatch.'}
     }
 }
-function Assert-HudStoneConfiguration([string]$Mode,[bool]$StoneFixture,[bool]$StoneLive,[bool]$LiveMouse,[bool]$OffscreenPresentation,[bool]$OffscreenTrial,[bool]$HostGpuBudget,[bool]$PointerFixture,[bool]$DelayFixture,[bool]$BackgroundTrial,[bool]$HideHostHud,[bool]$WorldClicks=$false,[bool]$SelectiveMouse=$false){
+function Assert-HudStoneConfiguration([string]$Mode,[bool]$StoneFixture,[bool]$StoneLive,[bool]$LiveMouse,[bool]$OffscreenPresentation,[bool]$OffscreenTrial,[bool]$HostGpuBudget,[bool]$PointerFixture,[bool]$DelayFixture,[bool]$BackgroundTrial,[bool]$HideHostHud,[bool]$WorldClicks=$false,[bool]$SelectiveMouse=$false,[ValidateSet(1,2)][int]$SelectiveRevision=1){
+    if($SelectiveRevision -eq 2 -and -not $SelectiveMouse){throw 'Selective revision 2 requires an explicit SelectiveMouse session.'}
     if($SelectiveMouse -and -not $WorldClicks){throw 'SelectiveMouse requires the explicit WorldClicks session and its separate capture profile.'}
     if($WorldClicks -and -not $StoneLive){throw 'WorldClicks requires the explicit capped StoneLive session.'}
     if($StoneFixture -and ($StoneLive -or $Mode -ne 'Fixture' -or -not $OffscreenTrial -or $PointerFixture -or $LiveMouse -or $DelayFixture -or $BackgroundTrial -or $HostGpuBudget -or $HideHostHud)){throw 'StoneFixture requires its separate standalone OffscreenTrial without other fixture/live modes.'}
     if($StoneLive -and ($StoneFixture -or $Mode -ne 'Live' -or -not $LiveMouse -or -not $OffscreenPresentation -or -not $HostGpuBudget -or $OffscreenTrial -or $PointerFixture -or $DelayFixture -or $BackgroundTrial)){throw 'StoneLive requires the capped live mouse profile without fixture modes.'}
 }
-function Assert-HudSelectiveArm($Receipt,[bool]$Expected){
+function Assert-HudSelectiveArm($Receipt,[bool]$Expected,[ValidateSet(1,2)][int]$SelectiveRevision=1){
     # Arm-HudStream returns an ordered dictionary directly; stored JSON reads
     # as PSCustomObject. Validate keys in both representations without coercion.
     $fields=if($Receipt -is [Collections.IDictionary]){@($Receipt.Keys)}else{@($Receipt.PSObject.Properties.Name)}
     if($fields -notcontains 'selective_mouse' -or $Receipt.selective_mouse -isnot [bool] -or $Receipt.selective_mouse -ne $Expected){throw 'Selective mouse arming receipt does not match the requested capture mode.'}
+    if($SelectiveRevision -eq 2){
+        if(-not $Expected -or $fields -notcontains 'selective_revision' -or
+           ($Receipt.selective_revision -isnot [int] -and $Receipt.selective_revision -isnot [long]) -or
+           $Receipt.selective_revision -ne 2){throw 'Selective arming receipt does not identify integer revision 2.'}
+    }elseif($fields -contains 'selective_revision'){throw 'Original capture mode cannot accept a revision-specific arming receipt.'}
 }
 function Assert-HudWorldClickGuest($Guest){
     Assert-HudStoneMode $Guest $false $true
@@ -255,7 +262,7 @@ function Start-Child([string]$Executable,[string[]]$Arguments){
     return [Diagnostics.Process]::Start($start)
 }
 $null=Assert-Unlinked $evidenceRoot
-Assert-HudStoneConfiguration $Mode ([bool]$StoneFixture) ([bool]$StoneLive) ([bool]$LiveMouse) ([bool]$OffscreenPresentation) ([bool]$OffscreenTrial) ([bool]$HostGpuBudget) ([bool]$PointerFixture) ([bool]$DelayFixture) ([bool]$BackgroundTrial) ([bool]$HideHostHud) ([bool]$WorldClicks) ([bool]$SelectiveMouse)
+Assert-HudStoneConfiguration $Mode ([bool]$StoneFixture) ([bool]$StoneLive) ([bool]$LiveMouse) ([bool]$OffscreenPresentation) ([bool]$OffscreenTrial) ([bool]$HostGpuBudget) ([bool]$PointerFixture) ([bool]$DelayFixture) ([bool]$BackgroundTrial) ([bool]$HideHostHud) ([bool]$WorldClicks) ([bool]$SelectiveMouse) $SelectiveRevision
 if($LiveMouse -and ($Mode -ne 'Live' -or -not $HostGpuBudget -or -not $OffscreenPresentation -or $PointerFixture -or $DelayFixture -or $BackgroundTrial -or $OffscreenTrial)){throw 'LiveMouse requires Live mode, HostGpuBudget and OffscreenPresentation, with all fixture modes disabled.'}
 if($DelayFixture -and $Mode -ne 'Fixture'){throw 'Controlled input delays require the standalone fixture.'}
 if($PointerFixture -and ($Mode -ne 'Fixture' -or $DelayFixture -or $BackgroundTrial)){throw 'PointerFixture requires standalone Fixture mode without delay/background trials.'}
@@ -292,8 +299,8 @@ if($Mode -eq 'Fixture'){
     if($WorldClicks){. (Join-Path $PSScriptRoot 'HudWorldClicks.ps1')}
     $context=Get-MineComeProbeContext
     if($StoneLive){$null=Test-MineComeHudStoneRelayPreflight $context}
-    if(-not $BundleDirectory){$BundleDirectory=Join-Path $root $(if($SelectiveMouse){'runtime/hud-compositor-selective'}elseif($WorldClicks){'runtime/hud-compositor-world'}elseif($LiveMouse){'runtime/hud-compositor-mouse'}else{'runtime/hud-compositor-input-waitfix'})}
-    & (Join-Path $PSScriptRoot 'Arm-HudStream.ps1') -InputMode -LiveMouse:$LiveMouse -StoneLive:$StoneLive -WorldClicks:$WorldClicks -SelectiveMouse:$SelectiveMouse -BundleDirectory $BundleDirectory -OffscreenPresentation:$OffscreenPresentation -PreflightOnly
+    if(-not $BundleDirectory){$BundleDirectory=Join-Path $root $(if($SelectiveMouse -and $SelectiveRevision -eq 2){'runtime/hud-compositor-selective-r2'}elseif($SelectiveMouse){'runtime/hud-compositor-selective'}elseif($WorldClicks){'runtime/hud-compositor-world'}elseif($LiveMouse){'runtime/hud-compositor-mouse'}else{'runtime/hud-compositor-input-waitfix'})}
+    & (Join-Path $PSScriptRoot 'Arm-HudStream.ps1') -InputMode -LiveMouse:$LiveMouse -StoneLive:$StoneLive -WorldClicks:$WorldClicks -SelectiveMouse:$SelectiveMouse -SelectiveRevision $SelectiveRevision -BundleDirectory $BundleDirectory -OffscreenPresentation:$OffscreenPresentation -PreflightOnly
 }
 if($PreflightOnly){Write-Output "HUD_INPUT_PREFLIGHT_PASS mode=$Mode no_process_started=true";return}
 $run=[guid]::NewGuid().ToString('N')
@@ -400,8 +407,8 @@ try{
     }
     if($WorldClicks){$worldClickState=New-MineComeHudWorldClicks $context (Join-Path ([IO.Path]::GetDirectoryName($context.GamePath)) 'ReShade.log') $run}
     if($Mode -eq 'Live'){
-        $armEvidence=& (Join-Path $PSScriptRoot 'Arm-HudStream.ps1') -InputMode -LiveMouse:$LiveMouse -StoneLive:$StoneLive -WorldClicks:$WorldClicks -SelectiveMouse:$SelectiveMouse -BundleDirectory $BundleDirectory -OffscreenPresentation:$OffscreenPresentation -ReadyManifest $readyPath
-        Assert-HudSelectiveArm $armEvidence ([bool]$SelectiveMouse)
+        $armEvidence=& (Join-Path $PSScriptRoot 'Arm-HudStream.ps1') -InputMode -LiveMouse:$LiveMouse -StoneLive:$StoneLive -WorldClicks:$WorldClicks -SelectiveMouse:$SelectiveMouse -SelectiveRevision $SelectiveRevision -BundleDirectory $BundleDirectory -OffscreenPresentation:$OffscreenPresentation -ReadyManifest $readyPath
+        Assert-HudSelectiveArm $armEvidence ([bool]$SelectiveMouse) $SelectiveRevision
         $selectiveArmVerified=[bool]$SelectiveMouse
     }
     Write-Output "HUD_INPUT_READY mode=$Mode run=$run"
@@ -549,7 +556,7 @@ finally{
             }
         }
         if($HostGpuBudget -and -not $hostBudgetSession){$passed=$false}
-        [ordered]@{schema=1;kind='minecome_hud_input_controller_v1';run=$run;mode=$Mode;stone_fixture=[bool]$StoneFixture;stone_live=[bool]$StoneLive;world_clicks_requested=[bool]$WorldClicks;world_clicks=$worldClickEvidence;selective_mouse_requested=[bool]$SelectiveMouse;selective_mouse_enabled=$selectiveArmVerified;stone_live_preview=$(if($WorldClicks){$null}else{$stonePreview});stone_relay=$stoneRelayEvidence;stone_protocol_peer=$stonePeerResult;pointer_fixture=[bool]$PointerFixture;delay_fixture=[bool]$DelayFixture;background_trial=[bool]$BackgroundTrial;offscreen_presentation=[bool]$OffscreenPresentation;offscreen_trial=[bool]$OffscreenTrial;host_gpu_budget_requested=[bool]$HostGpuBudget;host_gpu_budget=$hostBudgetEvidence;host_hud_hidden_requested=[bool]$HideHostHud;host_hud_visibility=$hostHudEvidence;body_passed=$bodyPassed;result=$(if($passed){'passed'}else{'failed'});failure=$failure;evidence=$directory;target_pid=$targetPid;target_start_filetime=$targetStart;fixture_sha256=$fixtureHash;compositor_armed=[bool]$armEvidence;width=$Width;height=$Height;gui_scale=$GuiScale;kcd_launched=$false;kcd_stopped=$false;host_input_exclusivity_verified=$false;live_mouse_requested=[bool]$LiveMouse;live_mouse_enabled=[bool]($LiveMouse -and $armEvidence);live_mouse_guest_verified=$liveMouseGuestVerified;live_mouse_guest_pass=[bool]($LiveMouse -and $liveMouseGuestVerified -and $passed);pointer_events_applied=$pointerEventsApplied;live_mouse_visual_verified=$false;producer_exit_observed=$producerExitObserved;producer_exit_code=$producerExitCode;created_utc_ms=$expires-180000;expires_utc_ms=$expires} | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $directory 'verification.json') -Encoding utf8NoBOM
+        [ordered]@{schema=1;kind='minecome_hud_input_controller_v1';run=$run;mode=$Mode;stone_fixture=[bool]$StoneFixture;stone_live=[bool]$StoneLive;world_clicks_requested=[bool]$WorldClicks;world_clicks=$worldClickEvidence;selective_mouse_requested=[bool]$SelectiveMouse;selective_mouse_enabled=$selectiveArmVerified;selective_revision_requested=$(if($SelectiveMouse){$SelectiveRevision}else{0});stone_live_preview=$(if($WorldClicks){$null}else{$stonePreview});stone_relay=$stoneRelayEvidence;stone_protocol_peer=$stonePeerResult;pointer_fixture=[bool]$PointerFixture;delay_fixture=[bool]$DelayFixture;background_trial=[bool]$BackgroundTrial;offscreen_presentation=[bool]$OffscreenPresentation;offscreen_trial=[bool]$OffscreenTrial;host_gpu_budget_requested=[bool]$HostGpuBudget;host_gpu_budget=$hostBudgetEvidence;host_hud_hidden_requested=[bool]$HideHostHud;host_hud_visibility=$hostHudEvidence;body_passed=$bodyPassed;result=$(if($passed){'passed'}else{'failed'});failure=$failure;evidence=$directory;target_pid=$targetPid;target_start_filetime=$targetStart;fixture_sha256=$fixtureHash;compositor_armed=[bool]$armEvidence;width=$Width;height=$Height;gui_scale=$GuiScale;kcd_launched=$false;kcd_stopped=$false;host_input_exclusivity_verified=$false;live_mouse_requested=[bool]$LiveMouse;live_mouse_enabled=[bool]($LiveMouse -and $armEvidence);live_mouse_guest_verified=$liveMouseGuestVerified;live_mouse_guest_pass=[bool]($LiveMouse -and $liveMouseGuestVerified -and $passed);pointer_events_applied=$pointerEventsApplied;live_mouse_visual_verified=$false;producer_exit_observed=$producerExitObserved;producer_exit_code=$producerExitCode;created_utc_ms=$expires-180000;expires_utc_ms=$expires} | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $directory 'verification.json') -Encoding utf8NoBOM
     }finally{
         if($stonePeer){
             if(-not $stonePeer.HasExited){[IO.File]::WriteAllText((Join-Path $directory 'stone-peer-stop.request'),'Controller cleanup');$null=$stonePeer.WaitForExit(3000)}

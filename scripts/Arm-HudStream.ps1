@@ -2,7 +2,7 @@
 # Original bounded stream arm. Input mode still requires a physical F8 latch.
 # No game launch, movement or process injection.
 [CmdletBinding()]
-param([string]$ReadyManifest, [string]$BundleDirectory, [switch]$PreflightOnly, [switch]$InputMode, [switch]$OffscreenPresentation, [switch]$LiveMouse, [switch]$StoneLive, [switch]$WorldClicks, [switch]$SelectiveMouse)
+param([string]$ReadyManifest, [string]$BundleDirectory, [switch]$PreflightOnly, [switch]$InputMode, [switch]$OffscreenPresentation, [switch]$LiveMouse, [switch]$StoneLive, [switch]$WorldClicks, [switch]$SelectiveMouse, [ValidateSet(1,2)][int]$SelectiveRevision=1)
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 if($OffscreenPresentation -and -not $InputMode){throw 'Offscreen presentation requires explicit input mode.'}
@@ -10,15 +10,16 @@ if($LiveMouse -and (-not $InputMode -or -not $OffscreenPresentation)){throw 'Liv
 if($StoneLive -and (-not $LiveMouse -or -not $InputMode -or -not $OffscreenPresentation)){throw 'Combined stone arming requires the explicit live mouse profile.'}
 if($WorldClicks -and (-not $LiveMouse -or -not $StoneLive)){throw 'World clicks require explicit LiveMouse and StoneLive modes.'}
 if($SelectiveMouse -and (-not $WorldClicks -or -not $LiveMouse)){throw 'Selective mouse requires explicit LiveMouse and WorldClicks modes.'}
+if($SelectiveRevision -eq 2 -and -not $SelectiveMouse){throw 'Selective revision 2 arming requires explicit SelectiveMouse mode.'}
 . (Join-Path $PSScriptRoot 'KcdToolsProbeHelpers.ps1')
 $root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $runtimeRoot=Join-Path $root 'runtime'
 $evidenceRoot=Join-Path $runtimeRoot 'evidence'
-if(-not $BundleDirectory) {$BundleDirectory=Join-Path $runtimeRoot $(if($SelectiveMouse){'hud-compositor-selective'}elseif($WorldClicks){'hud-compositor-world'}elseif($LiveMouse){'hud-compositor-mouse'}elseif($InputMode){'hud-compositor-input-waitfix'}else{'hud-compositor-stream'})}
+if(-not $BundleDirectory) {$BundleDirectory=Join-Path $runtimeRoot $(if($SelectiveMouse -and $SelectiveRevision -eq 2){'hud-compositor-selective-r2'}elseif($SelectiveMouse){'hud-compositor-selective'}elseif($WorldClicks){'hud-compositor-world'}elseif($LiveMouse){'hud-compositor-mouse'}elseif($InputMode){'hud-compositor-input-waitfix'}else{'hud-compositor-stream'})}
 $expectedArm=if($SelectiveMouse){'minecome-hud/addons/MineComeHudSelective.ini'}elseif($WorldClicks){'minecome-hud/addons/MineComeHudWorld.ini'}elseif($LiveMouse){'minecome-hud/addons/MineComeHudMouse.ini'}elseif($InputMode){'minecome-hud/addons/MineComeHudInput.ini'}else{'minecome-hud/addons/MineComeHudStream.ini'}
 $exeHash='a32d077e6b54e5cd0c5a5f3194f473779706ff266a711e4745ccdb598843340a'
 $proxyHash='0cee63f9c9f13f3ac909c5b4903f4dbb4b719a7ab3b4f13b0deaf83c814b94f7'
-if($LiveMouse){. (Join-Path $PSScriptRoot 'HudMouseProfile.ps1');$mouseProfile=Get-MineComeMouseProfile -WorldClicks:$WorldClicks -SelectiveMouse:$SelectiveMouse;$proxyHash=$mouseProfile.runtime_sha256}
+if($LiveMouse){. (Join-Path $PSScriptRoot 'HudMouseProfile.ps1');$mouseProfile=Get-MineComeMouseProfile -WorldClicks:$WorldClicks -SelectiveMouse:$SelectiveMouse -SelectiveRevision $SelectiveRevision;$proxyHash=$mouseProfile.runtime_sha256}
 $expected=@('dxgi.dll','ReShade.ini','MineComeHudPreset.ini','ReShade-LICENSE.txt','minecome-hud/addons/MineComeHudCompositor.addon64','minecome-hud/shaders/MineComeHud.fx')
 function Assert-Unlinked([string]$Path) {
     $full=[IO.Path]::GetFullPath($Path);$cursor=$full
@@ -42,8 +43,8 @@ function Assert-Artifact([string]$Path,$Record) {
 $BundleDirectory=Assert-Unlinked $BundleDirectory
 if(-not $BundleDirectory.StartsWith($runtimeRoot+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)) {throw 'Stream bundle must remain in workspace runtime.'}
 $bundle=Read-Receipt (Join-Path $BundleDirectory 'bundle.json')
-if($LiveMouse){Assert-MineComeMouseBundle $bundle $mouseProfile -WorldClicks:$WorldClicks -SelectiveMouse:$SelectiveMouse}
-elseif($bundle.PSObject.Properties.Name -contains 'mouse_capture_api' -or $bundle.PSObject.Properties.Name -contains 'world_clicks' -or $bundle.PSObject.Properties.Name -contains 'selective_mouse'){throw 'Mouse/world/selective bundle requires its explicit mode.'}
+if($LiveMouse){Assert-MineComeMouseBundle $bundle $mouseProfile -WorldClicks:$WorldClicks -SelectiveMouse:$SelectiveMouse -SelectiveRevision $SelectiveRevision}
+elseif($bundle.PSObject.Properties.Name -contains 'mouse_capture_api' -or $bundle.PSObject.Properties.Name -contains 'world_clicks' -or $bundle.PSObject.Properties.Name -contains 'selective_mouse' -or $bundle.PSObject.Properties.Name -contains 'selective_revision'){throw 'Mouse/world/selective bundle requires its explicit mode.'}
 if($bundle.schema -ne 1 -or $bundle.kind -cne 'minecome_hud_compositor_bundle_v1' -or $bundle.stream_protocol -ne 1 -or $bundle.tools_only -ne $true -or $bundle.runtime.version -cne '6.8.0' -or $bundle.runtime.reshade64_sha256 -cne $proxyHash -or $bundle.arm_config_relative_path -cne $expectedArm -or @($bundle.files).Count -ne 6) {throw 'An exact prepared stream bundle is required.'}
 if($InputMode){if($bundle.PSObject.Properties.Name -notcontains 'ui_input_protocol' -or $bundle.ui_input_protocol -ne 1){throw 'Input mode requires explicit protocol1 provenance.'}}
 elseif($bundle.PSObject.Properties.Name -contains 'ui_input_protocol'){throw 'Input bundle requires explicit InputMode.'}
@@ -116,6 +117,7 @@ $receipt.live_mouse=[bool]$LiveMouse
 $receipt.stone_live=[bool]$StoneLive
 $receipt.world_clicks=[bool]$WorldClicks
 $receipt.selective_mouse=[bool]$SelectiveMouse
+if($SelectiveRevision -eq 2){$receipt.selective_revision=2}
 $receiptPath=Join-Path $evidenceDirectory 'stream-arming.json'
 if(Test-Path -LiteralPath $receiptPath) {throw 'Existing stream arm receipt preserved.'}
 $receipt | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $receiptPath -Encoding utf8NoBOM

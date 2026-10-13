@@ -193,15 +193,19 @@ void Bridge::run(std::stop_token stop,std::uint16_t port,std::promise<bool> star
                                 throw std::runtime_error("unsupported minor/capability/role negotiation");
                             negotiated_minor=h.minor;
                             emit(protocol::Type::hello,protocol::encode(protocol::Hello{protocol::Role::kcd,hello.capabilities,identity_,{}}));
+                            std::uint64_t audit_connection=0,audit_reset=0;
                             {
                                 std::lock_guard l(mailbox_);
                                 ++connection_generation_;event_receive_order_=0;input_receive_order_=0;last_input_id_=0;peer_role_=hello.role;
                                 peer_minor_=negotiated_minor;peer_capabilities_=hello.capabilities;
                                 reset_events_locked(EventResetReason::connected);connected_=true;
+                                audit_connection=connection_generation_;audit_reset=event_reset_generation_;
                             }
                             handshake=true;
                             log(std::string("HELLO authenticated; protocol 1.")+std::to_string(negotiated_minor)+" session ready; peer role="
                                 +(hello.role==protocol::Role::minecraft?"minecraft":"harness"));
+                            if(negotiated_minor==1) log("STONE_INPUT_AUDIT_SESSION schema=1 connection="+std::to_string(audit_connection)
+                                +" reset="+std::to_string(audit_reset));
                         } else {
                             if(h.minor!=negotiated_minor) throw std::runtime_error("session minor changed");
                             switch(h.type) {
@@ -212,7 +216,7 @@ void Bridge::run(std::stop_token stop,std::uint16_t port,std::promise<bool> star
                                 }
                                 case protocol::Type::stone_input_result: {
                                     if(negotiated_minor!=1) throw std::runtime_error("input result without capability");
-                                    const auto result=protocol::decode_stone_input_result(body);bool matched=false;
+                                    const auto result=protocol::decode_stone_input_result(body);std::optional<StoneInputResultReceipt> accepted;
                                     {
                                         std::lock_guard l(mailbox_);
                                         const auto found=std::find_if(inflight_inputs_.begin(),inflight_inputs_.end(),[&](const PendingInput& pending) {
@@ -221,11 +225,18 @@ void Bridge::run(std::stop_token stop,std::uint16_t port,std::promise<bool> star
                                                 &&Clock::now()-pending.created<=1s;
                                         });
                                         if(input_ready_locked()&&found!=inflight_inputs_.end()) {
-                                            stone_input_results_.push_back({result,connection_generation_,event_reset_generation_,++input_receive_order_,h.sequence});
-                                            inflight_inputs_.erase(found);matched=true;
+                                            accepted=StoneInputResultReceipt{result,connection_generation_,event_reset_generation_,++input_receive_order_,h.sequence};
+                                            stone_input_results_.push_back(*accepted);
+                                            inflight_inputs_.erase(found);
                                         }
                                     }
-                                    log(std::string(matched?"stone input result accepted id=":"unmatched/stale stone input result ignored id=")+std::to_string(result.id));break;
+                                    // Audit the validated receipt before another frame can disconnect/reset the
+                                    // session. This journal never grants game-write or input authority.
+                                    if(accepted) log("STONE_INPUT_AUDIT schema=1 connection="+std::to_string(accepted->connection_generation)
+                                        +" reset="+std::to_string(accepted->reset_generation)+" order="+std::to_string(accepted->receive_order)
+                                        +" sequence="+std::to_string(accepted->wire_sequence)+" request="+std::to_string(result.id)
+                                        +" action="+std::to_string(result.action)+" result="+std::to_string(static_cast<unsigned>(result.result)));
+                                    log(std::string(accepted?"stone input result accepted id=":"unmatched/stale stone input result ignored id=")+std::to_string(result.id));break;
                                 }
                                 case protocol::Type::block_event: {
                                     auto e=protocol::decode_block_event(body);

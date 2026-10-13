@@ -144,6 +144,23 @@ endif()
 add_custom_command(TARGET minecome_hud_selective_compositor POST_BUILD
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/shaders/MineComeMouseHud.fx"
     "$<TARGET_FILE_DIR:minecome_hud_selective_compositor>/MineComeHud.fx")
+
+# Selective revision 2 adds motion-route filtering and separate diagnostics;
+# it keeps the existing capture ABI and its previous frozen output untouched.
+add_library(minecome_hud_motion_compositor SHARED hud_input_addon.cpp)
+target_link_libraries(minecome_hud_motion_compositor PRIVATE minecome_hud_input user32)
+target_include_directories(minecome_hud_motion_compositor PRIVATE "${MINECOME_RESHADE_ROOT}/include")
+target_compile_definitions(minecome_hud_motion_compositor PRIVATE MINECOME_HUD_UI_INPUT=1 MINECOME_HUD_LIVE_MOUSE=1 MINECOME_HUD_WORLD_CLICKS=1 MINECOME_HUD_SELECTIVE_MOUSE=1 MINECOME_HUD_MOTION_FILTER=1)
+set_target_properties(minecome_hud_motion_compositor PROPERTIES OUTPUT_NAME "MineComeHudCompositor" PREFIX "" SUFFIX ".addon64"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/motion" ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/motion"
+    PDB_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/motion")
+if(MSVC)
+    set_target_properties(minecome_hud_motion_compositor PROPERTIES MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    target_compile_options(minecome_hud_motion_compositor PRIVATE /W4 /permissive- /utf-8 /EHsc)
+endif()
+add_custom_command(TARGET minecome_hud_motion_compositor POST_BUILD
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/shaders/MineComeMouseHud.fx"
+    "$<TARGET_FILE_DIR:minecome_hud_motion_compositor>/MineComeHud.fx")
 if(BUILD_TESTING)
     add_executable(minecome_hud_selective_forwarding_tests selective_forwarding_tests.cpp)
     target_compile_features(minecome_hud_selective_forwarding_tests PRIVATE cxx_std_20)
@@ -214,4 +231,27 @@ if(BUILD_TESTING)
         target_compile_options(minecome_selective_capture_tests PRIVATE /W4 /permissive- /utf-8 /EHsc)
     endif()
     add_test(NAME hud_selective_capture_policy_and_adapter COMMAND minecome_selective_capture_tests)
+endif()
+
+if(BUILD_TESTING)
+    add_executable(minecome_motion_capture_tests motion_capture_tests.cpp)
+    target_compile_features(minecome_motion_capture_tests PRIVATE cxx_std_17)
+    target_include_directories(minecome_motion_capture_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_compile_definitions(minecome_motion_capture_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+    target_link_libraries(minecome_motion_capture_tests PRIVATE user32 dxguid dinput8)
+    if(MSVC)
+        set_target_properties(minecome_motion_capture_tests PROPERTIES MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+        target_compile_options(minecome_motion_capture_tests PRIVATE /W4 /permissive- /utf-8 /EHsc)
+    endif()
+    add_test(NAME hud_motion_capture_policy_and_adapter COMMAND minecome_motion_capture_tests)
+    add_executable(minecome_motion_sdk_compile_tests motion_sdk_compile_tests.cpp)
+    target_compile_features(minecome_motion_sdk_compile_tests PRIVATE cxx_std_17)
+    target_include_directories(minecome_motion_sdk_compile_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_compile_definitions(minecome_motion_sdk_compile_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+    target_link_libraries(minecome_motion_sdk_compile_tests PRIVATE user32 dxguid dinput8)
+    if(MSVC)
+        set_target_properties(minecome_motion_sdk_compile_tests PROPERTIES MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+        target_compile_options(minecome_motion_sdk_compile_tests PRIVATE /W4 /permissive- /utf-8 /EHsc)
+    endif()
+    add_test(NAME hud_motion_sdk_nokeystates COMMAND minecome_motion_sdk_compile_tests)
 endif()

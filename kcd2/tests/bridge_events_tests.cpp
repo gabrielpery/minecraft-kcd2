@@ -4,12 +4,15 @@
 #include <ws2tcpip.h>
 #include <minecome/bridge.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <functional>
 #include <iostream>
 #include <limits>
+#include <regex>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -352,10 +355,51 @@ int wmain(int argc,wchar_t** argv) {
         Peer wrong_minor(port,protocol::Role::minecraft,token,1,protocol::CAP_STONE_INPUT);connected_reset(bridge,protocol::Role::minecraft);
         wrong_minor.change_minor(0);wrong_minor.send(protocol::Type::heartbeat);
         await([&]{return !bridge.connected();},"changed session minor was accepted");
+
+        // A validated result immediately followed by GOODBYE may never reach a
+        // host poll. The audit survives, while all mutation queues still reset.
+        Peer final_input(port,protocol::Role::minecraft,token,1,protocol::CAP_STONE_INPUT);
+        const auto final_session=connected_reset(bridge,protocol::Role::minecraft);
+        require(bridge.acknowledge_event_reset(final_session.reset_generation),"final receipt reset ACK failed");fence(final_input);
+        const auto before_final_event=bridge.received_events();
+        final_input.send(protocol::Type::block_event,protocol::encode(block(1,222)));
+        await([&]{return bridge.received_events()==before_final_event+1;},"final receipt block setup missing");
+        const auto final_blocks=bridge.drain_block_events();
+        require(final_blocks.events.size()==1&&bridge.game_write_allowed(final_blocks.events[0]),"final receipt block setup invalid");
+        require(bridge.request_stone_input({222,2}),"final receipt request refused");
+        require(protocol::decode_stone_input_request(final_input.receive(protocol::Type::stone_input_request).second).id==222,"final receipt request changed");
+        const auto final_sequence=final_input.send(protocol::Type::stone_input_result,protocol::encode(protocol::StoneInputResult{222,2,protocol::StoneInputResultCode::absent}));
+        final_input.send(protocol::Type::goodbye);
+        await([&]{return !bridge.connected();},"final receipt graceful disconnect missing");
+        require(!bridge.input_ready()&&bridge.drain_stone_input_results().empty()&&!bridge.request_stone_input({223,1}),"audit repair retained disconnected input authority");
+        require(!bridge.game_write_allowed(final_blocks.events[0])&&bridge.drain_block_events().reset_required,"audit repair retained disconnected game-write authority");
         bridge.stop();
         std::ifstream evidence(logfile);
         const std::string log((std::istreambuf_iterator<char>(evidence)),std::istreambuf_iterator<char>());
         require(log.find("mailbox overflow")!=std::string::npos&&log.find("peer role=harness")!=std::string::npos,"overflow/role evidence missing from log");
+        std::vector<std::string> audited;
+        std::istringstream lines(log);std::string line;std::size_t anchors=0;
+        const std::regex receipt_pattern("^[1-9][0-9]* STONE_INPUT_AUDIT schema=1 connection=[1-9][0-9]* reset=[1-9][0-9]* order=[1-9][0-9]* sequence=[1-9][0-9]* request=[1-9][0-9]* action=[12] result=[1-7]$");
+        while(std::getline(lines,line)) {
+            if(line.find(" STONE_INPUT_AUDIT_SESSION ")!=std::string::npos) ++anchors;
+            if(line.find(" STONE_INPUT_AUDIT ")!=std::string::npos) {
+                require(std::regex_match(line,receipt_pattern),"accepted input audit format malformed");
+                audited.push_back(line.substr(line.find("STONE_INPUT_AUDIT ")));
+            }
+        }
+        auto audit_text=[](const minecome::StoneInputResultReceipt& receipt) {
+            return "STONE_INPUT_AUDIT schema=1 connection="+std::to_string(receipt.connection_generation)
+                +" reset="+std::to_string(receipt.reset_generation)+" order="+std::to_string(receipt.receive_order)
+                +" sequence="+std::to_string(receipt.wire_sequence)+" request="+std::to_string(receipt.result.id)
+                +" action="+std::to_string(receipt.result.action)+" result="+std::to_string(static_cast<unsigned>(receipt.result.result));
+        };
+        require(anchors==4,"audit anchor missing or emitted for unsupported/legacy peer");
+        require(audited.size()==21,"duplicate, unmatched, cancelled, stale or reset-invalid result became an accepted audit");
+        require(std::count(audited.begin(),audited.end(),audit_text(accepted[0]))==1,"accepted audit differs from drained receipt provenance");
+        for(const auto& receipt:bounded) require(std::count(audited.begin(),audited.end(),audit_text(receipt))==1,"bounded result audit changed provenance/outcome");
+        const minecome::StoneInputResultReceipt final_receipt{{222,2,protocol::StoneInputResultCode::absent},final_session.connection_generation,final_session.reset_generation,1,final_sequence};
+        require(std::count(audited.begin(),audited.end(),audit_text(final_receipt))==1,"final absent result audit lost or duplicated across graceful disconnect");
+        require(log.find(audit_text(final_receipt))<log.rfind("session ended: graceful peer goodbye"),"final result audit was not persisted before disconnect");
         std::cout<<checks<<" native loopback event/session checks passed. Explicit synthetic peers; no games launched.\n";
         return 0;
     } catch(const std::exception& error) {std::cerr<<"FAIL: "<<error.what()<<'\n';return 1;}

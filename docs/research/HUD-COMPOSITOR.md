@@ -76,8 +76,8 @@ After verifying a backup of 1,013 save/profile files, the previous owned World
 arm was archived and its proxy disabled. Update
 `runtime/evidence/hud-update-20261013-163734-14f01c89ad8b47bf83bda88c4d500d5f/update.json`
 records replacement of only `dxgi.dll` and the addon, with exact old-file backups
-and an unarmed enabled installation. No game was launched or stopped. The user
-restart and a combined camera/inventory/world-click check are still pending.
+and an unarmed enabled installation. No game was launched or stopped by the
+controller. The user subsequently restarted for the checks below.
 
 **First live attempt, controller failure:** run
 `0c9c4120403d46b195216db3a25c91ab` loaded the selective addon in KCD PID 36872
@@ -91,6 +91,99 @@ did not record the producer exit code; no crash or exit-code claim is inferred.
 The receipt reader now handles dictionaries and JSON objects with identical
 strict Boolean checks; its regression suite passes 1,008 assertions. This needs
 no binary update, but the consumed one-session renderer requires a host restart.
+
+**Second live attempt, camera still blocked:** run
+`ef8f44bfc62944faaf2bfea7dda8c091`, in KCD PID 11340, completed two
+client/server-confirmed place/break cycles and matching KCD spawn/removal receipts.
+The user reported "everything worked apart from camera movement." The guest
+applied 85 acknowledged UI events (81 cursor moves and four E/Escape edges),
+with actual inventory opening/closing. Native rendering uploaded 801 frames,
+submitted 3,144 draws and dropped none. Final air, relay cleanup, Java/relay
+exit 0 and temporary FPS restoration passed.
+
+Six physical world-click records produced five requests; the last was declined
+by the 300 ms spacing gate. Request 5 correctly returned target-absent in the
+guest and was accepted by the bridge worker, but disconnect cleared the receipt
+before the tools host drained it. The controller correctly reports
+`Relay/guest request count mismatch.` The raw result remains failed. Ownership
+closed with `mouse_transition` after about 18.11 seconds; the existing generic
+reason does not establish a more specific cause or full-duration operation.
+
+During the initial settled world interval the runtime handled 747 immediate
+DirectInput state calls without drains. That proves calls reached the adapter,
+not delivery of nonzero axes. The pinned upstream `input_windows.cpp` also
+discards WM_MOUSEMOVE/WM_INPUT and blocks buffered/raw hook paths. Revision 2
+therefore has separate source, build and bundle identities (runtime 6.8.0.4,
+capture ABI still 2). After ReShade observes the original message, it strips
+button flags from caller-visible WM_MOUSEMOVE and admits only immutable raw
+packets containing pure relative XY. Mixed button/wheel packets, raw-buffer
+records and Windows mouse hooks remain blocked. Exact foreground ownership,
+lease and settled world mode are required; inventory remains fully captured.
+
+The separate read-only diagnostics ABI counts observed/passed immediate XY,
+passed window/raw moves and blocked alternative routes. These process-lifetime
+counters describe callbacks/records, not unique physical movements. The addon
+logs them from its worker, with no callback file IO. Revision 2 passes 223 native
+checks, independent source review and clean upstream patch application. The
+addon compiles separately in `build/hud-motion-20261013`; frozen revision 1
+artifacts remain unchanged. Two initial runtime builds exposed upstream-specific
+compilation issues (hidden SDK button macros and a template lookup ambiguity).
+Both failed before staging; a new three-check production-wrapper smoke test now
+uses the upstream `NOKEYSTATES` setting and passes.
+
+The finalized 59.5-second runtime build passes all source/generated/protected
+checkout/installed-proxy guards:
+`runtime/dependencies/reshade-selective-r2-6.8.0/evidence/20261013-180647-65e52777a19842349638088e87de4c61/verification.json`.
+Runtime SHA256 is `7a0464fc9f32cbed3e37efb924144dd6128d894f3a1f24fb9eb943e392609774`;
+addon SHA256 is `960c9493b0836ab916c57f7592745ec265bf0f2fcae78b55d2a350fbc92755e0`.
+`config/hud-selective-profile-r2.json` and the explicit `-SelectiveRevision 2`
+select the separate bundle. Revision 1 remains the default and exact update
+predecessor. Actual camera movement still requires a live check after restart.
+
+Both Windows PowerShell 5.1 and PowerShell 7 pass 424 profile checks each
+(revision 149, Selective 142, World 110, Mouse 23). The read-only updater verifies
+the six previous/new files and two changed artifacts. Evidence:
+`runtime/evidence/hud-selective-r2-profile-20261013-171103-8970d6be838a477f95b40689c8bdbfbd/verification.json`.
+The human-run restart verified a new 1,015-file save/profile backup and installed
+revision 2 unarmed, recorded at
+`runtime/evidence/hud-update-20261013-171111-acdc235a74a54c61a211be1ac1102d4c/update.json`.
+Fresh KCD PID 47280 loaded the exact-tools motion add-on and compiled the HUD
+shader. This confirms loading, not camera behavior.
+
+The final-result repair journals each accepted bridge result with the
+authenticated session anchor, connection/reset generations, receive order and
+wire sequence before the worker handles a subsequent GOODBYE. The controller
+uses that bounded journal and cross-checks overlapping polled results. It rejects
+missing, malformed, duplicate, incomplete or mismatched final evidence. All
+command queues, readiness gates and game-write reset checks remain unchanged;
+the journal is only completed-result evidence. The old failed run is preserved.
+The immediate-GOODBYE native regression passes within 1,086 checks; relay and
+controller fixtures pass 275/1,008. Both tools-host integration checks also pass.
+The rebuilt standalone tools host has SHA256
+`7e230e54bcb05cbcf4421f5da71d504e109fc3221941ee6a200dd02a6a392a41`;
+the previous host binary is backed up before workspace staging. No game
+installation file changed for the relay repair.
+
+**Revision 2 live result:** run `27420095abc54651ae5d3ec5bbbc7369` passes the
+controller and the new canonical receipt checks. One physical place/break pair
+has matching client/server and KCD engine evidence; 97 UI events (93 pointer)
+were applied. Native rendering uploaded 620 frames/submitted 2,450 draws with
+zero drops. Java and relay exited 0; owned cleanup and FPS restoration pass.
+Foreground loss closed ownership after 21.141 seconds with fresh ACKs/images,
+so this is not a full 30-second endurance result.
+
+The user's report remains decisive for the missing behavior: "the camera didnt
+move at all but the mouse worked in the inventory and the stone appeared and
+disappeared". Final diagnostics show 1,333 passed window-movement messages but
+zero observed/passed nonzero DirectInput X/Y; raw-route counters are also zero.
+Those counters do not see rejected helper-window packets. Upstream
+`input_windows.cpp` resolves registered raw-input helper HWNDs to the most-rendered
+input window before blocking, whereas revision 2's exception requires the original
+message HWND itself to equal the lease owner. That is a concrete uncovered source
+path, consistent with starvation before DirectInput, but the current logs do not
+prove that KCD used it. The next repair will bind any helper exception to that
+same-call resolved owner, actual registration, process ownership and the existing
+pure-relative-packet/foreground/lease/mode gates.
 
 ## Physical world click profile — 2026-10-13
 

@@ -13,10 +13,12 @@ param(
     [string]$OutputDirectory,
     [string]$InstallerPath,
     [ValidateSet('Static','Stream','Input','Mouse','World','Selective')][string]$Mode='Static',
+    [ValidateSet(1,2)][int]$SelectiveRevision=1,
     [string]$CustomBuildReceipt
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+if($SelectiveRevision -eq 2 -and $Mode -ne 'Selective'){throw 'Selective revision 2 staging requires explicit Selective mode.'}
 $projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $runtimeRoot = Join-Path $projectRoot 'runtime'
 $sdkCommit = '18deaa52de0c425a78b329e9cb3c497281cd00ec'
@@ -27,11 +29,11 @@ $maxArtifactBytes = 64MB
 if($Mode -in @('Mouse','World','Selective')) {
     if(-not $CustomBuildReceipt -or $InstallerPath){throw 'Mouse/World/Selective mode requires its exact custom build receipt and no installer.'}
     . (Join-Path $PSScriptRoot 'HudMouseProfile.ps1')
-    $mouseProfile=Get-MineComeMouseProfile -WorldClicks:($Mode -in @('World','Selective')) -SelectiveMouse:($Mode -eq 'Selective')
+    $mouseProfile=Get-MineComeMouseProfile -WorldClicks:($Mode -in @('World','Selective')) -SelectiveMouse:($Mode -eq 'Selective') -SelectiveRevision $SelectiveRevision
     $runtimeHash=$mouseProfile.runtime_sha256
 } elseif($CustomBuildReceipt){throw 'Custom renderer receipt requires explicit Mouse, World or Selective mode.'}
 if (-not $ShaderPath) { $ShaderPath = Join-Path $projectRoot $(if($Mode -in @('Mouse','World','Selective')){'kcd2/hud/shaders/MineComeMouseHud.fx'}else{'kcd2/hud/shaders/MineComeHud.fx'}) }
-if (-not $OutputDirectory) { $OutputDirectory = Join-Path $runtimeRoot $(if($Mode -eq 'Selective'){'hud-compositor-selective'}elseif($Mode -eq 'World'){'hud-compositor-world'}elseif($Mode -eq 'Mouse'){'hud-compositor-mouse'}else{'hud-compositor'}) }
+if (-not $OutputDirectory) { $OutputDirectory = Join-Path $runtimeRoot $(if($Mode -eq 'Selective' -and $SelectiveRevision -eq 2){'hud-compositor-selective-r2'}elseif($Mode -eq 'Selective'){'hud-compositor-selective'}elseif($Mode -eq 'World'){'hud-compositor-world'}elseif($Mode -eq 'Mouse'){'hud-compositor-mouse'}else{'hud-compositor'}) }
 $AddonPath = [IO.Path]::GetFullPath($AddonPath)
 $ShaderPath = [IO.Path]::GetFullPath($ShaderPath)
 $OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
@@ -162,7 +164,7 @@ if($Mode -in @('Mouse','World','Selective')) {
     if($custom.kind -cne $expectedBuildKind -or $custom.status -cne 'built' -or
        $custom.commit -cne $sdkCommit -or $custom.output_sha256 -ine $runtimeHash -or
        $custom.generated_outputs_unchanged -ne $true){throw 'Verified pinned custom build required.'}
-    if($Mode -eq 'Selective'){Assert-MineComeSelectiveBuildReceipt $custom $mouseProfile}
+    if($Mode -eq 'Selective'){Assert-MineComeSelectiveBuildReceipt $custom $mouseProfile -SelectiveRevision $SelectiveRevision}
     $runtimeBytes=Read-BoundedFile $custom.output $maxArtifactBytes
     if((Get-BytesHash $runtimeBytes) -cne $runtimeHash -or (Get-BytesHash $addon) -cne $mouseProfile.addon_sha256 -or
        (Get-BytesHash $shader) -cne $mouseProfile.shader_sha256){throw 'Mouse build artifacts differ from the exact tested profile.'}
@@ -239,8 +241,9 @@ if($Mode -in @('Mouse','World','Selective')){
     $manifest.mouse_capture_api=$(if($Mode -eq 'Selective'){2}else{1})
     if($Mode -in @('World','Selective')){$manifest.world_clicks=$true}
     if($Mode -eq 'Selective'){$manifest.selective_mouse=$true}
+    if($SelectiveRevision -eq 2){$manifest.selective_revision=2}
     $manifest.runtime=[ordered]@{version='6.8.0';custom_version=$custom.version;source_commit=$sdkCommit;reshade64_sha256=$runtimeHash;proxy_name='dxgi.dll';full_addon_support=$true;build_receipt=$CustomBuildReceipt;build_receipt_sha256=$mouseProfile.build_receipt_sha256}
-    Assert-MineComeMouseBundle $manifest $mouseProfile -WorldClicks:($Mode -in @('World','Selective')) -SelectiveMouse:($Mode -eq 'Selective')
+    Assert-MineComeMouseBundle $manifest $mouseProfile -WorldClicks:($Mode -in @('World','Selective')) -SelectiveMouse:($Mode -eq 'Selective') -SelectiveRevision $SelectiveRevision
 }
 $manifestBytes = $utf8.GetBytes(($manifest | ConvertTo-Json -Depth 8) + "`n")
 if (Test-Path -LiteralPath (Join-Path $OutputDirectory 'bundle.json')) {

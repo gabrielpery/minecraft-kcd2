@@ -16,7 +16,7 @@ function New-Case {
     $s=New-MineComeHudStoneRelay $context $directory $run ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()+180000)
     [IO.Directory]::CreateDirectory($s.Home)|Out-Null
     [IO.Directory]::CreateDirectory((Join-Path $s.Home 'runtime/logs'))|Out-Null
-    [IO.File]::WriteAllText((Join-Path $s.Home 'runtime/logs/tools-bridge.log'),"123 HELLO authenticated; protocol 1.1 session ready; peer role=minecraft`n")
+    [IO.File]::WriteAllText((Join-Path $s.Home 'runtime/logs/tools-bridge.log'),(Valid-Audit))
     $s.Process=[pscustomobject]@{HasExited=$false;ExitCode=0;WaitCalls=0;WillExit=$true}
     $s.Process | Add-Member ScriptMethod WaitForExit {param($ms);$this.WaitCalls++;$this.HasExited=$this.WillExit;return $this.HasExited}
     $s.Ready=$true
@@ -43,6 +43,13 @@ function Valid-Log {
     )
     ($lines -join "`r`n")+"`r`n"
 }
+function Valid-Audit {
+    "123 HELLO authenticated; protocol 1.1 session ready; peer role=minecraft`n"+
+    "124 STONE_INPUT_AUDIT_SESSION schema=1 connection=1 reset=3`n"+
+    "200 STONE_INPUT_AUDIT schema=1 connection=1 reset=3 order=1 sequence=10 request=7 action=1 result=1`n"+
+    "300 STONE_INPUT_AUDIT schema=1 connection=1 reset=3 order=2 sequence=12 request=8 action=2 result=1`n"
+}
+function Write-Audit($Session,[string]$Text){[IO.File]::WriteAllText((Join-Path $Session.Home 'runtime/logs/tools-bridge.log'),$Text,[Text.UTF8Encoding]::new($false))}
 function Valid-Guest {
     [pscustomobject]@{
         run=$run;result='input_completed';save='MineCome-HudStream-owned'
@@ -59,6 +66,58 @@ function Valid-Guest {
     }
 }
 function Write-Log($Session,[string]$Text){[IO.File]::WriteAllText($Session.Stdout,$Text,[Text.UTF8Encoding]::new($false))}
+$audit=ConvertFrom-MineComeHudStoneReceiptAudit (Valid-Audit) -Completed
+Check ($audit.authenticated -and $audit.completed -and $audit.session.connection_generation -ceq 1UL -and $audit.session.reset_generation -ceq 3UL) 'Canonical receipt is bound to authenticated connection/reset provenance'
+Check ($audit.results.Count -eq 2 -and $audit.results[1].receive_order -ceq 2UL -and $audit.results[1].wire_sequence -ceq 12UL -and $audit.results[1].request_id -ceq 8L) 'Canonical receipt preserves exact wire/order/request provenance'
+foreach($code in 1..7){$a=ConvertFrom-MineComeHudStoneReceiptAudit ((Valid-Audit).Replace('request=8 action=2 result=1',"request=8 action=2 result=$code")) -Completed;Check ($a.results[1].result -eq $code) 'All protocol outcomes have canonical receipts'}
+$partialAudit=ConvertFrom-MineComeHudStoneReceiptAudit ((Valid-Audit).TrimEnd("`n"))
+Check ($partialAudit.results.Count -eq 1 -and -not $partialAudit.completed) 'Live partial audit line cannot become a receipt'
+Check (-not (ConvertFrom-MineComeHudStoneReceiptAudit '').authenticated) 'Empty startup journal is not authentication evidence'
+foreach($case in @('missing_anchor','missing_hello','legacy_hello','harness_hello','duplicate_hello','duplicate_anchor','duplicate_id','gap_order','duplicate_order','duplicate_sequence','backwards_sequence','hello_sequence','wrong_connection','wrong_reset','wrong_schema','wrong_action','wrong_result','large_id','overflow_generation','negative_sequence','zero_sequence','extra_field','prefix','backwards_time','post_disconnect','partial','oversized')){
+    $text=Valid-Audit
+    switch($case){
+        missing_anchor {$text=$text.Replace("124 STONE_INPUT_AUDIT_SESSION schema=1 connection=1 reset=3`n",'')}
+        missing_hello {$text=$text.Replace("123 HELLO authenticated; protocol 1.1 session ready; peer role=minecraft`n",'')}
+        legacy_hello {$text=$text.Replace('protocol 1.1','protocol 1.0')}
+        harness_hello {$text=$text.Replace('peer role=minecraft','peer role=harness')}
+        duplicate_hello {$text+="400 HELLO authenticated; protocol 1.1 session ready; peer role=minecraft`n"}
+        duplicate_anchor {$text+="400 STONE_INPUT_AUDIT_SESSION schema=1 connection=1 reset=3`n"}
+        duplicate_id {$text=$text.Replace('request=8','request=7')}
+        gap_order {$text=$text.Replace('order=2','order=3')}
+        duplicate_order {$text=$text.Replace('order=2','order=1')}
+        duplicate_sequence {$text=$text.Replace('sequence=12','sequence=10')}
+        backwards_sequence {$text=$text.Replace('sequence=12','sequence=9')}
+        hello_sequence {$text=$text.Replace('sequence=10','sequence=1')}
+        wrong_connection {$text=$text.Replace('connection=1 reset=3 order=2','connection=2 reset=3 order=2')}
+        wrong_reset {$text=$text.Replace('reset=3 order=2','reset=4 order=2')}
+        wrong_schema {$text=$text.Replace('AUDIT schema=1','AUDIT schema=2')}
+        wrong_action {$text=$text.Replace('action=2','action=3')}
+        wrong_result {$text=$text.Replace('result=1','result=8')}
+        large_id {$text=$text.Replace('request=8','request=9007199254740992')}
+        overflow_generation {$text=$text.Replace('connection=1','connection=18446744073709551616')}
+        negative_sequence {$text=$text.Replace('sequence=12','sequence=-12')}
+        zero_sequence {$text=$text.Replace('sequence=12','sequence=0')}
+        extra_field {$text=$text.Replace('request=8 action=2 result=1','request=8 action=2 result=1 trusted=true')}
+        prefix {$text=$text.Replace('300 STONE_INPUT_AUDIT','prefix 300 STONE_INPUT_AUDIT')}
+        backwards_time {$text=$text.Replace('300 STONE_INPUT_AUDIT','199 STONE_INPUT_AUDIT')}
+        post_disconnect {$text=$text.Replace('300 STONE_INPUT_AUDIT',"250 session ended: graceful peer goodbye`n300 STONE_INPUT_AUDIT")}
+        partial {$text=$text.TrimEnd("`n")}
+        oversized {$text='x'*(2MB+1)}
+    }
+    Reject {ConvertFrom-MineComeHudStoneReceiptAudit $text -Completed} "${case}: invalid canonical receipt audit rejected"
+}
+$many="1 HELLO authenticated; protocol 1.1 session ready; peer role=minecraft`n2 STONE_INPUT_AUDIT_SESSION schema=1 connection=1 reset=3`n"
+foreach($i in 1..17){$many+="$($i+2) STONE_INPUT_AUDIT schema=1 connection=1 reset=3 order=$i sequence=$($i+1) request=$i action=1 result=6`n"}
+Reject {ConvertFrom-MineComeHudStoneReceiptAudit $many -Completed} 'Canonical receipt audit is bounded to sixteen actions'
+Assert-MineComeHudStoneReceiptOverlap $audit.results @([pscustomobject]@{request_id=8L;action=2;result=1}) -Completed
+Check $true 'Polled results may be a strict ordered subset of durable results'
+foreach($case in @('duplicate','unknown','action','result','order')){
+    $poll=@([pscustomobject]@{request_id=7L;action=1;result=1},[pscustomobject]@{request_id=8L;action=2;result=1})
+    switch($case){duplicate {$poll+=@($poll[0])} unknown {$poll[1].request_id=9L} action {$poll[1].action=1} result {$poll[1].result=6} order {$poll=@($poll[1],$poll[0])}}
+    Reject {Assert-MineComeHudStoneReceiptOverlap $audit.results $poll -Completed} "${case}: polled audit overlap rejected"
+}
+Assert-MineComeHudStoneReceiptOverlap @() @([pscustomobject]@{request_id=7L;action=1;result=1})
+Check $true 'Cross-file flush race is deferred until final audit'
 $parsed=ConvertFrom-MineComeHudStoneRelayLog (Valid-Log)
 Check ($parsed.fresh_world -and $parsed.authenticated -and $parsed.begin_sessions.Count -eq 1 -and $parsed.cleanup_sessions.Count -eq 1) 'Fresh native identity/world/session parsed'
 Check ($parsed.results.Count -eq 2 -and $parsed.dispatches.Count -eq 2 -and $parsed.engine_acks.Count -eq 2 -and $parsed.events.Count -eq 2) 'Complete native action chain parsed'
@@ -69,6 +128,10 @@ $partial=ConvertFrom-MineComeHudStoneRelayLog ((Valid-Log).TrimEnd("`r","`n"))
 Check ($null -eq $partial.summary) 'Unterminated terminal receipt cannot prove cleanup'
 $partial=ConvertFrom-MineComeHudStoneRelayLog ('STONE_BEGIN_ACK session=123')
 Check ($partial.begin_sessions.Count -eq 0) 'Unterminated engine ACK ignored'
+$partial=ConvertFrom-MineComeHudStoneRelayLog ('STONE_INPUT_RESULT request=7 action=1 res')
+Check ($partial.results.Count -eq 0) 'Growing polled result tail is deferred before strict record validation'
+Reject {ConvertFrom-MineComeHudStoneRelayLog 'STONE_INPUT_RESULT request=7 action=1 res' -Completed} 'Completed truncated polled result is invalid'
+Reject {ConvertFrom-MineComeHudStoneRelayLog "STONE_INPUT_RESULT request=7 action=1 res`n"} 'Malformed complete polled result is invalid'
 $prefixed=ConvertFrom-MineComeHudStoneRelayLog ("untrusted-prefix STONE_BEGIN_ACK session=123`n")
 Check ($prefixed.begin_sessions.Count -eq 0) 'Native ACK requires full anchored line'
 Reject {ConvertFrom-MineComeHudStoneRelayLog ('x'*(2MB+1))} 'Bounded log enforced'
@@ -79,11 +142,30 @@ Check ($s.ExitObserved -and $s.ExitCode -eq 0 -and $s.CleanupVerified -and $s.Pr
 Check (Test-Path -LiteralPath $s.StopFile) 'Graceful stop uses owned stop file'
 Assert-MineComeHudStoneRelayGuest $s (Valid-Guest)
 Check $s.EngineMirroringVerified 'Matching actual-guest/native evidence verifies engine mirroring'
+# The worker accepted a final absent result immediately before GOODBYE. Its
+# canonical receipt survives even though the host poll never drained the queue.
+$last=New-Case;$last.Intents.Add([pscustomobject]@{ordinal=3;request_id=9L;action=2;accepted=$true;sent_utc_ms=2000L;failure=$null})
+Write-Log $last ((Valid-Log)+"STONE_INPUT_DISPATCH request=9 action=2`n")
+Write-Audit $last ((Valid-Audit)+"400 STONE_INPUT_AUDIT schema=1 connection=1 reset=3 order=3 sequence=15 request=9 action=2 result=6`n401 session ended: graceful peer goodbye`n402 bridge stopped`n")
+Stop-MineComeHudStoneRelay $last;$g=Valid-Guest;$g.lab_evidence.stone_bridge.request_count=3
+$g.lab_evidence.stone_bridge.requests+=@([pscustomobject]@{id=9L;action=2;result=6;result_queued=$true})
+Assert-MineComeHudStoneRelayGuest $last $g
+Check ($last.EngineMirroringVerified -and $last.Native.results.Count -eq 3 -and $last.Native.polled_results.Count -eq 2) 'Final validated absent result survives graceful disconnect without inventing engine events'
+$old=New-Case;Write-Log $old (Valid-Log);Write-Audit $old "123 HELLO authenticated; protocol 1.1 session ready; peer role=minecraft`n200 stone input result accepted id=7`n300 stone input result accepted id=8`n"
+Stop-MineComeHudStoneRelay $old;Reject {Assert-MineComeHudStoneRelayGuest $old (Valid-Guest)} 'Old unversioned run cannot acquire retrospective audit proof'
+Check (-not $old.EngineMirroringVerified -and $old.CleanupVerified -and $old.ReceiptAuditFailure) 'Missing audit does not prevent cleanup and cannot prove gameplay'
+Write-Audit $old (Valid-Audit);Reject {Assert-MineComeHudStoneRelayGuest $old (Valid-Guest)} 'Later replacement cannot erase observed audit failure'
+$missing=New-Case;Write-Log $missing (Valid-Log);Stop-MineComeHudStoneRelay $missing;Assert-MineComeHudStoneRelayGuest $missing (Valid-Guest)
+$journal=Join-Path $missing.Home 'runtime/logs/tools-bridge.log'
+[IO.File]::Move($journal,(Join-Path $missing.Home 'runtime/logs/tools-bridge-preserved.log'))
+$missingEvidence=Get-MineComeHudStoneRelayEvidence $missing
+Check (-not $missingEvidence.engine_mirroring_verified -and -not $missingEvidence.transport_auth_verified -and $missingEvidence.receipt_audit_failure) 'Missing completed journal clears a previous success claim while preserving the journal for inspection'
 # An authentic occupied/absent/other vanilla refusal has a request/result, but no
 # block event. Successful actions still require the complete engine proof chain.
 foreach($code in 2..7){
     $declined=New-Case;$declined.Intents.Add([pscustomobject]@{ordinal=3;request_id=9L;action=1;accepted=$true;sent_utc_ms=2000L;failure=$null})
     $text=(Valid-Log)+"STONE_INPUT_DISPATCH request=9 action=1`nSTONE_INPUT_RESULT request=9 action=1 result=$code`n"
+    Write-Audit $declined ((Valid-Audit)+"400 STONE_INPUT_AUDIT schema=1 connection=1 reset=3 order=3 sequence=15 request=9 action=1 result=$code`n")
     Write-Log $declined $text;Stop-MineComeHudStoneRelay $declined
     $g=Valid-Guest;$g.lab_evidence.stone_bridge.request_count=3
     $g.lab_evidence.stone_bridge.requests+=@([pscustomobject]@{id=9L;action=1;result=$code;result_queued=$true})

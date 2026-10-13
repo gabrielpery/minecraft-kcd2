@@ -19,6 +19,9 @@
 #include "stream_channel.hpp"
 #include "input_channel.hpp"
 #include "input_diagnostics.hpp"
+#ifdef MINECOME_HUD_MOTION_FILTER
+#include "motion_diagnostics_api.hpp"
+#endif
 #ifdef MINECOME_HUD_LIVE_MOUSE
 #ifdef MINECOME_HUD_SELECTIVE_MOUSE
 #include "selective_capture_api.hpp"
@@ -50,6 +53,10 @@ namespace api = reshade::api;
 namespace hud = minecome::hud;
 namespace st = minecome::hud::stream;
 namespace ui = minecome::hud::input;
+#ifdef MINECOME_HUD_MOTION_FILTER
+namespace motion = minecome::motion;
+motion::ReadDiagnostics motion_diagnostics=nullptr;
+#endif
 #ifdef MINECOME_HUD_WORLD_CLICKS
 namespace world = minecome::hud::world;
 #endif
@@ -77,7 +84,17 @@ void write_mouse_receipt(const mouse::Notice &notice,std::string_view run) {
         <<",\"mode\":"<<static_cast<unsigned>(snapshot.mode)<<",\"axis_records_delivered\":"<<snapshot.axis_records_delivered
         <<",\"button_records_filtered\":"<<snapshot.button_records_filtered<<",\"buffer_overflows\":"<<snapshot.buffer_overflows
 #endif
-        <<",\"live_verified\":false}";
+        ;
+#ifdef MINECOME_HUD_MOTION_FILTER
+    motion::Snapshot routes;
+    const bool sampled=motion_diagnostics&&motion_diagnostics(&routes);
+    line<<",\"motion_routes_sampled\":"<<(sampled?"true":"false");
+    if(sampled)line<<",\"state_xy_observed\":"<<routes.state_xy_observed<<",\"state_xy_passed\":"<<routes.state_xy_passed
+        <<",\"window_moves_passed\":"<<routes.window_moves_passed<<",\"raw_moves_passed\":"<<routes.raw_moves_passed
+        <<",\"raw_mixed_blocked\":"<<routes.raw_mixed_blocked<<",\"raw_buffer_blocked\":"<<routes.raw_buffer_blocked
+        <<",\"hook_motion_blocked\":"<<routes.hook_motion_blocked;
+#endif
+    line<<",\"live_verified\":false}";
     reshade::log::message(reshade::log::level::info,line.str().c_str());
 }
 void drain_mouse_receipts(std::string_view run) {
@@ -888,7 +905,10 @@ void on_begin(api::effect_runtime *runtime, api::command_list *commands, api::re
     } catch (...) { fail(state,5); hide(runtime,state); }
 }
 } // namespace
-#ifdef MINECOME_HUD_SELECTIVE_MOUSE
+#ifdef MINECOME_HUD_MOTION_FILTER
+extern "C" __declspec(dllexport) const char *NAME="MineCome bounded Minecraft motion filter lab";
+extern "C" __declspec(dllexport) const char *DESCRIPTION="Exact KCD2 tools/D3D12 genuine HUD; selective DI capture and button-free movement messages; full inventory capture, one F8 activation, at most 30 seconds and sixteen clicks. Fixed-cell stone target.";
+#elif defined(MINECOME_HUD_SELECTIVE_MOUSE)
 extern "C" __declspec(dllexport) const char *NAME="MineCome bounded Minecraft selective mouse lab";
 extern "C" __declspec(dllexport) const char *DESCRIPTION="Exact KCD2 tools/D3D12 genuine HUD; world clicks with KCD camera look, full inventory capture; one F8 activation, at most 30 seconds and sixteen clicks. Fixed-cell stone target.";
 #elif defined(MINECOME_HUD_WORLD_CLICKS)
@@ -915,6 +935,12 @@ extern "C" __declspec(dllexport) bool AddonInit(HMODULE addon, HMODULE reshade_m
         mouse_api=get_api?get_api(mouse::api_version,sizeof(mouse::Api)):nullptr;
         if(!mouse_api||mouse_api->version!=mouse::api_version||mouse_api->size!=sizeof(mouse::Api)||!mouse_api->query||!mouse_api->request||!mouse_api->release)
             throw std::runtime_error("custom_mouse_runtime_required");
+#endif
+#ifdef MINECOME_HUD_MOTION_FILTER
+        motion_diagnostics=reinterpret_cast<motion::ReadDiagnostics>(GetProcAddress(reshade_module,"MineComeReadMotionDiagnostics"));
+        motion::Snapshot routes;
+        if(!motion_diagnostics||!motion_diagnostics(&routes)||routes.version!=motion::api_version||routes.size!=sizeof(routes))
+            throw std::runtime_error("motion_diagnostics_runtime_required");
 #endif
         service=new Service(addon);
         if (!service->stop || service->config.empty()) throw std::runtime_error("service_init");

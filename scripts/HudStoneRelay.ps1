@@ -47,12 +47,13 @@ function New-MineComeHudStoneRelay($Context,[string]$Directory,[string]$Run,[lon
         Stdout=(Join-Path $relayHome 'relay.log');Stderr=(Join-Path $relayHome 'relay-errors.log');Process=$null
         ProcessId=0;ProcessStart=$null;Preflight=$null;Probe=$null;StartAttempted=$false;StopAttempted=$false
         Ready=$false;CleanupVerified=$false;ExitObserved=$false;ExitCode=$null;EngineMirroringVerified=$false;TransportAuthVerified=$false
-        Failure=$null;CleanupFailure=$null;GuestVerificationFailure=$null;LastIntentUtcMs=0L
+        Failure=$null;CleanupFailure=$null;GuestVerificationFailure=$null;LastIntentUtcMs=0L;ReceiptAudit=$null;ReceiptAuditFailure=$null
         Intents=[Collections.Generic.List[object]]::new();Native=$null
     }
 }
-function ConvertFrom-MineComeHudStoneRelayLog([string]$Text) {
+function ConvertFrom-MineComeHudStoneRelayLog([string]$Text,[switch]$Completed) {
     if($Text.Length -gt 2MB){throw 'Relay text exceeds its bounded extent.'}
+    if($Completed -and $Text.Length -gt 0 -and -not $Text.EndsWith("`n")){throw 'Completed relay log ends with an incomplete line.'}
     $begins=[Collections.Generic.List[string]]::new();$ends=[Collections.Generic.List[string]]::new()
     $results=[Collections.Generic.List[object]]::new();$dispatches=[Collections.Generic.List[object]]::new();$events=[Collections.Generic.List[object]]::new();$acks=[Collections.Generic.List[object]]::new()
     $world=$false;$authenticated=$false;$summary=$null
@@ -62,6 +63,7 @@ function ConvertFrom-MineComeHudStoneRelayLog([string]$Text) {
         elseif($line -match '^STONE_CLEANUP_ACK session=([1-9][0-9]{0,15})$'){$ends.Add($Matches[1])}
         elseif($line -match '^STONE_INPUT_DISPATCH request=([1-9][0-9]{0,15}) action=([12])$'){$dispatches.Add([pscustomobject]@{request_id=[long]$Matches[1];action=[int]$Matches[2]})}
         elseif($line -match '^STONE_INPUT_RESULT request=([1-9][0-9]{0,15}) action=([12]) result=([1-7])$'){$results.Add([pscustomobject]@{request_id=[long]$Matches[1];action=[int]$Matches[2];result=[int]$Matches[3]})}
+        elseif($line.Contains('STONE_INPUT_RESULT')){throw 'Malformed polled stone result receipt.'}
         elseif($line -match '^STONE_ENGINE_ACK session=([1-9][0-9]{0,15}) sequence=([1-9][0-9]{0,15}) result=(spawned|already_present|removed|absent)$'){$acks.Add([pscustomobject]@{session=$Matches[1];sequence=$Matches[2];result=$Matches[3]})}
         elseif($line -match '^KCD2_LOG .*\[MineComeBlock\] (\{[^\r\n]*\})$'){
             $r=$Matches[1] | ConvertFrom-Json -Depth 8
@@ -78,9 +80,78 @@ function ConvertFrom-MineComeHudStoneRelayLog([string]$Text) {
     [pscustomobject]@{begin_sessions=@($begins.ToArray());cleanup_sessions=@($ends.ToArray());dispatches=@($dispatches.ToArray());results=@($results.ToArray());events=@($events.ToArray());engine_acks=@($acks.ToArray());fresh_world=$world;authenticated=$authenticated;summary=$summary}
 }
 function Update-MineComeHudStoneRelayEvidence($Session) {
-    if(Test-Path -LiteralPath $Session.Stdout){$Session.Native=ConvertFrom-MineComeHudStoneRelayLog (Read-MineComeHudStoneText $Session.Stdout)}
-    $transportLog=Join-Path $Session.Home 'runtime/logs/tools-bridge.log'
-    if(Test-Path -LiteralPath $transportLog){$Session.TransportAuthVerified=(Read-MineComeHudStoneText $transportLog) -match '(?m)^[0-9]+ HELLO authenticated; protocol 1\.1 session ready; peer role=minecraft\r?$'}
+    $Session.TransportAuthVerified=$false;$Session.ReceiptAudit=$null
+    try {
+        if(Test-Path -LiteralPath $Session.Stdout){
+            $Session.Native=ConvertFrom-MineComeHudStoneRelayLog (Read-MineComeHudStoneText $Session.Stdout) -Completed:$Session.ExitObserved
+            $Session.Native | Add-Member NoteProperty polled_results @($Session.Native.results)
+            $Session.Native.results=@()
+        }
+        $transportLog=Join-Path $Session.Home 'runtime/logs/tools-bridge.log'
+        if(Test-Path -LiteralPath $transportLog){
+            $Session.ReceiptAudit=ConvertFrom-MineComeHudStoneReceiptAudit (Read-MineComeHudStoneText $transportLog) -Completed:$Session.ExitObserved
+            if($Session.Native){
+                Assert-MineComeHudStoneReceiptOverlap $Session.ReceiptAudit.results $Session.Native.polled_results -Completed:$Session.ExitObserved
+                $Session.Native.results=@($Session.ReceiptAudit.results)
+            }
+            $Session.TransportAuthVerified=$Session.ReceiptAudit.authenticated -and -not $Session.ReceiptAuditFailure
+        }elseif($Session.ExitObserved){throw 'Canonical stone receipt audit file is missing.'}
+    }catch{
+        # Preserve cleanup and failure evidence even when its action audit is bad.
+        # A later read cannot erase an already observed malformed/mismatched receipt.
+        if(-not $Session.ReceiptAuditFailure){$Session.ReceiptAuditFailure=$_.Exception.Message}
+        $Session.EngineMirroringVerified=$false
+        if($Session.Native){$Session.Native.results=@()}
+    }
+    if(-not $Session.TransportAuthVerified){$Session.EngineMirroringVerified=$false}
+}
+function ConvertFrom-MineComeHudStoneReceiptAudit([string]$Text,[switch]$Completed) {
+    if($Text.Length -gt 2MB){throw 'Stone receipt audit exceeds its bounded extent.'}
+    if($Completed -and $Text.Length -gt 0 -and -not $Text.EndsWith("`n")){throw 'Stone receipt audit ends with an incomplete line.'}
+    $results=[Collections.Generic.List[object]]::new();$ids=[Collections.Generic.HashSet[long]]::new()
+    $anchor=$null;$helloCount=0;$ended=$false;[uint64]$lastSequence=1;[uint64]$lastTime=0
+    function AuditNumber([string]$Value){
+        [uint64]$parsed=0
+        if($Value -cnotmatch '^[1-9][0-9]{0,19}$' -or -not [uint64]::TryParse($Value,[ref]$parsed)){throw 'Stone receipt audit integer is invalid.'}
+        $parsed
+    }
+    foreach($line in ($Text -split "`n" | Select-Object -SkipLast 1)){
+        $line=$line.TrimEnd("`r")
+        if($line -match '^[0-9]+ HELLO authenticated; '){
+            $helloCount++
+            if($helloCount -ne 1 -or $line -cnotmatch '^[0-9]+ HELLO authenticated; protocol 1\.1 session ready; peer role=minecraft$'){throw 'Stone receipt audit requires one authenticated Minecraft 1.1 session.'}
+        }
+        if($line -match '^[0-9]+ session ended: '){$ended=$true}
+        if(-not $line.Contains('STONE_INPUT_AUDIT')){continue}
+        if($line -cmatch '^([1-9][0-9]{0,19}) STONE_INPUT_AUDIT_SESSION schema=1 connection=([1-9][0-9]{0,19}) reset=([1-9][0-9]{0,19})$'){
+            if($null -ne $anchor -or $helloCount -ne 1 -or $ended){throw 'Stone receipt audit has an ambiguous or unauthenticated session anchor.'}
+            $fields=@(1..3 | ForEach-Object {$Matches[$_]})
+            $stamp=AuditNumber $fields[0];$connection=AuditNumber $fields[1];$reset=AuditNumber $fields[2]
+            $anchor=[pscustomobject]@{connection_generation=$connection;reset_generation=$reset};$lastTime=$stamp
+        }elseif($line -cmatch '^([1-9][0-9]{0,19}) STONE_INPUT_AUDIT schema=1 connection=([1-9][0-9]{0,19}) reset=([1-9][0-9]{0,19}) order=([1-9][0-9]{0,19}) sequence=([1-9][0-9]{0,19}) request=([1-9][0-9]{0,15}) action=([12]) result=([1-7])$'){
+            # Copy captures before helper regex checks change PowerShell's $Matches.
+            $fields=@(1..8 | ForEach-Object {$Matches[$_]})
+            $stamp=AuditNumber $fields[0];$connection=AuditNumber $fields[1];$reset=AuditNumber $fields[2]
+            $order=AuditNumber $fields[3];$sequence=AuditNumber $fields[4];$id=[long](AuditNumber $fields[5])
+            if($null -eq $anchor -or $ended -or $connection -ne $anchor.connection_generation -or $reset -ne $anchor.reset_generation){throw 'Stone receipt audit result belongs to another or closed session.'}
+            if($results.Count -ge 16 -or $order -ne $results.Count+1 -or $sequence -le $lastSequence -or $stamp -lt $lastTime -or $id -gt 9007199254740991 -or -not $ids.Add($id)){throw 'Stone receipt audit has duplicate, out-of-order or excessive results.'}
+            $results.Add([pscustomobject]@{request_id=$id;action=[int]$fields[6];result=[int]$fields[7];connection_generation=$connection;reset_generation=$reset;receive_order=$order;wire_sequence=$sequence})
+            $lastSequence=$sequence;$lastTime=$stamp
+        }else{throw 'Malformed or unsupported stone receipt audit record.'}
+    }
+    if($Completed -and $null -eq $anchor){throw 'Stone receipt audit session anchor is missing.'}
+    [pscustomobject]@{schema=1;kind='minecome_stone_receipt_audit_v1';authenticated=($null -ne $anchor);session=$anchor;results=@($results.ToArray());completed=[bool]$Completed}
+}
+function Assert-MineComeHudStoneReceiptOverlap($AuditResults,$PolledResults,[switch]$Completed) {
+    $seen=[Collections.Generic.HashSet[long]]::new();[uint64]$lastOrder=0
+    foreach($result in $PolledResults){
+        if(-not $seen.Add($result.request_id)){throw 'Duplicate polled stone result receipt.'}
+        $matches=@($AuditResults | Where-Object request_id -eq $result.request_id)
+        if($matches.Count -eq 0){if($Completed){throw 'Polled stone result has no canonical audit receipt.'};continue}
+        $audit=$matches[0]
+        if($matches.Count -ne 1 -or $audit.action -ne $result.action -or $audit.result -ne $result.result -or $audit.receive_order -le $lastOrder){throw 'Polled stone result differs from its canonical audit receipt.'}
+        $lastOrder=$audit.receive_order
+    }
 }
 function Assert-MineComeHudStoneRelay($Session) {
     Assert-MineComeProbeContext $Session.Context
@@ -166,6 +237,7 @@ function Assert-MineComeHudStoneRelayGuest($Session,$Guest) {
         function Integer($Value){if($Value -isnot [int] -and $Value -isnot [long]){throw 'Relay/guest integer receipt invalid.'}}
         Update-MineComeHudStoneRelayEvidence $Session
         $native=$Session.Native;$proof=$Guest.lab_evidence.stone_bridge
+        if($Session.ReceiptAuditFailure -or -not $Session.ReceiptAudit -or -not $Session.ReceiptAudit.completed){throw ('Canonical stone receipt audit is incomplete or invalid: '+$Session.ReceiptAuditFailure)}
         if($Session.Failure -or $Guest.result -cne 'input_completed'){throw 'Only a completed live guest run can verify engine mirroring.'}
         foreach($field in @('ui_input_stone_bridge','ui_input_stone_live','ui_input_live_mouse','ui_input_offscreen_presentation')){Flag $Guest.$field $true}
         foreach($field in @('ui_input_stone_fixture','ui_input_fixture','ui_input_pointer_fixture','ui_input_delay_fixture','ui_input_background_trial','ui_input_offscreen_trial')){Flag $Guest.$field $false}
@@ -209,7 +281,7 @@ function Get-MineComeHudStoneRelayEvidence($Session) {
         package_hash=$(if($Session.Preflight){$Session.Preflight.PakHash}else{$null});manifest_hash=$(if($Session.Preflight){$Session.Preflight.ManifestHash}else{$null})
         ready=$Session.Ready;exit_observed=$Session.ExitObserved;exit_code=$Session.ExitCode;cleanup_verified=$Session.CleanupVerified
         engine_mirroring_verified=$Session.EngineMirroringVerified;transport_auth_verified=$Session.TransportAuthVerified;visual_verified=$false;physical_block_input_verified=$false
-        intents=@($Session.Intents.ToArray());native=$Session.Native;failure=$Session.Failure;cleanup_failure=$Session.CleanupFailure;guest_verification_failure=$Session.GuestVerificationFailure
+        intents=@($Session.Intents.ToArray());native=$Session.Native;receipt_audit=$Session.ReceiptAudit;receipt_audit_failure=$Session.ReceiptAuditFailure;failure=$Session.Failure;cleanup_failure=$Session.CleanupFailure;guest_verification_failure=$Session.GuestVerificationFailure
         kcd_launched=$false;kcd_stopped=$false;other_processes_stopped=$false;credentials_recorded=$false
     }
 }

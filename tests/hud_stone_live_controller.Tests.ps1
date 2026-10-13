@@ -99,6 +99,7 @@ foreach($expected in @($false,$true)){
     }
 }
 $bundleNode=$controller.Find({param($n)$n -is [Management.Automation.Language.IfStatementAst] -and $n.Extent.Text.StartsWith('if(-not $BundleDirectory)') -and $n.Extent.Text.Contains('runtime/hud-compositor-selective')},$true)
+$SelectiveRevision=1
 Check ($null -ne $bundleNode) 'Controller has an explicit separate selective bundle default'
 $bundleSelector=[scriptblock]::Create($bundleNode.Extent.Text)
 foreach($bundleCase in @(
@@ -413,7 +414,13 @@ $integrationDirectory=Join-Path $root ('runtime/evidence/hud-stone-controller-co
 $context=[pscustomobject]@{ProjectRoot=$root;GamePid=42;GameStartedUtc=[DateTime]'2026-10-13T00:00:00Z';GameHash=('a'*64)}
 $session=New-MineComeHudStoneRelay $context $integrationDirectory $run ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()+180000)
 [IO.Directory]::CreateDirectory((Join-Path $session.Home 'runtime/logs'))|Out-Null
-[IO.File]::WriteAllText((Join-Path $session.Home 'runtime/logs/tools-bridge.log'),"123 HELLO authenticated; protocol 1.1 session ready; peer role=minecraft`n")
+$auditLines=@(
+    '123 HELLO authenticated; protocol 1.1 session ready; peer role=minecraft',
+    '124 STONE_INPUT_AUDIT_SESSION schema=1 connection=1 reset=3',
+    '200 STONE_INPUT_AUDIT schema=1 connection=1 reset=3 order=1 sequence=10 request=17 action=1 result=1',
+    '300 STONE_INPUT_AUDIT schema=1 connection=1 reset=3 order=2 sequence=12 request=18 action=2 result=1'
+)
+[IO.File]::WriteAllText((Join-Path $session.Home 'runtime/logs/tools-bridge.log'),($auditLines -join "`n")+"`n")
 $nativeLines=@(
     'Official tools console binding verified; waiting for fresh in-game diagnostic log receipt',
     'KCD2_LOG prefix [MineComePose] {"schema":1,"player":{"x":1,"y":2,"z":3},"camera":{"x":1,"y":2,"z":4}}',

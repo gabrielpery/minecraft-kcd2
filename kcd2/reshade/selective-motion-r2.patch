@@ -1,0 +1,263 @@
+diff --git a/source/input_windows.cpp b/source/input_windows.cpp
+index d022aeb..80f6960 100644
+--- a/source/input_windows.cpp
++++ b/source/input_windows.cpp
+@@ -25,6 +25,13 @@ static std::atomic<bool> s_block_mouse = false;
+ static std::atomic<bool> s_block_keyboard = false;
+ static std::atomic<bool> s_block_cursor_warping = false;
+ 
++// MineCome API v2: owned button capture keeps the host's relative camera recenter path.
++bool MineComeSelectiveCursorLook();
++bool MineComeAllowMotionMessage(MSG *message);
++bool MineComeAllowMotionPost(HWND window, WPARAM *keys);
++void MineComeObserveBlockedRawMouse();
++void MineComeObserveBlockedHookMotion();
++
+ extern "C" BOOL WINAPI HookClipCursor(const RECT *lpRect);
+ extern "C" auto WINAPI HookGetKeyState(int vKey) -> SHORT;
+ extern "C" auto WINAPI HookGetAsyncKeyState(int vKey) -> SHORT;
+@@ -364,12 +371,16 @@ void reshade::input::block_mouse_cursor_warping(bool enable)
+ {
+ 	static const auto ClipCursor_trampoline = reshade::hooks::is_hooked(ClipCursor) ? reshade::hooks::call(HookClipCursor, ClipCursor) : ClipCursor;
+ 
++	// Owned button capture preserves the game's saved clipping rectangle; keep
++	// the broad blocking flag so lease loss still blocks cursor warping.
++	const bool selective_look = MineComeSelectiveCursorLook();
++
+ 	// Some games setup ClipCursor with a tiny area which could make the cursor stay in that area instead of the whole window
+-	if (enable)
++	if (enable && !selective_look)
+ 	{
+ 		ClipCursor_trampoline(nullptr);
+ 	}
+-	else if (_block_cursor_warping && (s_last_clip_cursor.right - s_last_clip_cursor.left) != 0 && (s_last_clip_cursor.bottom - s_last_clip_cursor.top) != 0)
++	else if ((_block_cursor_warping || selective_look) && (s_last_clip_cursor.right - s_last_clip_cursor.left) != 0 && (s_last_clip_cursor.bottom - s_last_clip_cursor.top) != 0)
+ 	{
+ 		// Restore previous clipping rectangle when not blocking mouse input
+ 		ClipCursor_trampoline(&s_last_clip_cursor);
+@@ -456,7 +467,7 @@ extern "C" BOOL WINAPI HookGetMessageA(LPMSG lpMsg, HWND hWnd, UINT wMsgFilterMi
+ 
+ 	assert(lpMsg != nullptr);
+ 
+-	if (lpMsg->hwnd != nullptr && reshade::input::handle_window_message(lpMsg))
++	if (lpMsg->hwnd != nullptr && reshade::input::handle_window_message(lpMsg) && !MineComeAllowMotionMessage(lpMsg))
+ 	{
+ 		// We still want 'WM_CHAR' messages, so translate message
+ 		TranslateMessage(lpMsg);
+@@ -510,7 +521,7 @@ extern "C" BOOL WINAPI HookGetMessageW(LPMSG lpMsg, HWND hWnd, UINT wMsgFilterMi
+ 
+ 	assert(lpMsg != nullptr);
+ 
+-	if (lpMsg->hwnd != nullptr && reshade::input::handle_window_message(lpMsg))
++	if (lpMsg->hwnd != nullptr && reshade::input::handle_window_message(lpMsg) && !MineComeAllowMotionMessage(lpMsg))
+ 	{
+ 		// We still want 'WM_CHAR' messages, so translate message
+ 		TranslateMessage(lpMsg);
+@@ -528,7 +539,7 @@ extern "C" BOOL WINAPI HookPeekMessageA(LPMSG lpMsg, HWND hWnd, UINT wMsgFilterM
+ 	if (!trampoline(lpMsg, hWnd, wMsgFilterMin, wMsgFilterMax, wRemoveMsg) || lpMsg == nullptr)
+ 		return FALSE;
+ 
+-	if (lpMsg->hwnd != nullptr && (wRemoveMsg & PM_REMOVE) != 0 && reshade::input::handle_window_message(lpMsg))
++	if (lpMsg->hwnd != nullptr && (wRemoveMsg & PM_REMOVE) != 0 && reshade::input::handle_window_message(lpMsg) && !MineComeAllowMotionMessage(lpMsg))
+ 	{
+ 		// We still want 'WM_CHAR' messages, so translate message
+ 		TranslateMessage(lpMsg);
+@@ -545,7 +556,7 @@ extern "C" BOOL WINAPI HookPeekMessageW(LPMSG lpMsg, HWND hWnd, UINT wMsgFilterM
+ 	if (!trampoline(lpMsg, hWnd, wMsgFilterMin, wMsgFilterMax, wRemoveMsg) || lpMsg == nullptr)
+ 		return FALSE;
+ 
+-	if (lpMsg->hwnd != nullptr && (wRemoveMsg & PM_REMOVE) != 0 && reshade::input::handle_window_message(lpMsg))
++	if (lpMsg->hwnd != nullptr && (wRemoveMsg & PM_REMOVE) != 0 && reshade::input::handle_window_message(lpMsg) && !MineComeAllowMotionMessage(lpMsg))
+ 	{
+ 		// We still want 'WM_CHAR' messages, so translate message
+ 		TranslateMessage(lpMsg);
+@@ -560,7 +571,7 @@ extern "C" BOOL WINAPI HookPeekMessageW(LPMSG lpMsg, HWND hWnd, UINT wMsgFilterM
+ extern "C" BOOL WINAPI HookPostMessageA(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam)
+ {
+ 	// Do not allow mouse movement simulation while we block input
+-	if (reshade::input::is_blocking_any_mouse_input(hWnd) && Msg == WM_MOUSEMOVE)
++	if (reshade::input::is_blocking_any_mouse_input(hWnd) && Msg == WM_MOUSEMOVE && !MineComeAllowMotionPost(hWnd, &wParam))
+ 		return TRUE;
+ 
+ 	static const auto trampoline = reshade::hooks::call(HookPostMessageA);
+@@ -568,7 +579,7 @@ extern "C" BOOL WINAPI HookPostMessageA(HWND hWnd, UINT Msg, WPARAM wParam, LPAR
+ }
+ extern "C" BOOL WINAPI HookPostMessageW(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam)
+ {
+-	if (reshade::input::is_blocking_any_mouse_input(hWnd) && Msg == WM_MOUSEMOVE)
++	if (reshade::input::is_blocking_any_mouse_input(hWnd) && Msg == WM_MOUSEMOVE && !MineComeAllowMotionPost(hWnd, &wParam))
+ 		return TRUE;
+ 
+ 	static const auto trampoline = reshade::hooks::call(HookPostMessageW);
+@@ -620,7 +631,7 @@ extern "C" BOOL WINAPI HookClipCursor(const RECT *lpRect)
+ {
+ 	s_last_clip_cursor = (lpRect != nullptr) ? *lpRect : RECT {};
+ 
+-	if (reshade::input::is_blocking_any_mouse_input() || reshade::input::is_blocking_any_mouse_cursor_warping())
++	if ((reshade::input::is_blocking_any_mouse_input() || reshade::input::is_blocking_any_mouse_cursor_warping()) && !MineComeSelectiveCursorLook())
+ 		// Some applications clip the mouse cursor, so disable that while we want full control over mouse input
+ 		lpRect = nullptr;
+ 
+@@ -633,7 +644,7 @@ extern "C" BOOL WINAPI HookSetCursorPosition(int X, int Y)
+ 	s_last_cursor_position.x = X;
+ 	s_last_cursor_position.y = Y;
+ 
+-	if (reshade::input::is_blocking_any_mouse_cursor_warping())
++	if (reshade::input::is_blocking_any_mouse_cursor_warping() && !MineComeSelectiveCursorLook())
+ 		return TRUE;
+ 
+ 	static const auto trampoline = reshade::hooks::call(HookSetCursorPosition);
+@@ -641,7 +652,7 @@ extern "C" BOOL WINAPI HookSetCursorPosition(int X, int Y)
+ }
+ extern "C" BOOL WINAPI HookGetCursorPosition(LPPOINT lpPoint)
+ {
+-	if (reshade::input::is_blocking_any_mouse_input())
++	if (reshade::input::is_blocking_any_mouse_input() && !MineComeSelectiveCursorLook())
+ 	{
+ 		assert(lpPoint != nullptr);
+ 
+@@ -732,6 +743,7 @@ extern "C" UINT WINAPI HookGetRawInputBuffer(PRAWINPUT pData, PUINT pcbSize, UIN
+ 		case RIM_TYPEMOUSE:
+ 			if (reshade::input::is_blocking_any_mouse_input())
+ 			{
++				MineComeObserveBlockedRawMouse();
+ 				pData->header.hDevice = nullptr;
+ 				pData->header.wParam = RIM_INPUTSINK;
+ 
+@@ -768,7 +780,11 @@ static concurrency::concurrent_unordered_map<UINT64, std::pair<HHOOK, HOOKPROC>>
+ template <DWORD hook_id, bool(*is_blocking_input)(reshade::input::window_handle)>
+ static LRESULT CALLBACK handle_windows_hook(int nCode, WPARAM wParam, LPARAM lParam)
+ {
+-	if ((nCode == HC_ACTION || nCode == HC_NOREMOVE) && !is_blocking_input(nullptr))
++	const bool blocked = is_blocking_input(nullptr);
++	if constexpr (hook_id == WH_MOUSE || hook_id == WH_MOUSE_LL)
++		if ((nCode == HC_ACTION || nCode == HC_NOREMOVE) && blocked && wParam == WM_MOUSEMOVE)
++			MineComeObserveBlockedHookMotion();
++	if ((nCode == HC_ACTION || nCode == HC_NOREMOVE) && !blocked)
+ 	{
+ 		const UINT64 global_lookup_key = (static_cast<UINT64>(hook_id) << 32);
+ 		const UINT64 thread_lookup_key = GetCurrentThreadId() | global_lookup_key;
+diff --git a/source/windows/dinput8.cpp b/source/windows/dinput8.cpp
+index f17df2a..c7cab96 100644
+--- a/source/windows/dinput8.cpp
++++ b/source/windows/dinput8.cpp
+@@ -11,13 +11,82 @@
+ #include "hook_manager.hpp"
+ #include "input.hpp"
+ #include "lockfree_linear_map.hpp"
++#include "motion_capture_adapter.hpp"
+ 
+ lockfree_linear_map<IUnknown *, BYTE, 64> g_dinput_device_type;
+ 
++
++// MineCome: SDK-derived interface slots (IUnknown0..2; IDirectInputDevice8
++// GetProperty5, SetProperty6, GetDeviceState9, GetDeviceData10, SetDataFormat11,
++// SetCooperativeLevel13, Initialize17, SetActionMap30). No engine offsets.
++namespace mc = minecome::selective::adapter;
++template<class Device> bool MineComeReadRelative(Device *device) {
++    DIPROPDWORD value{};value.diph={sizeof(value),sizeof(value.diph),0,DIPH_DEVICE};
++    return SUCCEEDED(device->GetProperty(DIPROP_AXISMODE,&value.diph))&&mc::relative_property(&value.diph);
++}
++#define MineComeMouseHooks(encoding, chartype) \
++HRESULT STDMETHODCALLTYPE IDirectInputDevice8##encoding##_GetDeviceState(IDirectInputDevice8##encoding *,DWORD,LPVOID); \
++HRESULT STDMETHODCALLTYPE IDirectInputDevice8##encoding##_GetDeviceData(IDirectInputDevice8##encoding *,DWORD,LPDIDEVICEOBJECTDATA,LPDWORD,DWORD); \
++bool MineComeDrain##encoding(IDirectInputDevice8##encoding *device,std::uint32_t bytes) { \
++    return mc::drain(bytes,[&](DWORD count,LPVOID data){return reshade::hooks::call(IDirectInputDevice8##encoding##_GetDeviceState,reshade::hooks::vtable_from_instance(device)+9)(device,count,data);}, \
++        [&](DWORD count,LPDIDEVICEOBJECTDATA data,LPDWORD received,DWORD flags){return reshade::hooks::call(IDirectInputDevice8##encoding##_GetDeviceData,reshade::hooks::vtable_from_instance(device)+10)(device,count,data,received,flags);}); \
++} \
++HRESULT STDMETHODCALLTYPE MineComeQuery##encoding(IDirectInputDevice8##encoding *device,REFIID iid,LPVOID *out) { \
++    const auto hr=reshade::hooks::call(MineComeQuery##encoding,reshade::hooks::vtable_from_instance(device)+0)(device,iid,out); \
++    if(SUCCEEDED(hr)&&out&&*out&&(*out!=device||(iid!=IID_IUnknown&&iid!=IID_IDirectInputDevice8##encoding))) {mc::Guard lock;mc::policy.unsupported(reinterpret_cast<std::uintptr_t>(device));} \
++    return hr; \
++} \
++ULONG STDMETHODCALLTYPE MineComeRelease##encoding(IDirectInputDevice8##encoding *device) { \
++    const auto refs=reshade::hooks::call(MineComeRelease##encoding,reshade::hooks::vtable_from_instance(device)+2)(device); \
++    if(!refs){mc::Guard lock;mc::policy.remove(reinterpret_cast<std::uintptr_t>(device));}return refs; \
++} \
++HRESULT STDMETHODCALLTYPE MineComeFormat##encoding(IDirectInputDevice8##encoding *device,LPCDIDATAFORMAT format) { \
++    const auto key=reinterpret_cast<std::uintptr_t>(device);bool tracked=false; \
++    {mc::Guard lock;tracked=mc::policy.known(key);if(tracked)mc::policy.format(key,0,false);} \
++    const auto hr=reshade::hooks::call(MineComeFormat##encoding,reshade::hooks::vtable_from_instance(device)+11)(device,format); \
++    if(SUCCEEDED(hr)&&tracked){const auto bytes=mc::canonical_format(format);const bool relative=MineComeReadRelative(device);mc::Guard lock;mc::policy.format(key,bytes,relative);}return hr; \
++} \
++HRESULT STDMETHODCALLTYPE MineComeProperty##encoding(IDirectInputDevice8##encoding *device,REFGUID property,LPCDIPROPHEADER value) { \
++    const auto key=reinterpret_cast<std::uintptr_t>(device);bool tracked=false; \
++    {mc::Guard lock;tracked=mc::policy.known(key);if(tracked){if(&property==&DIPROP_AXISMODE)mc::policy.axis(key,false);else mc::policy.invalidate(minecome::selective::Reason::configuration_changed);}} \
++    const auto hr=reshade::hooks::call(MineComeProperty##encoding,reshade::hooks::vtable_from_instance(device)+6)(device,property,value); \
++    if(tracked&&&property==&DIPROP_AXISMODE){const bool relative=MineComeReadRelative(device);mc::Guard lock;mc::policy.axis(key,relative);}return hr; \
++} \
++HRESULT STDMETHODCALLTYPE MineComeCooperative##encoding(IDirectInputDevice8##encoding *device,HWND window,DWORD flags) { \
++    const auto key=reinterpret_cast<std::uintptr_t>(device); \
++    {mc::Guard lock;if(mc::policy.known(key))mc::policy.invalidate(minecome::selective::Reason::configuration_changed);} \
++    const auto hr=reshade::hooks::call(MineComeCooperative##encoding,reshade::hooks::vtable_from_instance(device)+13)(device,window,flags); \
++    if(SUCCEEDED(hr)){mc::Guard lock;mc::policy.cooperative(key,reinterpret_cast<std::uintptr_t>(window));}return hr; \
++} \
++HRESULT STDMETHODCALLTYPE MineComeInitialize##encoding(IDirectInputDevice8##encoding *device,HINSTANCE instance,DWORD version,REFGUID guid) { \
++    {mc::Guard lock;const auto key=reinterpret_cast<std::uintptr_t>(device);mc::policy.format(key,0,false);mc::policy.unsupported(key);} \
++    return reshade::hooks::call(MineComeInitialize##encoding,reshade::hooks::vtable_from_instance(device)+17)(device,instance,version,guid); \
++} \
++HRESULT STDMETHODCALLTYPE MineComeActionMap##encoding(IDirectInputDevice8##encoding *device,LPDIACTIONFORMAT##encoding format,const chartype *user,DWORD flags) { \
++    {mc::Guard lock;const auto key=reinterpret_cast<std::uintptr_t>(device);mc::policy.format(key,0,false);mc::policy.unsupported(key);} \
++    return reshade::hooks::call(MineComeActionMap##encoding,reshade::hooks::vtable_from_instance(device)+30)(device,format,user,flags); \
++} \
++void MineComeInstall##encoding(IDirectInputDevice8##encoding *device) { \
++    auto *table=reshade::hooks::vtable_from_instance(device);bool okay=true; \
++    okay=reshade::hooks::install("MineCome DI8" #encoding " QueryInterface",table,0,&MineComeQuery##encoding)&&okay; \
++    okay=reshade::hooks::install("MineCome DI8" #encoding " Release",table,2,&MineComeRelease##encoding)&&okay; \
++    okay=reshade::hooks::install("MineCome DI8" #encoding " SetProperty",table,6,&MineComeProperty##encoding)&&okay; \
++    okay=reshade::hooks::install("MineCome DI8" #encoding " GetDeviceState",table,9,&IDirectInputDevice8##encoding##_GetDeviceState)&&okay; \
++    okay=reshade::hooks::install("MineCome DI8" #encoding " GetDeviceData",table,10,&IDirectInputDevice8##encoding##_GetDeviceData)&&okay; \
++    okay=reshade::hooks::install("MineCome DI8" #encoding " SetDataFormat",table,11,&MineComeFormat##encoding)&&okay; \
++    okay=reshade::hooks::install("MineCome DI8" #encoding " SetCooperativeLevel",table,13,&MineComeCooperative##encoding)&&okay; \
++    okay=reshade::hooks::install("MineCome DI8" #encoding " Initialize",table,17,&MineComeInitialize##encoding)&&okay; \
++    okay=reshade::hooks::install("MineCome DI8" #encoding " SetActionMap",table,30,&MineComeActionMap##encoding)&&okay; \
++    mc::Guard lock;mc::policy.add(reinterpret_cast<std::uintptr_t>(device),okay); \
++}
++MineComeMouseHooks(A,char)
++MineComeMouseHooks(W,wchar_t)
++
+ #define IDirectInputDevice8_GetDeviceState_Impl(vtable_index, encoding) \
+ 	HRESULT STDMETHODCALLTYPE IDirectInputDevice8##encoding##_GetDeviceState(IDirectInputDevice8##encoding *pDevice, DWORD cbData, LPVOID lpvData) \
+ 	{ \
+ 		const HRESULT hr = reshade::hooks::call(IDirectInputDevice8##encoding##_GetDeviceState, reshade::hooks::vtable_from_instance(pDevice) + vtable_index)(pDevice, cbData, lpvData); \
++		if (minecome::motion::adapter::after_state(reinterpret_cast<std::uintptr_t>(pDevice),cbData,lpvData,hr,[&](std::uint32_t bytes){return MineComeDrain##encoding(pDevice,bytes);}))return hr; \
+ 		if (SUCCEEDED(hr)) \
+ 		{ \
+ 			switch (g_dinput_device_type.at(pDevice)) \
+@@ -44,7 +113,11 @@ IDirectInputDevice8_GetDeviceState_Impl(9, W)
+ 	HRESULT STDMETHODCALLTYPE IDirectInputDevice8##encoding##_GetDeviceData(IDirectInputDevice8##encoding *pDevice, DWORD cbObjectData, LPDIDEVICEOBJECTDATA rgdod, LPDWORD pdwInOut, DWORD dwFlags) \
+ 	{ \
+ 		/* Cannot cache the function pointer, as doing so crashes the Steam Overlay */ \
+-		HRESULT hr = reshade::hooks::call(IDirectInputDevice8##encoding##_GetDeviceData, reshade::hooks::vtable_from_instance(pDevice) + vtable_index)(pDevice, cbObjectData, rgdod, pdwInOut, dwFlags); \
++		HRESULT hr = DI_OK; \
++		if (mc::before_data(reinterpret_cast<std::uintptr_t>(pDevice),cbObjectData,rgdod,pdwInOut,dwFlags,hr, \
++			[&](DWORD bytes,LPDIDEVICEOBJECTDATA data,LPDWORD count,DWORD flags){return reshade::hooks::call(IDirectInputDevice8##encoding##_GetDeviceData,reshade::hooks::vtable_from_instance(pDevice)+vtable_index)(pDevice,bytes,data,count,flags);}, \
++			[&](std::uint32_t bytes){return MineComeDrain##encoding(pDevice,bytes);}))return hr; \
++		hr = reshade::hooks::call(IDirectInputDevice8##encoding##_GetDeviceData, reshade::hooks::vtable_from_instance(pDevice) + vtable_index)(pDevice, cbObjectData, rgdod, pdwInOut, dwFlags); \
+ 		if (SUCCEEDED(hr) && \
+ 			(dwFlags & DIGDD_PEEK) == 0 && \
+ 			(rgdod != nullptr && *pdwInOut != 0)) \
+@@ -89,9 +162,14 @@ IDirectInputDevice8_GetDeviceData_Impl(10, W)
+ 			/* DIDEVICEINSTANCE##encoding instance = { sizeof(instance) }; \
+ 			   device->GetDeviceInfo(&instance); \
+ 			   const BYTE device_type = GET_DIDEVICE_TYPE(instance.dwDevType); */ \
+-			const BYTE device_type = \
++			BYTE device_type = \
+ 				(rguid == GUID_SysMouse) ? DI8DEVTYPE_MOUSE : \
+ 				(rguid == GUID_SysKeyboard) ? DI8DEVTYPE_KEYBOARD : 0; \
++			if(!device_type) { \
++				DIDEVICEINSTANCE##encoding instance{};instance.dwSize=sizeof(instance); \
++				if(SUCCEEDED(device->GetDeviceInfo(&instance)))device_type=GET_DIDEVICE_TYPE(instance.dwDevType); \
++				else {mc::Guard lock;mc::policy.add(reinterpret_cast<std::uintptr_t>(device),false);} \
++			} \
+ 			g_dinput_device_type.emplace(device, device_type); \
+ 			\
+ 			/* Only install vtable hooks for mouse and keyboard devices, since others are not all proxied by the Steam overlay and thus would hook both Steam overlay and the original DirectInput entries. */ \
+@@ -100,6 +178,7 @@ IDirectInputDevice8_GetDeviceData_Impl(10, W)
+ 				reshade::hooks::install("IDirectInputDevice8" #encoding "::GetDeviceState", reshade::hooks::vtable_from_instance(device), 9, &IDirectInputDevice8##encoding##_GetDeviceState); \
+ 				reshade::hooks::install("IDirectInputDevice8" #encoding "::GetDeviceData", reshade::hooks::vtable_from_instance(device), 10, &IDirectInputDevice8##encoding##_GetDeviceData); \
+ 			} \
++			if(device_type==DI8DEVTYPE_MOUSE)MineComeInstall##encoding(device); \
+ 		} \
+ 		else \
+ 		{ \

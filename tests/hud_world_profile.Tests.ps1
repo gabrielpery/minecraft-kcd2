@@ -84,8 +84,9 @@ foreach($statement in $arm.EndBlock.Statements){
     if($statement -is [Management.Automation.Language.IfStatementAst]){$guardText+=$statement.Extent.Text}
     elseif($guardText.Count){break}
 }
-Check ($guardText.Count -eq 5) 'All arm configuration guards isolated'
+Check ($guardText.Count -eq 6) 'All arm configuration guards isolated'
 $SelectiveMouse=$false
+$SelectiveRevision=1
 $guards=[scriptblock]::Create($guardText -join "`n")
 foreach($inputEnabled in @($false,$true)){
     foreach($offscreen in @($false,$true)){
