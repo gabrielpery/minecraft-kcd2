@@ -29,21 +29,30 @@ public final class HudStreamProducer implements AutoCloseable {
                 throw new IllegalArgumentException("Invalid stream frame");
         }
     }
+    private record Sample(byte[] rgba,int width,int height,JsonObject metadata,String name){}
+    private record PublicationStage(String name,long at){}
     private final Identity identity;
     private final Path root,directory;
     private final String save;
     private final boolean genuine;
     private final int inputMode;
     private final boolean inputDelayFixture;
+    private final boolean backgroundTrial;
+    private final boolean offscreenPresentation,offscreenTrial;
     private final AtomicReference<Frame> latest=new AtomicReference<>();
     private final AtomicReference<String> terminal=new AtomicReference<>(),failure=new AtomicReference<>();
     private final AtomicReference<JsonObject> finalEvidence=new AtomicReference<>();
     private final AtomicReference<JsonArray> fixtureTargets=new AtomicReference<>();
+    private final AtomicReference<JsonObject> backgroundTrialReceipt=new AtomicReference<>();
+    private final AtomicReference<JsonObject> offscreenTrialReceipt=new AtomicReference<>();
     private final AtomicBoolean ready=new AtomicBoolean(),finished=new AtomicBoolean();
     private final AtomicLong replaced=new AtomicLong(),published=new AtomicLong();
     private Thread worker;
     private volatile int producerPid;
     private volatile long producerStart,lastPublishedAt;
+    private volatile PublicationStage publicationStage=new PublicationStage("not_started",System.nanoTime());
+    private volatile long maxPublicationGapNanos,maxConversionNanos,maxMapWriteNanos,maxPublishedCaptureAgeMs,lastPublishedCaptureUtcMs,lastPublishedUtcMs;
+    private volatile HudEvidenceWriter evidenceWriter;
     public HudStreamProducer(Path root,Path directory,Identity identity,String save,boolean genuine) {
         this(root,directory,identity,save,genuine,0);
     }
@@ -53,6 +62,9 @@ public final class HudStreamProducer implements AutoCloseable {
         if(inputMode<0 || inputMode>2)throw new IllegalArgumentException("Invalid input mode");
         this.root=root.normalize();this.directory=directory.normalize();this.identity=identity;this.save=save;this.genuine=genuine;this.inputMode=inputMode;
         inputDelayFixture=inputMode==2 && Boolean.getBoolean("minecome.hudStreamInputDelayFixture");
+        backgroundTrial=inputMode==2 && Boolean.getBoolean("minecome.hudStreamBackgroundTrial");
+        offscreenPresentation=inputMode!=0 && Boolean.getBoolean("minecome.hudStreamOffscreenPresentation");
+        offscreenTrial=inputMode==2 && Boolean.getBoolean("minecome.hudStreamOffscreenTrial");
     }
     public synchronized void start() {
         if(worker!=null)throw new IllegalStateException("HUD stream cannot restart");
@@ -67,7 +79,16 @@ public final class HudStreamProducer implements AutoCloseable {
     public int producerPid(){return producerPid;}
     public long producerStart(){return producerStart;}
     public long lastPublishedAt(){return lastPublishedAt;}
+    public JsonObject diagnostics(){
+        PublicationStage stage=publicationStage;var d=new JsonObject();d.addProperty("stage",stage.name());d.addProperty("stage_age_ms",(System.nanoTime()-stage.at())/1_000_000);d.addProperty("published_frames",published.get());
+        d.addProperty("last_published_utc_ms",lastPublishedUtcMs);d.addProperty("last_capture_utc_ms",lastPublishedCaptureUtcMs);d.addProperty("publication_age_ms",lastPublishedAt==0?-1:(System.nanoTime()-lastPublishedAt)/1_000_000);
+        d.addProperty("max_publication_gap_ms",maxPublicationGapNanos/1_000_000.0);d.addProperty("max_conversion_ms",maxConversionNanos/1_000_000.0);d.addProperty("max_mapping_write_ms",maxMapWriteNanos/1_000_000.0);d.addProperty("max_published_capture_age_ms",maxPublishedCaptureAgeMs);
+        var writer=evidenceWriter;if(writer!=null)d.add("evidence_io",writer.diagnostics());return d;
+    }
+    private void publicationStage(String value){publicationStage=new PublicationStage(value,System.nanoTime());}
     public void offerFixtureTargets(JsonArray slots){if(inputMode!=2 || !fixtureTargets.compareAndSet(null,slots.deepCopy()))throw new IllegalStateException("Fixture targets not allowed/already queued");}
+    public void offerBackgroundTrial(JsonObject evidence){if(!backgroundTrial || !backgroundTrialReceipt.compareAndSet(null,evidence.deepCopy()))throw new IllegalStateException("Background trial not allowed/already queued");}
+    public void offerOffscreenTrial(JsonObject evidence){if(!offscreenTrial || !offscreenTrialReceipt.compareAndSet(null,evidence.deepCopy()))throw new IllegalStateException("Offscreen trial not allowed/already queued");}
     public void offer(Frame frame) {
         if(!isReady() || terminal.get()!=null)return;
         if(latest.getAndSet(frame)!=null)replaced.incrementAndGet();
@@ -101,13 +122,14 @@ public final class HudStreamProducer implements AutoCloseable {
         r.addProperty("target_start_filetime",Long.toUnsignedString(identity.targetStart()));r.addProperty("expires_utc_ms",identity.expiresUtcMs());
         r.addProperty("mapping",identity.mappingName());r.addProperty("mapping_name",identity.mappingName());r.addProperty("mutex_name",identity.mutexName());r.addProperty("mapping_bytes",MAPPING_BYTES);
         r.addProperty("save",save);r.addProperty("source_kind",genuine?"minecraft_vanilla_ui_stream_v1":"standalone_transport_fixture");
-        if(inputMode!=0){r.addProperty("ui_input_protocol",1);r.addProperty("ui_input_fixture",inputMode==2);r.addProperty("ui_input_delay_fixture",inputDelayFixture);}return r;
+        if(inputMode!=0){r.addProperty("ui_input_protocol",1);r.addProperty("ui_input_fixture",inputMode==2);r.addProperty("ui_input_delay_fixture",inputDelayFixture);r.addProperty("ui_input_background_trial",backgroundTrial);r.addProperty("ui_input_offscreen_presentation",offscreenPresentation);r.addProperty("ui_input_offscreen_trial",offscreenTrial);}return r;
     }
     private void run() {
         Kernel32 api=null;WinNT.HANDLE mapping=null,mutex=null;Pointer view=null;
         Path target=null;int pid=0,width=0,height=0,selected=0,screen=0;long start=0,sequence=0,lastCaptured=0,skippedBusy=0,staleDrops=0;
         boolean closed=false,unmapped=false,mappingClosed=false,mutexClosed=false;
         var samples=new JsonArray();var states=new LinkedHashSet<String>();String result="failed";
+        var pendingSamples=new ArrayList<Sample>(8);
         try {
             long remaining=identity.expiresUtcMs()-System.currentTimeMillis();
             if(remaining<=0 || remaining>180_000)throw new IOException("Initial stream lease outside 1..180000ms");
@@ -132,35 +154,43 @@ public final class HudStreamProducer implements AutoCloseable {
             if(!lock(api,mutex))throw new IOException("Fresh mutex unexpectedly busy");
             try {view.clear(MAPPING_BYTES);view.write(0,header(identity,pid,start,0,0,0,0,0,0,0),0,HEADER_BYTES);}
             finally {unlock(api,mutex);}
-            writeJson(target.resolve("stream-ready.json"),identityReceipt(pid,start));ready.set(true);
+            publicationStage("initial_ready_receipt");writeJson(target.resolve("stream-ready.json"),identityReceipt(pid,start));evidenceWriter=new HudEvidenceWriter(HudStreamProducer::writeJson);ready.set(true);
             while(true) {
+                publicationStage("control_mailbox");
                 String end=terminal.get();
                 if(end!=null){result=end;break;}
+                if(evidenceWriter.failure()!=null)throw new IOException("HUD receipt writer: "+evidenceWriter.failure());
                 if(System.currentTimeMillis()>=identity.expiresUtcMs() || System.nanoTime()>=deadline)throw new IOException("Immutable stream lease expired");
                 var targets=fixtureTargets.getAndSet(null);
-                if(targets!=null){var receipt=identityReceipt(pid,start);receipt.add("slots",targets);writeJson(target.resolve("fixture-targets.json"),receipt);}
+                if(targets!=null){var receipt=identityReceipt(pid,start);receipt.add("slots",targets);evidenceWriter.submit(target.resolve("fixture-targets.json"),receipt);}
+                var trial=backgroundTrialReceipt.getAndSet(null);
+                if(trial!=null){var receipt=identityReceipt(pid,start);receipt.add("background_trial",trial);evidenceWriter.submit(target.resolve("background-trial-ready.json"),receipt);}
+                var offscreen=offscreenTrialReceipt.getAndSet(null);
+                if(offscreen!=null){var receipt=identityReceipt(pid,start);receipt.add("offscreen_trial",offscreen);evidenceWriter.submit(target.resolve("offscreen-trial-ready.json"),receipt);}
                 Frame frame=latest.getAndSet(null);
-                if(frame==null){Thread.sleep(5);continue;}
+                if(frame==null){publicationStage("awaiting_frame");Thread.sleep(5);continue;}
                 long now=System.currentTimeMillis();
                 if(frame.capturedUtcMs()>now+250 || frame.capturedUtcMs()<now-1000){staleDrops++;continue;}
                 if(width!=0 && (frame.width()!=width || frame.height()!=height))throw new IOException("Stream dimensions changed");
-                byte[] rgba=HudPixels.straightTopLeft(frame.bottomUp(),frame.width(),frame.height());
+                publicationStage("pixel_conversion");long convertAt=System.nanoTime();byte[] rgba=HudPixels.straightTopLeft(frame.bottomUp(),frame.width(),frame.height());maxConversionNanos=Math.max(maxConversionNanos,System.nanoTime()-convertAt);
+                publicationStage("mapping_mutex");
                 if(!lock(api,mutex)){skippedBusy++;continue;}
                 try {
+                    publicationStage("mapping_write");long writeAt=System.nanoTime();
                     width=frame.width();height=frame.height();selected=frame.selectedSlot();screen=frame.screen();lastCaptured=frame.capturedUtcMs();
                     byte[] head=header(identity,pid,start,++sequence,lastCaptured,width,height,selected,screen,1);
                     view.write(HEADER_BYTES,rgba,0,rgba.length);view.write(0,head,0,head.length);
+                    maxMapWriteNanos=Math.max(maxMapWriteNanos,System.nanoTime()-writeAt);
                 } finally {unlock(api,mutex);}
                 published.incrementAndGet();
-                lastPublishedAt=System.nanoTime();
+                long publishedAt=System.nanoTime();if(lastPublishedAt!=0)maxPublicationGapNanos=Math.max(maxPublicationGapNanos,publishedAt-lastPublishedAt);lastPublishedAt=publishedAt;
+                lastPublishedUtcMs=System.currentTimeMillis();lastPublishedCaptureUtcMs=frame.capturedUtcMs();maxPublishedCaptureAgeMs=Math.max(maxPublishedCaptureAgeMs,lastPublishedUtcMs-frame.capturedUtcMs());publicationStage("frame_metadata");
                 JsonObject meta=JsonParser.parseString(frame.metadata()).getAsJsonObject();String stage=meta.get("state").getAsString();
                 if(!stage.matches("[a-z0-9_]{1,40}"))throw new IOException("Invalid sample state");
                 if(states.add(stage)) {
                     if(states.size()>8)throw new IOException("Sample state bound exceeded");
-                    String name="sample-"+stage+".png";byte[] png=HudPixels.png(rgba,width,height);
-                    Files.write(target.resolve(name),png,StandardOpenOption.CREATE_NEW,StandardOpenOption.WRITE);
-                    meta.addProperty("png_file",name);meta.addProperty("png_sha256",HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(png)));
-                    meta.addProperty("width",width);meta.addProperty("height",height);meta.addProperty("sequence",sequence);samples.add(meta);
+                    String name="sample-"+stage+".png";
+                    meta.addProperty("width",width);meta.addProperty("height",height);meta.addProperty("sequence",sequence);pendingSamples.add(new Sample(rgba,width,height,meta,name));
                 }
             }
             if(result.equals("passed") && (!genuine || published.get()<30 || !states.containsAll(Set.of("hotbar_slot0","hotbar_slot1","inventory_screen","hotbar_slot2"))))
@@ -174,10 +204,16 @@ public final class HudStreamProducer implements AutoCloseable {
                     if(inputMode!=2 || proof==null)throw new IOException("Input fixture proof absent");
                     for(String key:List.of("input_fixture","server_swap_verified","inventory_opened","inventory_closed","selected_nine_verified","host_armed"))
                         if(!proof.has(key) || !proof.get(key).getAsBoolean())throw new IOException("Input fixture proof missing: "+key);
+                    if(offscreenTrial){
+                        var trial=proof.getAsJsonObject("offscreen_trial");var events=proof.getAsJsonObject("offscreen_trial_events");
+                        if(trial==null || !trial.get("completed").getAsBoolean() || events==null || events.get("unfocused_events_applied").getAsLong()!=31 || events.get("focused_events_applied").getAsLong()!=0 || events.get("focus_interruptions").getAsLong()!=0)
+                            throw new IOException("Offscreen fixture lacks all31 genuinely unfocused applications");
+                    }
                 }
             }
         } catch(Exception e) {failure.compareAndSet(null,e.toString());result="failed";}
         finally {
+            publicationStage("terminal_closed_publication");
             ready.set(false);latest.set(null);
             if(api!=null && view!=null && mutex!=null)try {
                 // Three bounded attempts; never wait indefinitely to close a foreign-owned mutex.
@@ -192,12 +228,23 @@ public final class HudStreamProducer implements AutoCloseable {
                 if(mapping!=null)mappingClosed=api.CloseHandle(mapping);else mappingClosed=true;
             }
             if(!closed || !unmapped || !mappingClosed || !mutexClosed) {failure.compareAndSet(null,"Terminal closed/handle cleanup incomplete");result="failed";}
+            try{
+                publicationStage("terminal_evidence_io");
+                if(evidenceWriter!=null && (!evidenceWriter.finish(2000) || evidenceWriter.failure()!=null))throw new IOException("HUD receipt writer terminal timeout/failure");
+                // These bounded samples are encoded only after the live image channel
+                // is closed, so compression/disk latency cannot starve input frames.
+                for(var sample:pendingSamples){
+                    byte[] png=HudPixels.png(sample.rgba(),sample.width(),sample.height());Files.write(target.resolve(sample.name()),png,StandardOpenOption.CREATE_NEW,StandardOpenOption.WRITE);
+                    sample.metadata().addProperty("png_file",sample.name());sample.metadata().addProperty("png_sha256",HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(png)));samples.add(sample.metadata());
+                }
+            }catch(Exception e){failure.compareAndSet(null,e.toString());result="failed";}
             if(target!=null)try {
                 var receipt=identityReceipt(pid,start);receipt.addProperty("result",failure.get()==null?result:"failed");receipt.addProperty("published_frames",published.get());
                 receipt.addProperty("mailbox_replaced",replaced.get());receipt.addProperty("mutex_busy_skipped",skippedBusy);receipt.addProperty("stale_frames_dropped",staleDrops);
                 receipt.addProperty("closed_published",closed);receipt.addProperty("mapping_unmapped",unmapped);receipt.addProperty("mapping_handle_closed",mappingClosed);receipt.addProperty("mutex_handle_closed",mutexClosed);
                 var seen=new JsonArray();states.forEach(seen::add);receipt.add("states_seen",seen);receipt.add("samples",samples);
                 receipt.addProperty("kcd_compositing_verified",false);if(failure.get()!=null)receipt.addProperty("failure",failure.get());
+                receipt.add("publication_timing",diagnostics());
                 if(finalEvidence.get()!=null)receipt.add("lab_evidence",finalEvidence.get());writeJson(target.resolve("stream-result.json"),receipt);
             }catch(Exception e){failure.compareAndSet(null,e.toString());}
             finished.set(true);

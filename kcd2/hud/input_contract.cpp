@@ -72,8 +72,11 @@ KeyboardGate::Step KeyboardGate::update(bool eligible,bool f8,std::uint32_t keys
         if(!neutral_||keys)return Step::idle;
         consumed_=true;began_=now;settling_=2;return Step::starting;
     }
-    if(!eligible||edge||now<began_||now-began_>=activation_ms) {closed_=true;return Step::closed;}
-    if(settling_) {--settling_;if(keys) {closed_=true;return Step::closed;}return Step::starting;}
+    if(!eligible||edge||now<began_||now-began_>=activation_ms) {
+        reason_=!eligible?Close::ineligible:edge?Close::second_f8:now<began_?Close::clock_regressed:Close::expired;
+        closed_=true;return Step::closed;
+    }
+    if(settling_) {--settling_;if(keys) {reason_=Close::key_during_settle;closed_=true;return Step::closed;}return Step::starting;}
     return Step::active;
 }
 } // namespace minecome::hud::input

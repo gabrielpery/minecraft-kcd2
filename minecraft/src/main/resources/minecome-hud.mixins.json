@@ -2,6 +2,6 @@
   "required": true,
   "package": "dev.minecome.hud.mixin",
   "compatibilityLevel": "JAVA_21",
-  "client": ["HudGameRendererMixin", "HudWorldRendererMixin", "HudBlendMixin", "HudHandledScreenAccessor", "HudMouseMixin"],
+  "client": ["HudGameRendererMixin", "HudWorldRendererMixin", "HudBlendMixin", "HudHandledScreenAccessor", "HudMouseMixin", "HudClientTimingMixin", "HudWindowVsyncAccessor", "HudOffscreenPresentationMixin", "HudOffscreenBlitMixin"],
   "injectors": {"defaultRequire": 1}
 }

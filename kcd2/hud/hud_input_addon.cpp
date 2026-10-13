@@ -18,6 +18,7 @@
 // never waits for a free staging slot or performs mapping/file IO.
 #include "stream_channel.hpp"
 #include "input_channel.hpp"
+#include "input_diagnostics.hpp"
 #include "hud_contract.hpp"
 #include <reshade.hpp>
 #include <algorithm>
@@ -41,6 +42,27 @@ constexpr char effect_name[] = "MineComeHud.fx", semantic[] = "MINECOME_HUD_1";
 // without the runtime lifetime lock while AddonUninit can delete it.
 std::atomic<bool> has_armed{false};
 std::atomic<bool> input_has_started{false},input_force_close{false};
+ui::FirstClose first_close;
+void record_close(ui::CloseCause cause) noexcept {
+    ui::CloseSnapshot snapshot;snapshot.cause=cause;snapshot.utc=st::utc_ms();first_close.publish(snapshot);
+}
+bool close_receipt(std::string_view run) {
+    ui::CloseSnapshot value;if(!first_close.read(value))return false;
+    auto predicate=[&](unsigned mask){return !value.eligibility_sampled?"null":(value.eligibility_failures&mask)?"false":"true";};
+    std::ostringstream line;
+    line << "[MineComeHudInput] {\"schema\":1,\"event\":\"first_input_close\",\"run\":\"" << run
+         << "\",\"cause\":\"" << ui::close_name(value.cause) << "\",\"closed_utc_ms\":" << value.utc
+         << ",\"ack_utc_ms\":" << value.ack_utc << ",\"ack_observation_age_ms\":" << value.ack_observed_age
+         << ",\"publication_age_ms\":" << value.publication_age << ",\"resident_age_ms\":" << value.resident_age
+         << ",\"eligibility_failures\":" << value.eligibility_failures << ",\"composition_stage\":" << value.composition_stage
+         << ",\"eligibility_sampled\":" << (value.eligibility_sampled?"true":"false")
+         << ",\"composed\":" << predicate(1) << ",\"overlay_closed\":" << predicate(2)
+         << ",\"focus_visible\":" << predicate(4) << ",\"ack_fresh\":" << predicate(32)
+         << ",\"ack_snapshot_fresh\":" << predicate(64)
+         << ",\"authorized_keys_held\":" << value.held_keys << ",\"f8_held\":" << (value.f8?"true":"false") << '}';
+    reshade::log::message(reshade::log::level::info,line.str().c_str());
+    return true;
+}
 void receipt(std::string_view event, std::string_view result, std::string_view run = {}) {
     const std::string message = "[MineComeHudInput] {\"schema\":1,\"event\":\""+std::string(event)+
         "\",\"result\":\""+std::string(result)+"\",\"run\":\""+std::string(run)+"\",\"visual_verified\":false}";
@@ -89,6 +111,7 @@ struct Service {
     }
     bool stopping() const { return !stop || WaitForSingleObject(stop.value,0) != WAIT_TIMEOUT; }
     void end(std::string_view why, std::string_view run) {
+        if(input_has_started.load(std::memory_order_acquire))record_close(ui::CloseCause::session_end);
         input_force_close.store(true,std::memory_order_release);
         terminal.store(true,std::memory_order_release);
         publication.store({},std::memory_order_release);
@@ -134,7 +157,7 @@ struct Service {
             session.store(accepted,std::memory_order_release); has_armed.store(true,std::memory_order_release);
             receipt("arm","accepted",identity.run);
             ui::Writer inputs;
-            bool input_created=inputs.create(identity),input_closed_logged=false;
+            bool input_created=inputs.create(identity),input_closed_logged=false,first_close_logged=false;
             if(!input_created) receipt("input",inputs.reason(),identity.run);
             input_status.store(std::make_shared<ui::Status>(inputs.status()),std::memory_order_release);
             std::vector<ui::Event> pending_input;pending_input.reserve(ui::ring_count);
@@ -143,11 +166,13 @@ struct Service {
                 if(input_created) {
                     const auto now=st::steady_ms();
                     const auto last_render=last_input_render.load(std::memory_order_acquire);
-                    if(input_force_close.load(std::memory_order_acquire)||input_request.load(std::memory_order_acquire)==2||input_mailbox.overflowed())
+                    if(input_force_close.load(std::memory_order_acquire)||input_request.load(std::memory_order_acquire)==2||input_mailbox.overflowed()) {
+                        if(input_mailbox.overflowed())record_close(ui::CloseCause::mailbox_overflow);
                         inputs.finish("ownership_closed");
-                    else if(inputs.status().state==1&&(!last_render||now<last_render||now-last_render>ui::fresh_ms))
+                    } else if(inputs.status().state==1&&(!last_render||now<last_render||now-last_render>ui::fresh_ms)) {
+                        record_close(ui::CloseCause::render_stale);
                         inputs.finish("render_stale");
-                    else {
+                    } else {
                         inputs.poll();
                         if(inputs.status().state==0&&input_request.load(std::memory_order_acquire)==1) {
                             if(!inputs.arm())inputs.finish("arm_not_ready");
@@ -164,8 +189,10 @@ struct Service {
                     if(inputs.status().state==2)inputs.poll();
                     input_status.store(std::make_shared<ui::Status>(inputs.status()),std::memory_order_release);
                     if(inputs.status().state==2&&!input_closed_logged) {
+                        record_close(ui::CloseCause::worker_terminal);
                         receipt("input",inputs.reason(),identity.run);input_receipt("input_closed",inputs,identity.run);input_closed_logged=true;
                     }
+                    if(inputs.status().state==2&&!first_close_logged)first_close_logged=close_receipt(identity.run);
                 }
                 std::shared_ptr<const st::Frame> next;
                 const auto result=channel.poll(next);
@@ -176,13 +203,16 @@ struct Service {
                     end(channel.reason(),identity.run);
                     if(input_created) {
                         inputs.finish("image_channel_closed");
+                        record_close(ui::CloseCause::worker_terminal);
                         const auto close_started=st::steady_ms();
-                        while(!stopping()&&inputs.status().ack.state!=2&&st::steady_ms()-close_started<1500) {
+                        while(!stopping()&&(inputs.status().ack.state!=2||!first_close_logged)&&st::steady_ms()-close_started<1500) {
                             inputs.poll();
                             input_status.store(std::make_shared<ui::Status>(inputs.status()),std::memory_order_release);
+                            if(!first_close_logged)first_close_logged=close_receipt(identity.run);
                             WaitForSingleObject(stop.value,5);
                         }
                         input_receipt("input_final",inputs,identity.run,st::steady_ms()-close_started);
+                        if(!first_close_logged)first_close_logged=close_receipt(identity.run);
                     }
                     return;
                 }
@@ -242,13 +272,14 @@ bool visible(api::effect_runtime *runtime, const RuntimeState &state) {
     return reinterpret_cast<HWND>(runtime->get_hwnd()) == state.window && owned_window(state.window) &&
         !IsIconic(state.window) && IsWindowVisible(state.window) && GetForegroundWindow() == state.window;
 }
-void close_keyboard(api::effect_runtime *runtime) noexcept {
+void close_keyboard(api::effect_runtime *runtime,ui::CloseCause cause,const ui::CloseSnapshot *snapshot=nullptr) noexcept {
     if(service&&service->input_owner.load(std::memory_order_acquire)==runtime) {
+        if(snapshot)first_close.publish(*snapshot);else record_close(cause);
         service->input_request.store(2,std::memory_order_release);
         input_force_close.store(true,std::memory_order_release);
     }
 }
-void capture_keyboard(api::effect_runtime *runtime,RuntimeState &state,bool composed) {
+void capture_keyboard(api::effect_runtime *runtime,RuntimeState &state,bool composed,std::uint32_t composition_stage) {
     if(!service)return;
     const auto peer=service->input_status.load(std::memory_order_acquire);
     if(!peer)return;
@@ -256,11 +287,29 @@ void capture_keyboard(api::effect_runtime *runtime,RuntimeState &state,bool comp
     std::uint32_t held=0;
     for(std::size_t i=0;i<keys.size();++i)if(runtime->is_key_down(keys[i]))held|=1u<<i;
     const auto now=st::steady_ms();
-    const bool eligible=composed&&!state.reshade_overlay&&visible(runtime,state)&&peer->live&&peer->state<2&&peer->ack.state==1&&
-        ui::fresh(peer->ack.utc,st::utc_ms())&&now>=peer->observed&&now-peer->observed<=ui::fresh_ms&&
-        !input_force_close.load(std::memory_order_acquire)&&!service->terminal.load(std::memory_order_acquire);
-    const auto step=state.keyboard.update(eligible,runtime->is_key_down(VK_F8),held,now);
-    if(step==ui::KeyboardGate::Step::closed) {close_keyboard(runtime);return;}
+    const auto utc=st::utc_ms();const bool f8=runtime->is_key_down(VK_F8);
+    // Diagnostic bits mirror the existing eligibility predicates, with no
+    // added grace or refresh: composed/overlay/focus/peer/ACK/observation/end.
+    const std::uint32_t failures=(!composed?1u:0u)|(state.reshade_overlay?2u:0u)|(!visible(runtime,state)?4u:0u)|
+        ((!peer->live||peer->state>=2)?8u:0u)|(peer->ack.state!=1?16u:0u)|(!ui::fresh(peer->ack.utc,utc)?32u:0u)|
+        ((now<peer->observed||now-peer->observed>ui::fresh_ms)?64u:0u)|
+        (input_force_close.load(std::memory_order_acquire)?128u:0u)|(service->terminal.load(std::memory_order_acquire)?256u:0u);
+    const auto step=state.keyboard.update(failures==0,f8,held,now);
+    if(step==ui::KeyboardGate::Step::closed) {
+        auto cause=ui::CloseCause::eligibility_lost;
+        switch(state.keyboard.close_reason()) {
+        case ui::KeyboardGate::Close::second_f8:cause=ui::CloseCause::second_f8;break;
+        case ui::KeyboardGate::Close::clock_regressed:cause=ui::CloseCause::clock_regressed;break;
+        case ui::KeyboardGate::Close::expired:cause=ui::CloseCause::activation_expired;break;
+        case ui::KeyboardGate::Close::key_during_settle:cause=ui::CloseCause::key_during_settle;break;
+        default:break;
+        }
+        auto age=[&](std::uint64_t observed){return observed&&now>=observed?now-observed:~std::uint64_t{0};};
+        const auto pub=service->publication.load(std::memory_order_acquire);
+        const ui::CloseSnapshot snapshot{cause,failures,composition_stage,held,f8,utc,peer->ack.utc,
+            age(peer->observed),pub?age(pub->observation):~std::uint64_t{0},age(state.uploaded_observation),true};
+        close_keyboard(runtime,cause,&snapshot);return;
+    }
     if(step==ui::KeyboardGate::Step::idle)return;
     api::effect_runtime *empty=nullptr;
     if(service->input_owner.load(std::memory_order_acquire)!=runtime&&
@@ -276,7 +325,7 @@ void capture_keyboard(api::effect_runtime *runtime,RuntimeState &state,bool comp
     const auto changed=held^state.previous_keys;
     for(std::size_t i=0;i<keys.size();++i)if(changed&(1u<<i)) {
         const ui::Event event{st::utc_ms(),(held&(1u<<i))?ui::Kind::key_down:ui::Kind::key_up,keys[i],0,0,0};
-        if(!service->input_mailbox.push(event)) {close_keyboard(runtime);return;}
+        if(!service->input_mailbox.push(event)) {close_keyboard(runtime,ui::CloseCause::mailbox_overflow);return;}
     }
     state.previous_keys=held;
 }
@@ -284,9 +333,10 @@ struct InputFrame {
     api::effect_runtime *runtime;
     RuntimeState &state;
     bool composed=false;
+    std::uint32_t composition_stage=0;
     ~InputFrame() {
-        try {capture_keyboard(runtime,state,composed);}
-        catch(...) {close_keyboard(runtime);}
+        try {capture_keyboard(runtime,state,composed,composition_stage);}
+        catch(...) {close_keyboard(runtime,ui::CloseCause::callback_exception);}
     }
 };
 bool sdr(api::format format) {
@@ -383,22 +433,24 @@ void on_init(api::effect_runtime *runtime) {
 void on_destroy(api::effect_runtime *runtime) {
     std::lock_guard lock(runtimes_mutex);
     const auto it=runtimes.find(runtime); if (it == runtimes.end()) return;
-    close_keyboard(runtime);release(runtime,it->second,true); runtimes.erase(it); receipt("cleanup","runtime_owned_resources_released");
+    close_keyboard(runtime,ui::CloseCause::runtime_destroy);release(runtime,it->second,true); runtimes.erase(it); receipt("cleanup","runtime_owned_resources_released");
 }
 void on_reload(api::effect_runtime *runtime) {
     std::lock_guard lock(runtimes_mutex);
-    const auto it=runtimes.find(runtime); if (it != runtimes.end()) {close_keyboard(runtime);forget(it->second);}
+    const auto it=runtimes.find(runtime); if (it != runtimes.end()) {close_keyboard(runtime,ui::CloseCause::runtime_reload);forget(it->second);}
 }
 bool on_overlay(api::effect_runtime *runtime,bool open,api::input_source) {
     std::lock_guard lock(runtimes_mutex);
     const auto it=runtimes.find(runtime);
-    if(it!=runtimes.end()) {it->second.reshade_overlay=open;if(open)close_keyboard(runtime);}
+    if(it!=runtimes.end()) {it->second.reshade_overlay=open;if(open)close_keyboard(runtime,ui::CloseCause::overlay_open);}
     return false; // Observe ReShade's UI; never prevent it opening.
 }
 void on_begin(api::effect_runtime *runtime, api::command_list *commands, api::resource_view rtv, api::resource_view) {
     std::unique_lock lock(runtimes_mutex,std::try_to_lock);
     if (!lock.owns_lock()) {
-        if(input_has_started.load(std::memory_order_acquire))input_force_close.store(true,std::memory_order_release);
+        if(input_has_started.load(std::memory_order_acquire)) {
+            record_close(ui::CloseCause::runtime_lock_contention);input_force_close.store(true,std::memory_order_release);
+        }
         // Another runtime may be in a lifecycle callback. Do not wait, and do
         // not leave this runtime's previous layer enabled. Only a fresh handle
         // obtained inside this live effects callback is usable without access
@@ -419,21 +471,29 @@ void on_begin(api::effect_runtime *runtime, api::command_list *commands, api::re
         // A withdrawn/expired publication must hide previously enabled effects.
         // Unarmed runtime has zero handles, so this makes no effect API call.
         hide(runtime,state);
+        input_frame.composition_stage=1; // Renderer or whole session unavailable.
         if (state.failed || service->terminal.load(std::memory_order_acquire)) return;
         const auto session=service->session.load(std::memory_order_acquire);
         const auto frame=service->publication.load(std::memory_order_acquire);
         auto now=st::steady_ms();
+        input_frame.composition_stage=2; // Session/publication freshness.
         if (!session || !frame || !session->live(st::utc_ms(),now) || !st::uploaded_fresh(frame->observation,now)) return;
+        input_frame.composition_stage=3; // Foreground, command list, effects, SDR.
         if (!visible(runtime,state) || !commands || rtv == 0 || !handles(runtime,state) ||
             !sdr(runtime->get_device()->get_resource_view_desc(rtv).format)) return;
+        input_frame.composition_stage=4;
         const auto target=runtime->get_device()->get_resource_from_view(rtv);
         if (target == 0) return;
+        input_frame.composition_stage=5;
         const auto desc=runtime->get_device()->get_resource_desc(target);
         if (desc.type != api::resource_type::texture_2d || !sdr(desc.texture.format)) return;
+        input_frame.composition_stage=6;
         const auto rectangle=hud::fit_rect(frame->header.width,frame->header.height,desc.texture.width,desc.texture.height);
         if (rectangle.width <= 0 || rectangle.height <= 0) return;
+        input_frame.composition_stage=7;
         upload(runtime,commands,state,*frame);
         if (state.failed || state.uploaded_sequence == 0 || state.view == 0) return;
+        input_frame.composition_stage=8;
         if (!state.bound) {
             runtime->update_texture_bindings(semantic,state.view,state.view);
             runtime->set_uniform_value_int(state.frame,0);
@@ -441,12 +501,15 @@ void on_begin(api::effect_runtime *runtime, api::command_list *commands, api::re
             state.bound=true;
         }
         now=st::steady_ms();
+        input_frame.composition_stage=9; // Resident texture/lease/focus recheck.
         // Recheck after ReShade resource/semantic APIs; their implementation can
         // take time. A stream of dropped new frames never refreshes resident age.
         if (service->terminal.load(std::memory_order_acquire) || !session->live(st::utc_ms(),now) ||
             !st::uploaded_fresh(state.uploaded_observation,now) || !visible(runtime,state)) return;
+        input_frame.composition_stage=10;
         runtime->set_uniform_value_float(state.rect,rectangle.x,rectangle.y,rectangle.width,rectangle.height);
         runtime->set_uniform_value_bool(state.active,true); ++service->submitted;
+        input_frame.composition_stage=11;
         input_frame.composed=true;
     } catch (...) { fail(state,5); hide(runtime,state); }
 }

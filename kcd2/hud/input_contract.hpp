@@ -45,10 +45,13 @@ private:
 class KeyboardGate {
 public:
     enum class Step { idle,starting,active,closed };
+    enum class Close { none,ineligible,second_f8,clock_regressed,expired,key_during_settle };
     Step update(bool eligible,bool f8,std::uint32_t keys,std::uint64_t now) noexcept;
     bool consumed() const noexcept { return consumed_; }
     bool closed() const noexcept { return closed_; }
+    Close close_reason() const noexcept { return reason_; }
 private:
+    Close reason_=Close::none;
     bool neutral_=false,previous_f8_=false,consumed_=false,closed_=false;
     std::uint32_t settling_=0;
     std::uint64_t began_=0;

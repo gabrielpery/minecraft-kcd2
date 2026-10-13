@@ -22,6 +22,12 @@ loom {
                 vmArgs '-Dminecome.hudStreamInputFixture=true'
             if (project.hasProperty('minecomeHudStreamInputDelayFixture'))
                 vmArgs '-Dminecome.hudStreamInputDelayFixture=true'
+            if (project.hasProperty('minecomeHudStreamBackgroundTrial'))
+                vmArgs '-Dminecome.hudStreamBackgroundTrial=true'
+            if (project.hasProperty('minecomeHudStreamOffscreenPresentation'))
+                vmArgs '-Dminecome.hudStreamOffscreenPresentation=true'
+            if (project.hasProperty('minecomeHudStreamOffscreenTrial'))
+                vmArgs '-Dminecome.hudStreamOffscreenTrial=true'
             for (String suffix : ['Run','TargetPid','TargetStart','ExpiresUtcMs','Directory','Width','Height','GuiScale']) {
                 String key = 'minecomeHudStream' + suffix
                 if (project.hasProperty(key))
@@ -155,6 +161,18 @@ tasks.register('hudInputTest', JavaExec) {
     dependsOn testClasses
     classpath = sourceSets.test.runtimeClasspath
     mainClass = 'dev.minecome.hud.HudInputTests'
+}
+
+tasks.register('hudRenderTimingTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'dev.minecome.hud.HudRenderTimingTests'
+}
+
+tasks.register('hudEvidenceWriterTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'dev.minecome.hud.HudEvidenceWriterTests'
 }
 
 tasks.register('hudStreamFixture', JavaExec) {

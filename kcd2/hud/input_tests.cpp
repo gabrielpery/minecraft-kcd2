@@ -1,5 +1,8 @@
 #include "input_channel.hpp"
 #include "input_json.hpp"
+#include "input_background_trial.hpp"
+#include "input_diagnostics.hpp"
+#include "input_offscreen_trial.hpp"
 #include <bit>
 #include <cstring>
 #include <iostream>
@@ -62,15 +65,72 @@ void contract() {
     check(gate.update(true,false,0,104)==ui::KeyboardGate::Step::starting,"settle frame2");
     check(gate.update(true,false,1,105)==ui::KeyboardGate::Step::active,"later UI key accepted");
     check(gate.update(false,false,0,106)==ui::KeyboardGate::Step::closed,"focus or fresh gate closes");
+    check(gate.close_reason()==ui::KeyboardGate::Close::ineligible,"ineligible close discriminated");
     check(gate.update(true,true,0,107)==ui::KeyboardGate::Step::closed,"no rearm");
     ui::KeyboardGate bounded;bounded.update(true,false,0,100);bounded.update(true,true,0,101);
     check(bounded.update(true,false,0,30101)==ui::KeyboardGate::Step::closed,"30second bound");
+    check(bounded.close_reason()==ui::KeyboardGate::Close::expired,"activation expiry discriminated");
     ui::KeyboardGate early;early.update(true,false,0,100);early.update(true,true,0,101);
     check(early.update(true,false,1,102)==ui::KeyboardGate::Step::closed,"early keys during settling close");
+    check(early.close_reason()==ui::KeyboardGate::Close::key_during_settle,"early key discriminated");
+    ui::KeyboardGate again;again.update(true,false,0,100);again.update(true,true,0,101);again.update(true,false,0,102);
+    check(again.update(true,true,0,103)==ui::KeyboardGate::Step::closed&&again.close_reason()==ui::KeyboardGate::Close::second_f8,"second F8 discriminated");
+    ui::FirstClose first;ui::CloseSnapshot snapshot,outcome;
+    check(!first.read(outcome),"close latch initially empty");snapshot.cause=ui::CloseCause::runtime_lock_contention;snapshot.utc=123;
+    check(first.publish(snapshot),"first close captured");snapshot.cause=ui::CloseCause::session_end;snapshot.utc=456;
+    check(!first.publish(snapshot)&&first.read(outcome)&&outcome.utc==123&&outcome.cause==ui::CloseCause::runtime_lock_contention,"later close cannot obscure first cause");
     const auto j=ui::json::Parser("{\"value\":\"134999999999999999\",\"array\":[true,0.25],\"escaped\":\"C:\\\\x\"}").parse();
     check(j.at("value").integer()==134999999999999999ULL&&j.at("array").array[0].boolean()&&j.at("array").array[1].real()==.25f,"bounded JSON precise receipt");
     for(const auto text:{"{\"x\":1,\"x\":2}","{\"x\":01}","[1,]","{\"x\":NaN}","{} trailing","\"\\ud800\""}) {
         bool rejected=false;try{ui::json::Parser(text).parse();}catch(...){rejected=true;}check(rejected,"malformed JSON");
+    }
+}
+void background_receipts() {
+    const st::Identity id{"0123456789abcdef0123456789abcdef",2,3,4,5,100000};
+    const auto valid=ui::json::Parser(R"({"schema":1,"run":"0123456789abcdef0123456789abcdef","producer_pid":2,"target_pid":3,"producer_start_filetime":"4","target_start_filetime":"5","expires_utc_ms":100000,"ui_input_background_trial":true,"background_trial":{"completed":true,"phases":[{"name":"baseline","duration_ms":12000,"focused_ticks":0,"unfocused_ticks":200,"vsync":true,"max_fps":120},{"name":"trial","duration_ms":12020,"focused_ticks":0,"unfocused_ticks":230,"vsync":false,"max_fps":60}]}})").parse();
+    check(ui::validate_background_trial(valid,id).phases[1].duration==12020,"actual background receipt accepted");
+    for(unsigned bad=0;bad<8;++bad) {
+        auto value=valid;
+        auto &trial=value.object.at("background_trial");auto &phases=trial.object.at("phases").array;
+        if(bad==0)value.object.at("producer_start_filetime").scalar="6";
+        if(bad==1)value.object.at("ui_input_background_trial").scalar="false";
+        if(bad==2)trial.object.at("completed").scalar="false";
+        if(bad==3)phases[0].object.at("duration_ms").scalar="11999";
+        if(bad==4)phases[1].object.at("focused_ticks").scalar="1";
+        if(bad==5)phases[1].object.at("vsync").scalar="true";
+        if(bad==6)phases[1].object.at("max_fps").scalar="120";
+        if(bad==7)phases.pop_back();
+        bool rejected=false;try{ui::validate_background_trial(value,id);}catch(...){rejected=true;}
+        check(rejected,"wrong identity mode incomplete focus or settings rejected");
+    }
+}
+void offscreen_receipts() {
+    const st::Identity id{"0123456789abcdef0123456789abcdef",2,3,4,5,100000};
+    const auto valid=ui::json::Parser(R"({"schema":1,"run":"0123456789abcdef0123456789abcdef","producer_pid":2,"target_pid":3,"producer_start_filetime":"4","target_start_filetime":"5","expires_utc_ms":100000,"ui_input_offscreen_trial":true,"ui_input_offscreen_presentation":true,"offscreen_trial":{"completed":true,"duration_ms":12000,"focused_ticks":0,"unfocused_ticks":240,"presentation_suppressed":true,"timing":{}},"result":"input_passed","lab_evidence":{"offscreen_trial_events":{"unfocused_events_applied":31,"focused_events_applied":0,"focus_interruptions":0}}})").parse();
+    check(ui::validate_offscreen_trial(valid,id).duration==12000,"single actual unfocused offscreen phase accepted");
+    ui::validate_offscreen_final(valid,id,31);check(true,"all31 actual unfocused events accepted");
+    for(unsigned bad=0;bad<9;++bad) {
+        auto value=valid;auto &phase=value.object.at("offscreen_trial");
+        if(bad==0)value.object.at("target_start_filetime").scalar="6";
+        if(bad==1)value.object.at("ui_input_offscreen_presentation").scalar="false";
+        if(bad==2)value.object.at("ui_input_offscreen_trial").scalar="false";
+        if(bad==3)phase.object.at("completed").scalar="false";
+        if(bad==4)phase.object.at("duration_ms").scalar="11999";
+        if(bad==5)phase.object.at("focused_ticks").scalar="1";
+        if(bad==6)phase.object.at("unfocused_ticks").scalar="0";
+        if(bad==7)phase.object.at("presentation_suppressed").scalar="false";
+        if(bad==8)phase.object.at("timing").type=ui::json::Value::Type::null_;
+        bool rejected=false;try{ui::validate_offscreen_trial(value,id);}catch(...){rejected=true;}
+        check(rejected,"offscreen wrong identity mode focus duration or suppression rejected");
+    }
+    for(unsigned bad=0;bad<5;++bad) {
+        auto value=valid;auto &events=value.object.at("lab_evidence").object.at("offscreen_trial_events");
+        if(bad==0)events.object.at("focus_interruptions").scalar="1";
+        if(bad==1)events.object.at("focused_events_applied").scalar="1";
+        if(bad==2)events.object.at("unfocused_events_applied").scalar="30";
+        if(bad==3)value.object.at("result").scalar="failed";
+        bool rejected=false;try{ui::validate_offscreen_final(value,id,bad==4?30:31);}catch(...){rejected=true;}
+        check(rejected,"offscreen focus interruption incomplete events or failed guest rejected");
     }
 }
 ui::Identity identity(unsigned serial) {
@@ -126,4 +186,4 @@ void channels() {
     recovery_peer.write(0,2);check(recovery.poll()&&recovery.status().ack.state==2,"delayed real closed acknowledgement observed");
 }
 }
-int main() {try{contract();channels();std::cout<<"HUD_INPUT_TESTS checks="<<checks<<" PASS\n";return 0;}catch(const std::exception&e){std::cerr<<"HUD_INPUT_TESTS FAIL "<<checks<<" "<<e.what()<<'\n';return 1;}}
+int main() {try{contract();background_receipts();offscreen_receipts();channels();std::cout<<"HUD_INPUT_TESTS checks="<<checks<<" PASS\n";return 0;}catch(const std::exception&e){std::cerr<<"HUD_INPUT_TESTS FAIL "<<checks<<" "<<e.what()<<'\n';return 1;}}

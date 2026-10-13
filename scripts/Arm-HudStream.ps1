@@ -2,9 +2,10 @@
 # Original bounded stream arm. Input mode still requires a physical F8 latch.
 # No game launch, movement or process injection.
 [CmdletBinding()]
-param([string]$ReadyManifest, [string]$BundleDirectory, [switch]$PreflightOnly, [switch]$InputMode)
+param([string]$ReadyManifest, [string]$BundleDirectory, [switch]$PreflightOnly, [switch]$InputMode, [switch]$OffscreenPresentation)
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
+if($OffscreenPresentation -and -not $InputMode){throw 'Offscreen presentation requires explicit input mode.'}
 . (Join-Path $PSScriptRoot 'KcdToolsProbeHelpers.ps1')
 $root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $runtimeRoot=Join-Path $root 'runtime'
@@ -78,6 +79,9 @@ if($InputMode){
     if($ready.PSObject.Properties.Name -notcontains 'ui_input_protocol' -or $ready.ui_input_protocol -ne 1){throw 'Input mode requires explicit genuine guest readiness.'}
     if($ready.PSObject.Properties.Name -notcontains 'ui_input_fixture' -or $ready.ui_input_fixture -isnot [bool] -or $ready.ui_input_fixture -ne $false){throw 'Fixture producer cannot arm live KCD input.'}
     if($ready.PSObject.Properties.Name -notcontains 'ui_input_delay_fixture' -or $ready.ui_input_delay_fixture -isnot [bool] -or $ready.ui_input_delay_fixture -ne $false){throw 'Delay fixture cannot arm live KCD input.'}
+    if($ready.PSObject.Properties.Name -notcontains 'ui_input_background_trial' -or $ready.ui_input_background_trial -isnot [bool] -or $ready.ui_input_background_trial -ne $false){throw 'Background trial cannot arm live KCD input.'}
+    if($ready.PSObject.Properties.Name -notcontains 'ui_input_offscreen_trial' -or $ready.ui_input_offscreen_trial -isnot [bool] -or $ready.ui_input_offscreen_trial -ne $false){throw 'Offscreen fixture trial cannot arm live KCD input.'}
+    if($ready.PSObject.Properties.Name -notcontains 'ui_input_offscreen_presentation' -or $ready.ui_input_offscreen_presentation -isnot [bool] -or $ready.ui_input_offscreen_presentation -ne [bool]$OffscreenPresentation){throw 'Offscreen presentation requires matching explicit input mode.'}
 }
 elseif($ready.PSObject.Properties.Name -contains 'ui_input_protocol'){throw 'Input producer requires explicit InputMode.'}
 $start=$context.GameStartedUtc.ToFileTimeUtc().ToString()

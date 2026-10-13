@@ -234,9 +234,9 @@ from `runtime/hud-compositor-stream`. With KCD closed, the updater replaced only
 the owned add-on, preserved its predecessor and enabled the pinned owned proxy
 last. Both PowerShell 5.1 and 7.6.5 preflight passed. Deployment evidence is
 `runtime/evidence/hud-update-20261012-213418-25efcf776e664040bd9047eb4974aa82/update.json`.
-The old static arm was archived; the owned empty mod-order list remains for the
-controlled renderer comparison and must be restored by ownership-checked cleanup
-after the comparison and normal closure.
+The old static arm was archived. The owned empty mod-order list was retained for
+that controlled renderer comparison, then removed with ownership checks after
+normal closure before the later input deployment.
 
 With a fresh user-started tools world ready,
 `Start-HudStreamLab.ps1 -Composite` in PowerShell 7.3 or later starts the isolated
@@ -255,8 +255,8 @@ from the full-canvas aspect fit. Individual slot/inventory transitions were not
 separately confirmed visually. Evidence is in
 `runtime/evidence/hud-stream-20261012-214338-3cd7ea7bb557436cba1f428b94f7b72d`.
 
-Next comes a
-separate vanilla UI input mode with focus, release and host-menu arbitration.
+A separate vanilla UI input mode is now implemented below; host-menu arbitration
+remains unfinished.
 The walking observer currently disarms on buttons/wheel, and the movement lab
 rejects menus; neither controls inventory. Slot clicks, crafting, held hands,
 survival HUD coverage, HDR and GPU sharing remain outside this lab.
@@ -312,11 +312,11 @@ request does not establish camera suppression. Host menu/cutscene detection,
 gamepad ownership and KCD physics control are also absent. KCD's own HUD and health
 remain active pending a separately verified health/display integration.
 
-The prior stream arm and diagnostic-owned empty mod-order file have now been
-cleaned up after normal KCD closure with exact ownership verification. Normal mod
-discovery is restored. The input installation is unarmed, with save and add-on
-backups; see `docs/PROGRESS.md` for exact receipts and hashes. No new KCD launch has
-been performed for this mode.
+Before the first input deployment, the prior stream arm and diagnostic-owned
+empty mod-order file were cleaned up after normal KCD closure with exact ownership
+verification, restoring normal mod discovery. That installation was unarmed,
+with save and add-on backups. Subsequent user-started live attempts are recorded
+below and in `docs/PROGRESS.md`, alongside exact receipts and hashes.
 
 The first live keyboard attempt ended before F8 with zero events: a stale
 waiting-state ACK was treated as terminal. KCD remained alive. Waiting readiness
@@ -327,5 +327,150 @@ granting ownership during waiting/closure. `Start-HudInputLab.ps1 -Mode Fixture
 -DelayFixture` verified a deliberate 498 ms prearm ACK delay and a 550 ms delayed
 closed ACK in actual Minecraft, followed by the same authoritative inventory
 proof. Delayed fixtures are explicitly marked and cannot arm Live mode. The
-repaired native build is installed unarmed; physical KCD input still needs a new
-user-started session. Exact results and deployment receipts are in `docs/PROGRESS.md`.
+repaired native build was installed unarmed before the second live attempt below.
+The latest live KCD session used this waitfix build; newer native first-close
+diagnostics remain undeployed. Exact results and deployment receipts are in
+`docs/PROGRESS.md`.
+
+## Background desktop presentation
+
+The second live input attempt acquired F8 ownership but closed before any UI keys
+were applied. A real standalone A/B comparison then located long render-thread
+stalls inside `GLFW.glfwSwapBuffers` while Minecraft was unfocused. Disabling VSync
+and setting 60 FPS did not prevent gaps longer than the 250 ms input limit. Both
+comparison phases completed, but the following UI sequence failed. VSync and FPS
+were restored and the game shut down normally; this was not a Minecraft crash.
+
+`Start-HudInputLab.ps1 -Mode Fixture -BackgroundTrial` preserves that diagnostic.
+It requires two 12-second unfocused phases, records bounded render/tick/PBO timing
+and slow stacks, and marks its receipts so they cannot arm KCD. Native and guest
+both validate exact identities, expiry and trial mode.
+
+The opt-in `-OffscreenPresentation` input mode omits the desktop swap inside the
+inspected Minecraft 1.21.1 `RenderSystem.flipFrame(J)V`, the separate desktop
+framebuffer draw, and the outer desktop clear in `MinecraftClient.render(Z)V`.
+The clear is omitted only for mask 16640 with draw-framebuffer binding 0 under
+the same ownership/lease guard; later clears on the genuine HUD framebuffer
+remain active. The draw's resulting GL/cache state is preserved. The real vanilla
+GUI framebuffer, PBO readback and image
+stream remain active; `glFlush` submits their work, while `flipFrame` retains both
+event polls, queued render work and Tessellator cleanup. These hooks require the
+owned world/player/server/window, explicit mode and unexpired wall/monotonic lease.
+Controlled client cleanup and normal host closure have at most 1.5 seconds of
+presentation-only grace for the real closed ACK, without input ownership or
+renewed freshness. The owned offscreen guest is temporarily capped at 30 FPS;
+original option and actual Window settings are restored separately. VSync is not
+changed by this mode. Other HUD modes retain ordinary desktop presentation.
+
+Guest pacing also appears in the pinned references.
+[SkyCraft's frame loop](https://github.com/chasmlol/SkyCraft/blob/bfcaf178524b92c2cdeb88e4ce0f13ef9ded6f32/fabric/src/client/java/dev/skycraft/client/SkyClient.java#L402-L449)
+follows Skyrim's frame sequence with a bounded wait, disables VSync and hides the
+guest window. Its 260 FPS setting leaves pacing to that host sequence.
+[EldenCraft's policy](https://github.com/SocketByte/EldenCraft/blob/ba7591cdde9fb16e17552cfe53546f44d0fd856e/minecraft/src/main/java/dev/eldencraft/bridge/FramePipeline.java#L7-L14)
+caps host-linked rendering at 60 FPS and bounds frame age. MineCome's 30 FPS
+experiment adapts pacing to its inspected 1.21.1 CPU readback path; those projects
+use different Minecraft rendering APIs and EldenCraft also has shared GPU transport.
+
+`Start-HudInputLab.ps1 -Mode Fixture -OffscreenTrial` implies the offscreen option
+and requires 12 seconds unfocused before the ordinary 31-event inventory fixture.
+Focus gain after readiness invalidates the run. Final proof must include all 31
+unfocused applications, server-confirmed stack swapping, real published images
+and complete cleanup. This remains distinct from physical keyboard input and
+compositing inside KCD; see `docs/PROGRESS.md` for measured results.
+
+Live opt-in is `Start-HudInputLab.ps1 -Mode Live -OffscreenPresentation` after the
+normal exact-installation and fresh-session checks. Live behavior, keyboard
+exclusivity, GUI size and host HUD integration still require their own evidence.
+
+Control receipts now use a separate bounded four-entry I/O queue. Up to eight
+captured state samples are retained within the existing image-size limits and
+encoded to PNG only after the image channel closes. Active pixel publication
+therefore performs neither disk writes nor PNG compression. Queue overflow,
+writer failure or incomplete shutdown invalidates success; owned input failures
+retain their first snapshot and complete the existing real closed-ACK rendezvous.
+Producer-stage, publication-gap, capture-server-age and PBO fence diagnostics
+separate possible causes of image starvation without changing any timeout. In
+offscreen mode, a diagnostic fence immediately before `glReadPixels` distinguishes
+earlier queued GPU work from the existing post-read fence. Only the post-read
+fence authorizes pixel mapping; zero-timeout polls add no wait or freshness credit.
+
+As of 2026-10-13, the capped offscreen trial
+`08c656378fc04555983218243fc6c9dc` still failed: 16 unfocused events were applied
+from 17 sent, before inventory opening. The publisher was waiting for a frame
+while all three PBO fences were pending; the oldest was 267 ms old at failure,
+and completion age reached 967 ms. Client ticks, pixel conversion and receipt
+writes remained short. The guest restored the original 120 FPS cap and enabled-VSync
+settings, completed real ACK/handle cleanup, saved and exited normally. The
+controller retained failure.
+
+The next trial, `fb7f035c9abc4d4b8d5cd5c00376923d`, exercised 570 desktop-clear
+omissions but failed after four applied events from five sent. At failure all
+three fences before readback were pending. Maximum observed pre-read fence age
+was 1,039 ms, compared with at most 32 ms from observing that fence complete to
+observing post-read completion. These coarse CPU poll observations locate the
+long wait before the pixel transfer; they are not GPU timer measurements or
+proof of the underlying scheduling cause. The real closed ACK/handle cleanup,
+restoration to enabled VSync/120 FPS, normal save and exit all completed. Possible
+host GPU contention remains under investigation. GPU readback stability is still
+unresolved, and neither standalone run adds live KCD input, sizing or exclusivity
+proof. Detailed measurements and full evidence paths are in `docs/PROGRESS.md`.
+
+## Host frame-cap comparison
+
+`Test-HudGpuBudget.ps1` now wraps the unchanged standalone offscreen fixture in a
+temporary KCD frame-cap comparison. It targets only an already-running exact
+tools process. The intended baseline is the previously observed uncapped
+`sys_MaxFPS=-1` with `r_VSync=0`; fresh values are checked before the probe applies
+60 FPS. It refuses a positive original cap at or below 60 and does not change
+VSync. This tests a possible host GPU workload contribution, which remains a
+hypothesis.
+
+The Lua probe arms a pause-updating 120-second engine-timer lease before its
+deferred write. Run/state/timer identity checks reject stale callbacks. End and
+expiry restore only a still-owned value, preserve external changes and check
+actual readback. The controller's `finally` requests End and accepts comparison
+validity only after a requested, nonexpired, verified restoration with timer
+cancellation. An engine stall can delay timer execution; the lease is not an
+independent wall-clock watchdog.
+
+Twenty-two cases pass in the real Lua 5.2 VM with simulated engine bindings, and
+the probe/wrapper have independent source review. The frozen receipt is
+`runtime/evidence/hud-gpu-budget-native-frozen-b8c6c066d2d44500a62fda949f75f6b7/verification.json`.
+The first invocation stopped at preflight after KCD PID 54424 had closed,
+without changing the cap or launching Minecraft. Its owned expired input arm
+`5854a3c5336448158a97e26b8bf42b57` has been archived with the receipt at
+`runtime/evidence/hud-input-20261012-222727-5854a3c5336448158a97e26b8bf42b57/capture/arm-archive.json`.
+The installed waitfix add-on is unchanged and unarmed; newer native diagnostics
+remain undeployed.
+
+The user subsequently started a fresh tools world with
+`scripts/Start-Kcd2ToolsTest.ps1`. The comparison command explicitly uses the
+installed PowerShell 7 runtime:
+
+```powershell
+& 'C:/Users/xephi/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/powershell/pwsh.exe' -NoProfile -File 'C:/Users/xephi/Documents/ChatGPT/New project/MineCome/scripts/Test-HudGpuBudget.ps1'
+```
+
+The controller starts the isolated Minecraft fixture and records its run alongside
+the host-cap receipts and restoration verdict. It neither arms KCD input nor
+launches/stops KCD.
+
+Actual host run `9354dbc5a9e3459e8c1ddfea711bb0f9`, under
+`runtime/evidence/hud-gpu-budget-20261013-124533-9354dbc5a9e3459e8c1ddfea711bb0f9`,
+used user-started KCD PID 46236 (created `2026-10-13T11:43:27.2961094Z`). It applied
+60 FPS from −1, then verified restoration to −1 when the 120-second timer expired.
+The controller correctly reports restoration success but comparison invalidity.
+
+Its paired guest run `6c7341981e1344a2ae437816ae60403d` remained focused for all
+2,003 observed ticks, with zero unfocused ticks. It reached the 100-second waiting
+limit without completing the unfocused phase or sending/applying any events.
+Minecraft published 1,492 genuine HUD frames, completed real ACK/handle cleanup,
+restored its enabled-VSync/120 FPS settings and shut down normally. Maximum image
+age was 85 ms and pre-read fence age 39 ms; these focused measurements cannot
+establish a fix for the background backlog. Guest evidence is at
+`runtime/evidence/hud-input-20261013-114534-6c7341981e1344a2ae437816ae60403d`.
+
+The same waitfix installation remains unarmed. Automatic hiding of the owned
+guest window is being implemented to remove the manual focus handoff, but has
+no verification result yet. A valid unfocused comparison and physical
+hotbar/inventory control remain pending.

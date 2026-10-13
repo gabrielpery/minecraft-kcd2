@@ -13,7 +13,10 @@ param(
     [ValidateRange(1,4)][int]$GuiScale=2,
     [switch]$InputMode,
     [switch]$InputFixture,
-    [switch]$InputDelayFixture
+    [switch]$InputDelayFixture,
+    [switch]$InputBackgroundTrial,
+    [switch]$OffscreenPresentation,
+    [switch]$InputOffscreenTrial
 )
 $ErrorActionPreference='Stop'
 $root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
@@ -28,10 +31,16 @@ $exitCode=1
 try {
     if($InputFixture -and -not $InputMode){throw 'Input fixture requires the separate UI input mode.'}
     if($InputDelayFixture -and -not $InputFixture){throw 'Controlled input delays require the standalone fixture.'}
+    if($InputBackgroundTrial -and (-not $InputFixture -or $InputDelayFixture)){throw 'Background timing requires a standalone fixture without synthetic delays.'}
+    if($OffscreenPresentation -and (-not $InputMode -or $InputBackgroundTrial -or $InputDelayFixture)){throw 'Offscreen presentation requires UI input mode without other timing trials.'}
+    if($InputOffscreenTrial -and (-not $InputFixture -or -not $OffscreenPresentation)){throw 'Offscreen timing requires an explicit offscreen standalone fixture.'}
     $arguments=@('-p',$minecraft,'--no-daemon','runClient','-PminecomeHudStreamLab',"-PminecomeHudStreamRun=$Run","-PminecomeHudStreamTargetPid=$TargetPid","-PminecomeHudStreamTargetStart=$TargetStart","-PminecomeHudStreamExpiresUtcMs=$ExpiresUtcMs","-PminecomeHudStreamDirectory=$producerDirectory","-PminecomeHudStreamWidth=$Width","-PminecomeHudStreamHeight=$Height","-PminecomeHudStreamGuiScale=$GuiScale")
     if($InputMode){$arguments+='-PminecomeHudStreamInput'}
     if($InputFixture){$arguments+='-PminecomeHudStreamInputFixture'}
     if($InputDelayFixture){$arguments+='-PminecomeHudStreamInputDelayFixture'}
+    if($InputBackgroundTrial){$arguments+='-PminecomeHudStreamBackgroundTrial'}
+    if($OffscreenPresentation){$arguments+='-PminecomeHudStreamOffscreenPresentation'}
+    if($InputOffscreenTrial){$arguments+='-PminecomeHudStreamOffscreenTrial'}
     & (Join-Path $minecraft 'gradlew.bat') @arguments 2>&1 | Tee-Object -LiteralPath (Join-Path $EvidenceDirectory 'client.log')
     $exitCode=$LASTEXITCODE
 } finally {
