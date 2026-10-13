@@ -3,8 +3,8 @@
 // Input APIs: pinned ReShade include/reshade_api.hpp:114-152,721;
 // source/runtime_api.cpp:16-63 and runtime_gui.cpp:843-845,1502-1508.
 // EldenCraft compositor/src/addon.cpp:350-389 uses the same public key/block APIs.
-// Only keys 1-9/E/Esc are forwarded. F8 is a one-shot physical ownership latch.
-// No mouse forwarding: public DirectInput blocking does not prove axis capture.
+// F8 is a one-shot physical ownership latch. The default target forwards only
+// 1-9/E/Esc; the separate mouse target requires the original strict-capture API.
 // Exact inspected upstreams for unchanged rendering:
 // ReShade v6.8.0 18deaa52de0c425a78b329e9cb3c497281cd00ec,
 // include/reshade_api_device.hpp; source/d3d12/d3d12_impl_command_queue.cpp:130-134;
@@ -19,6 +19,11 @@
 #include "stream_channel.hpp"
 #include "input_channel.hpp"
 #include "input_diagnostics.hpp"
+#ifdef MINECOME_HUD_LIVE_MOUSE
+#include "mouse_capture_api.hpp"
+#include "mouse_diagnostics.hpp"
+#include "mouse_forwarding.hpp"
+#endif
 #include "hud_contract.hpp"
 #include <reshade.hpp>
 #include <algorithm>
@@ -36,6 +41,34 @@ namespace api = reshade::api;
 namespace hud = minecome::hud;
 namespace st = minecome::hud::stream;
 namespace ui = minecome::hud::input;
+#ifdef MINECOME_HUD_LIVE_MOUSE
+namespace mouse = minecome::mouse;
+const mouse::Api *mouse_api=nullptr;
+mouse::Notices mouse_notices;
+void mouse_receipt(const char *event,mouse::Result result,const mouse::Snapshot &snapshot) noexcept {
+    mouse_notices.push({event,result,snapshot});
+}
+void write_mouse_receipt(const mouse::Notice &notice,std::string_view run) {
+    const auto &snapshot=notice.snapshot;
+    std::ostringstream line;
+    line<<"[MineComeHudInput] {\"schema\":1,\"event\":\""<<notice.event<<"\",\"run\":\""<<run<<"\",\"result\":"<<static_cast<unsigned>(notice.result)
+        <<",\"flags\":"<<snapshot.flags<<",\"reason\":"<<snapshot.reason<<",\"generation\":"<<snapshot.generation
+        <<",\"device_count\":"<<snapshot.device_count<<",\"eligible_devices\":"<<snapshot.eligible_devices
+        <<",\"state_suppressions\":"<<snapshot.state_suppressions<<",\"data_suppressions\":"<<snapshot.data_suppressions
+        <<",\"peek_suppressions\":"<<snapshot.peek_suppressions<<",\"queue_drains\":"<<snapshot.queue_drains
+        <<",\"drain_failures\":"<<snapshot.drain_failures<<",\"live_verified\":false}";
+    reshade::log::message(reshade::log::level::info,line.str().c_str());
+}
+void drain_mouse_receipts(std::string_view run) {
+    mouse::Notice notice;
+    // Bound each worker iteration even if a producer continually refills.
+    for(unsigned i=0;i<32&&mouse_notices.pop(notice);++i)write_mouse_receipt(notice,run);
+    if(const auto dropped=mouse_notices.take_dropped()){
+        const auto line="[MineComeHudInput] {\"schema\":1,\"event\":\"mouse_diagnostics_lost\",\"run\":\""+std::string(run)+"\",\"dropped\":"+std::to_string(dropped)+",\"live_verified\":false}";
+        reshade::log::message(reshade::log::level::warning,line.c_str());
+    }
+}
+#endif
 constexpr char exe_sha[] = "a32d077e6b54e5cd0c5a5f3194f473779706ff266a711e4745ccdb598843340a";
 constexpr char effect_name[] = "MineComeHud.fx", semantic[] = "MINECOME_HUD_1";
 // Stable until module unload; fallback callbacks must never dereference Service
@@ -119,7 +152,12 @@ struct Service {
     std::atomic<unsigned> renderer_error{0};
     explicit Service(HMODULE module) {
         const auto path = st::module_path(module); const auto slash = path.find_last_of(L"/\\");
-        if (slash != path.npos) config = path.substr(0,slash+1)+L"MineComeHudInput.ini";
+        if (slash != path.npos) config = path.substr(0,slash+1)+
+#ifdef MINECOME_HUD_LIVE_MOUSE
+            L"MineComeHudMouse.ini";
+#else
+            L"MineComeHudInput.ini";
+#endif
     }
     bool stopping() const { return !stop || WaitForSingleObject(stop.value,0) != WAIT_TIMEOUT; }
     void end(std::string_view why, std::string_view run) {
@@ -176,6 +214,9 @@ struct Service {
             auto reported=st::steady_ms(); bool first=false; unsigned last_renderer_error=0;
             while (!stopping()) {
                 if(input_created) {
+#ifdef MINECOME_HUD_LIVE_MOUSE
+                    drain_mouse_receipts(identity.run);
+#endif
                     const auto now=st::steady_ms();
                     const auto last_render=last_input_render.load(std::memory_order_acquire);
                     if(input_force_close.load(std::memory_order_acquire)||input_request.load(std::memory_order_acquire)==2||input_mailbox.overflowed()) {
@@ -218,6 +259,9 @@ struct Service {
                         record_close(ui::CloseCause::worker_terminal);
                         const auto close_started=st::steady_ms();
                         while(!stopping()&&(inputs.status().ack.state!=2||!first_close_logged)&&st::steady_ms()-close_started<1500) {
+#ifdef MINECOME_HUD_LIVE_MOUSE
+                            drain_mouse_receipts(identity.run);
+#endif
                             inputs.poll();
                             input_status.store(std::make_shared<ui::Status>(inputs.status()),std::memory_order_release);
                             if(!first_close_logged)first_close_logged=close_receipt(identity.run);
@@ -273,6 +317,14 @@ struct RuntimeState {
     std::uint32_t previous_keys=0;
     std::uint32_t width=0,height=0,pitch=0;
     std::uint64_t next_fence=0,uploaded_sequence=0,uploaded_observation=0;
+#ifdef MINECOME_HUD_LIVE_MOUSE
+    api::effect_uniform_variable cursor_visible{},cursor{};
+    ui::PointerForwarder pointer;
+    hud::Rect rectangle;
+    std::uint32_t target_width=0,target_height=0,uploaded_screen=0;
+    std::uint64_t forwarded_events=0,transition_sequence=0,mouse_generation=0;
+    bool transition=false,transition_screen=false,mouse_leased=false,mouse_capability_reported=false;
+#endif
 };
 std::mutex runtimes_mutex;
 std::unordered_map<api::effect_runtime *,RuntimeState> runtimes;
@@ -296,6 +348,22 @@ bool visible(api::effect_runtime *runtime, const RuntimeState &state,ui::WindowS
     if(observed_foreground)*observed_foreground=foreground;
     return snapshot.record(ui::WindowCheck::foreground,foreground==state.window);
 }
+#ifdef MINECOME_HUD_LIVE_MOUSE
+void release_mouse(api::effect_runtime *runtime,RuntimeState &state) {
+    if(!state.mouse_leased||!mouse_api)return;
+    mouse::Snapshot snapshot;
+    auto result=mouse_api->release(reinterpret_cast<std::uintptr_t>(state.window),reinterpret_cast<std::uintptr_t>(runtime),&snapshot);
+    state.mouse_leased=false;mouse_receipt("mouse_release",result,snapshot);
+}
+bool queue_input(RuntimeState &state,const ui::Event &event) {
+    if(!service->input_mailbox.push(event))return false;
+    ++state.forwarded_events;return true;
+}
+bool queue_pointer(RuntimeState &state,const ui::PointerBatch &batch) {
+    for(std::size_t i=0;i<batch.count;++i)if(!queue_input(state,batch.events[i]))return false;
+    return true;
+}
+#endif
 void close_keyboard(api::effect_runtime *runtime,ui::CloseCause cause,const ui::CloseSnapshot *snapshot=nullptr) noexcept {
     if(service&&service->input_owner.load(std::memory_order_acquire)==runtime) {
         if(snapshot)first_close.publish(*snapshot);else record_close(cause);
@@ -312,16 +380,31 @@ void capture_keyboard(api::effect_runtime *runtime,RuntimeState &state,bool comp
     for(std::size_t i=0;i<keys.size();++i)if(runtime->is_key_down(keys[i]))held|=1u<<i;
     const auto now=st::steady_ms();
     const auto utc=st::utc_ms();const bool f8=runtime->is_key_down(VK_F8);
+#ifdef MINECOME_HUD_LIVE_MOUSE
+    unsigned mouse_buttons=0;
+    for(unsigned i=0;i<2;++i)if(runtime->is_mouse_button_down(i))mouse_buttons|=1u<<i;
+    mouse::Snapshot mouse_status;
+    const auto mouse_query=mouse_api->query(reinterpret_cast<std::uintptr_t>(state.window),0,&mouse_status);
+    const bool mouse_capable=mouse_query==mouse::Result::ok&&(mouse_status.flags&mouse::eligible)!=0;
+    if(!state.mouse_capability_reported&&f8){mouse_receipt("mouse_capability",mouse_query,mouse_status);state.mouse_capability_reported=true;}
+#endif
     ui::WindowSnapshot window;HWND observed_foreground=nullptr;
     const bool window_eligible=visible(runtime,state,&window,&observed_foreground);
     // Diagnostic bits mirror the existing eligibility predicates, with no
     // added grace or refresh: composed/overlay/focus/peer/ACK/observation/end.
-    const std::uint32_t failures=(!composed?1u:0u)|(state.reshade_overlay?2u:0u)|(!window_eligible?4u:0u)|
+    std::uint32_t failures=(!composed?1u:0u)|(state.reshade_overlay?2u:0u)|(!window_eligible?4u:0u)|
         ((!peer->live||peer->state>=2)?8u:0u)|(peer->ack.state!=1?16u:0u)|(!ui::fresh(peer->ack.utc,utc)?32u:0u)|
         ((now<peer->observed||now-peer->observed>ui::fresh_ms)?64u:0u)|
         (input_force_close.load(std::memory_order_acquire)?128u:0u)|(service->terminal.load(std::memory_order_acquire)?256u:0u);
+#ifdef MINECOME_HUD_LIVE_MOUSE
+    if(!state.keyboard.consumed()&&(!mouse_capable||mouse_buttons))failures|=512u;
+    if(state.mouse_leased&&(!mouse_capable||!(mouse_status.flags&mouse::active)||mouse_status.generation!=state.mouse_generation))failures|=1024u;
+#endif
     const auto step=state.keyboard.update(failures==0,f8,held,now);
     if(step==ui::KeyboardGate::Step::closed) {
+#ifdef MINECOME_HUD_LIVE_MOUSE
+        release_mouse(runtime,state);
+#endif
         auto cause=ui::CloseCause::eligibility_lost;
         switch(state.keyboard.close_reason()) {
         case ui::KeyboardGate::Close::second_f8:cause=ui::CloseCause::second_f8;break;
@@ -356,12 +439,69 @@ void capture_keyboard(api::effect_runtime *runtime,RuntimeState &state,bool comp
     // fully neutral frames before forwarding UI edges. F8 itself may reach KCD.
     runtime->block_input_next_frame();
     if(step!=ui::KeyboardGate::Step::active||peer->state!=1)return;
+#ifdef MINECOME_HUD_LIVE_MOUSE
+    if(state.transition&&peer->ack.sequence>=state.transition_sequence&&peer->ack.screen==static_cast<unsigned>(state.transition_screen)&&state.uploaded_screen==peer->ack.screen)
+        state.transition=false;
+    if(state.mouse_leased){ // Also covers the bounded close-screen ACK interval.
+        mouse::Snapshot renewed;
+        const auto result=mouse_api->request(reinterpret_cast<std::uintptr_t>(state.window),reinterpret_cast<std::uintptr_t>(runtime),100,&renewed);
+        if(result!=mouse::Result::ok||!(renewed.flags&mouse::active)||renewed.generation!=state.mouse_generation){
+            mouse_receipt("mouse_renew_failed",result,renewed);close_keyboard(runtime,ui::CloseCause::mouse_capture);release_mouse(runtime,state);return;
+        }
+    }
+#endif
     const auto changed=held^state.previous_keys;
     for(std::size_t i=0;i<keys.size();++i)if(changed&(1u<<i)) {
         const ui::Event event{st::utc_ms(),(held&(1u<<i))?ui::Kind::key_down:ui::Kind::key_up,keys[i],0,0,0};
+#ifdef MINECOME_HUD_LIVE_MOUSE
+        const bool toggle=event.kind==ui::Kind::key_down&&(keys[i]==0x45||keys[i]==0x1b);
+        if(toggle){
+            if(state.transition){close_keyboard(runtime,ui::CloseCause::mouse_transition);release_mouse(runtime,state);return;}
+            ui::PointerBatch releases;state.pointer.close(utc,releases);
+            if(!queue_pointer(state,releases)){close_keyboard(runtime,ui::CloseCause::mailbox_overflow);release_mouse(runtime,state);return;}
+        }
+        if(!queue_input(state,event)){close_keyboard(runtime,ui::CloseCause::mailbox_overflow);release_mouse(runtime,state);return;}
+        if(toggle){state.transition=true;state.transition_sequence=state.forwarded_events;state.transition_screen=keys[i]==0x45&&peer->ack.screen==0;}
+#else
         if(!service->input_mailbox.push(event)) {close_keyboard(runtime,ui::CloseCause::mailbox_overflow);return;}
+#endif
     }
     state.previous_keys=held;
+#ifdef MINECOME_HUD_LIVE_MOUSE
+    if(state.transition)return;
+    if(peer->ack.screen==0){
+        ui::PointerBatch releases;state.pointer.close(utc,releases);
+        if(releases.count){close_keyboard(runtime,ui::CloseCause::mouse_transition);release_mouse(runtime,state);return;}
+        // Closing inventory while dragging releases the guest first. Keep the
+        // bounded native lease until the physical buttons are neutral so a
+        // still-held click cannot become a KCD attack on screen close.
+        if(!mouse_buttons)release_mouse(runtime,state);
+        return;
+    }
+    if(state.uploaded_screen!=1)return;
+    if(!state.mouse_leased){
+        mouse::Snapshot capture;
+        const auto result=mouse_api->request(reinterpret_cast<std::uintptr_t>(state.window),reinterpret_cast<std::uintptr_t>(runtime),100,&capture);
+        if(result==mouse::Result::draining)return;
+        if(result!=mouse::Result::ok||!(capture.flags&mouse::active)){
+            mouse_receipt("mouse_request_failed",result,capture);close_keyboard(runtime,ui::CloseCause::mouse_capture);release_mouse(runtime,state);return;
+        }
+        state.mouse_generation=capture.generation;state.mouse_leased=true;mouse_receipt("mouse_acquired",result,capture);
+    }
+    RECT client{};std::uint32_t x=0,y=0;std::int16_t wheel=0;
+    runtime->get_mouse_cursor_position(&x,&y,&wheel);
+    if(!GetClientRect(state.window,&client)){close_keyboard(runtime,ui::CloseCause::mouse_capture);release_mouse(runtime,state);return;}
+    const auto point=ui::pointer_point(static_cast<float>(static_cast<std::int32_t>(x)),static_cast<float>(static_cast<std::int32_t>(y)),
+        static_cast<float>(client.right-client.left),static_cast<float>(client.bottom-client.top),state.rectangle);
+    if(!point.valid){close_keyboard(runtime,ui::CloseCause::mouse_capture);release_mouse(runtime,state);return;}
+    const auto batch=state.pointer.update(true,true,mouse_buttons,point,wheel,utc);
+    if(!queue_pointer(state,batch)){close_keyboard(runtime,ui::CloseCause::mailbox_overflow);release_mouse(runtime,state);return;}
+    if(state.pointer.active()&&point.inside){
+        runtime->set_uniform_value_float(state.cursor,(state.rectangle.x+point.x*state.rectangle.width)*state.target_width,
+            (state.rectangle.y+point.y*state.rectangle.height)*state.target_height,std::max(1.0f,state.target_height/720.0f),0.0f);
+        runtime->set_uniform_value_bool(state.cursor_visible,true);
+    }
+#endif
 }
 struct InputFrame {
     api::effect_runtime *runtime;
@@ -370,7 +510,12 @@ struct InputFrame {
     std::uint32_t composition_stage=0;
     ~InputFrame() {
         try {capture_keyboard(runtime,state,composed,composition_stage);}
-        catch(...) {close_keyboard(runtime,ui::CloseCause::callback_exception);}
+        catch(...) {
+            close_keyboard(runtime,ui::CloseCause::callback_exception);
+#ifdef MINECOME_HUD_LIVE_MOUSE
+            try {release_mouse(runtime,state);} catch(...) { /* Internal lease still expires after 100 ms. */ }
+#endif
+        }
     }
 };
 bool sdr(api::format format) {
@@ -379,19 +524,36 @@ bool sdr(api::format format) {
 }
 void hide(api::effect_runtime *runtime, RuntimeState &state) {
     if (state.active != 0) runtime->set_uniform_value_bool(state.active,false);
+#ifdef MINECOME_HUD_LIVE_MOUSE
+    if(state.cursor_visible!=0)runtime->set_uniform_value_bool(state.cursor_visible,false);
+#endif
 }
-void forget(RuntimeState &state) { state.active={}; state.frame={}; state.rect={}; state.technique={}; state.bound=false; }
+void forget(RuntimeState &state) { state.active={}; state.frame={}; state.rect={}; state.technique={}; state.bound=false;
+#ifdef MINECOME_HUD_LIVE_MOUSE
+    state.cursor_visible={};state.cursor={};
+#endif
+}
 bool handles(api::effect_runtime *runtime, RuntimeState &state) {
     if (state.active == 0) {
         state.active=runtime->find_uniform_variable(effect_name,"McHudActive");
         state.frame=runtime->find_uniform_variable(effect_name,"McHudFrame");
         state.rect=runtime->find_uniform_variable(effect_name,"McHudRect");
         state.technique=runtime->find_technique(effect_name,"MineComeHud");
+#ifdef MINECOME_HUD_LIVE_MOUSE
+        state.cursor_visible=runtime->find_uniform_variable(effect_name,"McHudCursorVisible");
+        state.cursor=runtime->find_uniform_variable(effect_name,"McHudCursor");
+#endif
     }
     if (state.active == 0 || state.frame == 0 || state.rect == 0 || state.technique == 0) { forget(state); return false; }
+#ifdef MINECOME_HUD_LIVE_MOUSE
+    if(state.cursor_visible==0||state.cursor==0){forget(state);return false;}
+#endif
     return true;
 }
 void release(api::effect_runtime *runtime, RuntimeState &state, bool after_reset) {
+#ifdef MINECOME_HUD_LIVE_MOUSE
+    release_mouse(runtime,state);
+#endif
     // ReShade invalidates effect handles before destroy_effect_runtime. Never
     // write a cached uniform then; clearing the external semantic cache is safe.
     if (after_reset) forget(state); else hide(runtime,state);
@@ -456,6 +618,9 @@ bool upload(api::effect_runtime *runtime, api::command_list *commands, RuntimeSt
     if (!queue->signal(state.fence,slot->completion)) return fail(state,4);
     state.uploaded_sequence=frame.header.sequence;
     state.uploaded_observation=frame.observation; // Never use latest pub age instead.
+#ifdef MINECOME_HUD_LIVE_MOUSE
+    state.uploaded_screen=frame.header.screen;
+#endif
     ++service->uploaded; return true;
 }
 void on_init(api::effect_runtime *runtime) {
@@ -471,12 +636,21 @@ void on_destroy(api::effect_runtime *runtime) {
 }
 void on_reload(api::effect_runtime *runtime) {
     std::lock_guard lock(runtimes_mutex);
-    const auto it=runtimes.find(runtime); if (it != runtimes.end()) {close_keyboard(runtime,ui::CloseCause::runtime_reload);forget(it->second);}
+    const auto it=runtimes.find(runtime); if (it != runtimes.end()) {close_keyboard(runtime,ui::CloseCause::runtime_reload);
+#ifdef MINECOME_HUD_LIVE_MOUSE
+        release_mouse(runtime,it->second);
+#endif
+        forget(it->second);}
 }
 bool on_overlay(api::effect_runtime *runtime,bool open,api::input_source) {
     std::lock_guard lock(runtimes_mutex);
     const auto it=runtimes.find(runtime);
-    if(it!=runtimes.end()) {it->second.reshade_overlay=open;if(open)close_keyboard(runtime,ui::CloseCause::overlay_open);}
+    if(it!=runtimes.end()) {it->second.reshade_overlay=open;if(open){
+        close_keyboard(runtime,ui::CloseCause::overlay_open);
+#ifdef MINECOME_HUD_LIVE_MOUSE
+        release_mouse(runtime,it->second);
+#endif
+    }}
     return false; // Observe ReShade's UI; never prevent it opening.
 }
 void on_begin(api::effect_runtime *runtime, api::command_list *commands, api::resource_view rtv, api::resource_view) {
@@ -523,6 +697,9 @@ void on_begin(api::effect_runtime *runtime, api::command_list *commands, api::re
         if (desc.type != api::resource_type::texture_2d || !sdr(desc.texture.format)) return;
         input_frame.composition_stage=6;
         const auto rectangle=hud::fit_rect(frame->header.width,frame->header.height,desc.texture.width,desc.texture.height);
+#ifdef MINECOME_HUD_LIVE_MOUSE
+        state.rectangle=rectangle;state.target_width=desc.texture.width;state.target_height=desc.texture.height;
+#endif
         if (rectangle.width <= 0 || rectangle.height <= 0) return;
         input_frame.composition_stage=7;
         upload(runtime,commands,state,*frame);
@@ -548,11 +725,22 @@ void on_begin(api::effect_runtime *runtime, api::command_list *commands, api::re
     } catch (...) { fail(state,5); hide(runtime,state); }
 }
 } // namespace
+#ifdef MINECOME_HUD_LIVE_MOUSE
+extern "C" __declspec(dllexport) const char *NAME="MineCome bounded Minecraft mouse UI lab";
+extern "C" __declspec(dllexport) const char *DESCRIPTION="Exact KCD2 tools/D3D12 genuine UI stream; inventory cursor, left/right clicks, drag and wheel with strict capture; one F8 activation, at most 30 seconds.";
+#else
 extern "C" __declspec(dllexport) const char *NAME="MineCome bounded Minecraft keyboard UI lab";
 extern "C" __declspec(dllexport) const char *DESCRIPTION="Exact KCD2 tools/D3D12 genuine UI stream; one F8 activation, keys 1-9/E/Esc only, at most 30 seconds.";
+#endif
 extern "C" __declspec(dllexport) bool AddonInit(HMODULE addon, HMODULE reshade_module) {
     if (!reshade::register_addon(addon,reshade_module)) return false;
     try {
+#ifdef MINECOME_HUD_LIVE_MOUSE
+        const auto get_api=reinterpret_cast<mouse::GetApi>(GetProcAddress(reshade_module,"MineComeGetMouseCaptureApi"));
+        mouse_api=get_api?get_api(mouse::api_version,sizeof(mouse::Api)):nullptr;
+        if(!mouse_api||mouse_api->version!=mouse::api_version||mouse_api->size!=sizeof(mouse::Api)||!mouse_api->query||!mouse_api->request||!mouse_api->release)
+            throw std::runtime_error("custom_mouse_runtime_required");
+#endif
         service=new Service(addon);
         if (!service->stop || service->config.empty()) throw std::runtime_error("service_init");
         service->worker=std::thread([] { service->run(); });
@@ -577,6 +765,10 @@ extern "C" __declspec(dllexport) void AddonUninit(HMODULE addon, HMODULE reshade
     {
         std::lock_guard lock(runtimes_mutex);
         for (auto &[runtime,state] : runtimes) release(runtime,state,false);
+#ifdef MINECOME_HUD_LIVE_MOUSE
+        const auto session=service?service->session.load(std::memory_order_acquire):nullptr;
+        drain_mouse_receipts(session?session->identity.run:std::string{});
+#endif
         runtimes.clear(); delete service; service=nullptr;
     }
     receipt("addon","worker_joined_resources_released"); reshade::unregister_addon(addon,reshade_module);

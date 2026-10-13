@@ -14,7 +14,7 @@ final class HudVanillaUiAdapter {
     private final Set<Integer> keys=new HashSet<>();
     private final HudPointerState pointer=new HudPointerState();
     private Screen pointerScreen;
-    private long screenGeneration,cleanupReleases,lateReleasesConsumed,mouseDragCalls,wheelCalls;
+    private long screenGeneration,cleanupReleases,lateReleasesConsumed,mouseDragCalls,wheelCalls,mouseClickCalls,mouseReleaseCalls;
     private double x=0.5,y=0.5;
     private boolean pointerKnown;
     HudVanillaUiAdapter(MinecraftClient client,boolean mouseAllowed){world=client.world;player=client.player;server=client.getServer();this.mouseAllowed=mouseAllowed;}
@@ -40,8 +40,8 @@ final class HudVanillaUiAdapter {
         double nextX=logicalX(screen),nextY=logicalY(screen);screen.mouseMoved(nextX,nextY);
         switch(event.kind()){
             case 3 -> {int button=pointer.activeButton();if(button!=-1){screen.mouseDragged(nextX,nextY,button,nextX-oldX,nextY-oldY);mouseDragCalls++;}}
-            case 4 -> {pointer.press(event.code());screen.mouseClicked(nextX,nextY,event.code());}
-            case 5 -> {pointer.release(event.code());screen.mouseReleased(nextX,nextY,event.code());}
+            case 4 -> {pointer.press(event.code());screen.mouseClicked(nextX,nextY,event.code());mouseClickCalls++;}
+            case 5 -> {pointer.release(event.code());screen.mouseReleased(nextX,nextY,event.code());mouseReleaseCalls++;}
             case 6 -> {screen.mouseScrolled(nextX,nextY,0,HudPointerState.wheel(event.value(),client.options.getDiscreteMouseScroll().getValue(),client.options.getMouseWheelSensitivity().getValue()));wheelCalls++;}
             default -> throw new IllegalArgumentException("Unexpected UI input kind");
         }
@@ -73,7 +73,8 @@ final class HudVanillaUiAdapter {
     private double logicalY(Screen screen){return Math.min(screen.height-0.001,y*screen.height);}
     JsonObject pointerDiagnostics(){
         var proof=new JsonObject();proof.addProperty("held_buttons",pointer.heldCount());proof.addProperty("pending_releases",pointer.pendingReleaseCount());proof.addProperty("active_button",pointer.activeButton());
-        proof.addProperty("cleanup_releases",cleanupReleases);proof.addProperty("late_releases_consumed",lateReleasesConsumed);proof.addProperty("screen_generation",screenGeneration);proof.addProperty("mouse_drag_calls",mouseDragCalls);proof.addProperty("wheel_calls",wheelCalls);return proof;
+        proof.addProperty("cleanup_releases",cleanupReleases);proof.addProperty("late_releases_consumed",lateReleasesConsumed);proof.addProperty("screen_generation",screenGeneration);proof.addProperty("mouse_drag_calls",mouseDragCalls);proof.addProperty("wheel_calls",wheelCalls);
+        proof.addProperty("mouse_click_calls",mouseClickCalls);proof.addProperty("mouse_release_calls",mouseReleaseCalls);return proof;
     }
     Double windowX(MinecraftClient client){return pointerKnown && inventory(client.currentScreen)?Math.min(client.getWindow().getWidth()-0.001,x*client.getWindow().getWidth()):null;}
     Double windowY(MinecraftClient client){return pointerKnown && inventory(client.currentScreen)?Math.min(client.getWindow().getHeight()-0.001,y*client.getWindow().getHeight()):null;}

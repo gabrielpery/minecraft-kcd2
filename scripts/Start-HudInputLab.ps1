@@ -1,10 +1,10 @@
 #Requires -Version 7.3
 # Original bounded vanilla UI control lab. Fixture mode never operates KCD2.
-# Live mode arms only an already-running, separately installed keyboard-only addon.
+# Live mode arms an already-running, separately installed matching input profile.
 [CmdletBinding()]
 param(
     [ValidateSet('Fixture','Live')][string]$Mode='Fixture',
-    [string]$JavaHome,[string]$BundleDirectory,[switch]$PreflightOnly,[switch]$DelayFixture,[switch]$BackgroundTrial,[switch]$OffscreenPresentation,[switch]$OffscreenTrial,[switch]$HostGpuBudget,[switch]$HideHostHud,[switch]$PointerFixture,
+    [string]$JavaHome,[string]$BundleDirectory,[switch]$PreflightOnly,[switch]$DelayFixture,[switch]$BackgroundTrial,[switch]$OffscreenPresentation,[switch]$OffscreenTrial,[switch]$HostGpuBudget,[switch]$HideHostHud,[switch]$PointerFixture,[switch]$LiveMouse,
     [ValidateRange(320,1920)][int]$Width=1280,
     [ValidateRange(240,1080)][int]$Height=720,
     [ValidateRange(1,4)][int]$GuiScale=2
@@ -30,6 +30,18 @@ function Read-Receipt([string]$Path){
     if($item.PSIsContainer -or $item.Length -lt 2 -or $item.Length -gt 64KB){throw 'Invalid bounded UI receipt.'}
     return (Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json -Depth 16)
 }
+function Assert-LiveMouseReceipt([object]$Receipt,[bool]$Expected){
+    if($Receipt.PSObject.Properties.Name -notcontains 'ui_input_live_mouse' -or $Receipt.ui_input_live_mouse -isnot [bool] -or $Receipt.ui_input_live_mouse -ne $Expected){throw 'UI producer/result live-mouse mode mismatch.'}
+}
+function Assert-LiveMouseGuestProof([object]$Proof){
+    if($Proof.live_mouse -isnot [bool] -or $Proof.live_mouse -ne $true -or ($Proof.pointer_events_applied -isnot [long] -and $Proof.pointer_events_applied -isnot [int]) -or $Proof.pointer_events_applied -le 0 -or $Proof.pointer_events_applied -gt $Proof.input_events_applied){throw 'Live mouse needs actual successfully applied guest pointer events.'}
+    $neutral=$Proof.pointer_adapter_after_cleanup
+    foreach($field in @('held_buttons','pending_releases','active_button')){
+        $expected=if($field -ceq 'active_button'){-1}else{0}
+        if(($neutral.$field -isnot [long] -and $neutral.$field -isnot [int]) -or $neutral.$field -ne $expected){throw 'Live mouse guest pointer cleanup was not neutral.'}
+    }
+    return [long]$Proof.pointer_events_applied
+}
 function Start-Child([string]$Executable,[string[]]$Arguments){
     $start=[Diagnostics.ProcessStartInfo]::new()
     $start.FileName=$Executable;$start.WorkingDirectory=$root
@@ -38,6 +50,7 @@ function Start-Child([string]$Executable,[string[]]$Arguments){
     return [Diagnostics.Process]::Start($start)
 }
 $null=Assert-Unlinked $evidenceRoot
+if($LiveMouse -and ($Mode -ne 'Live' -or -not $HostGpuBudget -or -not $OffscreenPresentation -or $PointerFixture -or $DelayFixture -or $BackgroundTrial -or $OffscreenTrial)){throw 'LiveMouse requires Live mode, HostGpuBudget and OffscreenPresentation, with all fixture modes disabled.'}
 if($DelayFixture -and $Mode -ne 'Fixture'){throw 'Controlled input delays require the standalone fixture.'}
 if($PointerFixture -and ($Mode -ne 'Fixture' -or $DelayFixture -or $BackgroundTrial)){throw 'PointerFixture requires standalone Fixture mode without delay/background trials.'}
 if($BackgroundTrial -and ($Mode -ne 'Fixture' -or $DelayFixture)){throw 'Background timing requires a standalone fixture without synthetic delays.'}
@@ -69,8 +82,8 @@ if($Mode -eq 'Fixture'){
     if($HostGpuBudget){. (Join-Path $PSScriptRoot 'HudGpuBudget.ps1')}
     if($HideHostHud){. (Join-Path $PSScriptRoot 'HudVisibility.ps1')}
     $context=Get-MineComeProbeContext
-    if(-not $BundleDirectory){$BundleDirectory=Join-Path $root 'runtime/hud-compositor-input-waitfix'}
-    & (Join-Path $PSScriptRoot 'Arm-HudStream.ps1') -InputMode -BundleDirectory $BundleDirectory -OffscreenPresentation:$OffscreenPresentation -PreflightOnly
+    if(-not $BundleDirectory){$BundleDirectory=Join-Path $root $(if($LiveMouse){'runtime/hud-compositor-mouse'}else{'runtime/hud-compositor-input-waitfix'})}
+    & (Join-Path $PSScriptRoot 'Arm-HudStream.ps1') -InputMode -LiveMouse:$LiveMouse -BundleDirectory $BundleDirectory -OffscreenPresentation:$OffscreenPresentation -PreflightOnly
 }
 if($PreflightOnly){Write-Output "HUD_INPUT_PREFLIGHT_PASS mode=$Mode no_process_started=true";return}
 $run=[guid]::NewGuid().ToString('N')
@@ -83,6 +96,7 @@ $fixtureReady=Join-Path $directory 'fixture-ready.json'
 $fixtureResult=Join-Path $directory 'fixture-result.json'
 $fixture=$null;$client=$null;$armEvidence=$null;$failure=$null;$passed=$false;$targetPid=0;$targetStart='';$guest=$null
 $bodyPassed=$false;$hostBudgetSession=$null;$hostBudgetEvidence=$null
+$liveMouseGuestVerified=$false;$pointerEventsApplied=0
 $hostHudSession=$null;$hostHudEvidence=$null
 try{
     if($Mode -eq 'Fixture'){
@@ -105,6 +119,7 @@ try{
     }else{$targetPid=$context.GamePid;$targetStart=$context.GameStartedUtc.ToFileTimeUtc().ToString()}
     $arguments=@('-NoProfile','-File',(Join-Path $PSScriptRoot 'Run-HudStreamClient.ps1'),'-EvidenceDirectory',$directory,'-Run',$run,'-TargetPid',[string]$targetPid,'-TargetStart',$targetStart,'-ExpiresUtcMs',[string]$expires,'-JavaHome',$JavaHome,'-Width',[string]$Width,'-Height',[string]$Height,'-GuiScale',[string]$GuiScale,'-InputMode')
     if($Mode -eq 'Fixture'){$arguments+='-InputFixture'}
+    if($LiveMouse){$arguments+='-LiveMouse'}
     if($PointerFixture){$arguments+='-InputPointerFixture'}
     if($DelayFixture){$arguments+='-InputDelayFixture'}
     if($BackgroundTrial){$arguments+='-InputBackgroundTrial'}
@@ -120,6 +135,7 @@ try{
         Start-Sleep -Milliseconds 100
     }
     $ready=Read-Receipt $readyPath
+    Assert-LiveMouseReceipt $ready ([bool]$LiveMouse)
     if($ready.PSObject.Properties.Name -notcontains 'ui_input_fixture' -or $ready.ui_input_fixture -isnot [bool] -or $ready.ui_input_fixture -ne ($Mode -eq 'Fixture')){throw 'UI producer fixture/live mode mismatch.'}
     if($ready.PSObject.Properties.Name -notcontains 'ui_input_pointer_fixture' -or $ready.ui_input_pointer_fixture -isnot [bool] -or $ready.ui_input_pointer_fixture -ne [bool]$PointerFixture){throw 'UI producer pointer-fixture mode mismatch.'}
     if($ready.PSObject.Properties.Name -notcontains 'ui_input_delay_fixture' -or $ready.ui_input_delay_fixture -isnot [bool] -or $ready.ui_input_delay_fixture -ne [bool]$DelayFixture){throw 'UI producer delay-fixture mode mismatch.'}
@@ -145,7 +161,7 @@ try{
         Start-MineComeHudVisibility $hostHudSession
         Write-Output "HUD_HOST_VISIBILITY_APPLIED run=$($hostHudSession.Probe.Run) original_hud=$($hostHudSession.Applied.original_hud) temporary_hud=0 expiry_ms=120000"
     }
-    if($Mode -eq 'Live'){$armEvidence=& (Join-Path $PSScriptRoot 'Arm-HudStream.ps1') -InputMode -BundleDirectory $BundleDirectory -OffscreenPresentation:$OffscreenPresentation -ReadyManifest $readyPath}
+    if($Mode -eq 'Live'){$armEvidence=& (Join-Path $PSScriptRoot 'Arm-HudStream.ps1') -InputMode -LiveMouse:$LiveMouse -BundleDirectory $BundleDirectory -OffscreenPresentation:$OffscreenPresentation -ReadyManifest $readyPath}
     Write-Output "HUD_INPUT_READY mode=$Mode run=$run"
     while(-not $client.HasExited -or ($fixture -and -not $fixture.HasExited)){
         if([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() -ge $expires+15000){throw 'UI shutdown deadline reached; any remaining processes are preserved.'}
@@ -153,6 +169,7 @@ try{
     }
     if($client.ExitCode -ne 0 -or ($fixture -and $fixture.ExitCode -ne 0)){throw 'UI client or native fixture reported failure.'}
     $guest=Read-Receipt (Join-Path $directory 'capture/stream-result.json')
+    Assert-LiveMouseReceipt $guest ([bool]$LiveMouse)
     if($guest.PSObject.Properties.Name -notcontains 'ui_input_fixture' -or $guest.ui_input_fixture -isnot [bool] -or $guest.ui_input_fixture -ne ($Mode -eq 'Fixture')){throw 'UI result fixture/live mode mismatch.'}
     if($guest.PSObject.Properties.Name -notcontains 'ui_input_pointer_fixture' -or $guest.ui_input_pointer_fixture -isnot [bool] -or $guest.ui_input_pointer_fixture -ne [bool]$PointerFixture){throw 'UI result pointer-fixture mode mismatch.'}
     if($guest.PSObject.Properties.Name -notcontains 'ui_input_delay_fixture' -or $guest.ui_input_delay_fixture -isnot [bool] -or $guest.ui_input_delay_fixture -ne [bool]$DelayFixture){throw 'UI result delay-fixture mode mismatch.'}
@@ -216,6 +233,10 @@ try{
         }
     }else{
         if($guest.result -cne 'input_completed'){throw 'Live UI session did not complete cleanly.'}
+        if($LiveMouse){
+            $pointerEventsApplied=Assert-LiveMouseGuestProof $guest.lab_evidence
+            $liveMouseGuestVerified=$true
+        }
         if($guest.lab_evidence.host_armed -ne $true -or $guest.lab_evidence.input_events_applied -lt 1){throw 'Live UI session closed without observed arming and applied input.'}
         Assert-MineComeProbeContext $context
     }
@@ -243,7 +264,7 @@ finally{
             }
         }
         if($HostGpuBudget -and -not $hostBudgetSession){$passed=$false}
-        [ordered]@{schema=1;kind='minecome_hud_input_controller_v1';run=$run;mode=$Mode;pointer_fixture=[bool]$PointerFixture;delay_fixture=[bool]$DelayFixture;background_trial=[bool]$BackgroundTrial;offscreen_presentation=[bool]$OffscreenPresentation;offscreen_trial=[bool]$OffscreenTrial;host_gpu_budget_requested=[bool]$HostGpuBudget;host_gpu_budget=$hostBudgetEvidence;host_hud_hidden_requested=[bool]$HideHostHud;host_hud_visibility=$hostHudEvidence;body_passed=$bodyPassed;result=$(if($passed){'passed'}else{'failed'});failure=$failure;evidence=$directory;target_pid=$targetPid;target_start_filetime=$targetStart;fixture_sha256=$fixtureHash;compositor_armed=[bool]$armEvidence;width=$Width;height=$Height;gui_scale=$GuiScale;kcd_launched=$false;kcd_stopped=$false;host_input_exclusivity_verified=$false;live_mouse_enabled=$false;created_utc_ms=$expires-180000;expires_utc_ms=$expires} | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $directory 'verification.json') -Encoding utf8NoBOM
+        [ordered]@{schema=1;kind='minecome_hud_input_controller_v1';run=$run;mode=$Mode;pointer_fixture=[bool]$PointerFixture;delay_fixture=[bool]$DelayFixture;background_trial=[bool]$BackgroundTrial;offscreen_presentation=[bool]$OffscreenPresentation;offscreen_trial=[bool]$OffscreenTrial;host_gpu_budget_requested=[bool]$HostGpuBudget;host_gpu_budget=$hostBudgetEvidence;host_hud_hidden_requested=[bool]$HideHostHud;host_hud_visibility=$hostHudEvidence;body_passed=$bodyPassed;result=$(if($passed){'passed'}else{'failed'});failure=$failure;evidence=$directory;target_pid=$targetPid;target_start_filetime=$targetStart;fixture_sha256=$fixtureHash;compositor_armed=[bool]$armEvidence;width=$Width;height=$Height;gui_scale=$GuiScale;kcd_launched=$false;kcd_stopped=$false;host_input_exclusivity_verified=$false;live_mouse_requested=[bool]$LiveMouse;live_mouse_enabled=[bool]($LiveMouse -and $armEvidence);live_mouse_guest_verified=$liveMouseGuestVerified;live_mouse_guest_pass=[bool]($LiveMouse -and $liveMouseGuestVerified -and $passed);pointer_events_applied=$pointerEventsApplied;live_mouse_visual_verified=$false;created_utc_ms=$expires-180000;expires_utc_ms=$expires} | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $directory 'verification.json') -Encoding utf8NoBOM
     }finally{if($client){$client.Dispose()};if($fixture){$fixture.Dispose()}}
 }
 if(-not $passed){throw $(if($failure){$failure}else{'UI session did not pass.'})}

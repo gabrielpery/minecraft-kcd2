@@ -39,6 +39,8 @@ public final class HudStreamLab {
     private final HudStreamProducer.Identity identity;
     private final HudStreamLayout layout=HudStreamLayout.configured();
     private final boolean inputMode=Boolean.getBoolean("minecome.hudStreamInput"),inputFixture=Boolean.getBoolean("minecome.hudStreamInputFixture");
+    private final boolean liveMouse=Boolean.getBoolean("minecome.hudStreamLiveMouse");
+    private final boolean mouseInputEnabled=HudMousePolicy.enabled(inputMode,inputFixture,liveMouse);
     private final boolean inputDelayFixture=Boolean.getBoolean("minecome.hudStreamInputDelayFixture");
     private final boolean inputPointerFixture=Boolean.getBoolean("minecome.hudStreamInputPointerFixture");
     private final boolean backgroundTrial=Boolean.getBoolean("minecome.hudStreamBackgroundTrial");
@@ -55,7 +57,7 @@ public final class HudStreamLab {
     private HudVanillaUiAdapter ui;
     private HudPointerFixture pointerFixture;
     private final HudInputGate inputGate=new HudInputGate();
-    private long armedAt,inputEventsApplied;
+    private long armedAt,inputEventsApplied,pointerEventsApplied;
     private boolean fixtureTargetsSent,selectedNineVerified,inventoryOpened,inventoryClosed,serverSwapVerified;
     private JsonObject inputEndingProof;
     private String inputFailure;
@@ -181,8 +183,8 @@ public final class HudStreamLab {
         // HUD color clear and vanilla depth clear run later on the owned FBO.
         lab.offscreenClears++;return true;
     }
-    public static Double virtualMouseX(){var lab=active;var client=MinecraftClient.getInstance();return lab!=null && lab.ui!=null && lab.inputFixture && lab.owned(client)?lab.ui.windowX(client):null;}
-    public static Double virtualMouseY(){var lab=active;var client=MinecraftClient.getInstance();return lab!=null && lab.ui!=null && lab.inputFixture && lab.owned(client)?lab.ui.windowY(client):null;}
+    public static Double virtualMouseX(){var lab=active;var client=MinecraftClient.getInstance();return lab!=null && lab.ui!=null && lab.mouseInputEnabled && lab.owned(client)?lab.ui.windowX(client):null;}
+    public static Double virtualMouseY(){var lab=active;var client=MinecraftClient.getInstance();return lab!=null && lab.ui!=null && lab.mouseInputEnabled && lab.owned(client)?lab.ui.windowY(client):null;}
     public static void beforeGuiClear(){
         var lab=active;if(lab==null || !lab.given)return;var client=MinecraftClient.getInstance();if(!lab.owned(client))return;
         RenderSystem.assertOnRenderThread();
@@ -270,7 +272,7 @@ public final class HudStreamLab {
             }
             Path project=client.runDirectory.toPath().toAbsolutePath().normalize().getParent().getParent();
             output=new HudStreamProducer(project,outputDirectory,identity,save,true,inputMode?(inputFixture?2:1):0);output.start();
-            if(inputMode)ui=new HudVanillaUiAdapter(client,inputFixture);
+            if(inputMode)ui=new HudVanillaUiAdapter(client,mouseInputEnabled);
             if(inputPointerFixture)pointerFixture=new HudPointerFixture();
             if(backgroundTrial || offscreenPresentation)timing=new HudRenderTiming(Thread.currentThread(),RenderSystem::isFrozenAtPollEvents);
         }
@@ -381,6 +383,7 @@ public final class HudStreamLab {
                     if(!hiddenClientUnfocused(client))throw new IllegalStateException("Owned window focus/visibility changed before input");
                 }
                 inputGate.apply(event,System.currentTimeMillis());ui.apply(client,event);inputEventsApplied++;
+                if(event.kind()>=3)pointerEventsApplied++;
                 if(offscreenPresentation)hiddenUnfocusedEvents++;
                 if(offscreenTrial){if(client.isWindowFocused())offscreenFocusedEvents++;else offscreenUnfocusedEvents++;}
             }
@@ -410,6 +413,7 @@ public final class HudStreamLab {
     private void finishInput(MinecraftClient client,long now,String reason){
         if(inputPointerFixture && inputFailure==null && (pointerFixture==null || !pointerFixture.complete()))throw new IllegalStateException("Pointer fixture ended before all real gesture proofs");
         var proof=new JsonObject();proof.addProperty("input_fixture",inputFixture);proof.addProperty("input_armed",armedAt!=0);proof.addProperty("end_reason",reason);
+        proof.addProperty("live_mouse",liveMouse);proof.addProperty("pointer_events_applied",pointerEventsApplied);if(ui!=null)proof.add("pointer_adapter",ui.pointerDiagnostics());
         proof.addProperty("pointer_fixture",inputPointerFixture);if(pointerFixture!=null)proof.add("pointer_evidence",pointerFixture.evidence());
         proof.addProperty("host_armed",armedAt!=0);proof.addProperty("input_events_applied",inputEventsApplied);proof.addProperty("input_consumed_sequence",inputGate.sequence());
         proof.addProperty("input_delay_fixture",inputDelayFixture);proof.addProperty("withheld_ready_ack_ticks",withheldReadyTicks);proof.addProperty("prearm_ineligible_ticks",prearmIneligibleTicks);
@@ -423,6 +427,7 @@ public final class HudStreamLab {
             if(ui!=null)ui.releaseAndClose(client);inputGate.releaseAll();input.close();
             delayedCloseAckAt=now+500_000_000L;closeDelayStartUtc=System.currentTimeMillis();
         }else stopInput(client);
+        if(ui!=null)proof.add("pointer_adapter_after_cleanup",ui.pointerDiagnostics());
         proof.addProperty("controls_released",inputGate.heldKeyCount()==0 && inputGate.heldButtonCount()==0);
         inputEndingProof=proof;terminalAt=now;
         LOG.info("HUD_INPUT_TERMINAL run={} reason={} events={} serverSwapVerified={}",identity.run(),reason,inputEventsApplied,serverSwapVerified);

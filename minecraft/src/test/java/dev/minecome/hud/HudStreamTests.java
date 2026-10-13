@@ -76,6 +76,32 @@ public final class HudStreamTests {
             check(result.get("published_frames").getAsInt()==2 && result.get("samples").getAsJsonArray().size()==1,"bounded samples and actual frame count");
         }finally{p.close();p.awaitFinished(3000);api.UnmapViewOfFile(view);api.CloseHandle(mutex);api.CloseHandle(map);}
         var noMapping=api.OpenFileMapping(WinNT.FILE_MAP_READ,false,liveId.mappingName());check(noMapping==null,"all mapping handles released");if(noMapping!=null)api.CloseHandle(noMapping);
+        mouseModeReceipts(root,parent);
         System.out.println("HudStreamTests: "+checks+" checks passed; original Win32 transport fixture, no games launched; evidence="+parent);
+    }
+    private static void mouseModeReceipts(Path root,Path parent)throws Exception {
+        String previous=System.getProperty("minecome.hudStreamLiveMouse");
+        try{
+            for(int variant=0;variant<3;variant++){
+                boolean live=variant==2;int mode=variant==1?2:1;
+                if(live)System.setProperty("minecome.hudStreamLiveMouse","true");else System.clearProperty("minecome.hudStreamLiveMouse");
+                String child="mouse-mode-"+variant;var id=new HudStreamProducer.Identity(UUID.randomUUID().toString().replace("-",""),123,123456789,System.currentTimeMillis()+10_000);
+                var producer=new HudStreamProducer(root,parent.resolve(child),id,"MineCome-HudStream-"+UUID.randomUUID(),false,mode);
+                try{
+                    producer.start();waitFor(producer::isReady,"mouse mode receipt worker ready");
+                    var ready=JsonParser.parseString(Files.readString(parent.resolve(child+"/stream-ready.json"))).getAsJsonObject();
+                    check(ready.get("ui_input_live_mouse").getAsJsonPrimitive().isBoolean() && ready.get("ui_input_live_mouse").getAsBoolean()==live,"ready receipt records explicit live mouse mode");
+                    check(ready.get("ui_input_fixture").getAsBoolean()==(mode==2),"fixture identity stays separate from live opt-in");
+                    producer.finish("fixture",null);check(producer.awaitFinished(3000) && producer.failure()==null,"transport-only mode check closes normally");
+                    var terminal=JsonParser.parseString(Files.readString(parent.resolve(child+"/stream-result.json"))).getAsJsonObject();
+                    check(terminal.get("ui_input_live_mouse").getAsBoolean()==live && terminal.get("result").getAsString().equals("fixture"),"terminal keeps mode without claiming actual game input");
+                }finally{producer.close();producer.awaitFinished(3000);}
+            }
+            var id=new HudStreamProducer.Identity(UUID.randomUUID().toString().replace("-",""),123,123456789,System.currentTimeMillis()+10_000);
+            String save="MineCome-HudStream-"+UUID.randomUUID();
+            rejects(()->new HudStreamProducer(root,parent.resolve("invalid-ordinary"),id,save,false,0),"forced live mouse rejects non-input producer");
+            rejects(()->new HudStreamProducer(root,parent.resolve("invalid-fixture"),id,save,false,2),"forced live mouse rejects fixture producer");
+            check(!Files.exists(parent.resolve("invalid-ordinary")) && !Files.exists(parent.resolve("invalid-fixture")),"invalid forced modes create no output/session");
+        }finally{if(previous==null)System.clearProperty("minecome.hudStreamLiveMouse");else System.setProperty("minecome.hudStreamLiveMouse",previous);}
     }
 }

@@ -2,15 +2,17 @@
 # Original tools-only update of the owned, disabled MineCome HUD installation.
 # Does not start/stop a game. Preflight is read-only, including when the game is open.
 [CmdletBinding()]
-param([string]$BundleDirectory, [string]$PreviousBundleDirectory, [switch]$PreflightOnly)
+param([string]$BundleDirectory, [string]$PreviousBundleDirectory, [switch]$PreflightOnly, [switch]$LiveMouse)
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 $projectRoot=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $runtimeRoot=Join-Path $projectRoot 'runtime'
-if(-not $BundleDirectory){$BundleDirectory=Join-Path $runtimeRoot 'hud-compositor-resetfix'}
+if(-not $BundleDirectory){$BundleDirectory=Join-Path $runtimeRoot $(if($LiveMouse){'hud-compositor-mouse'}else{'hud-compositor-resetfix'})}
 if(-not $PreviousBundleDirectory){$PreviousBundleDirectory=Join-Path $runtimeRoot 'hud-compositor'}
 $exeHash='a32d077e6b54e5cd0c5a5f3194f473779706ff266a711e4745ccdb598843340a'
 $proxyHash='0cee63f9c9f13f3ac909c5b4903f4dbb4b719a7ab3b4f13b0deaf83c814b94f7'
+$previousProxyHash=$proxyHash
+if($LiveMouse){. (Join-Path $PSScriptRoot 'HudMouseProfile.ps1');$mouseProfile=Get-MineComeMouseProfile;$proxyHash=$mouseProfile.runtime_sha256}
 $supportedAddonHashes=@('a9bb60999fb526df64b3c61975431aed7c0b85728dc21a30db91b41bfccea484',
     '819499b52971d5027745be24e136b4a428975d108870ee0f70c1edfdf60b69cb')
 $supportedStreamAddonHashes=@('d7ebc92b59f7971998f1eafb5afe433b5bc44b84a272bcfc9840c49e1d1e6fd8')
@@ -119,9 +121,11 @@ if($old.schema-ne 1 -or $old.kind-cne'minecome_hud_install_v1' -or $old.exe_sha2
    -not ([IO.Path]::GetFullPath($old.target_exe).Equals($gameExe,[StringComparison]::OrdinalIgnoreCase)) -or
    -not ([IO.Path]::GetFullPath($old.bundle).Equals($PreviousBundleDirectory,[StringComparison]::OrdinalIgnoreCase)) -or @($old.files).Count-ne 6){throw 'Previous receipt does not own this exact six-file tools installation.'}
 $newManifestPath=Join-Path $BundleDirectory 'bundle.json';$manifest=Read-Json $newManifestPath
+if($LiveMouse){Assert-MineComeMouseBundle $manifest $mouseProfile}
+elseif($manifest.PSObject.Properties.Name -contains 'mouse_capture_api'){throw 'Mouse update requires explicit LiveMouse mode.'}
 if($manifest.schema-ne 1 -or $manifest.kind-cne'minecome_hud_compositor_bundle_v1' -or $manifest.tools_only-ne$true -or @($manifest.files).Count-ne 6 -or
    $manifest.runtime.version-cne'6.8.0' -or $manifest.runtime.full_addon_support-ne$true -or $manifest.runtime.reshade64_sha256-cne $proxyHash){throw 'Unexpected pinned ReShade6.8.0 update bundle.'}
-$inputBundle=$manifest.arm_config_relative_path-ceq'minecome-hud/addons/MineComeHudInput.ini'
+$inputBundle=$LiveMouse -or $manifest.arm_config_relative_path-ceq'minecome-hud/addons/MineComeHudInput.ini'
 $streamBundle=$inputBundle -or $manifest.arm_config_relative_path-ceq'minecome-hud/addons/MineComeHudStream.ini'
 if($streamBundle){
     if($manifest.PSObject.Properties.Name -notcontains 'stream_protocol' -or $manifest.stream_protocol-ne 1){throw 'Stream update requires protocol1 provenance.'}
@@ -130,11 +134,14 @@ if($inputBundle){
     if($manifest.PSObject.Properties.Name -notcontains 'ui_input_protocol' -or $manifest.ui_input_protocol-ne 1){throw 'UI input update requires protocol1 provenance.'}
 }elseif($manifest.PSObject.Properties.Name -contains 'ui_input_protocol'){throw 'UI input metadata in a non-input bundle.'}
 $activeProxy=Assert-Unlinked (Join-Path $bin 'dxgi.dll');$disabledProxy=Assert-Unlinked (Join-Path $bin 'dxgi.dll.minecome-disabled')
-if(Test-Path -LiteralPath $activeProxy){throw 'Update requires the active owned proxy to be disabled first; preserved all paths.'}
-if(-not(Test-Path -LiteralPath $disabledProxy -PathType Leaf)){throw 'Owned disabled proxy is missing.'}
+$activePresent=Test-Path -LiteralPath $activeProxy -PathType Leaf
+$disabledPresent=Test-Path -LiteralPath $disabledProxy -PathType Leaf
+if($activePresent -and ($disabledPresent -or -not $PreflightOnly)){throw 'Update requires the active owned proxy to be disabled first; preserved all paths.'}
+if(-not $activePresent -and -not $disabledPresent){throw 'Owned proxy is missing.'}
 $armPath=Assert-Unlinked (Join-Path $bin $manifest.arm_config_relative_path)
-$allArmPaths=@('MineComeHud.ini','MineComeHudStream.ini','MineComeHudInput.ini') | ForEach-Object {Assert-Unlinked (Join-Path $bin ('minecome-hud/addons/'+$_))}
-if(@($allArmPaths | Where-Object {Test-Path -LiteralPath $_}).Count){throw 'Existing HUD arm configuration preserved. Update requires an unarmed installation.'}
+$allArmPaths=@('MineComeHud.ini','MineComeHudStream.ini','MineComeHudInput.ini','MineComeHudMouse.ini') | ForEach-Object {Assert-Unlinked (Join-Path $bin ('minecome-hud/addons/'+$_))}
+$existingArms=@($allArmPaths | Where-Object {Test-Path -LiteralPath $_})
+if($existingArms.Count -and -not $PreflightOnly){throw 'Existing HUD arm configuration preserved. Update requires an unarmed installation.'}
 $installedPath=Assert-InRuntime (Join-Path $BundleDirectory 'installed.json')
 if(Test-Path -LiteralPath $installedPath){throw 'New bundle already has an installed receipt; preserved without overwrite.'}
 $entries=@()
@@ -142,13 +149,13 @@ foreach($relative in $expected){
     $before=@($old.files|Where-Object{$_.path-ceq$relative});$after=@($manifest.files|Where-Object{$_.path-ceq$relative})
     if($before.Count-ne 1 -or $after.Count-ne 1){throw "Missing/duplicate owned update record: $relative"}
     Assert-Record $before[0];Assert-Record $after[0]
-    $target=Assert-Unlinked (Join-Path $bin $(if($relative-ceq'dxgi.dll'){'dxgi.dll.minecome-disabled'}else{$relative}))
+    $target=Assert-Unlinked (Join-Path $bin $(if($relative-ceq'dxgi.dll' -and -not $activePresent){'dxgi.dll.minecome-disabled'}else{$relative}))
     if(-not $target.StartsWith($bin+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)){throw 'Update target escaped the exact tools binary directory.'}
     $source=Assert-InRuntime (Join-Path $BundleDirectory $relative)
     Assert-File $target $before[0];Assert-File $source $after[0]
-    if($relative-ceq'dxgi.dll' -and ($before[0].sha256-cne$proxyHash -or $after[0].sha256-cne$proxyHash)){throw 'Only the pinned unchanged owned proxy may be re-enabled.'}
+    if($relative-ceq'dxgi.dll' -and ($before[0].sha256-cne$previousProxyHash -or $after[0].sha256-cne$proxyHash)){throw 'Only the exact owned previous proxy and pinned new profile may be enabled.'}
     if($relative-ceq'minecome-hud/addons/MineComeHudCompositor.addon64'){
-        $allowedHashes=if($inputBundle){$supportedInputAddonHashes}elseif($streamBundle){$supportedStreamAddonHashes}else{$supportedAddonHashes}
+        $allowedHashes=if($LiveMouse){@($mouseProfile.addon_sha256)}elseif($inputBundle){$supportedInputAddonHashes}elseif($streamBundle){$supportedStreamAddonHashes}else{$supportedAddonHashes}
         if($after[0].sha256-cnotin$allowedHashes){throw 'An exact supported addon for the declared static/stream mode is required.'}
     }
     $entries+=[pscustomobject]@{Relative=$relative;Target=$target;Source=$source;Old=$before[0];New=$after[0];Changed=($before[0].sha256-cne$after[0].sha256);Backup=$null;Temp=$null}
@@ -159,7 +166,7 @@ Assert-File $builtAddon (@($entries|Where-Object{$_.Relative-ceq'minecome-hud/ad
 $gameOpen=Get-GameOpen
 $changed=@($entries|Where-Object{$_.Changed})
 if($PreflightOnly){
-    [ordered]@{schema=1;kind='minecome_hud_update_preflight_v1';game_open=$gameOpen;target_exe=$gameExe;previous_bundle=$PreviousBundleDirectory;new_bundle=$BundleDirectory;verified_old_files=6;verified_new_files=6;changed_files=@($changed|ForEach-Object{$_.Relative});reenable_owned_proxy=$true;requires_game_closed=$true;files_changed=$false;receipt_written=$false}|ConvertTo-Json -Depth 5
+    [ordered]@{schema=1;kind='minecome_hud_update_preflight_v1';game_open=$gameOpen;target_exe=$gameExe;previous_bundle=$PreviousBundleDirectory;new_bundle=$BundleDirectory;verified_old_files=6;verified_new_files=6;changed_files=@($changed|ForEach-Object{$_.Relative});reenable_owned_proxy=$true;requires_game_closed=$true;requires_proxy_disable=$activePresent;existing_arms=$existingArms;files_changed=$false;receipt_written=$false}|ConvertTo-Json -Depth 5
     Write-Output 'HUD_UPDATE_PREFLIGHT_PASS no_changes=true'
     return
 }

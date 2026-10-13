@@ -12,6 +12,7 @@ param(
     [ValidateRange(240,1080)][int]$Height=720,
     [ValidateRange(1,4)][int]$GuiScale=2,
     [switch]$InputMode,
+    [switch]$LiveMouse,
     [switch]$InputFixture,
     [switch]$InputPointerFixture,
     [switch]$InputDelayFixture,
@@ -30,6 +31,7 @@ $env:GRADLE_USER_HOME=Join-Path $minecraft '.gradle-user-home'
 $producerDirectory=Join-Path $EvidenceDirectory 'capture'
 $exitCode=1
 try {
+    if($LiveMouse -and (-not $InputMode -or $InputFixture -or $InputPointerFixture -or $InputDelayFixture -or $InputBackgroundTrial -or $InputOffscreenTrial -or -not $OffscreenPresentation)){throw 'Live mouse requires non-fixture input mode with OffscreenPresentation.'}
     if($InputFixture -and -not $InputMode){throw 'Input fixture requires the separate UI input mode.'}
     if($InputPointerFixture -and (-not $InputFixture -or $InputDelayFixture -or $InputBackgroundTrial)){throw 'Pointer fixture requires standalone input without delay/background trials.'}
     if($InputDelayFixture -and -not $InputFixture){throw 'Controlled input delays require the standalone fixture.'}
@@ -38,6 +40,7 @@ try {
     if($InputOffscreenTrial -and (-not $InputFixture -or -not $OffscreenPresentation)){throw 'Offscreen timing requires an explicit offscreen standalone fixture.'}
     $arguments=@('-p',$minecraft,'--no-daemon','runClient','-PminecomeHudStreamLab',"-PminecomeHudStreamRun=$Run","-PminecomeHudStreamTargetPid=$TargetPid","-PminecomeHudStreamTargetStart=$TargetStart","-PminecomeHudStreamExpiresUtcMs=$ExpiresUtcMs","-PminecomeHudStreamDirectory=$producerDirectory","-PminecomeHudStreamWidth=$Width","-PminecomeHudStreamHeight=$Height","-PminecomeHudStreamGuiScale=$GuiScale")
     if($InputMode){$arguments+='-PminecomeHudStreamInput'}
+    if($LiveMouse){$arguments+='-PminecomeHudStreamLiveMouse'}
     if($InputFixture){$arguments+='-PminecomeHudStreamInputFixture'}
     if($InputPointerFixture){$arguments+='-PminecomeHudStreamInputPointerFixture'}
     if($InputDelayFixture){$arguments+='-PminecomeHudStreamInputDelayFixture'}

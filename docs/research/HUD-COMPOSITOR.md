@@ -10,9 +10,95 @@ were acknowledged; the temporary host cap and guest state were restored, and
 Minecraft exited normally. The subsequent diagnostic run confirms the same
 controls with no KCD menu reported, and records a foreground-loss stop after
 15.766 seconds. Bounded host HUD suppression is implemented with live CVar
-restoration verified. Its combined visual result, full-session behavior, mouse
-ownership, general input exclusivity and health integration remain unfinished. Detailed evidence
+restoration verified. A separate strict mouse profile is now built and installed
+unarmed, with standalone guest checks passed. Its physical mouse behavior, combined
+host-HUD visual result, full-session behavior, general input exclusivity and health integration remain unverified. Detailed evidence
 and the earlier failed runs are recorded below.
+
+## Physical inventory mouse implementation — 2026-10-13
+
+The separate `minecome_hud_mouse_compositor` target retains the accepted 1280x720,
+GUI-scale-2 canvas. ReShade's actual client-coordinate cursor is mapped through
+the same aspect-fit rectangle used for composition. Left/right edges, held drags
+and wheel events travel through the existing reverse channel to real vanilla
+screen callbacks. An original arrow cursor is composited because the OS cursor
+is absent from Minecraft's framebuffer; the inventory/hotbar remain captured pixels.
+
+The original extension in `kcd2/reshade` reuses the pinned DirectInput8 A/W hook
+chain. Every observed mouse must have the same host HWND, a canonical relative
+DIMOUSESTATE/2 layout and an actual relative-axis property readback. Other HWNDs,
+unknown formats or aliases, action maps, failed classification and capacity loss
+refuse capability. No guessed engine method or offset is introduced. The render
+API uses nonblocking state access and a process/window/token-bound 100 ms lease.
+Only device callbacks invoke the original COM methods. Successful captured state
+and buffered polls suppress axes/buttons/wheel, including PEEK, and drain both
+immediate and buffered input. Failed original HRESULTs are preserved. Generation
+changes, focus loss and lease expiry withdraw ownership. Detailed contracts and
+SDK hook slots are in `kcd2/reshade/README.md`.
+
+The add-on requires capability before accepting its one-shot F8 activation.
+Inventory transitions wait for both the guest ACK and an uploaded matching screen.
+Two neutral captured frames prevent held-button entry clicks. E/Escape first
+releases forwarded guest buttons; capture remains until the closed-screen ACK
+and neutral physical buttons. The original 30-second activation limit and frame/
+ACK freshness checks remain intact. The keyboard target retains its original
+profile. Mouse receipts use a fixed 32-record queue; formatting and ReShade's
+synchronous log writes run on the worker, with counted diagnostic overflow.
+A release receipt arriving after worker completion can wait until addon unload;
+an absent receipt is never evidence of successful live restoration.
+
+`Build-MouseReShade.ps1` uses a fresh private checkout and the verified pristine
+build's generated GLAD files, with no object/DLL reuse or generator-network
+fallback. The exact four patched source files, staged tree/diff, generated files,
+exports and 29 license records are verified. The pristine build/reference and
+installed proxy were unchanged during this build. Final receipt:
+`runtime/dependencies/reshade-mouse-6.8.0/evidence/20261013-151144-f602cd6d508544929cc2688478ee9648/verification.json`.
+The DLL is 5,606,912 bytes, version `6.8.0.2 MINECOME MOUSE UNOFFICIAL`, SHA256
+`1798af0815f1e3ad6b7ba86d0a065181158dbaaf0dcaf600ea2981642217118f`.
+The final addon SHA256 is
+`e947533ec27e70a4782fa3c4e40df4d2fc69d85b00d768393bd1c43345fb34ca`.
+`config/hud-mouse-profile.json` pins the runtime, addon, shader, build receipt,
+patch and ABI. Staging aggregates all verified notices, explicitly transcoding
+the pinned Direct3D12-on-7 Windows-1252 notice without replacement characters.
+No game assets or third-party source/binaries are committed.
+
+Five focused CTest suites pass: 56 capture/real-SDK-adapter checks, 95 pointer/
+diagnostic checks, 338 transport checks and both original/mouse FX shaders compiled
+to DXBC. Both addon targets compile. The Java update passes 590 focused checks;
+explicit live mouse and fixture modes cannot be mixed. The controller requires
+matching Boolean readiness/result fields and reports `live_mouse_guest_pass`
+separately from still-false host-exclusivity and visual claims. Its production
+cleanup harness retains all 397 passing checks. Independent native, guest and
+deployment reviews passed. Profile/artifact rejection and actual owned-file
+replace/rollback tests pass 23 checks each in PowerShell 5.1 and 7.
+
+Fresh real Minecraft regression:
+`runtime/evidence/hud-input-20261013-141618-2a7f426275374735a38b9a1f0870916f`.
+All 43 hidden/unfocused events passed across 11 stages, including actual 32/32
+split/drag results and Creative scrolling. The guest published 218 genuine frames;
+the native fixture received 216. Stage server ages were 3–49 ms, max client tick
+gap 109 ms and max own-image age 154 ms. The real closed ACK arrived in 31 ms;
+pointer state, settings, window and handles restored, then Minecraft exited 0.
+KCD was closed, no compositor was armed and no physical host input was involved.
+
+After verifying a fresh backup of 1,010 save/profile files at
+`runtime/backups/20261013-151955`, the expired old arm was archived and the exact
+owned six-file installation updated. Receipt:
+`runtime/evidence/hud-update-20261013-142112-0a6ed12e8fa84d51b989be9810d1cdd2/update.json`.
+`runtime/hud-compositor-mouse` is installed **unarmed**. It includes the tutorial
+prompt setting below. No KCD launch occurred. Live loading, cursor mobility,
+drag/scroll delivery and camera suppression remain the next physical checks.
+
+Once a fresh test world is ready, the controller command is:
+
+```powershell
+& 'C:/Users/xephi/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/powershell/pwsh.exe' -NoProfile -File 'C:/Users/xephi/Documents/ChatGPT/New project/MineCome/scripts/Start-HudInputLab.ps1' -Mode Live -LiveMouse -OffscreenPresentation -HostGpuBudget -JavaHome 'C:/Program Files/Java/jdk-24'
+```
+
+This must precede the user's F8 instruction; do not start its short countdown while
+the user is still launching KCD. Mouse mode defaults to the exact mouse bundle.
+If a startup rollback is needed after KCD closes, `Disable-HudCompositor.ps1
+-LiveMouse` disables only that owned proxy and preserves its installation files.
 
 ## Real inventory pointer fixture — 2026-10-13
 

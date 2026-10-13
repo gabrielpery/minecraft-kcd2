@@ -2,18 +2,20 @@
 # Original bounded stream arm. Input mode still requires a physical F8 latch.
 # No game launch, movement or process injection.
 [CmdletBinding()]
-param([string]$ReadyManifest, [string]$BundleDirectory, [switch]$PreflightOnly, [switch]$InputMode, [switch]$OffscreenPresentation)
+param([string]$ReadyManifest, [string]$BundleDirectory, [switch]$PreflightOnly, [switch]$InputMode, [switch]$OffscreenPresentation, [switch]$LiveMouse)
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 if($OffscreenPresentation -and -not $InputMode){throw 'Offscreen presentation requires explicit input mode.'}
+if($LiveMouse -and (-not $InputMode -or -not $OffscreenPresentation)){throw 'Live mouse requires explicit input mode and offscreen presentation.'}
 . (Join-Path $PSScriptRoot 'KcdToolsProbeHelpers.ps1')
 $root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $runtimeRoot=Join-Path $root 'runtime'
 $evidenceRoot=Join-Path $runtimeRoot 'evidence'
-if(-not $BundleDirectory) {$BundleDirectory=Join-Path $runtimeRoot $(if($InputMode){'hud-compositor-input-waitfix'}else{'hud-compositor-stream'})}
-$expectedArm=if($InputMode){'minecome-hud/addons/MineComeHudInput.ini'}else{'minecome-hud/addons/MineComeHudStream.ini'}
+if(-not $BundleDirectory) {$BundleDirectory=Join-Path $runtimeRoot $(if($LiveMouse){'hud-compositor-mouse'}elseif($InputMode){'hud-compositor-input-waitfix'}else{'hud-compositor-stream'})}
+$expectedArm=if($LiveMouse){'minecome-hud/addons/MineComeHudMouse.ini'}elseif($InputMode){'minecome-hud/addons/MineComeHudInput.ini'}else{'minecome-hud/addons/MineComeHudStream.ini'}
 $exeHash='a32d077e6b54e5cd0c5a5f3194f473779706ff266a711e4745ccdb598843340a'
 $proxyHash='0cee63f9c9f13f3ac909c5b4903f4dbb4b719a7ab3b4f13b0deaf83c814b94f7'
+if($LiveMouse){. (Join-Path $PSScriptRoot 'HudMouseProfile.ps1');$mouseProfile=Get-MineComeMouseProfile;$proxyHash=$mouseProfile.runtime_sha256}
 $expected=@('dxgi.dll','ReShade.ini','MineComeHudPreset.ini','ReShade-LICENSE.txt','minecome-hud/addons/MineComeHudCompositor.addon64','minecome-hud/shaders/MineComeHud.fx')
 function Assert-Unlinked([string]$Path) {
     $full=[IO.Path]::GetFullPath($Path);$cursor=$full
@@ -37,6 +39,8 @@ function Assert-Artifact([string]$Path,$Record) {
 $BundleDirectory=Assert-Unlinked $BundleDirectory
 if(-not $BundleDirectory.StartsWith($runtimeRoot+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)) {throw 'Stream bundle must remain in workspace runtime.'}
 $bundle=Read-Receipt (Join-Path $BundleDirectory 'bundle.json')
+if($LiveMouse){Assert-MineComeMouseBundle $bundle $mouseProfile}
+elseif($bundle.PSObject.Properties.Name -contains 'mouse_capture_api'){throw 'Mouse bundle requires explicit LiveMouse mode.'}
 if($bundle.schema -ne 1 -or $bundle.kind -cne 'minecome_hud_compositor_bundle_v1' -or $bundle.stream_protocol -ne 1 -or $bundle.tools_only -ne $true -or $bundle.runtime.version -cne '6.8.0' -or $bundle.runtime.reshade64_sha256 -cne $proxyHash -or $bundle.arm_config_relative_path -cne $expectedArm -or @($bundle.files).Count -ne 6) {throw 'An exact prepared stream bundle is required.'}
 if($InputMode){if($bundle.PSObject.Properties.Name -notcontains 'ui_input_protocol' -or $bundle.ui_input_protocol -ne 1){throw 'Input mode requires explicit protocol1 provenance.'}}
 elseif($bundle.PSObject.Properties.Name -contains 'ui_input_protocol'){throw 'Input bundle requires explicit InputMode.'}
@@ -67,7 +71,7 @@ function Assert-LoadedStream {
 }
 Assert-LoadedStream
 $armPath=Assert-Unlinked (Join-Path $bin $bundle.arm_config_relative_path)
-foreach($name in @('MineComeHud.ini','MineComeHudStream.ini','MineComeHudInput.ini')){
+foreach($name in @('MineComeHud.ini','MineComeHudStream.ini','MineComeHudInput.ini','MineComeHudMouse.ini')){
     if(Test-Path -LiteralPath (Join-Path $bin ('minecome-hud/addons/'+$name))){throw 'Existing HUD arm preserved; ownership-checked cleanup is required first.'}
 }
 if($PreflightOnly) {Write-Output 'HUD_STREAM_ARM_PREFLIGHT_PASS no_changes=true';return}
@@ -82,6 +86,8 @@ if($InputMode){
     if($ready.PSObject.Properties.Name -notcontains 'ui_input_background_trial' -or $ready.ui_input_background_trial -isnot [bool] -or $ready.ui_input_background_trial -ne $false){throw 'Background trial cannot arm live KCD input.'}
     if($ready.PSObject.Properties.Name -notcontains 'ui_input_offscreen_trial' -or $ready.ui_input_offscreen_trial -isnot [bool] -or $ready.ui_input_offscreen_trial -ne $false){throw 'Offscreen fixture trial cannot arm live KCD input.'}
     if($ready.PSObject.Properties.Name -notcontains 'ui_input_offscreen_presentation' -or $ready.ui_input_offscreen_presentation -isnot [bool] -or $ready.ui_input_offscreen_presentation -ne [bool]$OffscreenPresentation){throw 'Offscreen presentation requires matching explicit input mode.'}
+    if($ready.PSObject.Properties.Name -notcontains 'ui_input_pointer_fixture' -or $ready.ui_input_pointer_fixture -isnot [bool] -or $ready.ui_input_pointer_fixture -ne $false){throw 'Pointer fixture cannot arm live KCD input.'}
+    if($ready.PSObject.Properties.Name -notcontains 'ui_input_live_mouse' -or $ready.ui_input_live_mouse -isnot [bool] -or $ready.ui_input_live_mouse -ne [bool]$LiveMouse){throw 'Live mouse requires matching explicit guest readiness.'}
 }
 elseif($ready.PSObject.Properties.Name -contains 'ui_input_protocol'){throw 'Input producer requires explicit InputMode.'}
 $start=$context.GameStartedUtc.ToFileTimeUtc().ToString()
@@ -98,6 +104,7 @@ $bytes=[Text.UTF8Encoding]::new($false).GetBytes($text+"`n")
 $hash=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
 $evidenceDirectory=[IO.Path]::GetDirectoryName($ReadyManifest)
 $receipt=[ordered]@{schema=1;kind='minecome_hud_stream_arm_v1';run=$ready.run;game_pid=$context.GamePid;game_start_filetime=$start;producer_pid=$ready.producer_pid;producer_start_filetime=$ready.producer_start_filetime;expires_utc_ms=$ready.expires_utc_ms;arm_path=$armPath;arm_sha256=$hash;bundle=$BundleDirectory;addon_sha256=$addonRecord.sha256;visual_verified=$false;interactive_inventory_verified=$false;game_launched=$false}
+$receipt.live_mouse=[bool]$LiveMouse
 $receiptPath=Join-Path $evidenceDirectory 'stream-arming.json'
 if(Test-Path -LiteralPath $receiptPath) {throw 'Existing stream arm receipt preserved.'}
 $receipt | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $receiptPath -Encoding utf8NoBOM

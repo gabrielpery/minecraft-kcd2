@@ -11,3 +11,5 @@
 gradlew text eol=lf
 *.bat text eol=crlf
 *.jar binary
+# Unified diff context must preserve the pinned upstream's whitespace exactly.
+kcd2/reshade/mouse-capture.patch -whitespace

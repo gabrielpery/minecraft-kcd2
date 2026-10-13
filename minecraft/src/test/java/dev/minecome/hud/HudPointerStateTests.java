@@ -11,6 +11,14 @@ public final class HudPointerStateTests {
         check(rejected,"invalid edge must be rejected");
     }
     public static void main(String[] args){
+        check(!HudMousePolicy.enabled(false,false,false),"ordinary stream has no mouse input");
+        check(!HudMousePolicy.enabled(true,false,false),"live keyboard default refuses mouse");
+        check(HudMousePolicy.enabled(true,true,false),"existing standalone fixture mouse remains enabled");
+        check(HudMousePolicy.enabled(true,false,true),"separate explicit live opt-in permits mouse");
+        rejected(()->HudMousePolicy.enabled(false,false,true));
+        rejected(()->HudMousePolicy.enabled(false,true,false));
+        rejected(()->HudMousePolicy.enabled(false,true,true));
+        rejected(()->HudMousePolicy.enabled(true,true,true));
         var pointer=new HudPointerState();
         check(pointer.activeButton()==-1 && pointer.heldCount()==0,"initial pointer neutral");
         pointer.press(0);check(pointer.activeButton()==0,"left drag active");

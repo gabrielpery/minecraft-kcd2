@@ -5,7 +5,7 @@ namespace minecome::hud::input {
 enum class CloseCause : std::uint32_t {
     none,eligibility_lost,second_f8,clock_regressed,activation_expired,key_during_settle,
     overlay_open,runtime_reload,runtime_destroy,runtime_lock_contention,callback_exception,
-    mailbox_overflow,session_end,render_stale,worker_terminal
+    mailbox_overflow,session_end,render_stale,worker_terminal,mouse_capture,mouse_transition
 };
 enum class WindowCheck : std::uint32_t {
     runtime_handle=1,valid_handle=2,owned_process=4,not_minimized=8,visible=16,foreground=32
@@ -69,6 +69,8 @@ inline const char *close_name(CloseCause cause) noexcept {
     case CloseCause::session_end:return "session_end";
     case CloseCause::render_stale:return "render_stale";
     case CloseCause::worker_terminal:return "worker_terminal";
+    case CloseCause::mouse_capture:return "mouse_capture";
+    case CloseCause::mouse_transition:return "mouse_transition";
     }
     return "unknown";
 }

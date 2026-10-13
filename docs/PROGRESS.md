@@ -37,17 +37,29 @@ and button releases across inventory closure. A separate opt-in 43-event fixture
 now verifies real stack splitting, drag distribution, scrolling and held-button
 close/reopen behavior, with fresh integrated-server inventory observations at all
 11 stages. All events ran in the hidden, unfocused Minecraft guest. This is
-standalone guest evidence; physical KCD mouse forwarding remains disabled.
+standalone guest evidence. A separate physical mouse profile is now implemented,
+compiled and installed unarmed; no physical mouse success is claimed yet.
 The reviewed native first-close diagnostic build is now
 installed and has supplied the live foreground-loss evidence above. See the
 implementation record in [HUD research](research/HUD-COMPOSITOR.md).
 
-A separate pinned ReShade 6.8.0 full-add-on source build now compiles with recorded
-local generator inputs. It is the prerequisite for extending ReShade's existing
-DirectInput hook to own inventory mouse input; that extension is not implemented
-yet. The running game's renderer remains unchanged. Future prepared packages also
-skip ReShade's persistent first-run tutorial prompt; its brief startup/loading
-splash remains enabled.
+A separate pinned ReShade 6.8.0 full-add-on source build now extends the existing
+DirectInput hook with a 100 ms renewable inventory mouse lease. The add-on forwards
+client-relative pointer positions, left/right clicks, drag and wheel events to
+actual vanilla screens, and draws a cursor over the genuine Minecraft pixels.
+Unknown devices/layouts, stale state or lost focus refuse or end capture. Closing
+inventory releases the guest buttons before returning physical input to KCD.
+The keyboard build remains separate.
+
+The mouse profile passes five focused native/shader suites, 590 Java checks,
+23 profile/rollback checks under both PowerShell 5.1 and 7, and a fresh real
+43-event inventory fixture. That fixture ran with KCD closed: all 11 stages,
+fresh server observations, 218 published/216 received frames and normal exit 0
+passed. This is standalone evidence. The custom proxy/add-on were installed
+unarmed after backing up 1,010 save/profile files and the previous renderer.
+Live loading, cursor mobility and camera suppression still require verification.
+The installed configuration also skips ReShade's persistent tutorial prompt;
+its brief startup/loading splash remains enabled.
 
 **Current build: interactive one-cell stone controls live verified.** KCD console
 commands `minecome_place`/`minecome_break` now request real Minecraft vanilla
@@ -102,7 +114,8 @@ completed its movement/view proof; the new KCD capture path still awaits a live 
 | Continuous vanilla UI transport | Java21/JNA producer, bounded Win32 channel and native receiver built | 168 Java stream checks and 146 native checks pass; existing 36 snapshot checks still pass | Fresh real Minecraft world sent 344 nontransparent frames, four vanilla UI states, pause/resumption and closed marker to standalone receiver; no KCD compositor was armed |
 | Continuous KCD UI compositor | Separate exact-tools D3D12 add-on installed with aspect fit, persistent texture and fenced upload slots | Native contract/lifecycle review and checks pass | Latest live run uploaded 471 frames/submitted 1,973 draws with zero drops; earlier user-accepted HUD size preserved. KCD's duplicate HUD remains |
 | Reverse HUD input and background presentation | Separate exact-identity input channel, bounded hidden/offscreen presentation and callback-based focus readiness built | Hidden fixtures pass all 31 events, nine slots, inventory open/close and server-confirmed swap | Ten physical 1/2/9/E/Escape press/release events acknowledged/applied; user confirms controls worked with no KCD menu. First-close diagnostics verify foreground-loss stop after 15.766 seconds. Full duration, mouse and general host exclusivity remain unverified |
-| Inventory pointer lifecycle | Single active drag button, screen-owned releases, vanilla wheel scaling and successful-application counter built | 34 new gesture checks and 353 input checks pass; changed guest passes real 31-event item-swap fixture | Live mouse forwarding remains disabled; drag/split/scroll and replacement-screen callback behavior need a richer real fixture |
+| Inventory pointer lifecycle | Single active drag button, screen-owned releases, vanilla wheel scaling and explicit live opt-in built | 45 pointer policy/state, 192 stream/receipt and 353 input checks pass; actual hidden 43-event fixture verifies splitting/drag/scroll/held-close at 11 stages | Physical mouse interaction remains unverified |
+| Host inventory mouse capture | Original pinned ReShade hook, API, add-on and cursor shader built; exact bundle installed unarmed | 56 native capture/SDK adapter checks, 95 forwarding/diagnostic checks, 338 input checks and both FX compilations pass; 23 profile/rollback checks pass in PS5.1 and PS7 | Awaiting fresh world load and physical cursor/camera check; no general host exclusivity claim |
 | Temporary host GPU-budget comparison | Shared opt-in Lua/PowerShell helper and live controller integration reviewed | 22 simulated-engine Lua cases and 98 assertions across 11 simulated-console scenarios pass; capped standalone fixture passed | Latest combined live run passed with verified −1→60→−1 restoration through requested End before expiry and timer cancellation |
 | Bounded host HUD suppression | Opt-in `-HideHostHud` in the Live input lab; documented whole-HUD CVar, engine-timer writes and independent finally restoration | 29 simulated-engine Lua cases and 397 controller checks pass, including both HUD/FPS cleanup after failure | Actual tools `wh_ui_ShowHud` readback passes 1→0→1 and timer cancellation. Combined visual scope, subtitles/dialogue behavior and health integration remain unverified |
 

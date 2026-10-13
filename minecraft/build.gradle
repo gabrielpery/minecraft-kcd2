@@ -18,6 +18,8 @@ loom {
                 vmArgs '-Dminecome.hudStreamLab=true'
             if (project.hasProperty('minecomeHudStreamInput'))
                 vmArgs '-Dminecome.hudStreamInput=true'
+            if (project.hasProperty('minecomeHudStreamLiveMouse'))
+                vmArgs '-Dminecome.hudStreamLiveMouse=true'
             if (project.hasProperty('minecomeHudStreamInputFixture'))
                 vmArgs '-Dminecome.hudStreamInputFixture=true'
             if (project.hasProperty('minecomeHudStreamInputPointerFixture'))
