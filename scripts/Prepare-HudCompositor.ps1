@@ -1,5 +1,7 @@
 # Workspace staging only. Never executes the installer, writes into a game, or launches a process.
-# Config keys inspected in ReShade v6.8.0 source/addon_manager.cpp and source/runtime.cpp.
+# Config keys inspected in ReShade v6.8.0 source/addon_manager.cpp, source/runtime.cpp
+# and source/runtime_gui.cpp. TutorialProgress=4 skips the persistent first-run
+# prompt; normal brief startup/loading notices remain enabled.
 # Requires PowerShell7.3+ (.NET7 ReadExactly) for bounded HTTP streaming and UTF8 output.
 # The bundle remains unarmed: its private addons directory contains no MineComeHud.ini.
 # Root's separate controller supplies that short-lived preview configuration later.
@@ -165,6 +167,9 @@ PresetPath=.\MineComeHudPreset.ini
 PerformanceMode=0
 SkipLoadingDisabledEffects=1
 NoEffectCache=1
+
+[OVERLAY]
+TutorialProgress=4
 '@
 $preset = "Techniques=MineComeHud@MineComeHud.fx`nTechniqueSorting=MineComeHud@MineComeHud.fx`n"
 $artifacts = [ordered]@{

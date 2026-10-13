@@ -26,6 +26,7 @@ final class HudPointerState {
     }
     int activeButton(){return activeButton;}
     int heldCount(){return held.size();}
+    int pendingReleaseCount(){return releasedByClose.size();}
     void clear(){held.clear();releasedByClose.clear();activeButton=-1;}
     static double wheel(int notches,boolean discrete,double sensitivity){
         if(notches==0 || notches< -16 || notches>16 || !Double.isFinite(sensitivity) || sensitivity<0)throw new IllegalArgumentException("Invalid UI wheel");

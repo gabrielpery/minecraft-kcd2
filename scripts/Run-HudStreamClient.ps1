@@ -13,6 +13,7 @@ param(
     [ValidateRange(1,4)][int]$GuiScale=2,
     [switch]$InputMode,
     [switch]$InputFixture,
+    [switch]$InputPointerFixture,
     [switch]$InputDelayFixture,
     [switch]$InputBackgroundTrial,
     [switch]$OffscreenPresentation,
@@ -30,6 +31,7 @@ $producerDirectory=Join-Path $EvidenceDirectory 'capture'
 $exitCode=1
 try {
     if($InputFixture -and -not $InputMode){throw 'Input fixture requires the separate UI input mode.'}
+    if($InputPointerFixture -and (-not $InputFixture -or $InputDelayFixture -or $InputBackgroundTrial)){throw 'Pointer fixture requires standalone input without delay/background trials.'}
     if($InputDelayFixture -and -not $InputFixture){throw 'Controlled input delays require the standalone fixture.'}
     if($InputBackgroundTrial -and (-not $InputFixture -or $InputDelayFixture)){throw 'Background timing requires a standalone fixture without synthetic delays.'}
     if($OffscreenPresentation -and (-not $InputMode -or $InputBackgroundTrial -or $InputDelayFixture)){throw 'Offscreen presentation requires UI input mode without other timing trials.'}
@@ -37,6 +39,7 @@ try {
     $arguments=@('-p',$minecraft,'--no-daemon','runClient','-PminecomeHudStreamLab',"-PminecomeHudStreamRun=$Run","-PminecomeHudStreamTargetPid=$TargetPid","-PminecomeHudStreamTargetStart=$TargetStart","-PminecomeHudStreamExpiresUtcMs=$ExpiresUtcMs","-PminecomeHudStreamDirectory=$producerDirectory","-PminecomeHudStreamWidth=$Width","-PminecomeHudStreamHeight=$Height","-PminecomeHudStreamGuiScale=$GuiScale")
     if($InputMode){$arguments+='-PminecomeHudStreamInput'}
     if($InputFixture){$arguments+='-PminecomeHudStreamInputFixture'}
+    if($InputPointerFixture){$arguments+='-PminecomeHudStreamInputPointerFixture'}
     if($InputDelayFixture){$arguments+='-PminecomeHudStreamInputDelayFixture'}
     if($InputBackgroundTrial){$arguments+='-PminecomeHudStreamBackgroundTrial'}
     if($OffscreenPresentation){$arguments+='-PminecomeHudStreamOffscreenPresentation'}

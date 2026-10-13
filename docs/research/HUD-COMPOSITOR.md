@@ -14,6 +14,67 @@ restoration verified. Its combined visual result, full-session behavior, mouse
 ownership, general input exclusivity and health integration remain unfinished. Detailed evidence
 and the earlier failed runs are recorded below.
 
+## Real inventory pointer fixture — 2026-10-13
+
+The separate `-PointerFixture` option uses 43 records and 11 independently checked
+stages. Actual vanilla Creative screen calls split a 64-stone stack with right
+click, restore and pick it up, distribute 32 stones into each of two empty hotbar
+slots by dragging, scroll the real Creative item grid and restore its position.
+Closing while a button is held releases the original screen. Reopening creates
+a new screen, and the late button-up event is consumed without releasing that
+new screen. Targets come from actual screen/slot geometry; no inventory mechanics
+are reimplemented. Each stage compares all nine client/server slots, fresh server
+observation age, cursor contents and actual adapter callback counters. The
+Creative cursor is a client observation, not a server cursor claim.
+
+The first actual run, `hud-input-20261013-132250-9180f7b941264fccbdd655d31ea84e2d`,
+passed splitting, dragging and scrolling but failed native receipt validation at
+event 38. Gson omitted the explicit null scroll position of the closed screen.
+Pointer-only serialization now preserves that null, covered by real disk-writer
+regression checks; ordinary mode serialization is unchanged. The native reader
+still requires the field and now saves bounded, escaped exception details.
+
+The repaired run passed:
+`runtime/evidence/hud-input-20261013-133209-73736e8cbcff406db59857d5657d9870`.
+It published 219 genuine Minecraft frames, received 217, acknowledged all 43
+events and validated every stage. All events occurred while hidden/unfocused;
+the preceding actual offscreen observation lasted 12.019 seconds. Stage server
+ages were 0–48 ms, maximum client-tick gap 107 ms and maximum own-image age
+166 ms, within the unchanged 250 ms gates. Closed ACK took 47 ms; Minecraft
+saved/exited normally with code 0 and restored its window/presentation settings.
+The temporary host 60 FPS cap restored to its original -1 setting, recorded in
+`runtime/evidence/hud-gpu-budget-20261013-143208-11aada23b7764eaf8d5078415146d645`.
+
+Frozen guest JAR SHA256:
+`2c1286291f37b254b6f5df722fec45a4825160644cdbdd68403e569ca9e1638d`.
+Native fixture SHA256:
+`f5c945ec5e8b5bba6007892fb9636eb84c6f0ddbe0c1ef198664bf2ef2729cce`.
+Focused checks pass: 338 native, 353 Java input, 37 pointer-state, 20 evidence
+writer, and 397 PowerShell host-HUD lifecycle checks. Independent cross-language
+review passed. No KCD compositor was armed and no physical KCD mouse input was
+sent. Live mouse ownership, cursor presentation and camera suppression remain
+the next implementation work.
+
+The unchanged baseline native executable was also rerun against the updated
+guest: `runtime/evidence/hud-input-20261013-133334-2fd34faafe88466c9797b36889a7bc1f`.
+All 31 original events and the real server-confirmed stack swap passed, with 203
+frames published and 202 received. All events ran hidden/unfocused, Minecraft
+exited with code 0, and guest presentation/window plus host FPS restoration
+passed. This preserves the earlier working path independently of the richer
+pointer fixture.
+
+## ReShade first-run banner — 2026-10-13
+
+Future bundles now include `[OVERLAY] TutorialProgress=4`. In the pinned ReShade
+6.8.0 `source/runtime_gui.cpp`, lines 316–317 load that setting and line 805 keeps
+the installation prompt visible while the tutorial index is zero. The stock skip
+action sets the index to 4. This removes the persistent "Press Home" tutorial
+prompt shown in the user's screenshot. The normal brief startup/loading splash
+still follows ReShade's own loading and five-second rules; this is not complete
+splash suppression. The source configuration and PowerShell parser checks pass.
+The currently loaded game configuration has not been changed; the setting takes
+effect in the next prepared and installed bundle.
+
 ## Optional host HUD suppression — 2026-10-13
 
 `Start-HudInputLab.ps1 -Mode Live -HideHostHud` now temporarily sets the exact

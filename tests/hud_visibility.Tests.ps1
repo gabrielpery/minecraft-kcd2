@@ -131,7 +131,7 @@ foreach($script:cleanupCase in @('success','hud_stop_throws','hud_evidence_throw
     $hostBudgetSession=[pscustomobject]@{BudgetValid=($cleanupCase -ne 'gpu_invalid');Failure=$null}
     $hostHudEvidence=$null;$hostBudgetEvidence=$null;$HideHostHud=$true;$HostGpuBudget=$true
     $passed=$cleanupCase -ne 'body_failed';$bodyPassed=$passed;$failure=if($passed){$null}else{'simulated input body failure'}
-    $run='c'*32;$Mode='Live';$DelayFixture=$false;$BackgroundTrial=$false;$OffscreenPresentation=$true;$OffscreenTrial=$false
+    $run='c'*32;$Mode='Live';$PointerFixture=$false;$DelayFixture=$false;$BackgroundTrial=$false;$OffscreenPresentation=$true;$OffscreenTrial=$false
     $directory=Join-Path $testRoot ('finally-'+$cleanupCase);[IO.Directory]::CreateDirectory($directory) | Out-Null
     $targetPid=42;$targetStart='12345';$fixtureHash=$null;$armEvidence=$true;$Width=1280;$Height=720;$GuiScale=2;$expires=180001
     $client=[pscustomobject]@{};$client | Add-Member -MemberType ScriptMethod -Name Dispose -Value {$script:cleanupCalls.Add('client_disposed')}

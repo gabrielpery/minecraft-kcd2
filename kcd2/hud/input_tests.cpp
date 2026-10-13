@@ -3,6 +3,7 @@
 #include "input_background_trial.hpp"
 #include "input_diagnostics.hpp"
 #include "input_offscreen_trial.hpp"
+#include "input_pointer_fixture.hpp"
 #include <bit>
 #include <cstring>
 #include <iostream>
@@ -110,6 +111,14 @@ void contract() {
     for(const auto text:{"{\"x\":1,\"x\":2}","{\"x\":01}","[1,]","{\"x\":NaN}","{} trailing","\"\\ud800\""}) {
         bool rejected=false;try{ui::json::Parser(text).parse();}catch(...){rejected=true;}check(rejected,"malformed JSON");
     }
+    const std::string detail="missing \"field\" at C:\\receipt\n\t\r\x01";
+    check(ui::json::Parser(ui::json::diagnostic_json(detail)).parse().text()==detail,"exception detail cannot escape receipt JSON");
+    const std::string long_detail(4096,'x');
+    check(ui::json::bounded_diagnostic(long_detail.c_str())==long_detail.substr(0,512),"exception capture is bounded to512 bytes");
+    check(ui::json::Parser(ui::json::diagnostic_json(long_detail)).parse().text().size()==512,"exception serialization independently bounds detail");
+    std::string all_bytes;for(unsigned i=0;i<256;++i)all_bytes+=static_cast<char>(i);
+    check(ui::json::Parser(ui::json::diagnostic_json(all_bytes)).parse().type==ui::json::Value::Type::string,"control and locale bytes always produce valid receipt JSON");
+    check(ui::json::bounded_diagnostic(nullptr).empty(),"absent exception detail is safe");
 }
 void background_receipts() {
     const st::Identity id{"0123456789abcdef0123456789abcdef",2,3,4,5,100000};
@@ -135,6 +144,14 @@ void offscreen_receipts() {
     const auto valid=ui::json::Parser(R"({"schema":1,"run":"0123456789abcdef0123456789abcdef","producer_pid":2,"target_pid":3,"producer_start_filetime":"4","target_start_filetime":"5","expires_utc_ms":100000,"ui_input_offscreen_trial":true,"ui_input_offscreen_presentation":true,"offscreen_trial":{"completed":true,"duration_ms":12000,"focused_ticks":0,"unfocused_ticks":240,"presentation_suppressed":true,"timing":{}},"result":"input_passed","lab_evidence":{"offscreen_trial_events":{"unfocused_events_applied":31,"focused_events_applied":0,"focus_interruptions":0}}})").parse();
     check(ui::validate_offscreen_trial(valid,id).duration==12000,"single actual unfocused offscreen phase accepted");
     ui::validate_offscreen_final(valid,id,31);check(true,"all31 actual unfocused events accepted");
+    auto pointer=valid;pointer.object["ui_input_pointer_fixture"]=ui::json::Parser("true").parse();
+    pointer.object.at("lab_evidence").object.at("offscreen_trial_events").object.at("unfocused_events_applied").scalar="43";
+    ui::validate_offscreen_final(pointer,id,43,43);check(true,"all43 pointer events explicitly unfocused accepted");
+    bool pointer_rejected=false;try{ui::validate_offscreen_final(pointer,id,31);}catch(...){pointer_rejected=true;}
+    check(pointer_rejected,"pointer mode cannot pass baseline offscreen identity");
+    pointer.object.at("ui_input_pointer_fixture").scalar="false";pointer_rejected=false;
+    try{ui::validate_offscreen_final(pointer,id,43,43);}catch(...){pointer_rejected=true;}
+    check(pointer_rejected,"pointer43 mode requires explicit final pointer flag");
     for(unsigned bad=0;bad<9;++bad) {
         auto value=valid;auto &phase=value.object.at("offscreen_trial");
         if(bad==0)value.object.at("target_start_filetime").scalar="6";
@@ -157,6 +174,84 @@ void offscreen_receipts() {
         if(bad==3)value.object.at("result").scalar="failed";
         bool rejected=false;try{ui::validate_offscreen_final(value,id,bad==4?30:31);}catch(...){rejected=true;}
         check(rejected,"offscreen focus interruption incomplete events or failed guest rejected");
+    }
+}
+void pointer_receipts() {
+    const st::Identity id{"0123456789abcdef0123456789abcdef",2,3,4,5,100000};
+    const auto root=ui::json::Parser(R"({"schema":1,"run":"0123456789abcdef0123456789abcdef","producer_pid":2,"target_pid":3,"producer_start_filetime":"4","target_start_filetime":"5","expires_utc_ms":100000,"ui_input_protocol":1,"ui_input_fixture":true,"ui_input_pointer_fixture":true})").parse();
+    ui::validate_pointer_identity(root,id);check(true,"pointer receipt exact immutable identity accepted");
+    for(const auto key:{"run","producer_start_filetime","target_start_filetime","expires_utc_ms","ui_input_pointer_fixture"}) {
+        auto bad=root;bad.object.at(key).scalar=std::string(key)=="ui_input_pointer_fixture"?"false":"99";
+        bool rejected=false;try{ui::validate_pointer_identity(bad,id);}catch(...){rejected=true;}check(rejected,"foreign or wrong-mode pointer receipt rejected");
+    }
+    auto opened=ui::json::Parser(R"({"stage":"opened","applied_sequence":20,"server_confirmed":true,"server_observation_age_ms":20,"client_slots":[{"slot":0,"item":"minecraft:stone","count":64},{"slot":1,"item":"minecraft:dirt","count":32},{"slot":2,"item":"minecraft:cobblestone","count":16},{"slot":3,"item":"minecraft:oak_planks","count":8},{"slot":4,"item":"minecraft:stick","count":3},{"slot":5,"item":"minecraft:apple","count":2},{"slot":6,"item":"minecraft:torch","count":12},{"slot":7,"item":"minecraft:air","count":0},{"slot":8,"item":"minecraft:air","count":0}],"cursor":{"item":"minecraft:air","count":0},"inventory_open":true,"scroll_position":0,"initial_scroll_position":0,"grid_matches_initial":true,"grid_changed_verified":false,"held_buttons":0,"pending_releases":0,"active_button":-1,"cleanup_releases":0,"late_releases_consumed":0,"screen_generation":1,"mouse_drag_calls":0,"wheel_calls":0})").parse();
+    opened.object["server_slots"]=opened.at("client_slots");
+    check(ui::validate_pointer_phase(opened,0)==0,"opened actual slot state accepted");
+    auto split=opened;split.object.at("stage").scalar="split";split.object.at("applied_sequence").scalar="23";
+    split.object.at("client_slots").array[0].object.at("count").scalar="32";split.object["server_slots"]=split.at("client_slots");
+    split.object.at("cursor").object.at("item").scalar="minecraft:stone";split.object.at("cursor").object.at("count").scalar="32";
+    check(ui::validate_pointer_phase(split,1)==0,"right-click half stack and real cursor accepted");
+    for(unsigned bad=0;bad<7;++bad) {
+        auto value=split;
+        if(bad==0)value.object.at("applied_sequence").scalar="22";
+        if(bad==1)value.object.at("server_confirmed").scalar="false";
+        if(bad==2)value.object.at("server_observation_age_ms").scalar="251";
+        if(bad==3)value.object.at("server_slots").array[0].object.at("count").scalar="64";
+        if(bad==4)value.object.at("client_slots").array[8].object.at("slot").scalar="7";
+        if(bad==5)value.object.at("cursor").object.at("count").scalar="31";
+        if(bad==6)value.object.at("active_button").scalar="1";
+        bool rejected=false;try{ui::validate_pointer_phase(value,1);}catch(...){rejected=true;}check(rejected,"unconfirmed stale replayed or incorrect split rejected");
+    }
+    auto distributed=opened;distributed.object.at("stage").scalar="distributed";distributed.object.at("applied_sequence").scalar="32";
+    auto &slots=distributed.object.at("client_slots").array;
+    slots[0].object.at("item").scalar="minecraft:air";slots[0].object.at("count").scalar="0";
+    for(unsigned slot:{7,8}){slots[slot].object.at("item").scalar="minecraft:stone";slots[slot].object.at("count").scalar="32";}
+    distributed.object["server_slots"]=distributed.at("client_slots");distributed.object.at("mouse_drag_calls").scalar="2";
+    check(ui::validate_pointer_phase(distributed,4)==0,"drag distribution requires two actual32 stacks and empty cursor");
+    auto scrolled=distributed;scrolled.object.at("stage").scalar="scrolled";scrolled.object.at("applied_sequence").scalar="33";
+    scrolled.object.at("scroll_position").scalar="0.125";scrolled.object.at("grid_matches_initial").scalar="false";
+    scrolled.object.at("grid_changed_verified").scalar="true";scrolled.object.at("wheel_calls").scalar="1";
+    check(ui::validate_pointer_phase(scrolled,5)==0,"wheel needs changed position and changed grid");
+    for(unsigned bad=0;bad<3;++bad) {
+        auto value=scrolled;if(bad==0)value.object.at("scroll_position").scalar="0";
+        if(bad==1)value.object.at("grid_matches_initial").scalar="true";if(bad==2)value.object.at("grid_changed_verified").scalar="false";
+        bool rejected=false;try{ui::validate_pointer_phase(value,5);}catch(...){rejected=true;}check(rejected,"wheel call alone never proves real inventory scrolling");
+    }
+    auto restored=scrolled;restored.object.at("stage").scalar="scroll_restored";restored.object.at("applied_sequence").scalar="34";
+    restored.object.at("scroll_position").scalar="0";restored.object.at("grid_matches_initial").scalar="true";restored.object.at("wheel_calls").scalar="2";
+    check(ui::validate_pointer_phase(restored,6)==0,"return scroll requires original grid and position");
+    auto held=restored;held.object.at("stage").scalar="closed_held";held.object.at("applied_sequence").scalar="38";
+    held.object.at("inventory_open").scalar="false";held.object.at("scroll_position")={};held.object.at("pending_releases").scalar="1";
+    held.object.at("cleanup_releases").scalar="1";
+    check(ui::validate_pointer_phase(held,7)==0,"held button released to closing screen but real up remains pending");
+    auto omitted_null=held;omitted_null.object.erase("scroll_position");std::string missing_detail;
+    try{ui::validate_pointer_phase(omitted_null,7);}catch(const std::exception &e){missing_detail=e.what();}
+    check(missing_detail=="json_missing_field:scroll_position","closed phase still requires explicit null and names missing proof field");
+    auto reopened=held;reopened.object.at("stage").scalar="reopened_held";reopened.object.at("applied_sequence").scalar="40";
+    reopened.object.at("inventory_open").scalar="true";reopened.object["scroll_position"]=restored.at("scroll_position");reopened.object.at("screen_generation").scalar="2";
+    check(ui::validate_pointer_phase(reopened,8)==0,"new real screen retains pending old physical release");
+    auto late=reopened;late.object.at("stage").scalar="late_release";late.object.at("applied_sequence").scalar="41";
+    late.object.at("pending_releases").scalar="0";late.object.at("late_releases_consumed").scalar="1";
+    check(ui::validate_pointer_phase(late,9)==0,"late release consumed without second cleanup callback");
+    for(const auto key:{"pending_releases","late_releases_consumed","cleanup_releases","screen_generation"}) {
+        auto value=late;value.object.at(key).scalar="9";
+        bool rejected=false;try{ui::validate_pointer_phase(value,9);}catch(...){rejected=true;}check(rejected,"late release bookkeeping mismatch rejected");
+    }
+    auto complete=late;complete.object.at("stage").scalar="complete";complete.object.at("applied_sequence").scalar="43";
+    complete.object.at("inventory_open").scalar="false";complete.object.at("scroll_position")={};
+    complete.object["completed"]=ui::json::Parser("true").parse();
+    auto final=root;final.object["result"]=ui::json::Parser("\"input_passed\"").parse();
+    final.object["lab_evidence"]=ui::json::Parser("{\"input_events_applied\":43,\"pointer_fixture\":true}").parse();final.object.at("lab_evidence").object["pointer_evidence"]=complete;
+    ui::validate_pointer_final(final,id,43,0);check(true,"final43 events complete phase accepted");
+    bool rejected=false;try{ui::validate_pointer_final(final,id,31,0);}catch(...){rejected=true;}check(rejected,"baseline31 cannot masquerade as pointer fixture");
+    const auto points=ui::json::Parser(R"({"slots":[{"slot":0,"x":0.25,"y":0.8},{"slot":7,"x":0.7,"y":0.8},{"slot":8,"x":0.75,"y":0.8}],"drag_entry":{"x":0.69,"y":0.8},"scroll":{"x":0.5,"y":0.5},"blank":{"x":0.3,"y":0.3}})").parse();
+    check(ui::pointer_targets(points).slots[2].first==0.75f,"targets use exact real slot identifiers");
+    for(unsigned bad=0;bad<4;++bad) {
+        auto value=points;if(bad==0)value.object.at("slots").array[2].object.at("slot").scalar="7";
+        if(bad==1)value.object.at("slots").array[2].object.at("x").scalar="1.01";
+        if(bad==2)value.object.at("blank").object.at("y").scalar="-0.01";
+        if(bad==3)value.object.at("drag_entry").object.at("x").scalar="NaN";
+        bool invalid=false;try{ui::pointer_targets(value);}catch(...){invalid=true;}check(invalid,"duplicate invalid or nonfinite pointer targets refused");
     }
 }
 ui::Identity identity(unsigned serial) {
@@ -212,4 +307,4 @@ void channels() {
     recovery_peer.write(0,2);check(recovery.poll()&&recovery.status().ack.state==2,"delayed real closed acknowledgement observed");
 }
 }
-int main() {try{contract();background_receipts();offscreen_receipts();channels();std::cout<<"HUD_INPUT_TESTS checks="<<checks<<" PASS\n";return 0;}catch(const std::exception&e){std::cerr<<"HUD_INPUT_TESTS FAIL "<<checks<<" "<<e.what()<<'\n';return 1;}}
+int main() {try{contract();background_receipts();offscreen_receipts();pointer_receipts();channels();std::cout<<"HUD_INPUT_TESTS checks="<<checks<<" PASS\n";return 0;}catch(const std::exception&e){std::cerr<<"HUD_INPUT_TESTS FAIL "<<checks<<" "<<e.what()<<'\n';return 1;}}

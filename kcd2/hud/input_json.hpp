@@ -14,7 +14,11 @@ struct Value {
     std::string scalar;
     std::map<std::string,Value> object;
     std::vector<Value> array;
-    const Value &at(const std::string &key) const {return object.at(key);}
+    const Value &at(const std::string &key) const {
+        const auto found=object.find(key);
+        if(found==object.end())throw std::runtime_error("json_missing_field:"+key.substr(0,80));
+        return found->second;
+    }
     std::string text() const {if(type!=Type::string)throw std::runtime_error("json_string");return scalar;}
     std::uint64_t integer() const {
         if(type!=Type::string&&type!=Type::number)throw std::runtime_error("json_integer_type");
@@ -29,6 +33,23 @@ struct Value {
     }
     bool boolean() const {if(type!=Type::boolean)throw std::runtime_error("json_boolean");return scalar=="true";}
 };
+// Fixture failures are evidence, not JSON syntax. Bound even library exception
+// messages and escape every non-ASCII byte so locale text cannot corrupt receipts.
+inline std::string bounded_diagnostic(const char *message) {
+    std::string out;
+    if(message)for(std::size_t i=0;i<512&&message[i];++i)out+=message[i];
+    return out;
+}
+inline std::string diagnostic_json(std::string_view message) {
+    constexpr char hex[]="0123456789abcdef";
+    std::string out="\"";
+    for(const unsigned char c:message.substr(0,512)) {
+        if(c=='\"'||c=='\\'){out+='\\';out+=static_cast<char>(c);}
+        else if(c<32||c>=127){out+="\\u00";out+=hex[c>>4];out+=hex[c&15];}
+        else out+=static_cast<char>(c);
+    }
+    out+='\"';return out;
+}
 class Parser {
 public:
     explicit Parser(std::string_view text):text_(text) {if(text.empty()||text.size()>65536)fail();}

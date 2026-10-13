@@ -117,7 +117,8 @@ Never load newer retail1.5.6 saves into this older1.5.5 development game. Backup
 - GPU-shared textures, host depth compositing and native dynamic block submission
   are future work. Bounded CPU shared-memory UI transport now passes with real
   Minecraft and a standalone receiver; the user also confirms live KCD2 HUD
-  visibility, with oversized GUI and duplicate host HUD still to address.
+  visibility and accepted GUI sizing. Optional whole-host-HUD suppression passes
+  live setting/readback restoration; its combined visual result remains unverified.
   The official tool build ships D3D12, so Skyrim's D3D11 code cannot be used directly.
 - Current local token authentication does not authenticate host identity or defend
   against an attacker who already has access to the user's files.
@@ -138,7 +139,9 @@ is unproven. The repaired build has since been installed and reached the world.
 Genuine Minecraft-side hotbar and Creative screen capture passed; the user now
 confirms the static HUD is visible inside KCD2. Continuous UI transport now passes
 with real Minecraft and a standalone native receiver; a subsequent user report
-also confirms the continuous HUD visible inside KCD2. Inventory interaction remains unverified.
+also confirms the continuous HUD visible inside KCD2. Later physical 1/2/9 and
+E/Escape checks verify slot selection and inventory opening/closing, with no KCD
+menu reported. Live mouse interaction remains unfinished.
 The subsequent bounded user-run diagnostic captured exit code 250 (`0x000000FA`)
 after 28.462 seconds. Six complete module snapshots omitted ReShade and the add-on;
 available system commit remained above 5.37 GB in all 28 memory samples. The meaning
@@ -162,9 +165,8 @@ The first visible HUD occupied only 1708×960 pixels within the 2560×1440 host
 backbuffer: integer upscaling rounded the 854×480 source's fit factor from about
 2.998 down to 2. The aspect-fit correction builds and passes 131 focused checks,
 including that exact resolution regression. The continuous compositor includes
-this correction. The user now reports the GUI is too large: the full-canvas fit
-exposes the separate 854x480 capture's GUI scale 2. A smaller GUI presentation
-must preserve the full-canvas anchors. The zero-mod
+this correction. The subsequent oversized GUI report was resolved by the accepted
+1280x720 capture at GUI scale 2, preserving full-canvas anchors. The zero-mod
 comparison's owned empty mod-order file requires ownership-checked cleanup after
 normal game closure when that comparison is complete.
 
@@ -173,8 +175,9 @@ inventory. Real Minecraft sent 344 nontransparent frames to the standalone nativ
 receiver, which observed all four states, the intentional pause, freshness expiry,
 resumption and closed marker. No KCD compositor was armed in that run. The native
 add-on subsequently uploaded 200 fresh frames inside live KCD2, with user-confirmed
-HUD visibility and clean stream closure. KCD's original HUD remains visible;
-native HUD suppression and KCD health display integration are not implemented.
+HUD visibility and clean stream closure. KCD's original HUD remains visible by
+default. A later bounded optional whole-HUD hide passes live readback/restoration;
+selective widget hiding and KCD health display integration remain unfinished.
 The current walking observer disarms on buttons/wheel and the
 movement lab rejects menus, so neither is an inventory input bridge.
 

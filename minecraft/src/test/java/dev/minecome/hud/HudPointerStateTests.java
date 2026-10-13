@@ -26,12 +26,15 @@ public final class HudPointerStateTests {
         check(pointer.activeButton()==-1 && pointer.heldCount()==0,"close stops all dragging");
         check(pointer.releaseScreen().isEmpty(),"repeated screen cleanup is idempotent");
         check(pointer.awaitingRelease(0) && pointer.awaitingRelease(1),"physical ups remain tracked after screen close");
+        check(pointer.pendingReleaseCount()==2,"close evidence counts both pending physical releases");
         rejected(()->pointer.press(0));
         check(!pointer.release(0),"late up is consumed without calling a new screen");
+        check(pointer.pendingReleaseCount()==1,"consuming one late release preserves the other");
         pointer.press(0);
         check(!pointer.release(1) && pointer.activeButton()==0,"old-screen up cannot stop a new-screen gesture");
         check(pointer.release(0),"new-screen genuine up delivered");
         check(!pointer.awaitingRelease(0) && !pointer.awaitingRelease(1),"all physical edges balanced");
+        check(pointer.pendingReleaseCount()==0,"all pending releases consumed exactly once");
 
         pointer.press(1);pointer.releaseScreen();pointer.clear();
         check(pointer.activeButton()==-1 && pointer.heldCount()==0 && !pointer.awaitingRelease(1),"terminal cleanup removes pending old-screen edges");

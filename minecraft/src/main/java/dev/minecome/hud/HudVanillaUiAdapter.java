@@ -14,6 +14,7 @@ final class HudVanillaUiAdapter {
     private final Set<Integer> keys=new HashSet<>();
     private final HudPointerState pointer=new HudPointerState();
     private Screen pointerScreen;
+    private long screenGeneration,cleanupReleases,lateReleasesConsumed,mouseDragCalls,wheelCalls;
     private double x=0.5,y=0.5;
     private boolean pointerKnown;
     HudVanillaUiAdapter(MinecraftClient client,boolean mouseAllowed){world=client.world;player=client.player;server=client.getServer();this.mouseAllowed=mouseAllowed;}
@@ -33,15 +34,15 @@ final class HudVanillaUiAdapter {
             return;
         }
         if(!mouseAllowed)throw new IllegalStateException("Live mouse forwarding is disabled");
-        if(event.kind()==5 && pointer.awaitingRelease(event.code())){pointer.release(event.code());return;}
+        if(event.kind()==5 && pointer.awaitingRelease(event.code())){pointer.release(event.code());lateReleasesConsumed++;return;}
         if(screen==null)throw new IllegalStateException("Pointer event without actual vanilla inventory");
         double oldX=logicalX(screen),oldY=logicalY(screen);x=event.x();y=event.y();pointerKnown=true;
         double nextX=logicalX(screen),nextY=logicalY(screen);screen.mouseMoved(nextX,nextY);
         switch(event.kind()){
-            case 3 -> {int button=pointer.activeButton();if(button!=-1)screen.mouseDragged(nextX,nextY,button,nextX-oldX,nextY-oldY);}
+            case 3 -> {int button=pointer.activeButton();if(button!=-1){screen.mouseDragged(nextX,nextY,button,nextX-oldX,nextY-oldY);mouseDragCalls++;}}
             case 4 -> {pointer.press(event.code());screen.mouseClicked(nextX,nextY,event.code());}
             case 5 -> {pointer.release(event.code());screen.mouseReleased(nextX,nextY,event.code());}
-            case 6 -> screen.mouseScrolled(nextX,nextY,0,HudPointerState.wheel(event.value(),client.options.getDiscreteMouseScroll().getValue(),client.options.getMouseWheelSensitivity().getValue()));
+            case 6 -> {screen.mouseScrolled(nextX,nextY,0,HudPointerState.wheel(event.value(),client.options.getDiscreteMouseScroll().getValue(),client.options.getMouseWheelSensitivity().getValue()));wheelCalls++;}
             default -> throw new IllegalArgumentException("Unexpected UI input kind");
         }
     }
@@ -50,10 +51,11 @@ final class HudVanillaUiAdapter {
         if(current==pointerScreen)return;
         releasePointerScreen();pointerKnown=false;
         pointerScreen=inventory(current)?current:null;
+        if(pointerScreen!=null)screenGeneration++;
     }
     private void releasePointerScreen(){
         var released=pointer.releaseScreen();Screen screen=pointerScreen;pointerScreen=null;
-        if(screen!=null)for(int button:released)screen.mouseReleased(logicalX(screen),logicalY(screen),button);
+        if(screen!=null)for(int button:released){screen.mouseReleased(logicalX(screen),logicalY(screen),button);cleanupReleases++;}
     }
     private void closeInventory(Screen screen){releasePointerScreen();pointerKnown=false;screen.close();}
     void releaseAndClose(MinecraftClient client){
@@ -69,6 +71,10 @@ final class HudVanillaUiAdapter {
     }
     private double logicalX(Screen screen){return Math.min(screen.width-0.001,x*screen.width);}
     private double logicalY(Screen screen){return Math.min(screen.height-0.001,y*screen.height);}
+    JsonObject pointerDiagnostics(){
+        var proof=new JsonObject();proof.addProperty("held_buttons",pointer.heldCount());proof.addProperty("pending_releases",pointer.pendingReleaseCount());proof.addProperty("active_button",pointer.activeButton());
+        proof.addProperty("cleanup_releases",cleanupReleases);proof.addProperty("late_releases_consumed",lateReleasesConsumed);proof.addProperty("screen_generation",screenGeneration);proof.addProperty("mouse_drag_calls",mouseDragCalls);proof.addProperty("wheel_calls",wheelCalls);return proof;
+    }
     Double windowX(MinecraftClient client){return pointerKnown && inventory(client.currentScreen)?Math.min(client.getWindow().getWidth()-0.001,x*client.getWindow().getWidth()):null;}
     Double windowY(MinecraftClient client){return pointerKnown && inventory(client.currentScreen)?Math.min(client.getWindow().getHeight()-0.001,y*client.getWindow().getHeight()):null;}
     JsonArray fixtureTargets(MinecraftClient client){

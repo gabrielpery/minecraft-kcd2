@@ -29,12 +29,16 @@ Minecraft saved and exited normally with code 0 in both runs.
 All nine slots and server-confirmed stack swapping remain separately verified by
 the standalone 31-event fixtures. Opt-in host HUD suppression is now implemented
 and live setting/readback restoration passes; its combined visual result remains
-unverified. General KCD input exclusivity, mouse interaction and health integration
+unverified. General KCD input exclusivity, live mouse interaction and health integration
 remain unfinished. Earlier failed runs and their evidence are preserved below.
 
-The follow-on guest update now handles vanilla drag ownership, wheel sensitivity,
-and button releases across inventory closure. Its changed build passed the real
-31-event fixture again. The reviewed native first-close diagnostic build is now
+The follow-on guest update handles vanilla drag ownership, wheel sensitivity,
+and button releases across inventory closure. A separate opt-in 43-event fixture
+now verifies real stack splitting, drag distribution, scrolling and held-button
+close/reopen behavior, with fresh integrated-server inventory observations at all
+11 stages. All events ran in the hidden, unfocused Minecraft guest. This is
+standalone guest evidence; physical KCD mouse forwarding remains disabled.
+The reviewed native first-close diagnostic build is now
 installed and has supplied the live foreground-loss evidence above. See the
 implementation record in [HUD research](research/HUD-COMPOSITOR.md).
 

@@ -40,6 +40,7 @@ public final class HudStreamLab {
     private final HudStreamLayout layout=HudStreamLayout.configured();
     private final boolean inputMode=Boolean.getBoolean("minecome.hudStreamInput"),inputFixture=Boolean.getBoolean("minecome.hudStreamInputFixture");
     private final boolean inputDelayFixture=Boolean.getBoolean("minecome.hudStreamInputDelayFixture");
+    private final boolean inputPointerFixture=Boolean.getBoolean("minecome.hudStreamInputPointerFixture");
     private final boolean backgroundTrial=Boolean.getBoolean("minecome.hudStreamBackgroundTrial");
     private final boolean offscreenPresentation=Boolean.getBoolean("minecome.hudStreamOffscreenPresentation"),offscreenTrial=Boolean.getBoolean("minecome.hudStreamOffscreenTrial");
     private final long initializedAt=System.nanoTime();
@@ -52,6 +53,7 @@ public final class HudStreamLab {
     private HudStreamProducer output;
     private HudInputReader input;
     private HudVanillaUiAdapter ui;
+    private HudPointerFixture pointerFixture;
     private final HudInputGate inputGate=new HudInputGate();
     private long armedAt,inputEventsApplied;
     private boolean fixtureTargetsSent,selectedNineVerified,inventoryOpened,inventoryClosed,serverSwapVerified;
@@ -107,6 +109,7 @@ public final class HudStreamLab {
         var lab=new HudStreamLab(Path.of(required("minecome.hudStreamDirectory")),identity);active=lab;
         if(lab.inputFixture && !lab.inputMode)throw new IllegalArgumentException("Input fixture requires HUD input mode");
         if(lab.inputDelayFixture && !lab.inputFixture)throw new IllegalArgumentException("Delayed input fixture requires standalone fixture mode");
+        if(lab.inputPointerFixture && (!lab.inputFixture || lab.inputDelayFixture || lab.backgroundTrial))throw new IllegalArgumentException("Pointer fixture requires standalone input fixture without delay/background trial");
         if(lab.backgroundTrial && (!lab.inputFixture || lab.inputDelayFixture))throw new IllegalArgumentException("Background trial requires input fixture without deliberate ACK delay");
         if(lab.offscreenPresentation && (!lab.inputMode || lab.backgroundTrial || lab.inputDelayFixture))throw new IllegalArgumentException("Offscreen presentation requires input lab without background A/B or delayed ACK trial");
         if(lab.offscreenTrial && (!lab.offscreenPresentation || !lab.inputFixture || lab.inputDelayFixture || lab.backgroundTrial))throw new IllegalArgumentException("Offscreen trial requires exclusive offscreen input fixture");
@@ -258,7 +261,7 @@ public final class HudStreamLab {
                 fail(client,"Requested stream framebuffer/GUI scale was not applied");return;
             }
             if(client.interactionManager==null || client.interactionManager.getCurrentGameMode()!=GameMode.CREATIVE){fail(client,"Fresh Creative inventory API unavailable");return;}
-            for(int i=0;i<9;i++){var stack=new ItemStack(Fixture.ITEMS[i],Fixture.COUNTS[i]);client.player.getInventory().setStack(i,stack);client.interactionManager.clickCreativeStack(stack,36+i);}
+            for(int i=0;i<9;i++){var stack=inputPointerFixture && i>=7?ItemStack.EMPTY:new ItemStack(Fixture.ITEMS[i],Fixture.COUNTS[i]);client.player.getInventory().setStack(i,stack);client.interactionManager.clickCreativeStack(stack,36+i);}
             client.player.getInventory().selectedSlot=0;given=true;
             if(offscreenPresentation){
                 client.options.getMaxFps().setValue(OFFSCREEN_FPS);offscreenFrameCapApplied=client.getWindow().getFramerateLimit()==OFFSCREEN_FPS && client.options.getMaxFps().getValue()==OFFSCREEN_FPS;
@@ -268,6 +271,7 @@ public final class HudStreamLab {
             Path project=client.runDirectory.toPath().toAbsolutePath().normalize().getParent().getParent();
             output=new HudStreamProducer(project,outputDirectory,identity,save,true,inputMode?(inputFixture?2:1):0);output.start();
             if(inputMode)ui=new HudVanillaUiAdapter(client,inputFixture);
+            if(inputPointerFixture)pointerFixture=new HudPointerFixture();
             if(backgroundTrial || offscreenPresentation)timing=new HudRenderTiming(Thread.currentThread(),RenderSystem::isFrozenAtPollEvents);
         }
         if(output.failure()!=null){fail(client,"HUD stream worker: "+output.failure());return;}
@@ -351,7 +355,7 @@ public final class HudStreamLab {
         }
         if(inventory){
             inventoryOpened=true;
-            if(inputFixture && !fixtureTargetsSent){output.offerFixtureTargets(ui.fixtureTargets(client));fixtureTargetsSent=true;}
+            if(inputFixture && !inputPointerFixture && !fixtureTargetsSent){output.offerFixtureTargets(ui.fixtureTargets(client));fixtureTargetsSent=true;}
         }else if(inventoryOpened)inventoryClosed=true;
         if(input.isClosed()){
             String reason=input.reason();
@@ -380,6 +384,14 @@ public final class HudStreamLab {
                 if(offscreenPresentation)hiddenUnfocusedEvents++;
                 if(offscreenTrial){if(client.isWindowFocused())offscreenFocusedEvents++;else offscreenUnfocusedEvents++;}
             }
+            if(pointerFixture!=null){
+                // Re-read both sides after actual Screen calls; the pre-event observation
+                // cannot certify a gesture that has just changed the client inventory.
+                Observation current=server.get();long observedAt=System.nanoTime();
+                long age=current==null?-1:(observedAt-current.at())/1_000_000;
+                boolean confirmed=current!=null && age>=0 && age<=250 && current.slots().equals(slots(client.player.getInventory())) && current.selected()==client.player.getInventory().selectedSlot;
+                pointerFixture.observe(client,ui,inputEventsApplied,age,confirmed,current==null?new JsonArray():jsonSlots(current.slots()),output);
+            }
             if(now-armedAt>=30_000_000_000L){finishInput(client,now,"activation_30s_complete");return;}
         }else if(now-streamAt>=((backgroundTrial||offscreenTrial)?100_000_000_000L:60_000_000_000L)){finishInput(client,now,(backgroundTrial||offscreenTrial)?"waiting_100s_complete":"waiting_60s_complete");return;}
         // While waiting we own no controls. Old image/heartbeat/ticks make us
@@ -396,7 +408,9 @@ public final class HudStreamLab {
         if(firstReadyAckAt==0)firstReadyAckAt=now;
     }
     private void finishInput(MinecraftClient client,long now,String reason){
+        if(inputPointerFixture && inputFailure==null && (pointerFixture==null || !pointerFixture.complete()))throw new IllegalStateException("Pointer fixture ended before all real gesture proofs");
         var proof=new JsonObject();proof.addProperty("input_fixture",inputFixture);proof.addProperty("input_armed",armedAt!=0);proof.addProperty("end_reason",reason);
+        proof.addProperty("pointer_fixture",inputPointerFixture);if(pointerFixture!=null)proof.add("pointer_evidence",pointerFixture.evidence());
         proof.addProperty("host_armed",armedAt!=0);proof.addProperty("input_events_applied",inputEventsApplied);proof.addProperty("input_consumed_sequence",inputGate.sequence());
         proof.addProperty("input_delay_fixture",inputDelayFixture);proof.addProperty("withheld_ready_ack_ticks",withheldReadyTicks);proof.addProperty("prearm_ineligible_ticks",prearmIneligibleTicks);
         proof.addProperty("prearm_ack_delay_start_utc_ms",prearmDelayStartUtc);proof.addProperty("prearm_ack_delay_end_utc_ms",prearmDelayEndUtc);proof.addProperty("prearm_ack_delay_ms",prearmDelayEndUtc-prearmDelayStartUtc);

@@ -1,8 +1,9 @@
 package dev.minecome.hud;
 
-import com.google.gson.JsonObject;
+import com.google.gson.*;
 import java.io.IOException;
 import java.nio.file.Path;
+import java.nio.file.Files;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.*;
 
@@ -36,6 +37,26 @@ public final class HudEvidenceWriterTests {
         failed.submit(Path.of("failed.json"),new JsonObject());check(failed.finish(2000),"failed sink stops");
         check(failed.failure()!=null && failed.failure().contains("controlled evidence failure"),"I/O failure observable to publisher");
         rejected(()->failed.submit(Path.of("after-failure.json"),new JsonObject()));
+        pointerNullReceipts();
         System.out.println("HudEvidenceWriterTests: "+checks+" checks passed; blocked I/O isolation and bounded lifecycle; no games launched.");
+    }
+    private static void pointerNullReceipts()throws Exception{
+        Path directory=Files.createTempDirectory("minecome-pointer-receipt-");
+        Path closed=directory.resolve("pointer-fixture-closed_held.json"),complete=directory.resolve("stream-result.json"),open=directory.resolve("pointer-fixture-opened.json"),ordinary=directory.resolve("ordinary.json");
+        var actual=new HudEvidenceWriter(HudStreamProducer::writeJson);
+        try{
+            var phase=new JsonObject();phase.addProperty("stage","closed_held");phase.addProperty("inventory_open",false);phase.add("scroll_position",JsonNull.INSTANCE);
+            var receipt=new JsonObject();receipt.addProperty("ui_input_pointer_fixture",true);receipt.add("pointer_fixture",phase);actual.submit(closed,receipt);
+            var terminal=new JsonObject();terminal.addProperty("ui_input_pointer_fixture",true);var lab=new JsonObject();lab.add("pointer_evidence",phase.deepCopy());terminal.add("lab_evidence",lab);actual.submit(complete,terminal);
+            var opened=receipt.deepCopy();opened.getAsJsonObject("pointer_fixture").addProperty("scroll_position",0.25);actual.submit(open,opened);
+            var normal=receipt.deepCopy();normal.addProperty("ui_input_pointer_fixture",false);actual.submit(ordinary,normal);
+            check(actual.finish(2000) && actual.failure()==null,"production receipt writer drains real serialized files");
+            var saved=JsonParser.parseString(Files.readString(closed)).getAsJsonObject().getAsJsonObject("pointer_fixture");
+            check(saved.has("scroll_position") && saved.get("scroll_position").isJsonNull(),"closed pointer receipt preserves required explicit null on disk");
+            var finalPhase=JsonParser.parseString(Files.readString(complete)).getAsJsonObject().getAsJsonObject("lab_evidence").getAsJsonObject("pointer_evidence");
+            check(finalPhase.has("scroll_position") && finalPhase.get("scroll_position").isJsonNull(),"nested terminal pointer proof preserves required null");
+            check(JsonParser.parseString(Files.readString(open)).getAsJsonObject().getAsJsonObject("pointer_fixture").get("scroll_position").getAsDouble()==0.25,"open pointer receipt keeps numeric scroll position");
+            check(!JsonParser.parseString(Files.readString(ordinary)).getAsJsonObject().getAsJsonObject("pointer_fixture").has("scroll_position"),"ordinary mode serialization is unchanged");
+        }finally{actual.finish(2000);try(var files=Files.list(directory)){for(Path path:files.toList())Files.delete(path);}Files.delete(directory);}
     }
 }

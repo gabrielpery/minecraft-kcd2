@@ -49,13 +49,17 @@ snapshots and the Creative inventory snapshot. **Continuous UI transport now als
 passes with real Minecraft:** a fresh world sent 344 frames to the standalone
 native receiver, including three selected slots and its actual Creative inventory.
 The receiver verified stale-frame hiding, fresh resumption and orderly closure.
-The continuous D3D12 add-on now also displays the HUD inside KCD2: its live run
-uploaded 200 fresh frames, and the user confirms visibility. The GUI is now too
-large and KCD's native HUD remains visible. A separate input mode now passes an
-actual Minecraft test: nine hotbar selections, real inventory opening/closing,
-and a vanilla slot swap confirmed by the integrated server. Its 1280x720 capture
-at GUI scale 2 reduces element size while retaining full-canvas placement.
-Physical KCD inventory controls and host menu/input arbitration remain unverified. See
+The continuous D3D12 add-on now displays the HUD inside KCD2 with user-accepted
+sizing. Physical 1/2/9 hotbar selection and E/Escape inventory control are verified;
+the user reports no KCD menu opening during that sequence. The latest run uploaded
+471 frames and exited normally when KCD lost foreground. A separate automatic
+real-Minecraft fixture verifies all nine hotbar selections and an item swap
+confirmed by the integrated server. A separate 43-event fixture now also verifies
+stack splitting, dragging, scrolling and held-button inventory closure/reopening
+in the hidden guest. The accepted capture is 1280x720 at GUI scale2.
+An optional bounded host-HUD switch also passes live shown/hidden/restored setting
+readbacks; its combined visual appearance remains unverified. Live inventory mouse
+control and general host input ownership are still in development. See
 [the HUD compositor](docs/research/HUD-COMPOSITOR.md).
 Earlier tools launches crashed during world loading with the renderer unarmed and
 with its hook disabled. A subsequent explicit PowerShell 7 launch reached the world,
@@ -66,7 +70,8 @@ a fresh world and completed its 40-second preview. The user reported the HUD
 canvas was too small. The aspect-fit correction passes 131 focused checks and is
 included in the new continuous compositor. The stream implementation passes 168
 Java checks and 146 native checks; the existing 36 snapshot checks still pass.
-GUI sizing needs refinement; KCD HUD suppression and health integration remain unfinished.
+Those earlier sizing issues are resolved by the accepted layout above. Selective
+KCD widget suppression and health integration remain unfinished.
 
 The retail KCSE route is blocked by a missing verified Steam 1.5.6 address library.
 The installed official tools run a distinct 1.5.5 development build. Its working HTTP

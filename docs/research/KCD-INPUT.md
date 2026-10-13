@@ -220,3 +220,31 @@ a generic menu/cutscene guard or establish reversible control ownership.
 Evidence: `runtime/evidence/control-capabilities-20261012-201510-c8e580acb2e642e4b2caa6cb79bcf04d`.
 The source references pinned official-tool binding documentation and inspected stock
 scripts. Documentation presence alone did not predict the actual filter setter.
+
+## Inventory mouse ownership route — 2026-10-13
+
+Pinned ReShade 6.8.0 commit `18deaa52de0c425a78b329e9cb3c497281cd00ec`
+already intercepts DirectInput8. `source/windows/dinput8.cpp:17–40` calls the
+original `GetDeviceState` and clears mouse buttons during overlay capture but
+deliberately preserves mouse axes. Lines 43–74 suppress buffered reads only
+without `DIGDD_PEEK`; lines 76–112 classify `GUID_SysMouse` and install the
+existing COM hooks. Prior actual KCD evidence in
+`runtime/evidence/hud-input-20261012-222727-5854a3c5336448158a97e26b8bf42b57/ReShade-after-input.log`
+records DirectInput8A mouse creation. This proves the route is used, not its data
+format or relative/absolute axis mode.
+
+The public add-on API's `block_input_next_frame` only requests ReShade's existing
+behavior (`include/reshade_api.hpp:721`, `source/runtime_api.cpp:60–65`). Its hook
+manager is internal. The intended extension therefore belongs in that existing
+hook layer, with an explicit fresh inventory lease from MineCome. This avoids
+adding another independent hook chain or using guessed KCD engine addresses.
+
+Before claiming mouse ownership, observe a recognized mouse data layout and
+relative-axis mode, bind the device to the owned game window, and preserve
+original behavior outside the lease. Absolute or unknown layouts must remain
+unsupported: zeroing absolute axes can reset a camera. Buffered PEEK and queued
+movement on release also need explicit handling. Preserve original failure
+results and restore ownership on closure, expiry or foreground loss. These are
+implementation requirements; no strict mouse hook has been installed or live
+verified. The separate pristine source build is a prerequisite, not evidence of
+camera suppression.

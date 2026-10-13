@@ -36,7 +36,7 @@ public final class HudStreamProducer implements AutoCloseable {
     private final String save;
     private final boolean genuine;
     private final int inputMode;
-    private final boolean inputDelayFixture;
+    private final boolean inputDelayFixture,inputPointerFixture;
     private final boolean backgroundTrial;
     private final boolean offscreenPresentation,offscreenTrial;
     private final AtomicReference<Frame> latest=new AtomicReference<>();
@@ -45,6 +45,7 @@ public final class HudStreamProducer implements AutoCloseable {
     private final AtomicReference<JsonArray> fixtureTargets=new AtomicReference<>();
     private final AtomicReference<JsonObject> backgroundTrialReceipt=new AtomicReference<>();
     private final AtomicReference<JsonObject> offscreenTrialReceipt=new AtomicReference<>();
+    private final AtomicReference<JsonObject> pointerStageReceipt=new AtomicReference<>();
     private final AtomicBoolean ready=new AtomicBoolean(),finished=new AtomicBoolean();
     private final AtomicLong replaced=new AtomicLong(),published=new AtomicLong();
     private Thread worker;
@@ -62,6 +63,7 @@ public final class HudStreamProducer implements AutoCloseable {
         if(inputMode<0 || inputMode>2)throw new IllegalArgumentException("Invalid input mode");
         this.root=root.normalize();this.directory=directory.normalize();this.identity=identity;this.save=save;this.genuine=genuine;this.inputMode=inputMode;
         inputDelayFixture=inputMode==2 && Boolean.getBoolean("minecome.hudStreamInputDelayFixture");
+        inputPointerFixture=inputMode==2 && Boolean.getBoolean("minecome.hudStreamInputPointerFixture");
         backgroundTrial=inputMode==2 && Boolean.getBoolean("minecome.hudStreamBackgroundTrial");
         offscreenPresentation=inputMode!=0 && Boolean.getBoolean("minecome.hudStreamOffscreenPresentation");
         offscreenTrial=inputMode==2 && Boolean.getBoolean("minecome.hudStreamOffscreenTrial");
@@ -89,6 +91,10 @@ public final class HudStreamProducer implements AutoCloseable {
     public void offerFixtureTargets(JsonArray slots){if(inputMode!=2 || !fixtureTargets.compareAndSet(null,slots.deepCopy()))throw new IllegalStateException("Fixture targets not allowed/already queued");}
     public void offerBackgroundTrial(JsonObject evidence){if(!backgroundTrial || !backgroundTrialReceipt.compareAndSet(null,evidence.deepCopy()))throw new IllegalStateException("Background trial not allowed/already queued");}
     public void offerOffscreenTrial(JsonObject evidence){if(!offscreenTrial || !offscreenTrialReceipt.compareAndSet(null,evidence.deepCopy()))throw new IllegalStateException("Offscreen trial not allowed/already queued");}
+    public void offerPointerStage(String stage,JsonObject evidence){
+        if(!inputPointerFixture || !stage.matches("opened|split|split_restored|picked_up|distributed|scrolled|scroll_restored|closed_held|reopened_held|late_release|complete") || !stage.equals(evidence.get("stage").getAsString()) || !pointerStageReceipt.compareAndSet(null,evidence.deepCopy()))
+            throw new IllegalStateException("Pointer stage not allowed/already queued");
+    }
     public void offer(Frame frame) {
         if(!isReady() || terminal.get()!=null)return;
         if(latest.getAndSet(frame)!=null)replaced.incrementAndGet();
@@ -122,7 +128,7 @@ public final class HudStreamProducer implements AutoCloseable {
         r.addProperty("target_start_filetime",Long.toUnsignedString(identity.targetStart()));r.addProperty("expires_utc_ms",identity.expiresUtcMs());
         r.addProperty("mapping",identity.mappingName());r.addProperty("mapping_name",identity.mappingName());r.addProperty("mutex_name",identity.mutexName());r.addProperty("mapping_bytes",MAPPING_BYTES);
         r.addProperty("save",save);r.addProperty("source_kind",genuine?"minecraft_vanilla_ui_stream_v1":"standalone_transport_fixture");
-        if(inputMode!=0){r.addProperty("ui_input_protocol",1);r.addProperty("ui_input_fixture",inputMode==2);r.addProperty("ui_input_delay_fixture",inputDelayFixture);r.addProperty("ui_input_background_trial",backgroundTrial);r.addProperty("ui_input_offscreen_presentation",offscreenPresentation);r.addProperty("ui_input_offscreen_trial",offscreenTrial);}return r;
+        if(inputMode!=0){r.addProperty("ui_input_protocol",1);r.addProperty("ui_input_fixture",inputMode==2);r.addProperty("ui_input_delay_fixture",inputDelayFixture);r.addProperty("ui_input_pointer_fixture",inputPointerFixture);r.addProperty("ui_input_background_trial",backgroundTrial);r.addProperty("ui_input_offscreen_presentation",offscreenPresentation);r.addProperty("ui_input_offscreen_trial",offscreenTrial);}return r;
     }
     private void run() {
         Kernel32 api=null;WinNT.HANDLE mapping=null,mutex=null;Pointer view=null;
@@ -167,6 +173,8 @@ public final class HudStreamProducer implements AutoCloseable {
                 if(trial!=null){var receipt=identityReceipt(pid,start);receipt.add("background_trial",trial);evidenceWriter.submit(target.resolve("background-trial-ready.json"),receipt);}
                 var offscreen=offscreenTrialReceipt.getAndSet(null);
                 if(offscreen!=null){var receipt=identityReceipt(pid,start);receipt.add("offscreen_trial",offscreen);evidenceWriter.submit(target.resolve("offscreen-trial-ready.json"),receipt);}
+                var pointer=pointerStageReceipt.getAndSet(null);
+                if(pointer!=null){var receipt=identityReceipt(pid,start);receipt.add("pointer_fixture",pointer);evidenceWriter.submit(target.resolve("pointer-fixture-"+pointer.get("stage").getAsString()+".json"),receipt);}
                 Frame frame=latest.getAndSet(null);
                 if(frame==null){publicationStage("awaiting_frame");Thread.sleep(5);continue;}
                 long now=System.currentTimeMillis();
@@ -202,12 +210,19 @@ public final class HudStreamProducer implements AutoCloseable {
                 if(result.equals("input_passed")){
                     var proof=finalEvidence.get();
                     if(inputMode!=2 || proof==null)throw new IOException("Input fixture proof absent");
-                    for(String key:List.of("input_fixture","server_swap_verified","inventory_opened","inventory_closed","selected_nine_verified","host_armed"))
+                    for(String key:List.of("input_fixture","inventory_opened","inventory_closed","selected_nine_verified","host_armed"))
                         if(!proof.has(key) || !proof.get(key).getAsBoolean())throw new IOException("Input fixture proof missing: "+key);
+                    if(inputPointerFixture){
+                        var pointer=proof.getAsJsonObject("pointer_evidence");
+                        if(!proof.get("pointer_fixture").getAsBoolean() || pointer==null || proof.get("input_events_applied").getAsLong()!=43 || pointer.get("applied_sequence").getAsLong()!=43 || !"complete".equals(pointer.get("stage").getAsString()) || pointer.getAsJsonArray("stages").size()!=11)
+                            throw new IOException("Pointer fixture complete phase absent");
+                        for(String key:List.of("completed","right_split_verified","drag_distribution_verified","scroll_changed_verified","scroll_restored_verified","held_close_release_verified","reopened_screen_verified","late_release_consumed_verified","cursor_empty","server_inventory_verified"))
+                            if(!pointer.has(key) || !pointer.get(key).getAsBoolean())throw new IOException("Pointer fixture proof missing: "+key);
+                    }else if(!proof.has("server_swap_verified") || !proof.get("server_swap_verified").getAsBoolean())throw new IOException("Input fixture swap proof absent");
                     if(offscreenTrial){
                         var trial=proof.getAsJsonObject("offscreen_trial");var events=proof.getAsJsonObject("offscreen_trial_events");
-                        if(trial==null || !trial.get("completed").getAsBoolean() || events==null || events.get("unfocused_events_applied").getAsLong()!=31 || events.get("focused_events_applied").getAsLong()!=0 || events.get("focus_interruptions").getAsLong()!=0)
-                            throw new IOException("Offscreen fixture lacks all31 genuinely unfocused applications");
+                        if(trial==null || !trial.get("completed").getAsBoolean() || events==null || events.get("unfocused_events_applied").getAsLong()!=(inputPointerFixture?43:31) || events.get("focused_events_applied").getAsLong()!=0 || events.get("focus_interruptions").getAsLong()!=0)
+                            throw new IOException("Offscreen fixture lacks all expected genuinely unfocused applications");
                     }
                 }
             }
@@ -259,8 +274,12 @@ public final class HudStreamProducer implements AutoCloseable {
         throw new IOException("Stream mutex wait failed: "+result);
     }
     private static void unlock(Kernel32 api,WinNT.HANDLE mutex)throws IOException {if(!api.ReleaseMutex(mutex))throw nativeFailure(api,"ReleaseMutex");}
-    private static void writeJson(Path path,JsonObject object)throws IOException {
-        byte[] body=(new GsonBuilder().setPrettyPrinting().create().toJson(object)+"\n").getBytes(StandardCharsets.UTF_8);
+    static void writeJson(Path path,JsonObject object)throws IOException {
+        var serializer=new GsonBuilder().setPrettyPrinting();
+        // Closed pointer phases explicitly carry scroll_position:null; absence
+        // means a malformed proof. Preserve that distinction in stage/final files.
+        if(object.has("ui_input_pointer_fixture") && object.get("ui_input_pointer_fixture").getAsBoolean())serializer.serializeNulls();
+        byte[] body=(serializer.create().toJson(object)+"\n").getBytes(StandardCharsets.UTF_8);
         if(body.length>65536)throw new IOException("Stream receipt byte bound exceeded");
         Path temp=path.resolveSibling(path.getFileName()+"."+UUID.randomUUID()+".tmp");
         Files.write(temp,body,StandardOpenOption.CREATE_NEW,StandardOpenOption.WRITE);
