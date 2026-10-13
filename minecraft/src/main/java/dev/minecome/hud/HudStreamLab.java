@@ -51,6 +51,7 @@ public final class HudStreamLab {
     private final AtomicReference<String> serverFailure=new AtomicReference<>();
     private final AtomicReference<ServerOwner> serverOwner=new AtomicReference<>();
     private final HudReadback readback=new HudReadback(offscreenPresentation);
+    private final HudCaptureCadence captureCadence=new HudCaptureCadence();
     private final Path outputDirectory;
     private HudStreamProducer output;
     private HudInputReader input;
@@ -221,11 +222,15 @@ public final class HudStreamLab {
         });
         timingStage("capture_metadata");
         if(output==null || !output.isReady() || terminal || (!inputMode && stage<0)){lastCaptureDecision="output_or_stage_not_ready";return;}
-        if(paused || now-lastCaptureAt<50_000_000L || (!inputMode && now-stateAt<250_000_000L)){lastCaptureDecision="capture_interval";return;}
+        if(paused || (!inputMode && now-stateAt<250_000_000L)){lastCaptureDecision="capture_interval";return;}
         if(client.getOverlay()!=null){lastCaptureDecision="overlay";return;}
         boolean inventory=inputMode?HudVanillaUiAdapter.inventory(client.currentScreen):stage==2;
         if(inventory && !(client.currentScreen instanceof InventoryScreen) && !(client.currentScreen instanceof CreativeInventoryScreen))return;
         if(!inventory && client.currentScreen!=null)return;
+        // A 50 ms timer skips alternate frames at the owned 30 FPS cap. Capture
+        // mouse-controlled inventory once per render; the hotbar keeps its timer.
+        boolean renderDriven=HudCaptureCadence.renderDriven(inputMode,mouseInputEnabled,offscreenPresentation,offscreenFrameCapApplied,inventory);
+        if(!HudCaptureCadence.due(now,lastCaptureAt,renderDriven)){lastCaptureDecision="capture_interval";return;}
         Observation observation=server.get();List<Slot> local=slots(client.player.getInventory());int selected=client.player.getInventory().selectedSlot;
         int expected=stage==0?0:stage==3?2:1;
         boolean serverFresh=observation!=null && now-observation.at()<=250_000_000L && observation.world()!=null;
@@ -244,7 +249,7 @@ public final class HudStreamLab {
         meta.addProperty("no_world_pixels",true);meta.addProperty("hand_pixels",false);meta.addProperty("gui_scale",client.getWindow().getScaleFactor());
         meta.add("client_slots",jsonSlots(local));meta.add("server_slots",jsonSlots(observation.slots()));
         timingStage("pbo_enqueue");
-        try{if(readback.capture(client.getFramebuffer(),++captureId,meta.toString())){lastCaptureAt=now;lastCaptureEnqueuedUtc=System.currentTimeMillis();lastCaptureDecision="enqueued";if(serverConfirmed)capturedServerConfirmed++;else capturedServerPending++;}else lastCaptureDecision="pbo_busy";}
+        try{if(readback.capture(client.getFramebuffer(),++captureId,meta.toString())){lastCaptureAt=now;captureCadence.captured(inventory,now);lastCaptureEnqueuedUtc=System.currentTimeMillis();lastCaptureDecision="enqueued";if(serverConfirmed)capturedServerConfirmed++;else capturedServerPending++;}else lastCaptureDecision="pbo_busy";}
         finally{timingStage("game_render");}
     }
     private void tick(MinecraftClient client){
@@ -615,6 +620,7 @@ public final class HudStreamLab {
     private JsonObject captureDiagnostics(){
         var proof=new JsonObject();proof.addProperty("last_decision",lastCaptureDecision);proof.addProperty("server_stale_skips",captureServerStaleSkips);proof.addProperty("auto_unconfirmed_skips",captureUnconfirmedSkips);
         proof.addProperty("older_completed_readbacks_ignored",captureOlderReadbacks);proof.addProperty("max_server_observation_age_ms",maxServerObservationAgeMs);proof.addProperty("last_enqueued_utc_ms",lastCaptureEnqueuedUtc);
+        var cadence=captureCadence.diagnostics();cadence.addProperty("inventory_render_driven",HudCaptureCadence.renderDriven(inputMode,mouseInputEnabled,offscreenPresentation,offscreenFrameCapApplied,true));proof.add("cadence",cadence);
         var observed=server.get();proof.addProperty("current_server_observation_age_ms",observed==null?-1:(System.nanoTime()-observed.at())/1_000_000);proof.add("pbo",readback.diagnostics());return proof;
     }
     private static List<Slot> slots(net.minecraft.entity.player.PlayerInventory inventory){List<Slot> result=new ArrayList<>(9);for(int i=0;i<9;i++){var stack=inventory.getStack(i);result.add(new Slot(i,Registries.ITEM.getId(stack.getItem()).toString(),stack.getCount()));}return List.copyOf(result);}

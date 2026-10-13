@@ -15,6 +15,39 @@ restoration verified. The separate strict mouse profile has now completed a full
 host-HUD appearance, general input exclusivity and health integration remain unverified. Detailed evidence
 and the earlier failed runs are recorded below.
 
+## Inventory capture cadence — 2026-10-13
+
+The 50 ms capture minimum combined with the 30 FPS guest cap skipped alternate
+rendered inventory frames. `HudCaptureCadence` now permits one capture per render
+only for actual supported vanilla inventory screens with input, mouse forwarding,
+offscreen presentation and the applied cap. Hotbar, keyboard-only, visible-window
+and automated snapshot modes retain the 50 ms minimum. The render cap, capture
+ordering, three bounded PBO slots, freshness/ACK checks and native profile are
+unchanged. There is no catch-up loop or additional timer.
+
+The 45 new regression checks exercise the 30 FPS/50 ms scheduling interaction,
+scope restrictions and independent per-screen timing. Together with the existing
+pointer, stream, input and window-cleanup suites, 692 focused Java checks pass;
+compilation/remapping and independent review also pass. The built JAR SHA256 is
+`104a827a4b398d855892d0e54a399e2336113c784fdaa4cab6ea8e8e6f5ef4fe`.
+
+The actual Minecraft `Fixture -OffscreenTrial -PointerFixture` run
+`e58de09d9e734576b723f2f6c852d1b3` passes, with evidence in
+`runtime/evidence/hud-input-20261013-144908-e58de09d9e734576b723f2f6c852d1b3`.
+All 43 events and 11 server-observed inventory stages completed while hidden and
+unfocused, including splitting, dragging, scrolling and held-button closure.
+Minecraft published 241 genuine frames; the standalone receiver received 240.
+The 46 successful inventory captures had 44 adjacent same-screen intervals,
+averaging 32.914 ms, maximum 36.294 ms. The hotbar mean was 67.061 ms. These are
+capture-enqueue measurements, not displayed FPS or end-to-end click latency.
+
+No PBO busy skips or fence-timeout polls occurred. Maximum readback completion
+age was 44 ms, client tick gap 103 ms and own-image age 133 ms. Normal Java exit 0,
+closed ACK and ordinary fixture window/settings/handle restoration passed.
+KCD was closed and no compositor was armed. This does not live-verify the earlier
+hidden-until-exit policy, which intentionally applies only to explicit live mouse
+sessions. Combined KCD smoothness and no-popup behavior remain pending.
+
 ## First live inventory mouse check — 2026-10-13
 
 The user launched the updated tools world, PID 18468, and confirmed it ready.
@@ -51,10 +84,9 @@ repair below is now compiled for the explicit live-mouse profile. No native rebu
 
 Separate timing analysis observes 14.8–15 content uploads per second and about
 62 composited frames per second. The 50 ms capture minimum with a 30 FPS guest
-skips alternate capture opportunities. Capture-per-render inventory updates are
-a possible later responsiveness improvement; this run does not measure true
-end-to-end click latency. The cadence remains unchanged while fixing the observed
-shutdown-window popup. No PBO busy skips, readback fence timeouts, mailbox
+skips alternate capture opportunities. The later capture-per-render change is
+recorded above; this live run did not measure true end-to-end click latency.
+Cadence was unchanged in the initial shutdown-window repair. No PBO busy skips, readback fence timeouts, mailbox
 replacements or native upload drops occurred in this successful run.
 
 ### Guest shutdown-window repair
@@ -77,7 +109,7 @@ an observed normal Java exit before accepting this policy. Missing legacy policy
 is allowed only under the prior ordinary-restoration checks; unknown declared
 policies are rejected.
 
-The updated JAR is
+The JAR for that repair was
 `1e82715a15dbc130fe31fc153489b19ca27cb21ca266ac941e8f788de9d349ff`.
 Compilation/remapping, 57 cleanup operation/policy checks, 45 pointer checks,
 focused controller receipt checks and all 397 existing cleanup checks pass.

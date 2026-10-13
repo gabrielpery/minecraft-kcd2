@@ -62,7 +62,10 @@ readbacks; its combined visual appearance remains unverified. **Physical invento
 mouse control now works in KCD2**, confirmed by the user. The separate strict
 DirectInput capture profile completed its full 30-second test: 639 events were
 acknowledged, including clicks, dragging and scrolling, with normal Minecraft
-shutdown. General gameplay input ownership remains unfinished. See
+shutdown. Inventory capture now follows the existing 30 FPS guest rendering cap;
+a fresh automatic Minecraft run measured about 30 captures per second and passed
+all 43 pointer actions. Combined KCD smoothness and the shutdown-window repair
+still await the next live session. General gameplay input ownership remains unfinished. See
 [the HUD compositor](docs/research/HUD-COMPOSITOR.md).
 Earlier tools launches crashed during world loading with the renderer unarmed and
 with its hook disabled. A subsequent explicit PowerShell 7 launch reached the world,

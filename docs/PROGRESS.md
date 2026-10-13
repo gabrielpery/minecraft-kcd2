@@ -24,6 +24,17 @@ compiled and independently reviewed: the explicit live-mouse guest stays hidden
 through exit, with truthful cleanup evidence and actual Java exit verification.
 Its automated checks pass; the absence of a popup still awaits the next live run.
 
+**Inventory responsiveness:** mouse-enabled offscreen inventory now captures once
+per rendered frame under the existing 30 FPS guest cap. A real isolated Minecraft
+run completed all 43 pointer-fixture events and 11 inventory stages: successful
+inventory captures averaged 32.9 ms apart (about 30 Hz), while hotbar captures kept
+their existing cadence. All 692 focused Java checks and review pass. There were
+no readback busy skips or fence-timeout polls; Minecraft exited normally. This is
+standalone evidence, not a KCD display-rate or end-to-end latency measurement.
+The next combined session still needs to confirm perceived smoothness and the
+earlier hidden-exit repair. See the dated evidence in
+[HUD research](research/HUD-COMPOSITOR.md#inventory-capture-cadence--2026-10-13).
+
 **Earlier keyboard milestone and accepted HUD size:** The user accepted the sizing in the earlier run
 and now confirms "done, no kcd menu opened, worked" with the updated add-on.
 Ten physical press/release events for 1, 2, 9, E and Escape were delivered and
@@ -127,7 +138,8 @@ completed its movement/view proof; the new KCD capture path still awaits a live 
 | Static Minecraft UI composition | Actual vanilla capture and original ReShade D3D12 add-on built | 36 Java capture checks; reset and aspect-fit contracts pass | User confirmed HUD visible in KCD2; logs record all three snapshot submissions and lease expiry |
 | Continuous vanilla UI transport | Java21/JNA producer, bounded Win32 channel and native receiver built | 168 Java stream checks and 146 native checks pass; existing 36 snapshot checks still pass | Fresh real Minecraft world sent 344 nontransparent frames, four vanilla UI states, pause/resumption and closed marker to standalone receiver; no KCD compositor was armed |
 | Continuous KCD UI compositor | Separate exact-tools D3D12 add-on installed with aspect fit, persistent texture and fenced upload slots | Native contract/lifecycle review and checks pass | Latest live run uploaded 471 frames/submitted 1,973 draws with zero drops; earlier user-accepted HUD size preserved. KCD's duplicate HUD remains |
-| Reverse HUD input and background presentation | Separate exact-identity input channel, bounded hidden/offscreen presentation and callback-based focus readiness built | Hidden fixtures pass all 31 events, nine slots, inventory open/close and server-confirmed swap | Ten physical 1/2/9/E/Escape press/release events acknowledged/applied; user confirms controls worked with no KCD menu. First-close diagnostics verify foreground-loss stop after 15.766 seconds. Full duration, mouse and general host exclusivity remain unverified |
+| Reverse HUD input and background presentation | Separate exact-identity input channel, bounded hidden/offscreen presentation and callback-based focus readiness built | Hidden fixtures pass all 31 events, nine slots, inventory open/close and server-confirmed swap | Ten physical 1/2/9/E/Escape press/release events acknowledged/applied; user confirms controls worked with no KCD menu. The later mouse run completed the full 30 seconds; general host exclusivity remains unverified |
+| Render-driven inventory capture | Mouse-enabled offscreen inventory captures once per rendered frame with the existing 30 FPS cap; hotbar timer unchanged | 45 cadence checks plus 647 pointer/stream/input/cleanup checks pass; actual 43-event Minecraft fixture measured mean 32.9 ms inventory capture intervals with no PBO busy skips/timeouts | Updated capture cadence and hidden-exit behavior await the next combined KCD session |
 | Inventory pointer lifecycle | Single active drag button, screen-owned releases, vanilla wheel scaling and explicit live opt-in built | 45 pointer policy/state, 192 stream/receipt and 353 input checks pass; actual hidden 43-event fixture verifies splitting/drag/scroll/held-close at 11 stages | User-confirmed physical mouse interaction; 635 pointer events and actual click/drag/wheel callbacks applied |
 | Host inventory mouse capture | Original pinned ReShade hook, API, add-on and cursor shader built; exact bundle installed | 56 native capture/SDK adapter checks, 95 forwarding/diagnostic checks, 338 input checks and both FX compilations pass; 23 profile/rollback checks pass in PS5.1 and PS7 | Full 30-second live activation, 1,535 immediate suppressions/drains and zero drain failures; final drain completion/general exclusivity not independently verified |
 | Temporary host GPU-budget comparison | Shared opt-in Lua/PowerShell helper and live controller integration reviewed | 22 simulated-engine Lua cases and 98 assertions across 11 simulated-console scenarios pass; capped standalone fixture passed | Latest combined live run passed with verified −1→60→−1 restoration through requested End before expiry and timer cancellation |
