@@ -81,6 +81,11 @@ check passed:** four clicks produced two confirmed cycles in both games, with
 the user's visual confirmation and normal cleanup. It intentionally
 locks KCD mouse look and controls one nearby cell for up to 30 seconds. Free
 aiming and continuous gameplay remain unfinished.
+A separate selective mouse profile is built and installed: it preserves KCD camera look
+in the world and retains full mouse ownership inside Minecraft inventory.
+Its live check is pending; the verified camera-locked profile remains available.
+Shared aiming geometry is tested in Java and C++, but live targeting still uses
+the fixed cell until the alignment handshake and vanilla raycast are connected.
 Earlier tools launches crashed during world loading with the renderer unarmed and
 with its hook disabled. A subsequent explicit PowerShell 7 launch reached the world,
 confirmed by the user and a successful two-minute process/HTTP check, with the hook

@@ -12,7 +12,7 @@ param(
     [string]$ShaderPath,
     [string]$OutputDirectory,
     [string]$InstallerPath,
-    [ValidateSet('Static','Stream','Input','Mouse','World')][string]$Mode='Static',
+    [ValidateSet('Static','Stream','Input','Mouse','World','Selective')][string]$Mode='Static',
     [string]$CustomBuildReceipt
 )
 $ErrorActionPreference = 'Stop'
@@ -24,14 +24,14 @@ $setupUrl = 'https://reshade.me/downloads/ReShade_Setup_6.8.0_Addon.exe'
 $setupHash = 'afe4c8f13048306307983b8b3d41d5bf00a86820440b0e57dea10950e1176445'
 $runtimeHash = '0cee63f9c9f13f3ac909c5b4903f4dbb4b719a7ab3b4f13b0deaf83c814b94f7'
 $maxArtifactBytes = 64MB
-if($Mode -in @('Mouse','World')) {
-    if(-not $CustomBuildReceipt -or $InstallerPath){throw 'Mouse/World mode requires its exact custom build receipt and no installer.'}
+if($Mode -in @('Mouse','World','Selective')) {
+    if(-not $CustomBuildReceipt -or $InstallerPath){throw 'Mouse/World/Selective mode requires its exact custom build receipt and no installer.'}
     . (Join-Path $PSScriptRoot 'HudMouseProfile.ps1')
-    $mouseProfile=Get-MineComeMouseProfile -WorldClicks:($Mode -eq 'World')
+    $mouseProfile=Get-MineComeMouseProfile -WorldClicks:($Mode -in @('World','Selective')) -SelectiveMouse:($Mode -eq 'Selective')
     $runtimeHash=$mouseProfile.runtime_sha256
-} elseif($CustomBuildReceipt){throw 'Custom renderer receipt requires explicit Mouse or World mode.'}
-if (-not $ShaderPath) { $ShaderPath = Join-Path $projectRoot $(if($Mode -in @('Mouse','World')){'kcd2/hud/shaders/MineComeMouseHud.fx'}else{'kcd2/hud/shaders/MineComeHud.fx'}) }
-if (-not $OutputDirectory) { $OutputDirectory = Join-Path $runtimeRoot $(if($Mode -eq 'World'){'hud-compositor-world'}elseif($Mode -eq 'Mouse'){'hud-compositor-mouse'}else{'hud-compositor'}) }
+} elseif($CustomBuildReceipt){throw 'Custom renderer receipt requires explicit Mouse, World or Selective mode.'}
+if (-not $ShaderPath) { $ShaderPath = Join-Path $projectRoot $(if($Mode -in @('Mouse','World','Selective')){'kcd2/hud/shaders/MineComeMouseHud.fx'}else{'kcd2/hud/shaders/MineComeHud.fx'}) }
+if (-not $OutputDirectory) { $OutputDirectory = Join-Path $runtimeRoot $(if($Mode -eq 'Selective'){'hud-compositor-selective'}elseif($Mode -eq 'World'){'hud-compositor-world'}elseif($Mode -eq 'Mouse'){'hud-compositor-mouse'}else{'hud-compositor'}) }
 $AddonPath = [IO.Path]::GetFullPath($AddonPath)
 $ShaderPath = [IO.Path]::GetFullPath($ShaderPath)
 $OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
@@ -154,13 +154,15 @@ $license = Read-BoundedFile $licensePath 64KB
 $utf8 = [Text.UTF8Encoding]::new($false, $true)
 $shaderText = $utf8.GetString($shader)
 if ($shaderText -notmatch '\btechnique\s+MineComeHud\b') { throw 'Expected original MineComeHud technique was absent.' }
-if($Mode -in @('Mouse','World')) {
+if($Mode -in @('Mouse','World','Selective')) {
     $receiptBytes=Read-BoundedFile $CustomBuildReceipt 1MB
     if((Get-BytesHash $receiptBytes) -cne $mouseProfile.build_receipt_sha256){throw 'Custom build receipt differs from the frozen profile.'}
     $custom=$utf8.GetString($receiptBytes) | ConvertFrom-Json
-    if($custom.kind -cne 'minecome_mouse_reshade_build_v1' -or $custom.status -cne 'built' -or
+    $expectedBuildKind=if($Mode -eq 'Selective'){'minecome_selective_reshade_build_v2'}else{'minecome_mouse_reshade_build_v1'}
+    if($custom.kind -cne $expectedBuildKind -or $custom.status -cne 'built' -or
        $custom.commit -cne $sdkCommit -or $custom.output_sha256 -ine $runtimeHash -or
        $custom.generated_outputs_unchanged -ne $true){throw 'Verified pinned custom build required.'}
+    if($Mode -eq 'Selective'){Assert-MineComeSelectiveBuildReceipt $custom $mouseProfile}
     $runtimeBytes=Read-BoundedFile $custom.output $maxArtifactBytes
     if((Get-BytesHash $runtimeBytes) -cne $runtimeHash -or (Get-BytesHash $addon) -cne $mouseProfile.addon_sha256 -or
        (Get-BytesHash $shader) -cne $mouseProfile.shader_sha256){throw 'Mouse build artifacts differ from the exact tested profile.'}
@@ -228,16 +230,17 @@ $manifest = [ordered]@{
     runtime=[ordered]@{ version='6.8.0'; acquisition_url=$setupUrl; installer_sha256=$setupHash; reshade64_sha256=$runtimeHash; proxy_name='dxgi.dll'; full_addon_support=$true }
     sdk=[ordered]@{ expected_commit=$sdkCommit; source_root=(Join-Path $projectRoot 'external\reshade'); license_source=$licensePath; license_sha256=(Get-BytesHash $license) }
     original_addon_source=$AddonPath; original_shader_source=$ShaderPath; prepare_script_sha256=(Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256).Hash.ToLowerInvariant()
-    arm_config_relative_path=$(if($Mode -eq 'World'){'minecome-hud/addons/MineComeHudWorld.ini'}elseif($Mode -eq 'Mouse'){'minecome-hud/addons/MineComeHudMouse.ini'}elseif($Mode -eq 'Input'){'minecome-hud/addons/MineComeHudInput.ini'}elseif($Mode -eq 'Stream'){'minecome-hud/addons/MineComeHudStream.ini'}else{'minecome-hud/addons/MineComeHud.ini'}); preview_armed=$false; live_kcd_compositing_verified=$false
+    arm_config_relative_path=$(if($Mode -eq 'Selective'){'minecome-hud/addons/MineComeHudSelective.ini'}elseif($Mode -eq 'World'){'minecome-hud/addons/MineComeHudWorld.ini'}elseif($Mode -eq 'Mouse'){'minecome-hud/addons/MineComeHudMouse.ini'}elseif($Mode -eq 'Input'){'minecome-hud/addons/MineComeHudInput.ini'}elseif($Mode -eq 'Stream'){'minecome-hud/addons/MineComeHudStream.ini'}else{'minecome-hud/addons/MineComeHud.ini'}); preview_armed=$false; live_kcd_compositing_verified=$false
     files=$files
 }
-if($Mode -in @('Stream','Input','Mouse','World')) {$manifest.stream_protocol=1}
-if($Mode -in @('Input','Mouse','World')) {$manifest.ui_input_protocol=1}
-if($Mode -in @('Mouse','World')){
-    $manifest.mouse_capture_api=1
-    if($Mode -eq 'World'){$manifest.world_clicks=$true}
+if($Mode -in @('Stream','Input','Mouse','World','Selective')) {$manifest.stream_protocol=1}
+if($Mode -in @('Input','Mouse','World','Selective')) {$manifest.ui_input_protocol=1}
+if($Mode -in @('Mouse','World','Selective')){
+    $manifest.mouse_capture_api=$(if($Mode -eq 'Selective'){2}else{1})
+    if($Mode -in @('World','Selective')){$manifest.world_clicks=$true}
+    if($Mode -eq 'Selective'){$manifest.selective_mouse=$true}
     $manifest.runtime=[ordered]@{version='6.8.0';custom_version=$custom.version;source_commit=$sdkCommit;reshade64_sha256=$runtimeHash;proxy_name='dxgi.dll';full_addon_support=$true;build_receipt=$CustomBuildReceipt;build_receipt_sha256=$mouseProfile.build_receipt_sha256}
-    Assert-MineComeMouseBundle $manifest $mouseProfile -WorldClicks:($Mode -eq 'World')
+    Assert-MineComeMouseBundle $manifest $mouseProfile -WorldClicks:($Mode -in @('World','Selective')) -SelectiveMouse:($Mode -eq 'Selective')
 }
 $manifestBytes = $utf8.GetBytes(($manifest | ConvertTo-Json -Depth 8) + "`n")
 if (Test-Path -LiteralPath (Join-Path $OutputDirectory 'bundle.json')) {

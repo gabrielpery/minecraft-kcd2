@@ -20,8 +20,14 @@
 #include "input_channel.hpp"
 #include "input_diagnostics.hpp"
 #ifdef MINECOME_HUD_LIVE_MOUSE
+#ifdef MINECOME_HUD_SELECTIVE_MOUSE
+#include "selective_capture_api.hpp"
+#include "selective_diagnostics.hpp"
+#include "selective_forwarding.hpp"
+#else
 #include "mouse_capture_api.hpp"
 #include "mouse_diagnostics.hpp"
+#endif
 #include "mouse_forwarding.hpp"
 #endif
 #ifdef MINECOME_HUD_WORLD_CLICKS
@@ -48,7 +54,11 @@ namespace ui = minecome::hud::input;
 namespace world = minecome::hud::world;
 #endif
 #ifdef MINECOME_HUD_LIVE_MOUSE
+#ifdef MINECOME_HUD_SELECTIVE_MOUSE
+namespace mouse = minecome::selective;
+#else
 namespace mouse = minecome::mouse;
+#endif
 const mouse::Api *mouse_api=nullptr;
 mouse::Notices mouse_notices;
 void mouse_receipt(const char *event,mouse::Result result,const mouse::Snapshot &snapshot) noexcept {
@@ -62,7 +72,12 @@ void write_mouse_receipt(const mouse::Notice &notice,std::string_view run) {
         <<",\"device_count\":"<<snapshot.device_count<<",\"eligible_devices\":"<<snapshot.eligible_devices
         <<",\"state_suppressions\":"<<snapshot.state_suppressions<<",\"data_suppressions\":"<<snapshot.data_suppressions
         <<",\"peek_suppressions\":"<<snapshot.peek_suppressions<<",\"queue_drains\":"<<snapshot.queue_drains
-        <<",\"drain_failures\":"<<snapshot.drain_failures<<",\"live_verified\":false}";
+        <<",\"drain_failures\":"<<snapshot.drain_failures
+#ifdef MINECOME_HUD_SELECTIVE_MOUSE
+        <<",\"mode\":"<<static_cast<unsigned>(snapshot.mode)<<",\"axis_records_delivered\":"<<snapshot.axis_records_delivered
+        <<",\"button_records_filtered\":"<<snapshot.button_records_filtered<<",\"buffer_overflows\":"<<snapshot.buffer_overflows
+#endif
+        <<",\"live_verified\":false}";
     reshade::log::message(reshade::log::level::info,line.str().c_str());
 }
 void drain_mouse_receipts(std::string_view run) {
@@ -163,7 +178,9 @@ struct Service {
     explicit Service(HMODULE module) {
         const auto path = st::module_path(module); const auto slash = path.find_last_of(L"/\\");
         if (slash != path.npos) config = path.substr(0,slash+1)+
-#ifdef MINECOME_HUD_WORLD_CLICKS
+#ifdef MINECOME_HUD_SELECTIVE_MOUSE
+            L"MineComeHudSelective.ini";
+#elif defined(MINECOME_HUD_WORLD_CLICKS)
             L"MineComeHudWorld.ini";
 #elif defined(MINECOME_HUD_LIVE_MOUSE)
             L"MineComeHudMouse.ini";
@@ -188,7 +205,11 @@ struct Service {
             // render stall must not emit after that shorter lease has expired.
             mouse::Snapshot capture;
             const auto capture_result=closed?mouse::Result::unavailable:mouse_api->query(pending_click.window,pending_click.token,&capture);
-            const bool captured=world::capture_matches(pending_click,capture_result==mouse::Result::ok&&(capture.flags&mouse::active),capture.token,capture.generation);
+            const bool captured=world::capture_matches(pending_click,capture_result==mouse::Result::ok&&(capture.flags&mouse::active)
+#ifdef MINECOME_HUD_SELECTIVE_MOUSE
+                &&!(capture.flags&mouse::draining)&&capture.mode==mouse::Mode::buttons
+#endif
+                ,capture.token,capture.generation);
             const bool live=!closed&&accepted.live(utc,now)&&peer.live&&peer.ack.state==1&&ui::fresh(peer.ack.utc,utc)&&
                 now>=peer.observed&&now-peer.observed<=ui::fresh_ms&&rendered&&now>=rendered&&now-rendered<=ui::fresh_ms&&
                 frame&&st::uploaded_fresh(frame->observation,now)&&captured&&!world_clicks.overflowed();
@@ -386,6 +407,10 @@ struct RuntimeState {
     std::uint32_t target_width=0,target_height=0,uploaded_screen=0;
     std::uint64_t forwarded_events=0,transition_sequence=0,mouse_generation=0;
     bool transition=false,transition_screen=false,mouse_leased=false,mouse_capability_reported=false;
+#ifdef MINECOME_HUD_SELECTIVE_MOUSE
+    mouse::ForwardingLease selective_lease;
+    mouse::ModeGate selective_mode;
+#endif
 #ifdef MINECOME_HUD_WORLD_CLICKS
     world::Gate world_click;
 #endif
@@ -419,6 +444,9 @@ void release_mouse(api::effect_runtime *runtime,RuntimeState &state) {
     mouse::Snapshot snapshot;
     auto result=mouse_api->release(reinterpret_cast<std::uintptr_t>(state.window),reinterpret_cast<std::uintptr_t>(runtime),&snapshot);
     state.mouse_leased=false;mouse_receipt("mouse_release",result,snapshot);
+#ifdef MINECOME_HUD_SELECTIVE_MOUSE
+    state.selective_lease.released();
+#endif
 }
 bool queue_input(RuntimeState &state,const ui::Event &event) {
     if(!service->input_mailbox.push(event))return false;
@@ -463,7 +491,11 @@ void capture_keyboard(api::effect_runtime *runtime,RuntimeState &state,bool comp
         (input_force_close.load(std::memory_order_acquire)?128u:0u)|(service->terminal.load(std::memory_order_acquire)?256u:0u);
 #ifdef MINECOME_HUD_LIVE_MOUSE
     if(!state.keyboard.consumed()&&(!mouse_capable||mouse_buttons))failures|=512u;
+#ifdef MINECOME_HUD_SELECTIVE_MOUSE
+    if(state.mouse_leased&&!state.selective_lease.observe(mouse_query,mouse_status,reinterpret_cast<std::uintptr_t>(runtime),now))failures|=1024u;
+#else
     if(state.mouse_leased&&(!mouse_capable||!(mouse_status.flags&mouse::active)||mouse_status.generation!=state.mouse_generation))failures|=1024u;
+#endif
 #endif
     const auto step=state.keyboard.update(failures==0,f8,held,now);
     if(step==ui::KeyboardGate::Step::closed) {
@@ -503,7 +535,32 @@ void capture_keyboard(api::effect_runtime *runtime,RuntimeState &state,bool comp
     // Public ReShade request affects the following frame. The gate waits two
     // fully neutral frames before forwarding UI edges. F8 itself may reach KCD.
     runtime->block_input_next_frame();
-#ifdef MINECOME_HUD_WORLD_CLICKS
+#ifdef MINECOME_HUD_SELECTIVE_MOUSE
+    // Enter full capture before forwarding E/Esc. The native device callbacks
+    // drain old state on a mode change; no world/pointer edge crosses that drain.
+    const bool toggle_edge=((held&~state.previous_keys)&((1u<<9)|(1u<<10)))!=0;
+    const auto desired=state.selective_mode.update(step==ui::KeyboardGate::Step::active&&peer->state==1,
+        state.transition,peer->ack.screen,state.uploaded_screen,toggle_edge,mouse_buttons,
+        state.selective_lease.allows(mouse::Mode::buttons));
+    const auto requested=state.selective_lease.request_mode(desired);
+    mouse::Snapshot world_capture;
+    const bool previously_owned=state.selective_lease.owned(),previously_pending=state.selective_lease.pending();
+    const auto old_generation=state.selective_lease.generation();
+    const auto capture_result=mouse_api->request(reinterpret_cast<std::uintptr_t>(state.window),
+        reinterpret_cast<std::uintptr_t>(runtime),100,requested,&world_capture);
+    const auto capture_step=state.selective_lease.accept(capture_result,world_capture,requested,
+        reinterpret_cast<std::uintptr_t>(runtime),now);
+    // A contradictory screen edge while a buttons-mode drain is pending ends
+    // this bounded session, rather than opening inventory with camera passthrough.
+    if(capture_step==mouse::ForwardingLease::Step::failed||(desired==mouse::Mode::full&&requested==mouse::Mode::buttons)){
+        if((world_capture.flags&mouse::active)&&world_capture.token==reinterpret_cast<std::uintptr_t>(runtime))state.mouse_leased=true;
+        mouse_receipt("selective_mouse_request_failed",capture_result,world_capture);
+        close_keyboard(runtime,ui::CloseCause::mouse_capture);release_mouse(runtime,state);return;
+    }
+    state.mouse_leased=state.selective_lease.owned();state.mouse_generation=state.selective_lease.generation();
+    if(!previously_owned||old_generation!=state.mouse_generation||previously_pending!=state.selective_lease.pending())
+        mouse_receipt(state.selective_lease.pending()?"selective_mouse_pending":"selective_mouse_ready",capture_result,world_capture);
+#elif defined(MINECOME_HUD_WORLD_CLICKS)
     // Deliberate bounded-lab policy: strict v1 capture freezes the complete
     // KCD mouse while world clicks or inventory own input. It is acquired
     // during neutral settling and kept across screen transitions.
@@ -564,7 +621,11 @@ void capture_keyboard(api::effect_runtime *runtime,RuntimeState &state,bool comp
         // bounded native lease until the physical buttons are neutral so a
         // still-held click cannot become a KCD attack on screen close.
 #ifdef MINECOME_HUD_WORLD_CLICKS
-        auto click=state.world_click.update(state.uploaded_screen==0&&state.mouse_leased,mouse_buttons,utc,now,state.forwarded_events);
+        auto click=state.world_click.update(state.uploaded_screen==0&&state.mouse_leased
+#ifdef MINECOME_HUD_SELECTIVE_MOUSE
+            &&state.selective_lease.allows(mouse::Mode::buttons)
+#endif
+            ,mouse_buttons,utc,now,state.forwarded_events);
         if(state.world_click.failure()!=world::Gate::Failure::none){close_keyboard(runtime,ui::CloseCause::mouse_transition);release_mouse(runtime,state);return;}
         click.window=reinterpret_cast<std::uintptr_t>(state.window);click.token=reinterpret_cast<std::uintptr_t>(runtime);click.generation=state.mouse_generation;
         if(click.sequence&&!service->world_clicks.push(click)){close_keyboard(runtime,ui::CloseCause::mailbox_overflow);release_mouse(runtime,state);return;}
@@ -577,6 +638,9 @@ void capture_keyboard(api::effect_runtime *runtime,RuntimeState &state,bool comp
     state.world_click.suspend();
 #endif
     if(state.uploaded_screen!=1)return;
+#ifdef MINECOME_HUD_SELECTIVE_MOUSE
+    if(!state.selective_lease.allows(mouse::Mode::full))return;
+#else
     if(!state.mouse_leased){
         mouse::Snapshot capture;
         const auto result=mouse_api->request(reinterpret_cast<std::uintptr_t>(state.window),reinterpret_cast<std::uintptr_t>(runtime),100,&capture);
@@ -586,6 +650,7 @@ void capture_keyboard(api::effect_runtime *runtime,RuntimeState &state,bool comp
         }
         state.mouse_generation=capture.generation;state.mouse_leased=true;mouse_receipt("mouse_acquired",result,capture);
     }
+#endif
     RECT client{};std::uint32_t x=0,y=0;std::int16_t wheel=0;
     runtime->get_mouse_cursor_position(&x,&y,&wheel);
     if(!GetClientRect(state.window,&client)){close_keyboard(runtime,ui::CloseCause::mouse_capture);release_mouse(runtime,state);return;}
@@ -823,7 +888,10 @@ void on_begin(api::effect_runtime *runtime, api::command_list *commands, api::re
     } catch (...) { fail(state,5); hide(runtime,state); }
 }
 } // namespace
-#ifdef MINECOME_HUD_WORLD_CLICKS
+#ifdef MINECOME_HUD_SELECTIVE_MOUSE
+extern "C" __declspec(dllexport) const char *NAME="MineCome bounded Minecraft selective mouse lab";
+extern "C" __declspec(dllexport) const char *DESCRIPTION="Exact KCD2 tools/D3D12 genuine HUD; world clicks with KCD camera look, full inventory capture; one F8 activation, at most 30 seconds and sixteen clicks. Fixed-cell stone target.";
+#elif defined(MINECOME_HUD_WORLD_CLICKS)
 extern "C" __declspec(dllexport) const char *NAME="MineCome bounded Minecraft world click lab";
 extern "C" __declspec(dllexport) const char *DESCRIPTION="Exact KCD2 tools/D3D12 genuine HUD; left break/right place intents and inventory mouse; strict capture freezes KCD look, one F8 activation, at most 30 seconds and sixteen clicks.";
 #elif defined(MINECOME_HUD_LIVE_MOUSE)
@@ -837,7 +905,13 @@ extern "C" __declspec(dllexport) bool AddonInit(HMODULE addon, HMODULE reshade_m
     if (!reshade::register_addon(addon,reshade_module)) return false;
     try {
 #ifdef MINECOME_HUD_LIVE_MOUSE
-        const auto get_api=reinterpret_cast<mouse::GetApi>(GetProcAddress(reshade_module,"MineComeGetMouseCaptureApi"));
+        const auto get_api=reinterpret_cast<mouse::GetApi>(GetProcAddress(reshade_module,
+#ifdef MINECOME_HUD_SELECTIVE_MOUSE
+            "MineComeGetSelectiveMouseCaptureApi"
+#else
+            "MineComeGetMouseCaptureApi"
+#endif
+        ));
         mouse_api=get_api?get_api(mouse::api_version,sizeof(mouse::Api)):nullptr;
         if(!mouse_api||mouse_api->version!=mouse::api_version||mouse_api->size!=sizeof(mouse::Api)||!mouse_api->query||!mouse_api->request||!mouse_api->release)
             throw std::runtime_error("custom_mouse_runtime_required");

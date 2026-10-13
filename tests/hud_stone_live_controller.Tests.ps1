@@ -23,6 +23,7 @@ function Get-ProductionFunction($Ast,[string]$Name){
 $controller=Parse-Production 'scripts/Start-HudInputLab.ps1'
 . (Get-ProductionFunction $controller 'Assert-HudStoneMode')
 . (Get-ProductionFunction $controller 'Assert-HudStoneConfiguration')
+. (Get-ProductionFunction $controller 'Assert-HudSelectiveArm')
 . (Get-ProductionFunction $controller 'Get-HudStonePreviewAction')
 . (Get-ProductionFunction $controller 'Test-HudStonePreviewEnginePlace')
 . (Get-ProductionFunction $controller 'Assert-HudStoneLivePreview')
@@ -72,6 +73,33 @@ function Live-Configuration {
 }
 $config=Live-Configuration;Assert-HudStoneConfiguration @config;Check $true 'Capped live mouse stone mode accepted'
 $config=Live-Configuration;$config.WorldClicks=$true;Assert-HudStoneConfiguration @config;Check $true 'Explicit world clicks accepted with combined live prerequisites'
+$config=Live-Configuration;$config.WorldClicks=$true;$config.SelectiveMouse=$true;Assert-HudStoneConfiguration @config;Check $true 'Explicit selective capture accepted with all combined prerequisites'
+foreach($required in @('WorldClicks','StoneLive','LiveMouse','OffscreenPresentation','HostGpuBudget')){
+    $config=Live-Configuration;$config.WorldClicks=$true;$config.SelectiveMouse=$true;$config[$required]=$false
+    Reject {Assert-HudStoneConfiguration @config} "SelectiveMouse accepted without $required"
+}
+foreach($incompatible in @('StoneFixture','OffscreenTrial','PointerFixture','DelayFixture','BackgroundTrial')){
+    $config=Live-Configuration;$config.WorldClicks=$true;$config.SelectiveMouse=$true;$config[$incompatible]=$true
+    Reject {Assert-HudStoneConfiguration @config} "SelectiveMouse accepted with $incompatible"
+}
+$config=Live-Configuration;$config.WorldClicks=$true;$config.SelectiveMouse=$true;$config.Mode='Fixture';Reject {Assert-HudStoneConfiguration @config} 'Selective capture cannot target a standalone fixture'
+foreach($expected in @($false,$true)){
+    Assert-HudSelectiveArm ([pscustomobject]@{selective_mouse=$expected}) $expected;Check $true 'Explicit matching capture arm receipt accepted'
+    foreach($invalid in @((-not $expected),'true','false',0,1,$null)){Reject {Assert-HudSelectiveArm ([pscustomobject]@{selective_mouse=$invalid}) $expected} 'Mismatched/untyped selective arm receipt rejected'}
+    Reject {Assert-HudSelectiveArm ([pscustomobject]@{}) $expected} 'Missing selective provenance rejected'
+}
+$bundleNode=$controller.Find({param($n)$n -is [Management.Automation.Language.IfStatementAst] -and $n.Extent.Text.StartsWith('if(-not $BundleDirectory)') -and $n.Extent.Text.Contains('runtime/hud-compositor-selective')},$true)
+Check ($null -ne $bundleNode) 'Controller has an explicit separate selective bundle default'
+$bundleSelector=[scriptblock]::Create($bundleNode.Extent.Text)
+foreach($bundleCase in @(
+    @($true,$true,$true,'hud-compositor-selective'),@($false,$true,$true,'hud-compositor-world'),
+    @($false,$false,$true,'hud-compositor-mouse'),@($false,$false,$false,'hud-compositor-input-waitfix'))){
+    & {
+        $SelectiveMouse=$bundleCase[0];$WorldClicks=$bundleCase[1];$LiveMouse=$bundleCase[2];$BundleDirectory=$null
+        . $bundleSelector;Check ($BundleDirectory -ceq (Join-Path $root ('runtime/'+$bundleCase[3]))) 'Capture mode chooses its own matching bundle'
+        $BundleDirectory='explicit-owned-bundle';. $bundleSelector;Check ($BundleDirectory -ceq 'explicit-owned-bundle') 'Explicit bundle selection preserved for downstream hash validation'
+    }
+}
 $config=Live-Configuration;$config.WorldClicks=$true;$config.StoneLive=$false;Reject {Assert-HudStoneConfiguration @config} 'World clicks without the real combined relay accepted'
 $config=Live-Configuration;$config.HideHostHud=$true;Assert-HudStoneConfiguration @config;Check $true 'Optional host HUD visibility accepted'
 foreach($required in @('LiveMouse','OffscreenPresentation','HostGpuBudget')){

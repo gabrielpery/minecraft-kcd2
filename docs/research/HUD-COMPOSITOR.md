@@ -15,6 +15,70 @@ restoration verified. The separate strict mouse profile has now completed a full
 host-HUD appearance, general input exclusivity and health integration remain unverified. Detailed evidence
 and the earlier failed runs are recorded below.
 
+## Selective camera capture — 2026-10-13
+
+The separate `-SelectiveMouse -WorldClicks` profile uses API v2 and its own
+`MineComeHudSelective.ini` arm file. World mode suppresses DirectInput buttons
+while preserving X/Y/Z motion. Inventory mode suppresses the complete mouse.
+The verified API v1 mouse/world binaries and profiles remain frozen.
+
+The native runtime still gates the exact foreground game window, canonical
+relative mouse layout, owner token and 100 ms renewable lease. Full/button mode
+changes increment generation, retain ownership and suppress all input until
+each device drains its prior state and buffered queue. The addon never forwards
+world or inventory pointer events during that drain. E/Escape requests full
+capture before forwarding the key. Returning from inventory requires its
+acknowledgement, a matching uploaded screen and two neutral frames. Input that
+contradicts an unfinished mode switch closes the bounded session; pause briefly
+after closing inventory before clicking.
+
+Buttons-only buffered input uses a bounded FIFO of axis records. It preserves
+order, timestamps, application data, DX3/full layouts and repeated PEEK semantics
+while consuming suppressed physical button records. Capacity or unknown-layout
+failure revokes capture instead of silently dropping movement. Only owned,
+settled buttons mode permits the existing cursor-position/clipping hooks to
+pass through; keyboard, raw mouse messages and window-message blocks retain
+the inspected ReShade behavior. The exact pinned upstream patch is separately
+built, with no engine offsets or additional game APIs.
+
+The selective compositor and all three existing input variants compile in
+`build/hud-selective-20261013`. Forwarding ownership and mode boundaries pass
+107 assertions; controller configuration/receipt checks pass 976. These are
+automated source/build checks, not proof of live KCD camera behavior. The same
+30-second activation and sixteen-click bounds still apply. The Minecraft guest
+is unchanged and still interacts with the fixed verified stone cell.
+
+Pure shared aiming geometry additionally passes 198 Java and 222 C++ assertions
+using 22 common golden vectors. `protocol/PROTOCOL.md` records the proposed
+future alignment/ray handshake, owned stone cluster and host occlusion check.
+The wire version, actual vanilla interaction path and live targeting are
+unchanged; crosshair aiming is not yet enabled.
+
+The final native adapter passes 775 checks, including expiry/focus/mode changes
+during original device calls. Review found and fixed a late immediate-state
+publication race before accepting the runtime. The cursor patch also covers
+ReShade's direct per-frame clip call, retaining the game's saved cursor boundary
+only while settled buttons ownership is active. Selective/World/Mouse profile
+checks pass 142/110/23 under both PowerShell 5.1 and 7.
+
+The accepted 53.28-second runtime build is recorded at
+`runtime/dependencies/reshade-selective-6.8.0/evidence/20261013-173502-b0870f4dcc4e4a1da528e43eae2f4138/verification.json`.
+Source, generated-output, reference and installed-proxy checks all pass;
+bit-for-bit build reproducibility is not claimed. An earlier build correctly
+failed its final source-change check while the review fix was applied; that
+output was never staged or installed.
+
+- Runtime SHA256: `2157f25f36baebe1c577cb3c6d8a485691fbacc727262d1a4bc09f9265522511`.
+- Addon SHA256: `15f3ac12101f0a1f36aa731c89f5df9018dc8d0b43d1e966117f78d138fba4de`.
+- Frozen profile: `config/hud-selective-profile.json`.
+
+After verifying a backup of 1,013 save/profile files, the previous owned World
+arm was archived and its proxy disabled. Update
+`runtime/evidence/hud-update-20261013-163734-14f01c89ad8b47bf83bda88c4d500d5f/update.json`
+records replacement of only `dxgi.dll` and the addon, with exact old-file backups
+and an unarmed enabled installation. No game was launched or stopped. The user
+restart and a combined camera/inventory/world-click check are still pending.
+
 ## Physical world click profile — 2026-10-13
 
 The new explicit `-WorldClicks` controller removes the timed demonstration and

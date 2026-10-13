@@ -1,5 +1,20 @@
 # MineCome progress — 2026-10-13
 
+**Selective camera capture: implemented, built and installed; live validation pending.** A separate
+API v2 renderer preserves DirectInput camera axes while capturing world buttons,
+then captures the full mouse for Minecraft inventory. Screen transitions drain
+old input and require matching UI acknowledgements and rendered screens before
+forwarding clicks. The selective compositor compiles and its 107 forwarding
+checks pass; the previous three input variants still compile independently.
+The final native adapter passes 775 checks; Selective/World/Mouse profile suites
+pass 142/110/23 under both PowerShell 5.1 and 7. The pinned custom runtime build
+passed source/provenance checks. Installation changed only the owned proxy and
+addon after a verified 1,013-file save/profile backup, and remains unarmed.
+This still operates the fixed stone cell. Shared Java/C++ aiming geometry passes
+198/222 assertions against the same golden vectors, but no aiming protocol or
+live crosshair interaction has been enabled. See the
+[selective capture record](research/HUD-COMPOSITOR.md#selective-camera-capture--2026-10-13).
+
 **Physical world clicks: implemented, built and live verified.** Run
 `62b35872e09d44a3b6b3a5474131e24e` passed four physical clicks and two
 place/break cycles, with the user's report: "it worked fine." Both games confirmed

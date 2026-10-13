@@ -8,3 +8,5 @@ $sources = Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot 'src') -Recurse -
 if ($LASTEXITCODE -ne 0) { throw 'javac failed' }
 & (Join-Path $JavaHome 'bin/java.exe') -cp $outputPath dev.minecome.protocol.ProtocolTests
 if ($LASTEXITCODE -ne 0) { throw 'Protocol tests failed' }
+& (Join-Path $JavaHome 'bin/java.exe') -cp $outputPath dev.minecome.protocol.AimGeometryTests (Join-Path $PSScriptRoot '../../tests/fixtures/aim_geometry.txt')
+if ($LASTEXITCODE -ne 0) { throw 'Aim geometry tests failed' }

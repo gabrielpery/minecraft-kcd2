@@ -183,3 +183,99 @@ Creative mode, chunks, solid support, occupied/air state and one pending action
 immediately before using vanilla inventory/interaction APIs. Integrated-server
 state is observed on its own thread. No movement, keybinding override, general
 input, persistence or initial-world snapshot is added by this extension.
+
+## Proposed aimed stone arena (not a negotiated or implemented wire extension)
+
+The implemented minor 1 fixed-cell request remains unchanged. `AimGeometry`
+(Java) and `aim_geometry.hpp` (C++) contain pure alignment and reference-ray
+math only. Their shared fixture `tests/fixtures/aim_geometry.txt` checks 22
+identical map, orientation and hit/miss vectors. Passing these tests does not
+demonstrate crosshair targeting, KCD camera calibration, engine ray capture or
+new gameplay. Actual Minecraft target selection must use its world raycast,
+not the reference cube picker.
+
+The next coherent feature is a bounded, visible **stone cluster**. A bootstrap
+stone is placed through the existing real vanilla action path and mirrored by
+the acknowledged KCD sink. Thereafter a fresh camera ray selects any owned
+stone: left click breaks it, and right click places adjacent to the returned
+face. Proposed limits are 16 owned cells, a 4.5 KCD-unit ray, and Minecraft's
+actual interaction-reach checks. An empty cluster has no invented support.
+The ordinary superflat floor is not rendered in KCD and must not be an aimed
+placement surface. The earlier captured 5×5 terrain patch is injected only
+into `BlockCollisionSpliterator`; it provides neither Minecraft block state,
+OUTLINE raycast shapes nor vanilla block-item support. Host terrain placement
+requires a separate, explicit support representation and is not part of this
+cluster feature.
+
+Proposed negotiation and ordering for minor 2:
+
+1. Add an explicit aimed-stone capability and new message schemas; retain the
+   existing minor 0/1 semantics and reject capability/version mismatches. Do
+   not extend the 12-byte minor 1 request in place or reinterpret raw pose
+   calibration fields.
+2. Before bootstrap, exchange one immutable arena ID, Minecraft anchor, KCD
+   anchor, blocks per KCD unit and finite cell bounds. Both peers acknowledge
+   that exact alignment before accepting aimed requests or displaying seed
+   events. Only one alignment is allowed per authenticated connection; reset,
+   world loss or replacement requires full cleanup and a new connection.
+   The KCD sink must use this alignment rather than creating a different one
+   when the first block event happens to arrive. A translated display island
+   is not global terrain/player calibration, so the `CALIBRATED` pose bit stays
+   clear until that separate measurement is complete.
+3. Capture the camera origin/forward and nearest physical host obstruction in
+   the same Lua aim-intent call, tied to the original click/request and arena
+   ID. The proposed request carries that immutable ray and bounded obstruction
+   distance/availability, or references an already acknowledged exact sample
+   ID. Do not combine an action with an unrelated latest 5 Hz pose. Bound
+   capture-to-dispatch age, reject duplicate IDs, and never retry ambiguous
+   dispatch. An absent/invalid host occlusion sample is not evidence of clear
+   space.
+4. On the actual Minecraft client thread, map the captured ray into the arena
+   and call `World.raycast(new RaycastContext(start,end,OUTLINE,NONE,player))`.
+   Require the hit block to be an owned stone; use its actual `BlockHitResult`
+   face and hit point with `interactBlock`, or its block/face with `attackBlock`.
+   Refuse a closer host obstruction, outside-arena/out-of-reach target,
+   inventory screen, stale sample, unsupported selected item, or occupied
+   destination. Observe the chosen cell/support on the integrated-server
+   thread and require fresh agreement before dispatch and after the change.
+5. Retain separate evidence for request admission, vanilla dispatch,
+   authoritative block transition and KCD engine acknowledgement. The pending
+   action must pin target/support/face and its immutable alignment rather than
+   re-reading a moving crosshair while waiting for server confirmation. Each
+   block event remains an actual Minecraft state transition; no native or Lua
+   aim code may synthesize a gameplay block mutation.
+
+For anchors `M` (Minecraft) and `K` (KCD), and scale `s` blocks/KCD unit:
+
+```text
+KCD(p) = K + ((p.x-M.x)/s, -(p.z-M.z)/s, (p.y-M.y)/s)
+MC(q)  = M + ((q.x-K.x)*s, (q.z-K.z)*s, -(q.y-K.y)*s)
+MC direction = (KCD direction.x, KCD direction.z, -KCD direction.y)
+MC ray length = KCD ray length * s
+```
+
+The camera quaternion maps local −Z to world forward; no FOV is needed for the
+centre ray. The pure reference AABB helper marks origins inside a box and uses
+stable XYZ ordering on equal-distance cell hits. Minecraft's actual shape
+raycast remains authoritative for real face/edge behavior.
+
+Inspected implementation seams are `StoneConsumer::update` in
+`kcd2/src/tools_http_host.cpp` (currently anchors on the first event),
+`StoneAlignment::create/map` in `kcd2/src/stone_mirror.cpp`,
+`HudStoneBridge.initializeCell/dispatch/readServer` (currently one cell and
+hard-coded UP face), and the action-only protocol/mailboxes. Minecraft 1.21.1
+named bytecode confirms `Entity.raycast` uses `RaycastContext.ShapeType.OUTLINE`
+and `World.raycast`; the same cached classes expose `interactBlock` and
+`attackBlock`. Existing `kcd2/probes/ground_probe.lua` documents the inspected
+official `Physics.RayWorldIntersection(origin, direction*range, maxHits, mask,
+skipPlayerId, nil, privateHits)` call and checked `pos/normal/dist` fields.
+An aimed occlusion probe must use the actually exported `ent_all` mask to
+include host obstacles; the terrain-only sampler cannot establish wall
+occlusion. Mirrored stones currently have `physics=false`, so the host ray
+does not replace Minecraft selection of those stones.
+
+Live work still needed before this feature can be claimed: shared-alignment
+handshake, exact sample/intent pairing, client/server selection agreement,
+host occlusion, and visual checks of centre-ray alignment on several block
+faces while turning/stepping. Existing orientation algebra tests and stone
+model bounds do not prove those camera timing, eye/feet or gameplay outcomes.
