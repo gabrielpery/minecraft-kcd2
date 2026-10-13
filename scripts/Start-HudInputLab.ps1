@@ -42,6 +42,26 @@ function Assert-LiveMouseGuestProof([object]$Proof){
     }
     return [long]$Proof.pointer_events_applied
 }
+function Assert-HudWindowCleanup([object]$Visibility,[object]$Hidden,[bool]$MouseMode,[bool]$Offscreen,[string]$SessionMode,[bool]$ClientExited,[int]$ClientExitCode){
+    if($Visibility.PSObject.Properties.Name -contains 'policy' -and ($Visibility.policy -isnot [string] -or $Visibility.policy -cnotin @('restore_original_visibility','hidden_until_process_exit'))){throw 'Unknown owned-window cleanup policy.'}
+    $hiddenExit=$Visibility.PSObject.Properties.Name -contains 'policy' -and $Visibility.policy -ceq 'hidden_until_process_exit'
+    if($hiddenExit){
+        if(-not $MouseMode -or -not $Offscreen -or $SessionMode -cne 'Live' -or -not $ClientExited -or $ClientExitCode -ne 0){throw 'Hidden terminal window requires an explicitly owned live mouse client that exited normally.'}
+        foreach($field in @('hidden_for_exit','cleanup_succeeded','window_identity_verified','layout_runtime_restore_skipped','layout_options_restored')){
+            if($Visibility.$field -isnot [bool] -or $Visibility.$field -ne $true){throw "Hidden terminal window proof missing: $field"}
+        }
+        foreach($field in @('actual_visible','focus_requested','show_with_focus_disabled','process_exit_observed')){
+            if($Visibility.$field -isnot [bool] -or $Visibility.$field -ne $false){throw "Hidden terminal window proof invalid: $field"}
+        }
+        if($Hidden.hide_verified -isnot [bool] -or $Hidden.hide_verified -ne $true -or $Hidden.owned_window_handle -isnot [string] -or $Hidden.owned_window_handle -cnotmatch '^[1-9][0-9]{0,19}$' -or
+           $Visibility.expected_window_handle -isnot [string] -or $Visibility.actual_window_handle -isnot [string] -or $Visibility.expected_window_handle -cne $Hidden.owned_window_handle -or $Visibility.actual_window_handle -cne $Hidden.owned_window_handle){throw 'Hidden terminal window identity differs from the owned hidden guest.'}
+        if($Visibility.original_focus_on_show -isnot [bool] -or $Visibility.actual_focus_on_show -isnot [bool] -or $Visibility.original_focus_on_show -ne $Visibility.actual_focus_on_show){throw 'Owned window focus-on-show setting was not restored.'}
+        if($Visibility.original_visible -isnot [bool] -or $Visibility.restored -isnot [bool] -or $Visibility.restored -ne (-not $Visibility.original_visible)){throw 'Hidden window receipt misstates original visibility restoration.'}
+        return
+    }
+    if(($Visibility.PSObject.Properties.Name -contains 'hidden_for_exit' -and $Visibility.hidden_for_exit -ne $false) -or
+       $Visibility.restored -ne $true -or $Visibility.original_visible -ne $Visibility.actual_visible -or $Visibility.original_focus_on_show -ne $Visibility.actual_focus_on_show -or $Visibility.focus_requested -ne $false){throw 'Owned Minecraft visibility was not restored without requesting focus.'}
+}
 function Start-Child([string]$Executable,[string[]]$Arguments){
     $start=[Diagnostics.ProcessStartInfo]::new()
     $start.FileName=$Executable;$start.WorkingDirectory=$root
@@ -94,7 +114,8 @@ $expires=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()+180000
 $readyPath=Join-Path $directory 'capture/stream-ready.json'
 $fixtureReady=Join-Path $directory 'fixture-ready.json'
 $fixtureResult=Join-Path $directory 'fixture-result.json'
-$fixture=$null;$client=$null;$armEvidence=$null;$failure=$null;$passed=$false;$targetPid=0;$targetStart='';$guest=$null
+$fixture=$null;$client=$null;$producer=$null;$armEvidence=$null;$failure=$null;$passed=$false;$targetPid=0;$targetStart='';$guest=$null
+$producerExitObserved=$false;$producerExitCode=$null
 $bodyPassed=$false;$hostBudgetSession=$null;$hostBudgetEvidence=$null
 $liveMouseGuestVerified=$false;$pointerEventsApplied=0
 $hostHudSession=$null;$hostHudEvidence=$null
@@ -144,9 +165,10 @@ try{
     if($ready.PSObject.Properties.Name -notcontains 'ui_input_offscreen_presentation' -or $ready.ui_input_offscreen_presentation -isnot [bool] -or $ready.ui_input_offscreen_presentation -ne [bool]$OffscreenPresentation){throw 'UI producer offscreen-presentation mode mismatch.'}
     if($ready.schema -ne 1 -or $ready.run -cne $run -or $ready.source_kind -cne 'minecraft_vanilla_ui_stream_v1' -or $ready.ui_input_protocol -ne 1 -or $ready.target_pid -ne $targetPid -or [string]$ready.target_start_filetime -cne $targetStart -or $ready.expires_utc_ms -ne $expires){throw 'Genuine UI producer readiness mismatch.'}
     $producer=Get-Process -Id $ready.producer_pid
-    try{
-        if($producer.StartTime.ToUniversalTime().ToFileTimeUtc().ToString() -cne [string]$ready.producer_start_filetime -or -not $producer.Path.Equals((Join-Path $JavaHome 'bin/java.exe'),[StringComparison]::OrdinalIgnoreCase)){throw 'Actual Minecraft process identity mismatch.'}
-    }finally{$producer.Dispose()}
+    # Retain the actual Java kernel process handle through shutdown; the wrapper
+    # finishing alone cannot prove that a deliberately hidden guest has exited.
+    $null=$producer.Handle
+    if($producer.StartTime.ToUniversalTime().ToFileTimeUtc().ToString() -cne [string]$ready.producer_start_filetime -or -not $producer.Path.Equals((Join-Path $JavaHome 'bin/java.exe'),[StringComparison]::OrdinalIgnoreCase)){throw 'Actual Minecraft process identity mismatch.'}
     if($HostGpuBudget){
         # Retain the cleanup handle before Begin can mutate the already-running host.
         # Guest startup consumes none of this unchanged 120-second engine lease.
@@ -163,11 +185,12 @@ try{
     }
     if($Mode -eq 'Live'){$armEvidence=& (Join-Path $PSScriptRoot 'Arm-HudStream.ps1') -InputMode -LiveMouse:$LiveMouse -BundleDirectory $BundleDirectory -OffscreenPresentation:$OffscreenPresentation -ReadyManifest $readyPath}
     Write-Output "HUD_INPUT_READY mode=$Mode run=$run"
-    while(-not $client.HasExited -or ($fixture -and -not $fixture.HasExited)){
+    while(-not $client.HasExited -or -not $producer.HasExited -or ($fixture -and -not $fixture.HasExited)){
         if([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() -ge $expires+15000){throw 'UI shutdown deadline reached; any remaining processes are preserved.'}
         Start-Sleep -Milliseconds 200
     }
-    if($client.ExitCode -ne 0 -or ($fixture -and $fixture.ExitCode -ne 0)){throw 'UI client or native fixture reported failure.'}
+    $producerExitObserved=$producer.HasExited;$producerExitCode=$producer.ExitCode
+    if($client.ExitCode -ne 0 -or $producerExitCode -ne 0 -or ($fixture -and $fixture.ExitCode -ne 0)){throw 'UI client, actual Java producer or native fixture reported failure.'}
     $guest=Read-Receipt (Join-Path $directory 'capture/stream-result.json')
     Assert-LiveMouseReceipt $guest ([bool]$LiveMouse)
     if($guest.PSObject.Properties.Name -notcontains 'ui_input_fixture' -or $guest.ui_input_fixture -isnot [bool] -or $guest.ui_input_fixture -ne ($Mode -eq 'Fixture')){throw 'UI result fixture/live mode mismatch.'}
@@ -191,7 +214,7 @@ try{
         if($hidden.hide_requested -ne $true -or $hidden.hide_verified -ne $true -or $hidden.visible_after_hide -ne $false -or $hidden.hidden_unfocused_ticks -lt 1){throw 'Owned Minecraft window was not verified hidden and unfocused.'}
         if($hidden.focus_authority -cne 'minecraft_window_focus_callback' -or $hidden.focus_ready_observed -ne $true -or $hidden.client_focused_when_ready -ne $false -or $hidden.focus_ready_utc_ms -le 0){throw 'Hidden Minecraft readiness lacks genuine client focus evidence.'}
         if($hidden.client_focused_before_hide -eq $true -and $hidden.focus_loss_callbacks_after_hide -lt 1){throw 'Initially focused Minecraft did not receive a real focus-loss callback.'}
-        if($visibility.restored -ne $true -or $visibility.original_visible -ne $visibility.actual_visible -or $visibility.original_focus_on_show -ne $visibility.actual_focus_on_show -or $visibility.focus_requested -ne $false){throw 'Owned Minecraft visibility was not restored without requesting focus.'}
+        Assert-HudWindowCleanup $visibility $hidden ([bool]$LiveMouse) ([bool]$OffscreenPresentation) $Mode $producerExitObserved $producerExitCode
     }
     if($Mode -eq 'Fixture'){
         $native=Read-Receipt $fixtureResult
@@ -264,8 +287,8 @@ finally{
             }
         }
         if($HostGpuBudget -and -not $hostBudgetSession){$passed=$false}
-        [ordered]@{schema=1;kind='minecome_hud_input_controller_v1';run=$run;mode=$Mode;pointer_fixture=[bool]$PointerFixture;delay_fixture=[bool]$DelayFixture;background_trial=[bool]$BackgroundTrial;offscreen_presentation=[bool]$OffscreenPresentation;offscreen_trial=[bool]$OffscreenTrial;host_gpu_budget_requested=[bool]$HostGpuBudget;host_gpu_budget=$hostBudgetEvidence;host_hud_hidden_requested=[bool]$HideHostHud;host_hud_visibility=$hostHudEvidence;body_passed=$bodyPassed;result=$(if($passed){'passed'}else{'failed'});failure=$failure;evidence=$directory;target_pid=$targetPid;target_start_filetime=$targetStart;fixture_sha256=$fixtureHash;compositor_armed=[bool]$armEvidence;width=$Width;height=$Height;gui_scale=$GuiScale;kcd_launched=$false;kcd_stopped=$false;host_input_exclusivity_verified=$false;live_mouse_requested=[bool]$LiveMouse;live_mouse_enabled=[bool]($LiveMouse -and $armEvidence);live_mouse_guest_verified=$liveMouseGuestVerified;live_mouse_guest_pass=[bool]($LiveMouse -and $liveMouseGuestVerified -and $passed);pointer_events_applied=$pointerEventsApplied;live_mouse_visual_verified=$false;created_utc_ms=$expires-180000;expires_utc_ms=$expires} | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $directory 'verification.json') -Encoding utf8NoBOM
-    }finally{if($client){$client.Dispose()};if($fixture){$fixture.Dispose()}}
+        [ordered]@{schema=1;kind='minecome_hud_input_controller_v1';run=$run;mode=$Mode;pointer_fixture=[bool]$PointerFixture;delay_fixture=[bool]$DelayFixture;background_trial=[bool]$BackgroundTrial;offscreen_presentation=[bool]$OffscreenPresentation;offscreen_trial=[bool]$OffscreenTrial;host_gpu_budget_requested=[bool]$HostGpuBudget;host_gpu_budget=$hostBudgetEvidence;host_hud_hidden_requested=[bool]$HideHostHud;host_hud_visibility=$hostHudEvidence;body_passed=$bodyPassed;result=$(if($passed){'passed'}else{'failed'});failure=$failure;evidence=$directory;target_pid=$targetPid;target_start_filetime=$targetStart;fixture_sha256=$fixtureHash;compositor_armed=[bool]$armEvidence;width=$Width;height=$Height;gui_scale=$GuiScale;kcd_launched=$false;kcd_stopped=$false;host_input_exclusivity_verified=$false;live_mouse_requested=[bool]$LiveMouse;live_mouse_enabled=[bool]($LiveMouse -and $armEvidence);live_mouse_guest_verified=$liveMouseGuestVerified;live_mouse_guest_pass=[bool]($LiveMouse -and $liveMouseGuestVerified -and $passed);pointer_events_applied=$pointerEventsApplied;live_mouse_visual_verified=$false;producer_exit_observed=$producerExitObserved;producer_exit_code=$producerExitCode;created_utc_ms=$expires-180000;expires_utc_ms=$expires} | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $directory 'verification.json') -Encoding utf8NoBOM
+    }finally{if($producer){$producer.Dispose()};if($client){$client.Dispose()};if($fixture){$fixture.Dispose()}}
 }
 if(-not $passed){throw $(if($failure){$failure}else{'UI session did not pass.'})}
 Write-Output "HUD_INPUT_COMPLETED mode=$Mode run=$run actual_minecraft=true host_input_exclusivity_verified=false"

@@ -58,11 +58,11 @@ confirmed by the integrated server. A separate 43-event fixture now also verifie
 stack splitting, dragging, scrolling and held-button inventory closure/reopening
 in the hidden guest. The accepted capture is 1280x720 at GUI scale2.
 An optional bounded host-HUD switch also passes live shown/hidden/restored setting
-readbacks; its combined visual appearance remains unverified. Inventory mouse
-forwarding and a strict DirectInput capture extension are now built and installed
-in a separate, inactive test profile. Cursor movement, clicks, dragging and
-scrolling in KCD still need a physical check; general gameplay input ownership
-remains unfinished. See
+readbacks; its combined visual appearance remains unverified. **Physical inventory
+mouse control now works in KCD2**, confirmed by the user. The separate strict
+DirectInput capture profile completed its full 30-second test: 639 events were
+acknowledged, including clicks, dragging and scrolling, with normal Minecraft
+shutdown. General gameplay input ownership remains unfinished. See
 [the HUD compositor](docs/research/HUD-COMPOSITOR.md).
 Earlier tools launches crashed during world loading with the renderer unarmed and
 with its hook disabled. A subsequent explicit PowerShell 7 launch reached the world,

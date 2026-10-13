@@ -335,7 +335,7 @@ public final class HudStreamLab {
             if(timing!=null){timing.close();inputEndingProof.add("render_timing",timing.overall());}
             if(backgroundTrial)inputEndingProof.add("background_trial",backgroundEvidence());
             if(backgroundTrial || offscreenPresentation){restorePresentation(client);var restored=presentationRestoration(client);inputEndingProof.add("presentation_restoration",restored);if(!restored.get("restored").getAsBoolean())throw new IllegalStateException("HUD presentation restoration failed");}
-            if(offscreenPresentation){restoreOwnedWindow(client);inputEndingProof.add("window_restoration",windowRestoration.deepCopy());if(!windowRestoration.get("restored").getAsBoolean())throw new IllegalStateException("Owned window visibility restoration failed");}
+            if(offscreenPresentation){restoreOwnedWindow(client);inputEndingProof.add("window_restoration",windowRestoration.deepCopy());if(!windowRestoration.get("cleanup_succeeded").getAsBoolean())throw new IllegalStateException("Owned window terminal cleanup failed");}
             addOffscreenEvidence(inputEndingProof);
             if(!input.cleanupComplete())throw new IllegalStateException("Input handle cleanup failed");
             String result=inputFailure!=null?"failed":inputFixture?"input_passed":(armedAt!=0 && inputEventsApplied>0?"input_completed":"input_cancelled");
@@ -469,6 +469,7 @@ public final class HudStreamLab {
     private void restoreLayout(MinecraftClient client){
         if(oldGuiScale==null)return;
         restoreOwnedWindow(client);
+        if(keepOwnedWindowHiddenForExit())return;
         client.options.getGuiScale().setValue(oldGuiScale);
         client.getWindow().setWindowedSize(oldWindowWidth,oldWindowHeight);
         client.options.getFullscreen().setValue(oldFullscreenOption);
@@ -506,28 +507,36 @@ public final class HudStreamLab {
     }
     private void restoreOwnedWindow(MinecraftClient client){
         if(oldWindowVisible==null)return;
-        RenderSystem.assertOnRenderThread();var proof=new JsonObject();proof.addProperty("attempted",true);proof.addProperty("original_visible",oldWindowVisible);proof.addProperty("original_focus_on_show",oldFocusOnShow);proof.addProperty("focus_requested",false);
-        boolean restored=false,showWithFocusDisabled=false;String error=null;
+        RenderSystem.assertOnRenderThread();boolean keepHidden=keepOwnedWindowHiddenForExit();
+        var proof=HudWindowCleanup.finish(new HudWindowCleanup.Window(){
+            public long handle(){return client.getWindow().getHandle();}
+            public boolean windowed(){return !client.getWindow().isFullscreen() && GLFW.glfwGetWindowMonitor(hiddenWindow)==0;}
+            public boolean visible(){return windowAttribute(hiddenWindow,GLFW.GLFW_VISIBLE);}
+            public boolean focusOnShow(){return windowAttribute(hiddenWindow,GLFW.GLFW_FOCUS_ON_SHOW);}
+            public void focusOnShow(boolean value){GLFW.glfwSetWindowAttrib(hiddenWindow,GLFW.GLFW_FOCUS_ON_SHOW,value?GLFW.GLFW_TRUE:GLFW.GLFW_FALSE);}
+            public void show(){GLFW.glfwShowWindow(hiddenWindow);}
+            public void hide(){GLFW.glfwHideWindow(hiddenWindow);}
+        },hiddenWindow,oldWindowVisible,oldFocusOnShow,keepHidden);
+        boolean layoutSkipped=false;
         try{
-            if(client.getWindow().getHandle()!=hiddenWindow)throw new IllegalStateException("Owned GLFW window changed before restoration");
-            if(client.getWindow().isFullscreen() || GLFW.glfwGetWindowMonitor(hiddenWindow)!=0)throw new IllegalStateException("Owned window left windowed mode before visibility restoration");
-            proof.addProperty("glfw_focused_before_raw",windowAttribute(hiddenWindow,GLFW.GLFW_FOCUSED));proof.addProperty("client_focused_before",client.isWindowFocused());
-            try{
-                if(windowAttribute(hiddenWindow,GLFW.GLFW_VISIBLE)!=oldWindowVisible){
-                    if(oldWindowVisible){
-                        GLFW.glfwSetWindowAttrib(hiddenWindow,GLFW.GLFW_FOCUS_ON_SHOW,GLFW.GLFW_FALSE);
-                        if(windowAttribute(hiddenWindow,GLFW.GLFW_FOCUS_ON_SHOW))throw new IllegalStateException("GLFW focus-on-show disable failed");
-                        showWithFocusDisabled=true;GLFW.glfwShowWindow(hiddenWindow);
-                    }else GLFW.glfwHideWindow(hiddenWindow);
-                }
-            }finally{GLFW.glfwSetWindowAttrib(hiddenWindow,GLFW.GLFW_FOCUS_ON_SHOW,oldFocusOnShow?GLFW.GLFW_TRUE:GLFW.GLFW_FALSE);}
-            boolean actualVisible=windowAttribute(hiddenWindow,GLFW.GLFW_VISIBLE),actualFocusOnShow=windowAttribute(hiddenWindow,GLFW.GLFW_FOCUS_ON_SHOW);
-            proof.addProperty("actual_visible",actualVisible);proof.addProperty("actual_focus_on_show",actualFocusOnShow);proof.addProperty("glfw_focused_after_raw",windowAttribute(hiddenWindow,GLFW.GLFW_FOCUSED));proof.addProperty("client_focused_after",client.isWindowFocused());
-            restored=actualVisible==oldWindowVisible && actualFocusOnShow==oldFocusOnShow;
-        }catch(RuntimeException e){error=e.getMessage();}
-        proof.addProperty("show_with_focus_disabled",showWithFocusDisabled);proof.addProperty("restored",restored);if(error!=null)proof.addProperty("failure",error);
+            if(keepHidden && proof.get("cleanup_succeeded").getAsBoolean() && oldGuiScale!=null){
+                client.options.getGuiScale().setValue(oldGuiScale);client.options.getFullscreen().setValue(oldFullscreenOption);
+                // Pinned1.21.1 option callback only toggles Window.fullscreen. Cancel
+                // that pending runtime change before another swap; native resize or
+                // fullscreen restoration could show this process just before exit.
+                if(client.getWindow().isFullscreen())client.getWindow().toggleFullscreen();
+                layoutSkipped=true;
+            }
+            if(proof.get("window_identity_verified").getAsBoolean()){
+                proof.addProperty("glfw_focused_after_raw",windowAttribute(hiddenWindow,GLFW.GLFW_FOCUSED));proof.addProperty("client_focused_after",client.isWindowFocused());
+            }
+        }catch(RuntimeException e){proof.addProperty("cleanup_succeeded",false);proof.addProperty("failure",e.getMessage());}
+        proof.addProperty("layout_runtime_restore_skipped",layoutSkipped);
+        proof.addProperty("layout_options_restored",oldGuiScale!=null && client.options.getGuiScale().getValue().equals(oldGuiScale) && client.options.getFullscreen().getValue().equals(oldFullscreenOption));
+        proof.addProperty("process_exit_observed",false);
         windowRestoration=proof;
     }
+    private boolean keepOwnedWindowHiddenForExit(){return HudWindowCleanup.retainHidden(inputMode,inputFixture,liveMouse,offscreenPresentation,windowHideVerified);}
     private void restorePresentation(MinecraftClient client){
         if(oldVsync==null)return;
         client.options.getEnableVsync().setValue(oldVsync);client.options.getMaxFps().setValue(oldMaxFps);
@@ -592,6 +601,7 @@ public final class HudStreamLab {
         presentation.addProperty("vanilla_flip_frame_preserved",true);presentation.addProperty("closure_grace_limit_ms",1500);presentation.addProperty("closure_skipped_swaps",offscreenClosureSkips);proof.add("offscreen_presentation",presentation);
         presentation.addProperty("desktop_blits_skipped",offscreenBlits);presentation.addProperty("desktop_clears_skipped",offscreenClears);presentation.addProperty("active_guest_fps_limit",OFFSCREEN_FPS);presentation.addProperty("frame_limit_applied",offscreenFrameCapApplied);
         var window=new JsonObject();window.addProperty("hide_requested",windowHideRequested);window.addProperty("hide_verified",windowHideVerified);
+        window.addProperty("owned_window_handle",Long.toUnsignedString(hiddenWindow));
         window.addProperty("original_visible",oldWindowVisible);window.addProperty("original_focus_on_show",oldFocusOnShow);window.addProperty("visible_after_hide",visibleAfterHide);window.addProperty("glfw_focused_after_hide_raw",glfwFocusedAfterHideRaw);
         window.addProperty("client_focused_before_hide",clientFocusedBeforeHide);window.addProperty("client_focused_after_hide",clientFocusedAfterHide);window.addProperty("focus_loss_callbacks_after_hide",focusLossCallbacksAfterHide);window.addProperty("focus_authority","minecraft_window_focus_callback");
         window.addProperty("focus_ready_observed",focusReadyObserved);window.addProperty("client_focused_when_ready",clientFocusedWhenReady);window.addProperty("focus_ready_utc_ms",focusReadyUtc);

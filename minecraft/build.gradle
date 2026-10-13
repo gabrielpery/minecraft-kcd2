@@ -173,6 +173,12 @@ tasks.register('hudPointerStateTest', JavaExec) {
     mainClass = 'dev.minecome.hud.HudPointerStateTests'
 }
 
+tasks.register('hudWindowCleanupTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'dev.minecome.hud.HudWindowCleanupTests'
+}
+
 tasks.register('hudRenderTimingTest', JavaExec) {
     dependsOn testClasses
     classpath = sourceSets.test.runtimeClasspath

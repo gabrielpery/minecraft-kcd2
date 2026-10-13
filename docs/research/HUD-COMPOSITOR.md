@@ -10,10 +10,80 @@ were acknowledged; the temporary host cap and guest state were restored, and
 Minecraft exited normally. The subsequent diagnostic run confirms the same
 controls with no KCD menu reported, and records a foreground-loss stop after
 15.766 seconds. Bounded host HUD suppression is implemented with live CVar
-restoration verified. A separate strict mouse profile is now built and installed
-unarmed, with standalone guest checks passed. Its physical mouse behavior, combined
-host-HUD visual result, full-session behavior, general input exclusivity and health integration remain unverified. Detailed evidence
+restoration verified. The separate strict mouse profile has now completed a full
+30-second physical test, with user-confirmed inventory interaction. Combined
+host-HUD appearance, general input exclusivity and health integration remain unverified. Detailed evidence
 and the earlier failed runs are recorded below.
+
+## First live inventory mouse check — 2026-10-13
+
+The user launched the updated tools world, PID 18468, and confirmed it ready.
+Run `78b4a2ef7c6d4fa39e24152be460952f` at
+`runtime/evidence/hud-input-20261013-142525-78b4a2ef7c6d4fa39e24152be460952f`
+passes. The user reports that the mouse test worked, with a reappearing Minecraft
+window and some lag there after Escape. ReShade loaded the custom proxy/addon,
+compiled the cursor shader and recognized one eligible mouse. F8 activated the
+original 30-second gate; the final close cause is `activation_expired`, elapsed
+exactly 30,000 ms, with all focus/freshness predicates passing.
+
+All 639 events were acknowledged/applied, including 635 pointer events. The real
+vanilla adapter recorded 20 clicks, 20 releases, 26 drag calls and 32 wheel calls.
+Held buttons, pending releases and active-button state were neutral before and
+after cleanup. Minecraft published 774 genuine frames; KCD uploaded 499, submitted
+2,091 draws and dropped no uploads while eligible. Maximum client tick gap was 122 ms,
+own-image age 151 ms and client ACK age 157 ms, all within the unchanged guards.
+
+Native mouse ownership recorded 1,535 immediate state suppressions and 1,535 drains,
+zero drain failures, and no buffered/PEEK suppressions observed in this run. The
+release receipt at 15:26:39.799 marked its final drain pending; no later snapshot
+certifies that final drain. This is evidence for the observed immediate DI path,
+not general host input exclusivity. Run-scoped native receipts are saved in
+`native-mouse.log`, with the user statement and bounded analysis in
+`live-analysis.json` beside the controller receipt.
+
+Minecraft acknowledged closure, restored controls/handles/settings, saved and
+exited normally with code 0. The temporary host FPS budget restored −1 after 60:
+`runtime/evidence/hud-gpu-budget-20261013-152550-f2880897bf244dd1bfa19ad5fe8cd302`.
+No KCD process was started or stopped by the controller. The popup was explained
+by the existing `restoreOwnedWindow` call showing the guest before `scheduleStop`;
+the process then spent about seven seconds saving/exiting. The narrow hidden-exit
+repair below is now compiled for the explicit live-mouse profile. No native rebuild is needed.
+
+Separate timing analysis observes 14.8–15 content uploads per second and about
+62 composited frames per second. The 50 ms capture minimum with a 30 FPS guest
+skips alternate capture opportunities. Capture-per-render inventory updates are
+a possible later responsiveness improvement; this run does not measure true
+end-to-end click latency. The cadence remains unchanged while fixing the observed
+shutdown-window popup. No PBO busy skips, readback fence timeouts, mailbox
+replacements or native upload drops occurred in this successful run.
+
+### Guest shutdown-window repair
+
+`HudWindowCleanup` retains the same verified owned GLFW window hidden only for
+explicit non-fixture live mouse input with offscreen presentation. Repeated
+terminal/CLIENT_STOPPING cleanup does not show it. Saved options and presentation
+settings are restored, while native resize/fullscreen transitions are deferred
+until process destruction. Inspection of the pinned Minecraft option callback
+and `Window.toggleFullscreen`/`swapBuffers` bytecode verifies that cancelling the
+pending logical fullscreen flag prevents an implicit native transition. Fixture
+and keyboard profiles preserve their existing visibility-restoration behavior.
+
+The receipt uses `policy=hidden_until_process_exit`, `hidden_for_exit=true` and
+`restored=false` when the original window was visible. It identifies the same
+owned hidden window, records actual visibility/focus attributes and explicitly
+does not claim process exit from inside the guest. The controller retains the
+exact Java process handle, waits independently of its Gradle wrapper and requires
+an observed normal Java exit before accepting this policy. Missing legacy policy
+is allowed only under the prior ordinary-restoration checks; unknown declared
+policies are rejected.
+
+The updated JAR is
+`1e82715a15dbc130fe31fc153489b19ca27cb21ca266ac941e8f788de9d349ff`.
+Compilation/remapping, 57 cleanup operation/policy checks, 45 pointer checks,
+focused controller receipt checks and all 397 existing cleanup checks pass.
+Independent review passed. This repair has source/build/automated evidence;
+physical no-popup behavior awaits the next session. The working native profile,
+capture cadence and freshness limits were unchanged.
 
 ## Physical inventory mouse implementation — 2026-10-13
 

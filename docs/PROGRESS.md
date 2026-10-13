@@ -10,8 +10,21 @@ observation. The final automated two-game run passes matching engine spawn,
 deferred removal and cleanup acknowledgements with zero owned/pending replicas.
 No retail native-engine hook is enabled.
 
-**Current UI milestone: live Minecraft hotbar/inventory keyboard control and
-accepted HUD size inside KCD2.** The user accepted the sizing in the earlier run
+**Current UI milestone: live Minecraft inventory mouse control inside KCD2.**
+The user confirms the physical test worked. All 639 events were acknowledged,
+including 635 pointer events with 20 clicks, 26 drag callbacks and 32 wheel calls.
+The full 30-second activation ended on its timer, with KCD still in foreground,
+fresh frames/ACKs and normal Minecraft exit 0. The hook recorded 1,535 immediate
+state suppressions and matching drains, with zero drain failures. Its release
+receipt still marked the final drain pending, so final native drain completion
+and general host input exclusivity are not independently claimed.
+The user noticed the guest window reappearing and lag during shutdown; cleanup
+restored visibility before the seven-second save/exit path. The repair is now
+compiled and independently reviewed: the explicit live-mouse guest stays hidden
+through exit, with truthful cleanup evidence and actual Java exit verification.
+Its automated checks pass; the absence of a popup still awaits the next live run.
+
+**Earlier keyboard milestone and accepted HUD size:** The user accepted the sizing in the earlier run
 and now confirms "done, no kcd menu opened, worked" with the updated add-on.
 Ten physical press/release events for 1, 2, 9, E and Escape were delivered and
 acknowledged, including actual Creative inventory opening/closing. The latest
@@ -23,22 +36,22 @@ This verifies the short keyboard sequence, the reported absence of a KCD menu
 during it, and live sizing. The diagnostic build records foreground loss after
 15.766 seconds: KCD's window stayed valid/visible, but Explorer owned foreground;
 ACK/image ages were only 19/47 ms. This is the intended focus-loss stop, and no
-native gate fix is indicated. A full 30-second session remains unverified; the
-earlier uninstrumented 10.47-second stop still has no established cause.
+native gate fix is indicated. The later mouse run above now verifies the full
+30-second duration; the earlier uninstrumented 10.47-second stop still has no established cause.
 Minecraft saved and exited normally with code 0 in both runs.
 All nine slots and server-confirmed stack swapping remain separately verified by
 the standalone 31-event fixtures. Opt-in host HUD suppression is now implemented
 and live setting/readback restoration passes; its combined visual result remains
-unverified. General KCD input exclusivity, live mouse interaction and health integration
-remain unfinished. Earlier failed runs and their evidence are preserved below.
+unverified. General KCD input exclusivity and health integration remain unfinished.
+Earlier failed runs and their evidence are preserved below.
 
 The follow-on guest update handles vanilla drag ownership, wheel sensitivity,
 and button releases across inventory closure. A separate opt-in 43-event fixture
 now verifies real stack splitting, drag distribution, scrolling and held-button
 close/reopen behavior, with fresh integrated-server inventory observations at all
 11 stages. All events ran in the hidden, unfocused Minecraft guest. This is
-standalone guest evidence. A separate physical mouse profile is now implemented,
-compiled and installed unarmed; no physical mouse success is claimed yet.
+standalone guest evidence. The separate physical mouse profile has now also
+completed the live run summarized above.
 The reviewed native first-close diagnostic build is now
 installed and has supplied the live foreground-loss evidence above. See the
 implementation record in [HUD research](research/HUD-COMPOSITOR.md).
@@ -57,7 +70,8 @@ The mouse profile passes five focused native/shader suites, 590 Java checks,
 fresh server observations, 218 published/216 received frames and normal exit 0
 passed. This is standalone evidence. The custom proxy/add-on were installed
 unarmed after backing up 1,010 save/profile files and the previous renderer.
-Live loading, cursor mobility and camera suppression still require verification.
+Live loading and inventory interaction now pass; general camera/input exclusivity
+remains a separate qualification.
 The installed configuration also skips ReShade's persistent tutorial prompt;
 its brief startup/loading splash remains enabled.
 
@@ -114,8 +128,8 @@ completed its movement/view proof; the new KCD capture path still awaits a live 
 | Continuous vanilla UI transport | Java21/JNA producer, bounded Win32 channel and native receiver built | 168 Java stream checks and 146 native checks pass; existing 36 snapshot checks still pass | Fresh real Minecraft world sent 344 nontransparent frames, four vanilla UI states, pause/resumption and closed marker to standalone receiver; no KCD compositor was armed |
 | Continuous KCD UI compositor | Separate exact-tools D3D12 add-on installed with aspect fit, persistent texture and fenced upload slots | Native contract/lifecycle review and checks pass | Latest live run uploaded 471 frames/submitted 1,973 draws with zero drops; earlier user-accepted HUD size preserved. KCD's duplicate HUD remains |
 | Reverse HUD input and background presentation | Separate exact-identity input channel, bounded hidden/offscreen presentation and callback-based focus readiness built | Hidden fixtures pass all 31 events, nine slots, inventory open/close and server-confirmed swap | Ten physical 1/2/9/E/Escape press/release events acknowledged/applied; user confirms controls worked with no KCD menu. First-close diagnostics verify foreground-loss stop after 15.766 seconds. Full duration, mouse and general host exclusivity remain unverified |
-| Inventory pointer lifecycle | Single active drag button, screen-owned releases, vanilla wheel scaling and explicit live opt-in built | 45 pointer policy/state, 192 stream/receipt and 353 input checks pass; actual hidden 43-event fixture verifies splitting/drag/scroll/held-close at 11 stages | Physical mouse interaction remains unverified |
-| Host inventory mouse capture | Original pinned ReShade hook, API, add-on and cursor shader built; exact bundle installed unarmed | 56 native capture/SDK adapter checks, 95 forwarding/diagnostic checks, 338 input checks and both FX compilations pass; 23 profile/rollback checks pass in PS5.1 and PS7 | Awaiting fresh world load and physical cursor/camera check; no general host exclusivity claim |
+| Inventory pointer lifecycle | Single active drag button, screen-owned releases, vanilla wheel scaling and explicit live opt-in built | 45 pointer policy/state, 192 stream/receipt and 353 input checks pass; actual hidden 43-event fixture verifies splitting/drag/scroll/held-close at 11 stages | User-confirmed physical mouse interaction; 635 pointer events and actual click/drag/wheel callbacks applied |
+| Host inventory mouse capture | Original pinned ReShade hook, API, add-on and cursor shader built; exact bundle installed | 56 native capture/SDK adapter checks, 95 forwarding/diagnostic checks, 338 input checks and both FX compilations pass; 23 profile/rollback checks pass in PS5.1 and PS7 | Full 30-second live activation, 1,535 immediate suppressions/drains and zero drain failures; final drain completion/general exclusivity not independently verified |
 | Temporary host GPU-budget comparison | Shared opt-in Lua/PowerShell helper and live controller integration reviewed | 22 simulated-engine Lua cases and 98 assertions across 11 simulated-console scenarios pass; capped standalone fixture passed | Latest combined live run passed with verified −1→60→−1 restoration through requested End before expiry and timer cancellation |
 | Bounded host HUD suppression | Opt-in `-HideHostHud` in the Live input lab; documented whole-HUD CVar, engine-timer writes and independent finally restoration | 29 simulated-engine Lua cases and 397 controller checks pass, including both HUD/FPS cleanup after failure | Actual tools `wh_ui_ShowHud` readback passes 1→0→1 and timer cancellation. Combined visual scope, subtitles/dialogue behavior and health integration remain unverified |
 
