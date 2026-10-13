@@ -7,10 +7,89 @@ hotbar, web UI, or replacement inventory implementation.
 **Current result:** the user has verified live 1/2/9 hotbar selection, E/Escape
 inventory control and accepted HUD size in KCD2. Ten physical press/release events
 were acknowledged; the temporary host cap and guest state were restored, and
-Minecraft exited normally. Ownership lasted about 10.47 seconds with an unknown
-close trigger. Full-session behavior, mouse ownership, KCD menu exclusivity,
-host HUD suppression and health integration remain unfinished. Detailed evidence
+Minecraft exited normally. The subsequent diagnostic run confirms the same
+controls with no KCD menu reported, and records a foreground-loss stop after
+15.766 seconds. Bounded host HUD suppression is implemented with live CVar
+restoration verified. Its combined visual result, full-session behavior, mouse
+ownership, general input exclusivity and health integration remain unfinished. Detailed evidence
 and the earlier failed runs are recorded below.
+
+## Optional host HUD suppression — 2026-10-13
+
+`Start-HudInputLab.ps1 -Mode Live -HideHostHud` now temporarily sets the exact
+`wh_ui_ShowHud` CVar to 0 after real Minecraft readiness and before arming the
+compositor. Installed tools `Data/Scripts.pak` contains stock commands using 0
+and 1 in `Scripts/CommandExecutor/sample_terrain.xml:18` and
+`sample_terrain_default.xml:14`, also present in pinned docs commit
+`9cb067543245ec5cf4e27b3d21e32485a35db518`. The pinned System.GetCVar/SetCVar
+binding pages document the paired read/write API. No native offset is used.
+
+The new Lua probe and PowerShell helper retain the original strict numeric 0/1
+value, create an immutable pause-updating engine expiry before a deferred hide,
+and verify readback. An already-hidden HUD incurs zero writes. End also defers
+restoration through an engine timer. Restoration requires the same owned reader
+and setter and preserves an observed external value; changed readback functions
+cannot produce a success claim. Engine stalls can delay the timer, and equal-value
+external writes are not detectable by a CVar. The feature is therefore opt-in
+for this controlled lab. There is no startup mutation or persisted user setting.
+
+The controller retains its session before Begin, restores the HUD in finally,
+then restores the independent FPS budget even if HUD cleanup/evidence fails.
+Both restorations affect the final pass result. Repeated terminal receipts from
+expiry followed by End are accepted only with consistent ownership/outcome
+fields; restored-but-expired sessions remain invalid. Standalone coverage passes
+29 Lua cases with simulated engine bindings, plus 397 PowerShell checks across
+36 lifecycle and seven actual production-finally scenarios. Independent review
+passed after correcting duplicate-terminal handling and replaced-reader evidence.
+
+One actual helper-only check used the already-open exact tools PID 28844:
+`runtime/evidence/hud-visibility-20261013-140202-332ec774885045858826ce6f76590862`.
+Fresh source loading and receipt readback verify shown 1 → hidden 0 → restored 1,
+requested End before the 10-second expiry, cancelled timer, no remaining active
+lease and no game launch/stop. Lua source/snapshot SHA256 is
+`ca3c85f7e9ca85d0f606beb7e0c130ca194ffa06d7b8494e80294e3d18fdcf6b`.
+This proves the engine setting transition, not the combined visual appearance.
+
+The switch hides the whole host HUD. Retail source describes that element as
+including subtitles/dialogue widgets and hints as well as stats/compass; exact
+tools visual scope still needs validation. This is not selective widget hiding,
+gameplay input suppression or KCD-health-to-Minecraft synchronization. The helper
+is restored at session completion; it is not yet tied to individual inventory
+open/close transitions. Use the verified temporary host frame cap and hidden
+guest for the eventual combined check, and preserve the accepted 1280×720/GUI2
+layout.
+
+## Live first-close diagnosis — 2026-10-13
+
+The user installed the reviewed diagnostic add-on and restarted the exact tools
+game (PID 28844, start `2026-10-13T12:45:38.7482732Z`). Its loaded module path and
+SHA256 match `ef224499d2c5a331e5f8ee011761e4bced2a3709fb2ba3b6471aa598ea07ab74`.
+Evidence is in
+`runtime/evidence/hud-input-20261013-124816-c1a1f7ce1a9d428eaabe392bca1ab583`;
+the exact user reply, native run lines and foreground process correlation are
+preserved in `user-observation.json` and `native-session.log`.
+
+The user confirmed "done, no kcd menu opened, worked". All ten physical 1/2/9/E/Esc
+events were sent, acknowledged and applied, with actual Creative inventory
+opening/closing. Minecraft published 493 frames; the host uploaded 471/submitted
+1,973 with zero drops. All ten events were applied hidden/unfocused. Cleanup,
+closed ACK and normal exit 0 passed; the temporary host cap was restored from 60
+to the original -1 by requested End before expiry.
+
+The immutable `first_input_close` receipt reports `eligibility_lost` at
+15,766 ms after activation. All six window checks were sampled; only foreground
+failed (mask 32). The KCD HWND still matched its runtime, was valid, belonged to
+KCD, remained visible and was not minimized. Recorded foreground PID 16560 was
+identified read-only as Explorer, with a start time preceding this run. ACK age
+was 19 ms, observed ACK age 0 ms, and publication/resident image ages 47 ms.
+The composition gate also stopped drawing because foreground had changed.
+No stale-input/image, overlay, second-F8, settling-key or expiry failure occurred.
+
+This is the intended focus-loss shutdown, so no input-rule change is indicated.
+The evidence does not establish why focus changed, explain the earlier
+uninstrumented 10.47-second stop, or verify a full uninterrupted 30-second run.
+The user's menu observation covers this keyboard sequence; mouse/camera ownership
+and general host-menu exclusivity remain separate work.
 
 ## Inventory pointer lifecycle and first-close diagnostics — 2026-10-13
 
@@ -47,8 +126,8 @@ The focused native contract/channel suite passed 294 checks, including slot/E/Es
 ownership and immutable first-close context. Add-on SHA256
 `ef224499d2c5a331e5f8ee011761e4bced2a3709fb2ba3b6471aa598ea07ab74` is staged in
 `runtime/hud-compositor-input-close-diagnostics`, with its exact hash supported
-by the owned update script. The current KCD process still has the earlier waitfix
-build loaded; a normal close/update/restart is required for these diagnostics.
+by the owned update script. It was subsequently installed and verified in the
+live first-close diagnosis above.
 
 Pointer capture must still address host input ownership, as the reference projects
 do. Pinned ReShade implementation returns client coordinates despite its header

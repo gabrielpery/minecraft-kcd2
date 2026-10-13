@@ -4,6 +4,17 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 include(CTest)
+if(BUILD_TESTING)
+  set(MINECOME_TEST_PYTHON "" CACHE FILEPATH "Existing Python interpreter for standalone Lua tests")
+  set(MINECOME_LUA_LIBRARY "" CACHE FILEPATH "Explicit existing Lua 5.1/5.2 library; never installed by MineCome")
+  if(EXISTS "${MINECOME_TEST_PYTHON}" AND EXISTS "${MINECOME_LUA_LIBRARY}")
+    add_test(NAME lua_hud_visibility_lifecycle COMMAND "${MINECOME_TEST_PYTHON}"
+      "${PROJECT_SOURCE_DIR}/kcd2/tests/run_lua_sink_tests.py" --lua-library "${MINECOME_LUA_LIBRARY}"
+      --module "${PROJECT_SOURCE_DIR}/kcd2/probes/hud_visibility_probe.lua"
+      --tests "${PROJECT_SOURCE_DIR}/kcd2/tests/lua_hud_visibility_tests.lua")
+    set_tests_properties(lua_hud_visibility_lifecycle PROPERTIES TIMEOUT 15)
+  endif()
+endif()
 option(MINECOME_BUILD_KCSE "Build the KCSE plugin using inspected local SDK headers" OFF)
 option(MINECOME_BUILD_HUD_COMPOSITOR "Build the opt-in ReShade D3D12 HUD compositor" OFF)
 add_library(minecome_protocol protocol/src/protocol.cpp)

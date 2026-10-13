@@ -4,7 +4,7 @@
 [CmdletBinding()]
 param(
     [ValidateSet('Fixture','Live')][string]$Mode='Fixture',
-    [string]$JavaHome,[string]$BundleDirectory,[switch]$PreflightOnly,[switch]$DelayFixture,[switch]$BackgroundTrial,[switch]$OffscreenPresentation,[switch]$OffscreenTrial,[switch]$HostGpuBudget,
+    [string]$JavaHome,[string]$BundleDirectory,[switch]$PreflightOnly,[switch]$DelayFixture,[switch]$BackgroundTrial,[switch]$OffscreenPresentation,[switch]$OffscreenTrial,[switch]$HostGpuBudget,[switch]$HideHostHud,
     [ValidateRange(320,1920)][int]$Width=1280,
     [ValidateRange(240,1080)][int]$Height=720,
     [ValidateRange(1,4)][int]$GuiScale=2
@@ -42,6 +42,7 @@ if($BackgroundTrial -and ($Mode -ne 'Fixture' -or $DelayFixture)){throw 'Backgro
 if($OffscreenTrial -and $Mode -ne 'Fixture'){throw 'Offscreen timing requires a standalone fixture.'}
 if($OffscreenTrial){$OffscreenPresentation=$true}
 if($HostGpuBudget -and ($Mode -ne 'Live' -or -not $OffscreenPresentation)){throw 'HostGpuBudget requires Live mode with OffscreenPresentation.'}
+if($HideHostHud -and $Mode -ne 'Live'){throw 'HideHostHud requires the controlled Live lab.'}
 if($OffscreenPresentation -and ($BackgroundTrial -or $DelayFixture)){throw 'Offscreen presentation cannot be combined with the baseline comparison or deliberate delays.'}
 if($OffscreenPresentation -and $Mode -eq 'Fixture' -and -not $OffscreenTrial){throw 'Use OffscreenTrial to verify standalone offscreen presentation.'}
 if($Width -lt 320*$GuiScale -or $Height -lt 240*$GuiScale){throw 'UI layout needs at least320x240 logical pixels.'}
@@ -64,6 +65,7 @@ if($Mode -eq 'Fixture'){
 }else{
     . (Join-Path $PSScriptRoot 'KcdToolsProbeHelpers.ps1')
     if($HostGpuBudget){. (Join-Path $PSScriptRoot 'HudGpuBudget.ps1')}
+    if($HideHostHud){. (Join-Path $PSScriptRoot 'HudVisibility.ps1')}
     $context=Get-MineComeProbeContext
     if(-not $BundleDirectory){$BundleDirectory=Join-Path $root 'runtime/hud-compositor-input-waitfix'}
     & (Join-Path $PSScriptRoot 'Arm-HudStream.ps1') -InputMode -BundleDirectory $BundleDirectory -OffscreenPresentation:$OffscreenPresentation -PreflightOnly
@@ -79,6 +81,7 @@ $fixtureReady=Join-Path $directory 'fixture-ready.json'
 $fixtureResult=Join-Path $directory 'fixture-result.json'
 $fixture=$null;$client=$null;$armEvidence=$null;$failure=$null;$passed=$false;$targetPid=0;$targetStart='';$guest=$null
 $bodyPassed=$false;$hostBudgetSession=$null;$hostBudgetEvidence=$null
+$hostHudSession=$null;$hostHudEvidence=$null
 try{
     if($Mode -eq 'Fixture'){
         if((Get-FileHash -LiteralPath $fixturePath).Hash -ine $fixtureHash){throw 'Fixture changed before launch.'}
@@ -128,6 +131,13 @@ try{
         $hostBudgetSession=New-MineComeHudGpuBudget $context
         Start-MineComeHudGpuBudget $hostBudgetSession
         Write-Output "HUD_GPU_BUDGET_APPLIED run=$($hostBudgetSession.Probe.Run) original_fps=$($hostBudgetSession.Applied.original_fps) temporary_fps=60 expiry_ms=120000"
+    }
+    if($HideHostHud){
+        # Whole-HUD visibility is opt-in and bounded to this controlled lab.
+        # Preserve the cleanup handle before any engine-side write can occur.
+        $hostHudSession=New-MineComeHudVisibility $context
+        Start-MineComeHudVisibility $hostHudSession
+        Write-Output "HUD_HOST_VISIBILITY_APPLIED run=$($hostHudSession.Probe.Run) original_hud=$($hostHudSession.Applied.original_hud) temporary_hud=0 expiry_ms=120000"
     }
     if($Mode -eq 'Live'){$armEvidence=& (Join-Path $PSScriptRoot 'Arm-HudStream.ps1') -InputMode -BundleDirectory $BundleDirectory -OffscreenPresentation:$OffscreenPresentation -ReadyManifest $readyPath}
     Write-Output "HUD_INPUT_READY mode=$Mode run=$run"
@@ -197,6 +207,17 @@ try{
 }catch{$failure=$_.Exception.Message}
 finally{
     try{
+        if($hostHudSession){
+            try{
+                try{Stop-MineComeHudVisibility $hostHudSession}catch{$passed=$false;if(-not $failure){$failure=$_.Exception.Message}}
+                $hostHudEvidence=Get-MineComeHudVisibilityEvidence $hostHudSession
+                if(-not $hostHudSession.VisibilityValid -or $hostHudSession.Failure){
+                    $passed=$false
+                    if(-not $failure){$failure=if($hostHudSession.Failure){$hostHudSession.Failure}else{'Temporary host HUD visibility was not verified through restoration.'}}
+                }
+            }catch{$passed=$false;if(-not $failure){$failure=$_.Exception.Message}}
+        }
+        if($HideHostHud -and -not $hostHudSession){$passed=$false}
         if($hostBudgetSession){
             try{Stop-MineComeHudGpuBudget $hostBudgetSession}catch{$passed=$false;if(-not $failure){$failure=$_.Exception.Message}}
             $hostBudgetEvidence=Get-MineComeHudGpuBudgetEvidence $hostBudgetSession
@@ -206,7 +227,7 @@ finally{
             }
         }
         if($HostGpuBudget -and -not $hostBudgetSession){$passed=$false}
-        [ordered]@{schema=1;kind='minecome_hud_input_controller_v1';run=$run;mode=$Mode;delay_fixture=[bool]$DelayFixture;background_trial=[bool]$BackgroundTrial;offscreen_presentation=[bool]$OffscreenPresentation;offscreen_trial=[bool]$OffscreenTrial;host_gpu_budget_requested=[bool]$HostGpuBudget;host_gpu_budget=$hostBudgetEvidence;body_passed=$bodyPassed;result=$(if($passed){'passed'}else{'failed'});failure=$failure;evidence=$directory;target_pid=$targetPid;target_start_filetime=$targetStart;fixture_sha256=$fixtureHash;compositor_armed=[bool]$armEvidence;width=$Width;height=$Height;gui_scale=$GuiScale;kcd_launched=$false;kcd_stopped=$false;host_input_exclusivity_verified=$false;live_mouse_enabled=$false;created_utc_ms=$expires-180000;expires_utc_ms=$expires} | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $directory 'verification.json') -Encoding utf8NoBOM
+        [ordered]@{schema=1;kind='minecome_hud_input_controller_v1';run=$run;mode=$Mode;delay_fixture=[bool]$DelayFixture;background_trial=[bool]$BackgroundTrial;offscreen_presentation=[bool]$OffscreenPresentation;offscreen_trial=[bool]$OffscreenTrial;host_gpu_budget_requested=[bool]$HostGpuBudget;host_gpu_budget=$hostBudgetEvidence;host_hud_hidden_requested=[bool]$HideHostHud;host_hud_visibility=$hostHudEvidence;body_passed=$bodyPassed;result=$(if($passed){'passed'}else{'failed'});failure=$failure;evidence=$directory;target_pid=$targetPid;target_start_filetime=$targetStart;fixture_sha256=$fixtureHash;compositor_armed=[bool]$armEvidence;width=$Width;height=$Height;gui_scale=$GuiScale;kcd_launched=$false;kcd_stopped=$false;host_input_exclusivity_verified=$false;live_mouse_enabled=$false;created_utc_ms=$expires-180000;expires_utc_ms=$expires} | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $directory 'verification.json') -Encoding utf8NoBOM
     }finally{if($client){$client.Dispose()};if($fixture){$fixture.Dispose()}}
 }
 if(-not $passed){throw $(if($failure){$failure}else{'UI session did not pass.'})}

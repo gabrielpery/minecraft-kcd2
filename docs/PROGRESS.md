@@ -11,28 +11,32 @@ deferred removal and cleanup acknowledgements with zero owned/pending replicas.
 No retail native-engine hook is enabled.
 
 **Current UI milestone: live Minecraft hotbar/inventory keyboard control and
-accepted HUD size inside KCD2.** In the latest run the user confirmed the HUD size
-was perfect and the controls worked. Ten physical press/release events for 1, 2,
-9, E and Escape were delivered and acknowledged, including actual Creative
-inventory opening/closing. Minecraft published 496 genuine frames and KCD uploaded
-478. The hidden guest and temporary 60 FPS host cap completed with real closed
-ACK, full cleanup and restoration to the original uncapped KCD setting.
+accepted HUD size inside KCD2.** The user accepted the sizing in the earlier run
+and now confirms "done, no kcd menu opened, worked" with the updated add-on.
+Ten physical press/release events for 1, 2, 9, E and Escape were delivered and
+acknowledged, including actual Creative inventory opening/closing. The latest
+Minecraft run published 493 genuine frames and KCD uploaded 471. The hidden guest
+and temporary 60 FPS host cap completed with real closed ACK, full cleanup and
+restoration to the original uncapped KCD setting.
 
-This verifies the short keyboard sequence and live sizing. Ownership ended after
-about 10.47 seconds; the installed waitfix add-on does not record its exact first
-close cause, so a full 30-second session is not verified. Minecraft saved and
-exited normally with code 0 despite the user's concern that it might have crashed.
+This verifies the short keyboard sequence, the reported absence of a KCD menu
+during it, and live sizing. The diagnostic build records foreground loss after
+15.766 seconds: KCD's window stayed valid/visible, but Explorer owned foreground;
+ACK/image ages were only 19/47 ms. This is the intended focus-loss stop, and no
+native gate fix is indicated. A full 30-second session remains unverified; the
+earlier uninstrumented 10.47-second stop still has no established cause.
+Minecraft saved and exited normally with code 0 in both runs.
 All nine slots and server-confirmed stack swapping remain separately verified by
-the standalone 31-event fixtures. The next work is diagnosing full-session closure
-and mouse ownership. KCD menu/input exclusivity, mouse interaction, KCD HUD
-suppression and health integration remain unfinished. Earlier failed runs and
-their evidence are preserved below.
+the standalone 31-event fixtures. Opt-in host HUD suppression is now implemented
+and live setting/readback restoration passes; its combined visual result remains
+unverified. General KCD input exclusivity, mouse interaction and health integration
+remain unfinished. Earlier failed runs and their evidence are preserved below.
 
 The follow-on guest update now handles vanilla drag ownership, wheel sensitivity,
 and button releases across inventory closure. Its changed build passed the real
-31-event fixture again. A reviewed native build adds individual window/focus
-observations to the first-close receipt; it is staged but not installed in the
-still-running KCD process. See the implementation record below.
+31-event fixture again. The reviewed native first-close diagnostic build is now
+installed and has supplied the live foreground-loss evidence above. See the
+implementation record in [HUD research](research/HUD-COMPOSITOR.md).
 
 **Current build: interactive one-cell stone controls live verified.** KCD console
 commands `minecome_place`/`minecome_break` now request real Minecraft vanilla
@@ -85,10 +89,11 @@ completed its movement/view proof; the new KCD capture path still awaits a live 
 | Original saves protection | Backup script | 982 copied files SHA256 verified | Original saves were not opened for the tests |
 | Static Minecraft UI composition | Actual vanilla capture and original ReShade D3D12 add-on built | 36 Java capture checks; reset and aspect-fit contracts pass | User confirmed HUD visible in KCD2; logs record all three snapshot submissions and lease expiry |
 | Continuous vanilla UI transport | Java21/JNA producer, bounded Win32 channel and native receiver built | 168 Java stream checks and 146 native checks pass; existing 36 snapshot checks still pass | Fresh real Minecraft world sent 344 nontransparent frames, four vanilla UI states, pause/resumption and closed marker to standalone receiver; no KCD compositor was armed |
-| Continuous KCD UI compositor | Separate exact-tools D3D12 add-on installed with aspect fit, persistent texture and fenced upload slots | Native contract/lifecycle review and checks pass | Latest live run uploaded 478 frames/submitted 2,001 draws with zero drops; user accepted HUD size. KCD's duplicate HUD remains |
-| Reverse HUD input and background presentation | Separate exact-identity input channel, bounded hidden/offscreen presentation and callback-based focus readiness built | Hidden fixtures pass all 31 events, nine slots, inventory open/close and server-confirmed swap | Ten physical 1/2/9/E/Escape press/release events acknowledged/applied; actual inventory open/close and user-accepted controls. Ownership lasted ~10.47 seconds; full duration, mouse and host exclusivity remain unverified |
+| Continuous KCD UI compositor | Separate exact-tools D3D12 add-on installed with aspect fit, persistent texture and fenced upload slots | Native contract/lifecycle review and checks pass | Latest live run uploaded 471 frames/submitted 1,973 draws with zero drops; earlier user-accepted HUD size preserved. KCD's duplicate HUD remains |
+| Reverse HUD input and background presentation | Separate exact-identity input channel, bounded hidden/offscreen presentation and callback-based focus readiness built | Hidden fixtures pass all 31 events, nine slots, inventory open/close and server-confirmed swap | Ten physical 1/2/9/E/Escape press/release events acknowledged/applied; user confirms controls worked with no KCD menu. First-close diagnostics verify foreground-loss stop after 15.766 seconds. Full duration, mouse and general host exclusivity remain unverified |
 | Inventory pointer lifecycle | Single active drag button, screen-owned releases, vanilla wheel scaling and successful-application counter built | 34 new gesture checks and 353 input checks pass; changed guest passes real 31-event item-swap fixture | Live mouse forwarding remains disabled; drag/split/scroll and replacement-screen callback behavior need a richer real fixture |
 | Temporary host GPU-budget comparison | Shared opt-in Lua/PowerShell helper and live controller integration reviewed | 22 simulated-engine Lua cases and 98 assertions across 11 simulated-console scenarios pass; capped standalone fixture passed | Latest combined live run passed with verified −1→60→−1 restoration through requested End before expiry and timer cancellation |
+| Bounded host HUD suppression | Opt-in `-HideHostHud` in the Live input lab; documented whole-HUD CVar, engine-timer writes and independent finally restoration | 29 simulated-engine Lua cases and 397 controller checks pass, including both HUD/FPS cleanup after failure | Actual tools `wh_ui_ShowHud` readback passes 1→0→1 and timer cancellation. Combined visual scope, subtitles/dialogue behavior and health integration remain unverified |
 
 ## Current artifacts
 
