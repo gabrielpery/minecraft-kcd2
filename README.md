@@ -2,6 +2,13 @@
 
 **Minecraft × Kingdom Come: Deliverance II**
 
+[![Platform: Windows x64](https://img.shields.io/badge/platform-Windows_x64-0078D4?style=flat)](docs/SETUP.md)
+[![Status: experimental](https://img.shields.io/badge/status-experimental-orange?style=flat)](docs/PROGRESS.md)
+[![Minecraft Java: 1.21.1](https://img.shields.io/badge/Minecraft_Java-1.21.1-62B47A?style=flat)](minecraft/gradle.properties)
+[![Mod loader: Fabric](https://img.shields.io/badge/loader-Fabric-DBB790?style=flat)](minecraft/README.md)
+[![KCD2 development build: 1.5.5](https://img.shields.io/badge/KCD2_dev-1.5.5-8A6D3B?style=flat)](kcd2/TOOLS-TEST.md)
+[![Code license: GPL-3.0-or-later](https://img.shields.io/badge/code-GPL--3.0--or--later-brightgreen?style=flat)](LICENSE)
+
 MineCome brings real Minecraft Java Edition gameplay and UI into KCD2. Minecraft
 owns its blocks, inventory and interactions; KCD2 provides the host world. The
 architecture draws on [SkyCraft and EldenCraft](docs/research/MASHUPS.md), including
