@@ -76,6 +76,68 @@ pre-dispatch reasons such as `original_permit_expired`.
 
 ## Latest verification and remaining live check
 
+### Rendered cube offset — 2026-10-20
+
+The top-only retry `f074546edb4441f69c8951d727ba0b5c` again produced a WEST
+placement followed by UP on the added side block. The user reported aiming at
+the visible original top. The next automatic diagnostic measured the actual
+production sink object:
+
+| Property | Measured value |
+|---|---|
+| Requested and actual entity position | `(121.68408203125,2041.2486572265625,56.279521942138672)` |
+| World angles | `(0,0,-1.5707962512969971)` |
+| Entity/slot scale | `1` / `1` |
+| Slot position/angles | Zero |
+| Local bounds | `(0,-1,0)` to `(1,0,1)` |
+| Actual world bounds | `(120.68408203125,2040.2486572265625,56.279521942138672)` to `(121.68408203125,2041.2486572265625,57.279521942138672)` |
+| Intended world X interval | `121.68408203125` to `122.68408203125` |
+
+The engine's default entity rotation therefore shifts this asymmetric local cube
+one unit in negative X. The saved first-click ray hits the visible top at
+`(121.159468249,2040.738715266,57.279521942)`, distance 1.006076452 m. The same
+ray hits the logical WEST face 0.343107 m below its top at distance 1.634615 m.
+Camera direction is stable across 61 surrounding pose samples, including at
+least 1.1289 seconds before and 2.7206 seconds after the capture; camera-origin
+sway is at most 7.26 mm. This is a measured render/pick offset, not a rounding
+tie or dispatch-time camera turn.
+
+Installed CGF bytes match the compiled asset. Its 24 vertices, 36 indices,
+outward triangle winding and identity node transform are correct. The installed
+BasicEntity script adds no transform. A separate read-only forward projection
+sample lands near the virtual screen centre, but `System.ProjectToScreen`
+explicitly lacks guarantees outside the renderer and is not alignment proof.
+
+The diagnostic's bounded sink session `1792505901202000` cleaned up successfully.
+Its source commands, fresh readbacks and cleanup are preserved in
+`runtime/evidence/stone-world-bounds-20261020-151821-c2493cc15cef4baa8170cbb74166322f/`.
+The full live game log snapshot is `capture/kcd-observed.log` under the f074 run,
+SHA256 `8a593d90b2d845995aaf60596e02881cc5a9cbae041e3e1f73949e495e61050d`.
+The renderer snapshot SHA256 is
+`bd07be4df7536c7e31e3008f9fccd8728fa79977c24857473173aa1d6d325de1`.
+
+The fix uses documented `Entity.SetWorldAngles(vAngles)` with zero angles and
+checks actual world bounds before success. The inspected binding is
+`external/kcd2-mod-docs/script_bind_2025_01_14/CScriptBindEntity__SetWorldAngles@IFunctionHandler__@Ang3.html:60`;
+the shipped `AnimObject.lua:614` also calls this API. No renderer hook or hitbox
+tolerance change is needed. Both spawn paths share the repair, and
+`already_present` revalidates existing geometry without silently moving it.
+The world and local endpoints must match within 0.01 m; malformed/unknown
+readbacks reject placement and retain cleanup ownership. All 64 Lua cases pass.
+The reviewed source is installed with the old package backed up and the compiled
+CGF unchanged; live bounds and visual targeting verification remain pending.
+
+The f074 guest completed with five confirmed network actions and zero owned or
+pending stones. Three extra clicks were refused while the preceding removal
+awaited engine acknowledgement. A repaired audit accepts this narrow busy case
+only with a unique same-session pending/removed/ACK interval, later validated
+against the full guest/event/cell/ownership chain. Its 165 checks and five
+read-only replays preserve original evidence; the original controller receipt
+remains failed and the user's visual failure remains unresolved until the
+orientation repair is checked.
+
+### Earlier face and latency checks
+
 Run `3c111cfc7ed242089dff99066a0ca7ae` is an incomplete face-placement attempt.
 The user saw placement on the face toward them and both added blocks breaking,
 but did not identify top placement. The recorded confirmed actions are:

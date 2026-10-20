@@ -14,7 +14,7 @@ end
 local function fixture(options)
     options = options or {}
     local f = { now = 0, next_id = 1, entities = {}, names = {}, timers = {}, logs = {},
-        spawns = {}, removals = {}, flags = {}, timer_calls = 0, commands = {}, registrations = {},
+        spawns = {}, removals = {}, flags = {}, rotations = {}, draws = {}, timer_calls = 0, commands = {}, registrations = {},
         command_mode = options.command_mode }
     MineCome = nil
     ENTITY_FLAG_NO_SAVE = nil
@@ -23,6 +23,10 @@ local function fixture(options)
     System = {
         LogAlways = function(line) f.logs[#f.logs + 1] = line end,
         GetCurrTime = function() if f.bad_clock then error("clock unavailable") end; return f.now end,
+        GetViewCameraPos = function() return { x = 0, y = 0, z = 1.62 } end,
+        GetViewCameraDir = function() return { x = 1, y = 0, z = 0 } end,
+        GetViewCameraUpDir = function() return { x = 0, y = 0, z = 1 } end,
+        GetViewCameraFov = function() return 1.2 end,
         GetEntityByName = function(name)
             if f.bad_name_lookup then error("name lookup unavailable") end
             return f.names[name]
@@ -34,7 +38,10 @@ local function fixture(options)
         SpawnEntity = function(params)
             if f.spawn_fails then error("spawn failed") end
             f.spawns[#f.spawns + 1] = params
-            local entity = { id = f.next_id, name = params.name }
+            -- The real KCD binding's unspecified orientation produced -90
+            -- degrees, despite the C++ spawn-params constructor being identity.
+            local entity = { id = f.next_id, name = params.name, angle = -math.pi / 2,
+                position = { x = params.position.x, y = params.position.y, z = params.position.z } }
             f.next_id = f.next_id + 1
             function entity:GetName() return self.name end
             function entity:SetFlags(flag, mode) f.flags[#f.flags + 1] = { flag, mode } end
@@ -42,11 +49,37 @@ local function fixture(options)
                 if f.geometry_fails then error("model unavailable") end
                 equal(slot, 0); equal(model, "objects/minecome/stone.cgf")
             end
-            function entity:DrawSlot(slot, draw) equal(slot, 0); equal(draw, 1) end
+            function entity:SetWorldAngles(angles)
+                if f.angle_fails then error("orientation unavailable") end
+                equal(angles.x, 0); equal(angles.y, 0); equal(angles.z, 0)
+                f.rotations[#f.rotations + 1] = { before = self.angle, after = angles.z }
+                if not f.angle_ignored then self.angle = angles.z end
+            end
+            function entity:DrawSlot(slot, draw)
+                equal(slot, 0); equal(draw, 1); f.draws[#f.draws + 1] = self.id
+            end
             function entity:GetLocalBBox()
                 if f.malformed_bbox then return 3, nil end
                 if f.wrong_scale then return { x = 0, y = 0, z = 0 }, { x = 2, y = 2, z = 2 } end
                 return { x = 0, y = -1, z = 0 }, { x = 1, y = 0, z = 1 }
+            end
+            function entity:GetWorldBBox()
+                if f.world_bbox_fails then error("world bounds unavailable") end
+                if f.malformed_world_bbox then return {}, nil end
+                local lo = { x = math.huge, y = math.huge, z = math.huge }
+                local hi = { x = -math.huge, y = -math.huge, z = -math.huge }
+                local scale, c, s = f.world_scale or 1, math.cos(self.angle), math.sin(self.angle)
+                for x = 0, 1 do for y = -1, 0 do for z = 0, 1 do
+                    local px, py = x + (f.slot_offset or 0), y
+                    local p = { x = self.position.x + scale * (c * px - s * py) + (f.world_offset or 0),
+                        y = self.position.y + scale * (s * px + c * py),
+                        z = self.position.z + scale * z }
+                    for _, axis in ipairs({ "x", "y", "z" }) do
+                        lo[axis] = math.min(lo[axis], p[axis]); hi[axis] = math.max(hi[axis], p[axis])
+                    end
+                end end end
+                if f.nonfinite_world_bbox then lo.x = 0 / 0 end
+                return lo, hi
             end
             f.entities[entity.id] = entity
             f.names[entity.name] = entity
@@ -146,6 +179,8 @@ test("stone creation uses actual unit asset with physics disabled and receipt bb
     equal(params.properties.Physics.bPhysicalize, false)
     equal(params.properties.Physics.bRigidBody, false)
     equal(params.properties.Physics.bPushableByPlayers, false)
+    equal(#f.rotations, 1); equal(f.rotations[1].before, -math.pi / 2); equal(f:entity().angle, 0)
+    equal(#f.draws, 1)
     equal(#f.flags, 0); equal(f:status().owned_count, 1)
     local log = f.logs[#f.logs]
     assert(log:find('"session":1800000000000000', 1, true))
@@ -153,6 +188,71 @@ test("stone creation uses actual unit asset with physics disabled and receipt bb
     assert(log:find('"result":"spawned"', 1, true))
     assert(log:find('"bounds_min":{"x":0,"y":-1,"z":0}', 1, true))
     assert(log:find('"live_draw_verified":false', 1, true))
+end)
+
+test("explicit identity corrects the observed default rotation at real KCD coordinates", function()
+    local f = fixture(); player.position = { x = 120, y = 2041, z = 56 }; assert(f:begin())
+    local x, y, z = 121.68408203125, 2041.2486572265625, 56.279521942138672
+    assert(MineCome.ApplyStoneEvent(SESSION, "1", 1, 2, -60, -9, x, y, z))
+    local entity = f:entity(); local lo, hi = entity:GetWorldBBox()
+    equal(entity.angle, 0)
+    equal(lo.x, x); equal(lo.y, y - 1); equal(lo.z, z)
+    equal(hi.x, x + 1); equal(hi.y, y); equal(hi.z, z + 1)
+end)
+
+test("ignored orientation and malformed world bounds cannot acknowledge or draw a stone", function()
+    for _, mode in ipairs({ "angle_ignored", "angle_fails", "world_bbox_fails", "malformed_world_bbox", "nonfinite_world_bbox" }) do
+        local f = fixture(); assert(f:begin()); f[mode] = true
+        local ok, result = f:place(1)
+        equal(ok, false); equal(result, "geometry_failed"); equal(#f.draws, 0)
+        equal(#f.removals, 1); equal(f:status().owned_count, 0)
+    end
+end)
+
+test("translated scaled and slot-offset world geometry is refused", function()
+    for _, mode in ipairs({ "world_offset", "world_scale", "slot_offset" }) do
+        local f = fixture(); assert(f:begin()); f[mode] = mode == "world_scale" and 2 or 0.25
+        local ok, result = f:place(1)
+        equal(ok, false); equal(result, "geometry_failed"); equal(#f.draws, 0); equal(f:status().owned_count, 0)
+    end
+end)
+
+test("world bounds tolerance is bounded and accepts small coordinate rounding", function()
+    local f = fixture(); assert(f:begin()); f.world_offset = 0.009
+    assert(f:place(1)); equal(#f.draws, 1)
+    f = fixture(); assert(f:begin()); f.world_offset = 0.0101
+    local ok, result = f:place(1)
+    equal(ok, false); equal(result, "geometry_failed"); equal(#f.draws, 0)
+end)
+
+test("already-present requires fresh world geometry and never resets a changed pose", function()
+    for _, mode in ipairs({ "rotation", "world_offset", "world_scale", "slot_offset" }) do
+        local f = fixture(); assert(f:begin()); assert(f:place(1))
+        if mode == "rotation" then f:entity().angle = -math.pi / 2
+        else f[mode] = mode == "world_scale" and 2 or 0.25 end
+        local ok, result = f:place(2)
+        equal(ok, false); equal(result, "geometry_failed"); equal(#f.rotations, 1)
+        equal(#f.spawns, 1); equal(#f.draws, 1); equal(f:status().owned_count, 0)
+    end
+end)
+
+test("world geometry failure retains pending ownership until cleanup completes", function()
+    local f = fixture(); assert(f:begin()); f.angle_ignored = true; f.remove_mode = "deferred"
+    local ok, result = f:place(1)
+    equal(ok, false); equal(result, "geometry_failed"); equal(f:status().pending_count, 1); equal(#f.draws, 0)
+    f.remove_mode = nil; f:tick(); equal(f:status().owned_count, 0)
+end)
+
+test("legacy ShowStone uses the same identity and world-bound guard", function()
+    local f = fixture(); assert(MineCome.ShowStone())
+    equal(f:entity().angle, 0); equal(#f.rotations, 1); equal(#f.draws, 1)
+    local lo, hi = f:entity():GetWorldBBox()
+    equal(lo.x, 3); equal(lo.y, -1); equal(lo.z, 1.62); equal(hi.x, 4); equal(hi.y, 0); equal(hi.z, 2.62)
+    assert(MineCome.RemoveStone()); equal(f:entity(), nil)
+    for _, mode in ipairs({ "angle_ignored", "world_scale", "world_offset", "slot_offset", "malformed_world_bbox" }) do
+        f = fixture(); f[mode] = mode == "world_scale" and 2 or (mode == "world_offset" or mode == "slot_offset") and 0.25 or true
+        equal(MineCome.ShowStone(), false); equal(f:entity(), nil); equal(#f.draws, 0); equal(#f.removals, 1)
+    end
 end)
 
 test("only an exported no-save flag is used", function()

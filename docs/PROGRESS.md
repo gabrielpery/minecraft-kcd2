@@ -1,5 +1,50 @@
 # MineCome progress — 2026-10-20
 
+**Visible targeting offset diagnosed in the live engine.** The top-only retry
+`f074546edb4441f69c8951d727ba0b5c` reproduced the user's mismatch: aiming at the
+visible top could place against the face toward the player. A subsequent bounded
+automatic measurement found that `System.SpawnEntity` had given the stone a
+world Z rotation of approximately -90 degrees. The source CGF and its local
+bounds were correct, but the actual world bounds were shifted one unit toward
+negative X from Minecraft's targeting box.
+
+For the first saved click, the ray intersects the measured visible cube's top at
+distance 1.006076 m. It reaches Minecraft's logical west face at 1.634615 m,
+0.343107 m below its top. Sixty-one surrounding camera samples have unchanged
+direction, ruling out camera turning during dispatch for this click. This
+explains the user's report; earlier local-bounds and requested-position receipts
+did not establish the object's actual world transform.
+
+The diagnostic used the production stone sink, read actual world position,
+angles, scale, slot transform and world bounds, then ended its own temporary
+session. Engine cleanup confirms no active session, owned objects or pending
+removals. Evidence:
+`runtime/evidence/stone-world-bounds-20261020-151821-c2493cc15cef4baa8170cbb74166322f/fresh-kcd-complete.log`.
+Both spawn paths now explicitly set the documented world angles to zero and
+require the actual world bounds to match the mapped cell before acknowledging
+success. Existing objects are rechecked before `already_present`; a mismatched
+object enters the normal tracked cleanup path. All 64 Lua lifecycle cases pass,
+including a mock of the observed -90-degree default, ignored/failed orientation
+writes, malformed/shifted/scaled geometry and deferred cleanup.
+
+Independent review passed. With KCD closed, the repaired Lua package was
+installed and its source hash verified as
+`3422859e62afafda5f5afb83d20ac6cf14c325b5031608ee6478b1781abd23a9`.
+The previous package is backed up at `runtime/packages/previous-20261020-152428`.
+The compiled stone asset is unchanged. Automatic live world-bounds verification
+and a fresh visual top-face check remain pending.
+
+The retry itself records two network placements, three breaks and final
+Minecraft air with no owned/pending work. No permit-expiry rejection occurred;
+the first request entered at 304.77 ms. Its original controller receipt remains
+failed because it rejected three native `engine_session_unready` refusals while
+earlier removals awaited engine acknowledgement. The audit repair accepts only
+refusals inside a uniquely corroborated pending-removal-to-ACK interval and keeps
+them separate from guest actions. It passes 165 PowerShell 7 checks, including
+the Windows PowerShell 5.1 handoff, and five read-only saved-run replay
+expectations. Original evidence hashes remain unchanged. This repairs evidence
+classification, not visual alignment.
+
 **Face-placement attempt: two faces confirmed in the records; full live check
 failed.** Run `3c111cfc7ed242089dff99066a0ca7ae` confirms placement against the
 seed's WEST face, then against the new block's UP face, followed by breaking both

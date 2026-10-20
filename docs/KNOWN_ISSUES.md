@@ -20,6 +20,12 @@ with barely any delay reported after the log-latency repair. A later run records
 confirmed WEST- and UP-face placements and both added blocks breaking, but the
 user did not identify the top placement and the session ended before the final
 seed break. Reliable, visually confirmed placement across faces remains pending.
+The next retry exposed the cause: KCD's default spawned-entity rotation moves the
+visible cube one unit in negative X from the logical targeting box. Actual world
+bounds confirmed the offset; local bounds alone had missed it. Both spawn paths
+now explicitly set zero world rotation and verify world bounds. The repair passes
+64 Lua tests and is installed; automatic live bounds and visual targeting checks
+are pending.
 Continuous shared movement, general block rendering,
 persistence, survival integration and multiplayer remain unfinished.
 

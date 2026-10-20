@@ -25,7 +25,7 @@ The public repository contains source, build scripts and development procedures.
 | Minecraft stone in KCD2 | Actual Minecraft-derived stone appears and disappears in the official KCD2 development world after vanilla placement/breaking. |
 | Hotbar and Creative inventory | Minecraft's real UI is composited inside KCD2. Physical slot selection, inventory opening/closing, clicks, dragging and scrolling have passed live tests. |
 | Camera and block controls together | KCD camera look works outside inventory and stays still inside it. Right-click/place and left-click/break work in one fixed nearby cell during a bounded live session. |
-| Minecraft aiming | A single live crosshair click broke a block with barely any delay reported. A later run confirms side- and top-face placements in Minecraft and KCD acknowledgements, but visual top placement and the full sequence still need a clean live check. The standalone actual-Minecraft lab passes 28 targeting/control scenarios with synthetic host rays, including hotbar changes while an action finishes. |
+| Minecraft aiming | Live clicks reach Minecraft and replicate confirmed placements/breaks. Face tests exposed a rotated KCD cube offset from its targeting box; the orientation repair is implemented and installed, with live verification pending. The standalone actual-Minecraft lab passes 28 targeting/control scenarios with synthetic host rays, including hotbar changes while an action finishes. |
 | Movement groundwork | Separate labs verify Minecraft walking/jumping on sampled KCD ground, physical input forwarding, and a short KCD player-following test. These are not yet one continuous movement system. |
 
 Live checks above use the **official KCD2 1.5.5 development build**. The native

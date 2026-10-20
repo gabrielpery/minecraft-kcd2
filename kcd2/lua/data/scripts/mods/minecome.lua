@@ -96,6 +96,46 @@ end
 -- by the installed official Resource Compiler. No physics proxy is available.
 local stone_name = "MineCome_RuntimeStone"
 local stone_model = "objects/minecome/stone.cgf"
+local STONE_BOUNDS_TOLERANCE = 0.01
+
+local function stone_point_matches(actual, expected)
+    if type(actual) ~= "table" then return false end
+    for _, axis in ipairs({ "x", "y", "z" }) do
+        if not finite(actual[axis]) or math.abs(actual[axis] - expected[axis]) > STONE_BOUNDS_TOLERANCE then
+            return false
+        end
+    end
+    return true
+end
+
+local function checked_stone_bounds(entity, position)
+    local minimum, maximum = entity:GetLocalBBox()
+    local world_minimum, world_maximum = entity:GetWorldBBox()
+    -- The compiled MC cell (x,y,z)->(x,-z,y) has this corner pivot,
+    -- not a centered pivot. Size-only checks miss the engine's -90-degree
+    -- default entity rotation, which displaced the visible cube by one metre.
+    if not stone_point_matches(minimum, { x = 0, y = -1, z = 0 })
+        or not stone_point_matches(maximum, { x = 1, y = 0, z = 1 })
+        or not stone_point_matches(world_minimum, { x = position.x, y = position.y - 1, z = position.z })
+        or not stone_point_matches(world_maximum, { x = position.x + 1, y = position.y, z = position.z + 1 }) then
+        error("stone world geometry differs from the mapped Minecraft cell")
+    end
+    return minimum, maximum
+end
+
+local function load_aligned_stone(entity, position)
+    entity:LoadObject(0, stone_model)
+    -- Official Warhorse script_bind_2025_01_14:
+    -- CScriptBindEntity__SetWorldAngles@IFunctionHandler__@Ang3.html and
+    -- CScriptBindEntity__GetWorldBBox@IFunctionHandler__.html.
+    -- Installed AnimObject.lua:614 also uses SetWorldAngles to restore a pose.
+    -- Explicit world angles avoid System.SpawnEntity's observed -90-degree
+    -- default. Read back the rendered bounds before drawing/acknowledging.
+    entity:SetWorldAngles({ x = 0, y = 0, z = 0 })
+    local minimum, maximum = checked_stone_bounds(entity, position)
+    entity:DrawSlot(0, 1)
+    return minimum, maximum
+end
 
 function MineCome.RemoveStone()
     if not MineCome.stone_entity_id then return true end
@@ -160,12 +200,9 @@ function MineCome.ShowStone()
         else
             System.LogAlways("[MineComeVisual] No exported no-save flag; remove the temporary entity before saving")
         end
-        entity:LoadObject(0, stone_model)
-        entity:DrawSlot(0, 1)
-        return entity:GetLocalBBox()
+        return load_aligned_stone(entity, position)
     end)
-    if not loaded or not vector_json(minimum) or not vector_json(maximum)
-        or maximum.x <= minimum.x or maximum.y <= minimum.y or maximum.z <= minimum.z then
+    if not loaded then
         System.LogAlways("[MineComeVisual] Geometry/bounds unavailable; removing temporary entity")
         MineCome.RemoveStone()
         return false
@@ -179,7 +216,7 @@ end
 -- Bounded stone-only sink. The host forwards these calls through the official
 -- ExecuteString console, on the engine thread. No network callback runs here.
 -- Official bindings: System.{GetCurrTime,GetEntity,GetEntityByName,SpawnEntity,
--- RemoveEntity}, entity:{LoadObject,DrawSlot,GetLocalBBox,SetFlags}, and
+-- RemoveEntity}, entity:{LoadObject,DrawSlot,SetWorldAngles,GetLocalBBox,GetWorldBBox,SetFlags}, and
 -- Script.SetTimerForFunction are in Warhorse's script_bind_2025_01_14 docs.
 -- BasicEntity's installed SetFromProperties only physicalizes when
 -- Properties.Physics.bPhysicalize is true. This sink always supplies false.
@@ -619,7 +656,17 @@ function MineCome.ApplyStoneEvent(session, sequence, operation, mc_x, mc_y, mc_z
         if distance_squared(existing.position, position) > 0.000000000001 then
             return block_receipt(session, sequence, operation, mc, position, "rejected_origin_change")
         end
-        return block_receipt(session, sequence, operation, mc, position, "already_present", existing.minimum, existing.maximum)
+        -- Re-check actual geometry; a reload must not bless a pre-fix rotated
+        -- entity, or one whose world/slot transform changed after creation.
+        local valid, minimum, maximum = pcall(function()
+            return checked_stone_bounds(System.GetEntity(existing.id), position)
+        end)
+        if not valid then
+            mark_pending(existing); cleanup_one(existing)
+            return block_receipt(session, sequence, operation, mc, position, "geometry_failed")
+        end
+        existing.minimum, existing.maximum = minimum, maximum
+        return block_receipt(session, sequence, operation, mc, position, "already_present", minimum, maximum)
     end
     if #sink.owned >= BLOCK_CAPACITY then
         return block_receipt(session, sequence, operation, mc, position, "rejected_capacity")
@@ -654,14 +701,9 @@ function MineCome.ApplyStoneEvent(session, sequence, operation, mc_x, mc_y, mc_z
         if type(ENTITY_FLAG_NO_SAVE) == "number" and type(entity.SetFlags) == "function" then
             entity:SetFlags(ENTITY_FLAG_NO_SAVE, 0)
         end
-        entity:LoadObject(0, stone_model)
-        entity:DrawSlot(0, 1)
-        return entity:GetLocalBBox()
+        return load_aligned_stone(entity, position)
     end)
-    if not loaded or not valid_position(minimum) or not valid_position(maximum)
-        or math.abs(maximum.x - minimum.x - 1) > 0.01
-        or math.abs(maximum.y - minimum.y - 1) > 0.01
-        or math.abs(maximum.z - minimum.z - 1) > 0.01 then
+    if not loaded then
         mark_pending(record); cleanup_one(record)
         return block_receipt(session, sequence, operation, mc, position, "geometry_failed")
     end
