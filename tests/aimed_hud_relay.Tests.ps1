@@ -72,6 +72,38 @@ function New-Case {
     $session.Intents.Add([pscustomobject]@{ordinal=1;request_id=2;sequence=2;arena_id=1;permit_id=7;action=2;edge_utc_ms=1050L;installed_utc_ms=1000L;sent_utc_ms=1100L;accepted=$true;failure=$null})
     $session
 }
+function New-MixedCase {
+    $session=New-Case;$session.Intents.Clear()
+    foreach($id in 1..4){$session.Intents.Add([pscustomobject]@{ordinal=$id;request_id=$id;sequence=$id;arena_id=1;permit_id=$id+5;action=2;edge_utc_ms=1050L;installed_utc_ms=1000L;sent_utc_ms=1100L;accepted=$true;failure=$null})}
+    # One actual adapter confirmation, two independently rejected native intents,
+    # and one actual protocol stale reply that never reaches the Java adapter.
+    $capture=@((Valid-Log)-split "`n"|Where-Object{$_ -match '\[MineComeAimInput\]'})[0]
+    function Extra-Lines([int]$Id,[int]$Permit,[string]$Reason) {
+        'KCD2_LOG prefix [MineComeAimPermit] {"schema":1,"run":"'+$run+'","arena":"1","permit":"'+$Permit+'","result":"installed","engine_time":2,"expires_engine_time":2.5}'
+        "AIM_PERMIT_READY run=$run arena=1 permit=$Permit installed_utc_ms=1000"
+        $capture.Replace('"request":"2"','"request":"'+$Id+'"').Replace('"permit":"7"','"permit":"'+$Permit+'"').Replace('"click":"2"','"click":"'+$Id+'"')
+        if($Reason){"AIM_INPUT_REJECTED reason=$Reason run=$run request=$Id permit=$Permit"}
+        else{
+            "AIM_INPUT_DISPATCH run=$run arena=1 request=$Id permit=$Permit click=$Id action=2"
+            "AIM_INPUT_RESULT run=$run arena=1 request=$Id action=2 result=3"
+        }
+    }
+    $lines=[Collections.Generic.List[string]]::new()
+    foreach($line in ((Valid-Log).TrimEnd("`n") -split "`n")){
+        if($line -match '\[MineComeAimPermit\]'){foreach($extra in (Extra-Lines 1 6 'original_permit_expired')){$lines.Add($extra)}}
+        if($line.StartsWith('AIM_INPUT_CANCEL')){
+            foreach($extra in (Extra-Lines 3 8 'unknown_or_consumed_permit')){$lines.Add($extra)}
+            foreach($extra in (Extra-Lines 4 9 '')){$lines.Add($extra)}
+        }
+        if($line -match '\[MineComeBlock\].*"operation":2'){
+            $lines.Add('KCD2_LOG prefix [MineComeBlock] {"schema":1,"event":"remove","session":100,"sequence":9,"operation":2,"mc":{"x":12,"y":64,"z":20},"position":{"x":101.5,"y":200.5,"z":50.08},"result":"cleanup_pending","physics":false,"live_draw_verified":false}')
+        }
+        $lines.Add($line)
+    }
+    $text=($lines -join "`n")+"`n"
+    $audit=(Valid-Audit).Replace('130 session',"121 AIM_REQUEST arena=1 request=4 permit=9`n122 AIM_RESULT arena=1 request=4 result=3`n130 session")
+    [pscustomobject]@{Session=$session;Guest=(Valid-Guest);Text=$text;Audit=$audit}
+}
 $stone=Valid-Stone;Assert-MineComeHudAimedBridgeProof $stone;Check $true 'Valid isolated adapter proof accepted'
 $refused=Valid-Stone
 $refused.requests[0].result=3;$refused.requests[0].client_and_server=$false;$refused.requests[0].captured_age_ns=600000000L
@@ -147,6 +179,59 @@ foreach($case in @('missing_input_end','missing_cleanup','missing_lua_permit','m
     [IO.File]::WriteAllText($s.Stdout,$text);[IO.File]::WriteAllText((Join-Path $s.Home 'runtime/logs/tools-bridge.log'),$journal)
     Stop-MineComeHudAimedRelay $s
     Reject {Assert-MineComeHudAimedRelayGuest $s $g} "Reject mismatched live chain: $case"
+}
+$mixed=New-MixedCase;$s=$mixed.Session
+[IO.File]::WriteAllText($s.Stdout,$mixed.Text);[IO.File]::WriteAllText((Join-Path $s.Home 'runtime/logs/tools-bridge.log'),$mixed.Audit)
+Stop-MineComeHudAimedRelay $s;Assert-MineComeHudAimedRelayGuest $s $mixed.Guest
+Check ($s.EngineMirroringVerified -and $s.GuestWorldCleanupComplete -and $s.InputDisposition.captured_intents -eq 4 -and
+    $s.InputDisposition.native_refused -eq 2 -and $s.InputDisposition.wire_requests -eq 2 -and $s.InputDisposition.guest_protocol_refused -eq 1 -and
+    $s.InputDisposition.guest_adapter_results -eq 1 -and $s.InputDisposition.confirmed_network_actions -eq 1 -and
+    $s.InputDisposition.removal_pending_receipts -eq 1) 'Mixed refusals and pending removal remain separate from one fully confirmed Minecraft action'
+Check ($s.InputDisposition.outcomes[0].guest_result -eq $null -and $s.InputDisposition.outcomes[2].guest_result -eq $null -and
+    $s.InputDisposition.outcomes[3].outcome -ceq 'guest_protocol_refused' -and $mixed.Guest.lab_evidence.stone_bridge.requests.Count -eq 1) 'Refusals never fabricate guest adapter receipts'
+foreach($case in @('rejection_run','rejection_missing_identity','rejection_reason','rejection_duplicate','rejection_id','rejection_permit','rejection_capture_missing','rejection_capture_id','rejection_capture_action','rejection_ray','rejection_time','rejection_capture_unavailable','rejection_before_capture','rejection_after_cancel','rejection_same_permit','rejection_and_dispatch','rejection_extra','protocol_no_polled','protocol_action','protocol_forged_confirmed','protocol_nonstale','protocol_no_wire','protocol_duplicate','protocol_adapter_without_wire','no_confirmation','pending_duplicate','pending_sequence','pending_operation','pending_cell','pending_session','pending_without_terminal','pending_after_terminal','pending_position','pending_unknown_status')){
+    $mixed=New-MixedCase;$s=$mixed.Session;$g=$mixed.Guest;$text=$mixed.Text;$journal=$mixed.Audit
+    $rejection="AIM_INPUT_REJECTED reason=original_permit_expired run=$run request=1 permit=6"
+    $pendingLine=@($text -split "`n"|Where-Object{$_ -match '"result":"cleanup_pending"'})[0]
+    switch($case){
+        'rejection_run'{$text=$text.Replace($rejection,$rejection.Replace($run,('f'*32)))}
+        'rejection_missing_identity'{$text=$text.Replace($rejection,'AIM_INPUT_REJECTED reason=original_permit_expired')}
+        'rejection_reason'{$text=$text.Replace($rejection,$rejection.Replace('original_permit_expired','arena_invalidated'))}
+        'rejection_duplicate'{$text=$text.Replace($rejection,$rejection+"`n"+$rejection)}
+        'rejection_id'{$text=$text.Replace($rejection,$rejection.Replace('request=1','request=8'))}
+        'rejection_permit'{$text=$text.Replace($rejection,$rejection.Replace('permit=6','permit=5'))}
+        'rejection_capture_missing'{$text=$text -replace '(?m)^KCD2_LOG.*\[MineComeAimInput\].*"request":"1".*\n',''}
+        'rejection_capture_id'{$text=$text.Replace('"request":"1"','"request":"8"')}
+        'rejection_capture_action'{$text=$text.Replace('"click":"1","action":2','"click":"1","action":1')}
+        'rejection_ray'{$text=$text.Replace('"direction":{"x":1','"direction":{"x":0.5')}
+        'rejection_time'{$text=$text.Replace('"completed_engine_time":2.11','"completed_engine_time":2.6')}
+        'rejection_capture_unavailable'{$text=$text.Replace('"result":"sampled"','"result":"unavailable"')}
+        'rejection_before_capture'{$text=$text.Replace($rejection+"`n",'').Replace("AIM_PERMIT_READY run=$run arena=1 permit=6",$rejection+"`nAIM_PERMIT_READY run=$run arena=1 permit=6")}
+        'rejection_after_cancel'{$text=$text.Replace($rejection+"`n",'').Replace("AIM_INPUT_CANCEL run=$run arena=1 authority_revoked=true sent_requests_recallable=false","AIM_INPUT_CANCEL run=$run arena=1 authority_revoked=true sent_requests_recallable=false`n"+$rejection)}
+        'rejection_same_permit'{$s.Intents[0].permit_id=7}
+        'rejection_and_dispatch'{$text=$text.Replace($rejection,$rejection+"`nAIM_INPUT_DISPATCH run=$run arena=1 request=1 permit=6 click=1 action=2")}
+        'rejection_extra'{$text=$text.Replace($rejection,$rejection+"`nAIM_INPUT_REJECTED reason=original_permit_expired run=$run request=8 permit=10")}
+        'protocol_no_polled'{$text=$text.Replace("AIM_INPUT_RESULT run=$run arena=1 request=4 action=2 result=3`n",'')}
+        'protocol_action'{$text=$text.Replace('request=4 action=2 result=3','request=4 action=1 result=3')}
+        'protocol_forged_confirmed'{$text=$text.Replace('request=4 action=2 result=3','request=4 action=2 result=1');$journal=$journal.Replace('request=4 result=3','request=4 result=1')}
+        'protocol_nonstale'{$text=$text.Replace('request=4 action=2 result=3','request=4 action=2 result=2');$journal=$journal.Replace('request=4 result=3','request=4 result=2')}
+        'protocol_no_wire'{$journal=$journal -replace '(?m)^121 .*\n',''}
+        'protocol_duplicate'{$text=$text.Replace("AIM_INPUT_RESULT run=$run arena=1 request=4 action=2 result=3","AIM_INPUT_RESULT run=$run arena=1 request=4 action=2 result=3`nAIM_INPUT_RESULT run=$run arena=1 request=4 action=2 result=3")}
+        'protocol_adapter_without_wire'{$journal=$journal.Replace('request=2 permit=7','request=1 permit=6').Replace('request=2 result=1','request=1 result=1')}
+        'no_confirmation'{$g.lab_evidence.stone_bridge.confirmed_network_actions=0}
+        'pending_duplicate'{$text=$text.Replace($pendingLine,$pendingLine+"`n"+$pendingLine)}
+        'pending_sequence'{$text=$text.Replace($pendingLine,$pendingLine.Replace('"sequence":9','"sequence":8'))}
+        'pending_operation'{$text=$text.Replace($pendingLine,$pendingLine.Replace('"operation":2','"operation":1'))}
+        'pending_cell'{$text=$text.Replace($pendingLine,$pendingLine.Replace('"mc":{"x":12','"mc":{"x":13'))}
+        'pending_session'{$text=$text.Replace($pendingLine,$pendingLine.Replace('"session":100','"session":101'))}
+        'pending_without_terminal'{$text=$text -replace '(?m)^KCD2_LOG.*"result":"removed".*\n',''}
+        'pending_after_terminal'{$text=$text.Replace($pendingLine+"`n",'').Replace('STONE_ENGINE_ACK session=100 sequence=9 result=removed','STONE_ENGINE_ACK session=100 sequence=9 result=removed'+"`n"+$pendingLine)}
+        'pending_position'{$text=$text.Replace($pendingLine,$pendingLine.Replace('"x":101.5','"x":105.5'))}
+        'pending_unknown_status'{$text=$text.Replace($pendingLine,$pendingLine.Replace('cleanup_pending','pending'))}
+    }
+    [IO.File]::WriteAllText($s.Stdout,$text);[IO.File]::WriteAllText((Join-Path $s.Home 'runtime/logs/tools-bridge.log'),$journal)
+    Stop-MineComeHudAimedRelay $s
+    Reject {Assert-MineComeHudAimedRelayGuest $s $g} "Mixed outcome tamper rejected: $case"
 }
 # Failed shutdown preserves the owned bounded process; no broad Stop-Process.
 $s=New-Case;$s.Process.WillExit=$false;Stop-MineComeHudAimedRelay $s

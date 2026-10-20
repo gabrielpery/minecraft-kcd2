@@ -49,7 +49,13 @@ function ConvertFrom-MineComeHudAimedRelayLog([string]$Text,[string]$Run,[switch
             Assert-MineComeAimedInteger ([long]$fields[1]) 1;Assert-MineComeAimedInteger ([long]$fields[2]) 1
             $collections.results.Add([pscustomobject]@{arena=[long]$fields[1];request_id=[long]$fields[2];action=[int]$fields[3];result=[int]$fields[4];line=$lineNumber})
         }elseif($line -cmatch '^AIM_INPUT_REJECTED reason=([a-z_]+)(?: run=([0-9a-f]{32}) request=([1-9][0-9]{0,15}) permit=([1-9][0-9]{0,15}))?$'){
-            $collections.rejections.Add([pscustomobject]@{reason=$Matches[1];line=$lineNumber})
+            $reason=$Matches[1];$runValue=$null;$id=$null;$permit=$null
+            if($Matches.ContainsKey(2)){
+                $runValue=$Matches[2];$id=[long]$Matches[3];$permit=[long]$Matches[4]
+                if($runValue -cne $Run){throw 'Aimed rejection run differs.'}
+                Assert-MineComeAimedInteger $id 1;Assert-MineComeAimedInteger $permit 1
+            }
+            $collections.rejections.Add([pscustomobject]@{reason=$reason;run=$runValue;request_id=$id;permit_id=$permit;line=$lineNumber})
         }elseif($line -cmatch '^AIM_INPUT_CANCEL run=([0-9a-f]{32}) arena=([1-9][0-9]{0,15}) authority_revoked=true sent_requests_recallable=false$'){
             if($Matches[1] -cne $Run){throw 'Aimed cancellation run differs.'}
             $collections.input_cancels.Add([pscustomobject]@{arena=[long]$Matches[2];line=$lineNumber})
@@ -70,7 +76,7 @@ function ConvertFrom-MineComeHudAimedRelayLog([string]$Text,[string]$Run,[switch
     }
     $result=[ordered]@{fresh_world=$world;summary=$summary}
     foreach($name in $collections.Keys){
-        $limit=if($name -in @('permits','lua_permits')){1800}elseif($name -eq 'lua_sessions'){2}elseif($name -in @('events','engine_acks')){17}else{16}
+        $limit=if($name -in @('permits','lua_permits')){1800}elseif($name -eq 'lua_sessions'){2}elseif($name -eq 'events'){33}elseif($name -eq 'engine_acks'){17}else{16}
         if($collections[$name].Count -gt $limit){throw 'Aimed relay receipt bound exceeded.'}
         $result[$name]=@($collections[$name].ToArray())
     }
@@ -283,7 +289,11 @@ function Assert-MineComeHudAimedBridgeProof($Stone) {
 }
 
 function Assert-MineComeHudAimedRelayGuest($Session,$Guest) {
-    $Session.EngineMirroringVerified=$false
+    $Session.EngineMirroringVerified=$false;$Session.InputDisposition=$null
+    function SampleNumber($Value,[double]$Minimum,[double]$Maximum) {
+        if(($Value -isnot [int] -and $Value -isnot [long] -and $Value -isnot [double] -and $Value -isnot [decimal]) -or
+            [double]::IsNaN([double]$Value) -or [double]::IsInfinity([double]$Value) -or $Value -lt $Minimum -or $Value -gt $Maximum){throw 'Aimed capture finite number invalid.'}
+    }
     try{
         Update-MineComeHudAimedRelayEvidence $Session
         if($Session.Failure -or $Session.ReceiptAuditFailure -or -not $Session.ExitObserved -or $Session.ExitCode -ne 0 -or -not $Session.CleanupVerified -or -not $Session.InputCleanupVerified -or -not $Session.TransportAuthVerified){throw 'Aimed native completion/cleanup/authentication proof missing.'}
@@ -297,8 +307,9 @@ function Assert-MineComeHudAimedRelayGuest($Session,$Guest) {
         if($stone.save -cne $Guest.save -or $stone.confirmed_network_actions -lt 1){throw 'Live aimed check lacks an actual confirmed physical interaction.'}
         $native=$Session.Native;$audit=$Session.ReceiptAudit;$requests=@($stone.requests);$intents=@($Session.Intents.ToArray());$offer=$stone.arena_offer
         if($audit.queue_drops.Count){throw 'Bounded aimed verification contains an expired unsent intent; no guest action is claimed for it.'}
-        if(-not $native.fresh_world -or -not $audit.completed -or $audit.arena.arena -ne $offer.arenaId -or $native.rejections.Count -ne 0 -or
-            $requests.Count -ne $intents.Count -or $native.captures.Count -ne $intents.Count -or $native.dispatches.Count -ne $intents.Count -or $audit.requests.Count -ne $intents.Count -or $audit.results.Count -ne $intents.Count){throw 'Aimed source/dispatch/canonical guest count or arena mismatch.'}
+        if(-not $native.fresh_world -or -not $audit.completed -or $audit.arena.arena -ne $offer.arenaId -or $intents.Count -gt 16 -or
+            $native.captures.Count -ne $intents.Count -or $native.dispatches.Count+$native.rejections.Count -ne $intents.Count -or
+            $audit.requests.Count -ne $native.dispatches.Count -or $audit.results.Count -ne $native.dispatches.Count -or $requests.Count -gt $native.dispatches.Count){throw 'Aimed source/dispatch/canonical guest count or arena mismatch.'}
         if($native.input_begins.Count -ne 1 -or $native.input_ends.Count -ne 1 -or $native.input_cancels.Count -ne 1 -or $native.input_begins[0].arena -ne $offer.arenaId -or $native.input_ends[0].arena -ne $offer.arenaId -or $native.input_cancels[0].arena -ne $offer.arenaId -or $native.input_begins[0].line -ge $native.input_cancels[0].line -or $native.input_cancels[0].line -ge $native.input_ends[0].line){throw 'Aimed independent input begin/revocation/end chain differs.'}
         if($native.lua_sessions.Count -ne 2){throw 'Aimed input lifecycle lacks exact Lua begin/end records.'}
         for($i=0;$i -lt 2;$i++){
@@ -307,51 +318,124 @@ function Assert-MineComeHudAimedRelayGuest($Session,$Guest) {
             if($lua.run -isnot [string] -or $lua.run -cne $Session.Run -or $lua.arena -isnot [string] -or $lua.arena -cne [string]$offer.arenaId -or $lua.event -cne $(if($i -eq 0){'begin'}else{'end'}) -or $lua.result -cne $(if($i -eq 0){'accepted'}else{'ended'}) -or $lua.journal_line -ge $ack.line){throw 'Aimed Lua lifecycle record differs from native ACK.'}
             if($i -eq 1 -and $lua.journal_line -le $native.input_cancels[0].line){throw 'Aimed end receipt precedes authority revocation.'}
         }
-        $used=[Collections.Generic.HashSet[long]]::new();$lastId=0L
-        for($i=0;$i -lt $requests.Count;$i++){
-            $request=$requests[$i];$wire=$request.wire;$intent=$intents[$i];$capture=$native.captures[$i];$dispatch=$native.dispatches[$i];$sent=$audit.requests[$i];$result=$audit.results[$i]
+        $used=[Collections.Generic.HashSet[long]]::new();$lastId=0L;$lastOutcomeLine=0;$sentIndex=0;$guestIndex=0
+        $dispositions=[Collections.Generic.List[object]]::new();$nativeRefused=0;$protocolRefused=0
+        for($i=0;$i -lt $intents.Count;$i++){
+            $intent=$intents[$i];$capture=$native.captures[$i]
             Assert-MineComeAimedFlag $intent.accepted $true
-            if($intent.failure -or $intent.ordinal -ne $i+1 -or $intent.request_id -le $lastId -or $intent.request_id -ne $intent.sequence -or $intent.sequence -gt 16 -or -not $used.Add($intent.permit_id)){throw 'Aimed controller intent ordering/replay invalid.'};$lastId=$intent.request_id
+            foreach($name in @('ordinal','request_id','sequence','arena_id','permit_id','edge_utc_ms','installed_utc_ms','sent_utc_ms')){Assert-MineComeAimedInteger $intent.$name 1}
+            Assert-MineComeAimedInteger $intent.action 1 2
+            if($intent.failure -or $intent.ordinal -ne $i+1 -or $intent.arena_id -ne $offer.arenaId -or $intent.request_id -le $lastId -or $intent.request_id -ne $intent.sequence -or $intent.sequence -gt 16 -or -not $used.Add($intent.permit_id)){throw 'Aimed controller intent ordering/replay invalid.'};$lastId=$intent.request_id
+            $dispatches=@($native.dispatches|Where-Object{$_.request_id -eq $intent.request_id})
+            $rejections=@($native.rejections|Where-Object{$_.request_id -eq $intent.request_id})
+            if($dispatches.Count+$rejections.Count -ne 1){throw 'Aimed capture lacks one exclusive native dispatch or rejection.'}
+            $outcome=if($dispatches.Count){$dispatches[0]}else{$rejections[0]}
             $permits=@($native.permits|Where-Object{ $_.arena -eq $intent.arena_id -and $_.permit -eq $intent.permit_id -and $_.installed_utc_ms -eq $intent.installed_utc_ms })
             if($permits.Count -ne 1 -or $intent.installed_utc_ms -ge $intent.edge_utc_ms -or $intent.edge_utc_ms -gt $intent.sent_utc_ms -or $intent.sent_utc_ms-$intent.edge_utc_ms -gt 250 -or $intent.sent_utc_ms-$intent.installed_utc_ms -gt 350){throw 'Aimed controller lacks original pre-click permit.'}
             $permit=$permits[0];$luaPermits=@($native.lua_permits|Where-Object{ $_.run -ceq $Session.Run -and $_.arena -ceq [string]$intent.arena_id -and $_.permit -ceq [string]$intent.permit_id -and $_.result -ceq 'installed' })
-            if($luaPermits.Count -ne 1 -or $luaPermits[0].journal_line -ge $permit.line -or $permit.line -ge $capture.journal_line -or $capture.journal_line -ge $dispatch.line -or $dispatch.line -ge $native.input_cancels[0].line){throw 'Aimed original Lua permit/capture/dispatch order invalid.'}
+            if($luaPermits.Count -ne 1 -or $luaPermits[0].journal_line -ge $permit.line -or $permit.line -ge $capture.journal_line -or
+                $capture.journal_line -le $lastOutcomeLine -or $capture.journal_line -le $native.input_begins[0].line -or
+                $capture.journal_line -ge $outcome.line -or $outcome.line -ge $native.input_cancels[0].line){throw 'Aimed original Lua permit/capture/outcome order invalid.'}
+            $lastOutcomeLine=$outcome.line
             foreach($name in @('run','arena','request','permit','click','result')){if($capture.$name -isnot [string]){throw 'Aimed Lua identifiers must remain exact decimal text.'}}
             foreach($name in @('permit_engine_time','engine_time','completed_engine_time')){
-                $number=$capture.$name
-                if(($number -isnot [int] -and $number -isnot [long] -and $number -isnot [double] -and $number -isnot [decimal]) -or [double]::IsNaN($number) -or [double]::IsInfinity($number) -or $number -lt 0){throw 'Aimed Lua engine clock invalid.'}
+                SampleNumber $capture.$name 0 1e12
             }
             if([Math]::Abs($capture.permit_engine_time-$luaPermits[0].engine_time) -gt 0.000001 -or $capture.engine_time -lt $capture.permit_engine_time -or $capture.completed_engine_time -lt $capture.engine_time -or $capture.completed_engine_time-$capture.engine_time -gt 0.25 -or $capture.completed_engine_time-$capture.permit_engine_time -gt 0.5){throw 'Aimed capture renewed or exceeded original Lua permit.'}
+            if($capture.schema -ne 1 -or $capture.run -cne $Session.Run -or $capture.arena -cne [string]$intent.arena_id -or
+                $capture.request -cne [string]$intent.request_id -or $capture.permit -cne [string]$intent.permit_id -or $capture.click -cne [string]$intent.sequence -or
+                $capture.action -ne $intent.action -or $capture.result -cne 'sampled' -or $capture.reason -cne 'none'){throw 'Aimed Lua sample differs from physical intent.'}
+            SampleNumber $capture.range 4.5 4.5;SampleNumber $capture.nearest_distance 0 $capture.range
+            Assert-MineComeAimedInteger $capture.occlusion 1 2
+            $norm=0.0
+            foreach($axis in @('x','y','z')){
+                SampleNumber $capture.origin.$axis -10000000 10000000;SampleNumber $capture.direction.$axis -1.00001 1.00001
+                $norm+=$capture.direction.$axis*$capture.direction.$axis
+            }
+            if([Math]::Abs($norm-1) -gt 0.00001 -or ($capture.occlusion -ne 2 -and $capture.nearest_distance -ne 0)){throw 'Aimed captured ray or obstruction invalid.'}
+            if($rejections.Count){
+                # These exact pre-wire refusals consume the observed intent but
+                # cannot be treated as Minecraft requests, results or actions.
+                if($outcome.run -cne $Session.Run -or $outcome.permit_id -ne $intent.permit_id -or
+                    $outcome.reason -cnotin @('original_permit_expired','unknown_or_consumed_permit')){throw 'Aimed native rejection identity or reason cannot certify a refusal.'}
+                if(@($audit.requests|Where-Object{$_.request_id -eq $intent.request_id}).Count -or
+                    @($requests|Where-Object{$_.wire.requestId -eq $intent.request_id}).Count){throw 'Aimed rejected intent also claims a wire or guest request.'}
+                $nativeRefused++
+                $dispositions.Add([pscustomobject]@{request_id=$intent.request_id;permit_id=$intent.permit_id;action=$intent.action;outcome='native_rejected';reason=$outcome.reason;guest_result=$null})
+                continue
+            }
+            $dispatch=$outcome;$sent=$audit.requests[$sentIndex];$result=$audit.results[$sentIndex];$sentIndex++
+            if($dispatch.arena -ne $intent.arena_id -or $dispatch.permit_id -ne $intent.permit_id -or $dispatch.click -ne $intent.sequence -or $dispatch.action -ne $intent.action -or
+                $sent.request_id -ne $intent.request_id -or $sent.permit_id -ne $intent.permit_id -or $result.request_id -ne $intent.request_id){throw 'Aimed dispatched physical/canonical identities differ.'}
+            $guestMatches=@($requests|Where-Object{$_.wire.requestId -eq $intent.request_id})
+            if($guestMatches.Count -eq 0){
+                # AimedSession.receive can return AIM_STALE before the request
+                # reaches the adapter. Require the actual canonical reply plus
+                # its independent polled action; never synthesize adapter proof.
+                $polledStale=@($native.results|Where-Object{$_.request_id -eq $intent.request_id})
+                if($result.result -ne 3 -or $polledStale.Count -ne 1 -or $polledStale[0].arena -ne $intent.arena_id -or
+                    $polledStale[0].action -ne $intent.action -or $polledStale[0].result -ne 3 -or $polledStale[0].line -le $dispatch.line -or
+                    $polledStale[0].line -ge $native.input_cancels[0].line){throw 'Aimed wire request lacks adapter proof or an exact guest protocol stale refusal.'}
+                $protocolRefused++
+                $dispositions.Add([pscustomobject]@{request_id=$intent.request_id;permit_id=$intent.permit_id;action=$intent.action;outcome='guest_protocol_refused';reason='stale';guest_result=3})
+                continue
+            }
+            if($guestMatches.Count -ne 1 -or $requests[$guestIndex].wire.requestId -ne $intent.request_id){throw 'Aimed adapter request order or identity differs.'}
+            $request=$requests[$guestIndex];$wire=$request.wire;$guestIndex++
             if($wire.requestId -ne $intent.request_id -or $wire.permitId -ne $intent.permit_id -or $wire.arenaId -ne $intent.arena_id -or $wire.action -ne $intent.action -or
                $dispatch.request_id -ne $wire.requestId -or $dispatch.permit_id -ne $wire.permitId -or $dispatch.arena -ne $wire.arenaId -or $dispatch.click -ne $intent.sequence -or $dispatch.action -ne $wire.action -or
                $sent.request_id -ne $wire.requestId -or $sent.permit_id -ne $wire.permitId -or $result.request_id -ne $wire.requestId -or $result.result -ne $request.result){throw 'Aimed physical/native/wire/result identities differ.'}
             if($capture.schema -ne 1 -or $capture.run -cne $Session.Run -or $capture.arena -cne [string]$wire.arenaId -or $capture.request -cne [string]$wire.requestId -or $capture.permit -cne [string]$wire.permitId -or $capture.click -cne [string]$intent.sequence -or $capture.action -ne $wire.action -or $capture.result -cne 'sampled' -or $capture.occlusion -ne $wire.occlusion -or $capture.range -ne $wire.range -or [Math]::Abs($capture.nearest_distance-$wire.nearestDistance) -gt 0.000001){throw 'Aimed Lua sample differs from guest wire request.'}
             foreach($axis in @('x','y','z')){if([Math]::Abs($capture.origin.$axis-$wire.origin.$axis) -gt 0.000001 -or [Math]::Abs($capture.direction.$axis-$wire.direction.$axis) -gt 0.00001){throw 'Aimed camera ray changed during relay.'}}
+            $dispositions.Add([pscustomobject]@{request_id=$intent.request_id;permit_id=$intent.permit_id;action=$intent.action;outcome='guest_adapter_result';reason=$null;guest_result=$request.result})
         }
+        if($guestIndex -ne $requests.Count -or $sentIndex -ne $audit.requests.Count){throw 'Unmatched aimed guest or canonical request.'}
         # Polled results may lose the last sample during disconnect; the canonical
         # wire journal is complete and authoritative. Any polled overlap must match.
         $polled=[Collections.Generic.HashSet[long]]::new()
         foreach($result in $native.results){
             if(-not $polled.Add($result.request_id)){throw 'Duplicate polled aimed result.'}
-            $matches=@($requests|Where-Object{$_.wire.requestId -eq $result.request_id})
-            if($matches.Count -ne 1 -or $result.arena -ne $offer.arenaId -or $result.action -ne $matches[0].wire.action -or $result.result -ne $matches[0].result){throw 'Polled aimed result differs from canonical guest result.'}
+            $matches=@($audit.results|Where-Object{$_.request_id -eq $result.request_id});$dispatches=@($native.dispatches|Where-Object{$_.request_id -eq $result.request_id})
+            if($matches.Count -ne 1 -or $dispatches.Count -ne 1 -or $result.arena -ne $offer.arenaId -or $result.action -ne $dispatches[0].action -or $result.result -ne $matches[0].result -or
+                $result.line -le $dispatches[0].line -or $result.line -ge $native.input_cancels[0].line){throw 'Polled aimed result differs from canonical guest result.'}
         }
         $confirmations=@($stone.confirmations)
-        if($native.begin_sessions.Count -ne 1 -or $native.cleanup_sessions.Count -ne 1 -or $native.begin_sessions[0] -ne $native.cleanup_sessions[0] -or $native.events.Count -ne $confirmations.Count -or $native.engine_acks.Count -ne $confirmations.Count){throw 'Aimed replica action/session counts differ.'}
-        $lastSequence=0L
+        $terminalEvents=@($native.events|Where-Object{$_.result -cin @('spawned','removed')})
+        $pendingEvents=@($native.events|Where-Object{$_.result -ceq 'cleanup_pending'})
+        if($native.begin_sessions.Count -ne 1 -or $native.cleanup_sessions.Count -ne 1 -or $native.begin_sessions[0] -ne $native.cleanup_sessions[0] -or
+            $terminalEvents.Count -ne $confirmations.Count -or $native.engine_acks.Count -ne $confirmations.Count -or
+            $terminalEvents.Count+$pendingEvents.Count -ne $native.events.Count){throw 'Aimed replica action/session counts differ.'}
+        $lastSequence=0L;$lastAckLine=0;$matchedPending=0
         for($i=0;$i -lt $confirmations.Count;$i++){
-            $confirmation=$confirmations[$i];$event=$native.events[$i];$ack=$native.engine_acks[$i]
+            $confirmation=$confirmations[$i];$event=$terminalEvents[$i];$ack=$native.engine_acks[$i]
             Assert-MineComeAimedInteger $event.schema 1 1;Assert-MineComeAimedInteger $event.sequence 1;Assert-MineComeAimedInteger $event.session 1
             Assert-MineComeAimedFlag $event.physics $false;Assert-MineComeAimedFlag $event.live_draw_verified $false
             $expected=if($confirmation.action -eq 1){'spawned'}else{'removed'}
             if($event.sequence -le $lastSequence -or $event.session -ne $native.begin_sessions[0] -or $event.operation -ne $confirmation.action -or $event.result -cne $expected -or $ack.session -ne $event.session -or $ack.sequence -ne $event.sequence -or $ack.result -cne $expected -or $event.journal_line -ge $ack.line){throw 'Aimed engine ACK lacks preceding same confirmed operation.'}
-            $lastSequence=$event.sequence
             foreach($axis in @('x','y','z')){Assert-MineComeAimedInteger $event.mc.$axis ([int]::MinValue) ([int]::MaxValue);if($event.mc.$axis -ne $confirmation.target.$axis){throw 'Aimed replica used another Minecraft cell.'}}
             $expectedPosition=@{x=$offer.kcdAnchor.x+$event.mc.x-$offer.minecraftAnchor.x;y=$offer.kcdAnchor.y-($event.mc.z-$offer.minecraftAnchor.z);z=$offer.kcdAnchor.z+$event.mc.y-$offer.minecraftAnchor.y}
             # Removed receipts legitimately report null position after entity deletion.
             if($confirmation.action -eq 1){foreach($axis in @('x','y','z')){if($null -eq $event.position -or [double]::IsNaN([double]$event.position.$axis) -or [Math]::Abs($event.position.$axis-$expectedPosition[$axis]) -gt 0.01){throw 'Aimed replica transform differs from agreed arena.'}}}
+            $pending=@($pendingEvents|Where-Object{$_.sequence -eq $event.sequence})
+            if($pending.Count -gt 1){throw 'Repeated aimed removal-pending receipt.'}
+            if($pending.Count){
+                $phase=$pending[0]
+                Assert-MineComeAimedInteger $phase.schema 1 1;Assert-MineComeAimedInteger $phase.session $event.session $event.session
+                Assert-MineComeAimedInteger $phase.sequence $event.sequence $event.sequence;Assert-MineComeAimedInteger $phase.operation 2 2
+                Assert-MineComeAimedFlag $phase.physics $false;Assert-MineComeAimedFlag $phase.live_draw_verified $false
+                if($confirmation.action -ne 2 -or $phase.event -cne 'remove' -or $phase.journal_line -le $lastAckLine -or $phase.journal_line -ge $event.journal_line){throw 'Aimed pending removal lacks a later matching terminal removal.'}
+                foreach($axis in @('x','y','z')){
+                    Assert-MineComeAimedInteger $phase.mc.$axis $event.mc.$axis $event.mc.$axis
+                    SampleNumber $phase.position.$axis -10000000 10000000
+                    if([Math]::Abs($phase.position.$axis-$expectedPosition[$axis]) -gt 0.01){throw 'Aimed pending removal position differs from agreed arena.'}
+                }
+                $matchedPending++
+            }
+            $lastSequence=$event.sequence;$lastAckLine=$ack.line
         }
+        if($matchedPending -ne $pendingEvents.Count){throw 'Unmatched aimed pending removal receipt.'}
         if(-not $native.summary -or $native.summary.rejected -ne 0 -or $native.summary.placed -ne $stone.confirmed_places -or $native.summary.removed -ne $stone.confirmed_breaks){throw 'Aimed engine summary differs from confirmed guest actions.'}
+        $Session.InputDisposition=[pscustomobject]@{captured_intents=$intents.Count;native_refused=$nativeRefused;wire_requests=$sentIndex;guest_protocol_refused=$protocolRefused;guest_adapter_results=$guestIndex;confirmed_network_actions=$stone.confirmed_network_actions;removal_pending_receipts=$matchedPending;outcomes=@($dispositions.ToArray())}
         $Session.GuestWorldCleanupComplete=$stone.guest_world_cleanup_complete;$Session.EngineMirroringVerified=$true
     }catch{$Session.GuestVerificationFailure=$_.Exception.Message;throw}
     finally{if(Test-Path -LiteralPath $Session.Home){Get-MineComeHudAimedRelayEvidence $Session|ConvertTo-Json -Depth 32|Set-Content -LiteralPath (Join-Path $Session.Home 'relay-result.json') -Encoding utf8NoBOM}}
@@ -366,7 +450,7 @@ function Get-MineComeHudAimedRelayEvidence($Session) {
         native_hash=$(if($Session.Preflight){$Session.Preflight.NativeHash}else{$null});lua_probe=$Session.Probe;aim_probes=$Session.AimProbes
         ready=$Session.Ready;exit_observed=$Session.ExitObserved;exit_code=$Session.ExitCode;cleanup_verified=$Session.CleanupVerified;input_cleanup_verified=$Session.InputCleanupVerified;guest_world_cleanup_complete=$Session.GuestWorldCleanupComplete
         engine_mirroring_verified=$Session.EngineMirroringVerified;transport_auth_verified=$Session.TransportAuthVerified;visual_verified=$false;physical_block_input_verified=$false
-        intents=@($Session.Intents.ToArray());native=$Session.Native;receipt_audit=$Session.ReceiptAudit;receipt_audit_failure=$Session.ReceiptAuditFailure;failure=$Session.Failure;cleanup_failure=$Session.CleanupFailure;guest_verification_failure=$Session.GuestVerificationFailure
+        intents=@($Session.Intents.ToArray());input_disposition=$Session.InputDisposition;native=$Session.Native;receipt_audit=$Session.ReceiptAudit;receipt_audit_failure=$Session.ReceiptAuditFailure;failure=$Session.Failure;cleanup_failure=$Session.CleanupFailure;guest_verification_failure=$Session.GuestVerificationFailure
         kcd_launched=$false;kcd_stopped=$false;other_processes_stopped=$false;credentials_recorded=$false
     }
 }

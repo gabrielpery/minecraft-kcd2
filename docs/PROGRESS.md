@@ -1,5 +1,40 @@
 # MineCome progress — 2026-10-20
 
+**One live aimed break confirmed; responsiveness remains unfinished.** Run
+`67b5fd8e70bc46ed97fc8f52d999489b` records physical click 6, its original permit 83,
+the same-callback KCD camera ray, native `AIM_REQUEST`, a confirmed Minecraft
+client/server break, the matching block event and KCD removal acknowledgement.
+The user saw the stone disappear after trying several spots. There were seven
+physical clicks: three native permit-expiry refusals, two unknown/consumed-permit
+refusals, one guest transport stale refusal, and one confirmed break. No hitbox
+change follows from these refusals: most never reached Minecraft selection.
+An analytical check of the saved rays against the logged engine cube bounds
+also finds that the first expired ray and the successful sixth ray intersect
+that same cube. This calculation is not a substitute for Minecraft's raycast.
+
+The guest reports `input_completed`; Java and native exit normally, and replica
+cleanup, independent input-end acknowledgement and frame-cap restoration pass.
+The renderer closes on foreground loss about 10.5 seconds after F8, so this is
+not a full 30-second stability result. The original controller receipt remains
+failed because its validator assumed every captured intent reached the guest.
+The repaired validator passes 124 checks and a read-only replay of this run,
+separating five native refusals and one transport stale reply from the actual
+adapter action. An intermediate `cleanup_pending` receipt must match the exact
+later removal session, sequence and cell; it is not a second action. Both earlier
+zero-action runs remain rejected and original receipt hashes are unchanged.
+Replay evidence is
+`runtime/evidence/aimed-outcome-replay-20261020-e22930bbe4a340f9828d8322d8c1985f/verification.json`.
+
+The lower-latency native path is now built and independently reviewed. It parses
+only complete critical records through the existing bounded, end-anchored
+parsers, processes each once, and retains the original age/reset history of
+incomplete fragments. Aimed log polling runs every 5 ms; pose requests remain
+at least 50 ms after completion of the previous request. Healthy endpoint/world
+guards and original permit expiry remain intact. All three tools HTTP integration
+suites pass, including a split closing brace, dispatch before any later newline,
+and no replay when the separator finally arrives. Live first-click responsiveness
+still needs confirmation.
+
 **First revision 4 live attempt: click capture passed; aimed break not verified.**
 Run `0565b12d8af64ad7980a7999b870e844` admitted one physical break intent and
 its KCD camera sample without the previous origin/capture rejection. The user

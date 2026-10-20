@@ -307,7 +307,7 @@ peer is permitted to create a Minecraft block state directly.
    when the first block event happens to arrive. A translated display island
    is not global terrain/player calibration, so the `CALIBRATED` pose bit stays
    clear until that separate measurement is complete.
-3. **Implemented; live KCD verification pending:** capture the camera origin/forward and nearest
+3. **Implemented; one live aimed break verified:** capture the camera origin/forward and nearest
    physical host obstruction in the same Lua aim-intent call, tied to the original
    click/request and arena ID. The implemented request carries the immutable ray,
    obstruction availability and distance plus its one-use permit ID. Do not combine
@@ -361,7 +361,11 @@ does not replace Minecraft selection of those stones.
 
 The bounded controller now loads the Lua modules, forwards physical clicks with
 their original acknowledged permits, and validates the separate aimed HUD proof.
-The latest KCD run did not admit an aimed request; fixes still need a live test.
+KCD run `67b5fd8e70bc46ed97fc8f52d999489b` confirms one physical aimed break
+through Minecraft client/server state and the matching engine removal. Earlier
+clicks were mostly refused before selection because their permits expired.
+The lower-latency log reader passes HTTP integration tests; first-click
+responsiveness still needs live verification.
 Centre-ray alignment on several block faces while turning, and any later movement
 support, remain unverified. Standalone Minecraft selection and
 transport checks do not prove host camera timing, eye/feet alignment or KCD gameplay.

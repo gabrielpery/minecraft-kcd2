@@ -15,7 +15,8 @@ const token='b'.repeat(64);fs.writeFileSync(path.join(root,'config','bridge.toke
 const gameLog=path.join(root,'fixture-kcd.log');fs.writeFileSync(gameLog,'Synthetic aimed fixture. No live KCD proof.\n');
 const stopFile=path.join(root,'stop.request');
 const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
-const log=(marker,value)=>fs.appendFileSync(gameLog,`\r\n${marker} ${JSON.stringify(value)}`);
+let quietLog=false;
+const log=(marker,value)=>{if(!quietLog)fs.appendFileSync(gameLog,`\r\n${marker} ${JSON.stringify(value)}`);};
 const commands=[],owned=new Map(),installations=new Map();
 let beginCount=0,bootstrapAckSent=false,refusePermitAck=false,session=0,lastAcknowledgedPermit='0';
 const started=performance.now();
@@ -91,10 +92,11 @@ async function newestPermit(excluded='0'){
   await waitFor(()=>readyPermits().some(p=>BigInt(p.permit)>BigInt(excluded)&&Date.now()-p.utc<100),'fresh acknowledged permit');
   return readyPermits().filter(p=>BigInt(p.permit)>BigInt(excluded)&&Date.now()-p.utc<150).at(-1);
 }
-function capture(permit,click,action=2,overrides={}){
+function capture(permit,click,action=2,overrides={},cutTailBytes=0){
   const installed=installations.get(permit.permit);assert.notEqual(installed,undefined);
   const value={schema:1,run,arena:'1',request:String(click),permit:permit.permit,click:String(click),action,result:'sampled',reason:'none',permit_engine_time:installed,engine_time:Math.fround(installed+.1),completed_engine_time:Math.fround(installed+.11),origin:{x:100,y:200,z:51.7},direction:{x:1,y:0,z:0},range:4.5,occlusion:1,nearest_distance:0,...overrides};
-  log('[MineComeAimInput]',value);return value;
+  const text=`\r\n[MineComeAimInput] ${JSON.stringify(value)}`;
+  fs.appendFileSync(gameLog,cutTailBytes?text.slice(0,-cutTailBytes):text);return value;
 }
 try{
   await waitFor(()=>output.includes('Official tools console binding verified'),'adapter startup');
@@ -127,7 +129,27 @@ try{
   await waitFor(()=>output.includes('reason=unavailable_or_malformed_sample'),'unavailable sample refused');
   assert.ok(output.includes('"reason":"ray_unavailable"'),'bounded original refusal evidence preserved');
   const firstUsable=await newestPermit(first.permit);
-  capture(firstUsable,1);await waitFor(()=>requests.length===1,'physical captured intent dispatch');
+  // Preserve the engine's prefix-newline format but suppress all later
+  // separators. A valid critical record must dispatch before another record is
+  // written, while its partial JSON prefix must never be treated as complete.
+  quietLog=true;
+  const partialCapture=capture(firstUsable,1,2,{},1);
+  const incompleteBytes=fs.statSync(gameLog).size;
+  const sampleCalls=()=>commands.filter(c=>c==='#MineCome.SamplePose()').length;
+  const samplesBeforePartial=sampleCalls(),malformedBefore=(output.match(/reason=unavailable_or_malformed_sample/g)||[]).length;
+  await waitFor(()=>sampleCalls()>samplesBeforePartial,'poll during incomplete critical tail',250);
+  await delay(20);
+  assert.equal(requests.length,0,'incomplete critical JSON must not dispatch');
+  assert.equal((output.match(/reason=unavailable_or_malformed_sample/g)||[]).length,malformedBefore,'partial critical tail must wait for completion');
+  assert.equal(fs.statSync(gameLog).size,incompleteBytes,'fixture must not supply a newline while partial');
+  fs.appendFileSync(gameLog,JSON.stringify(partialCapture).slice(-1));
+  await waitFor(()=>requests.length===1,'complete critical tail dispatch without later newline',250);
+  assert.equal(fs.statSync(gameLog).size,incompleteBytes+1,'tail dispatch must precede any later log separator');
+  const replaysBeforeSeparator=(output.match(/reason=replayed_intent/g)||[]).length;
+  quietLog=false;
+  await delay(70);
+  assert.equal(requests.length,1,'later newline must not replay the already consumed complete tail');
+  assert.equal((output.match(/reason=replayed_intent/g)||[]).length,replaysBeforeSeparator,'later newline must not reparse the consumed tail as a refused replay');
   assert.deepEqual(requests[0],{arena:1n,id:1n,permit:BigInt(firstUsable.permit),action:2,occlusion:1,origin:[100,200,51.7]});
   capture(firstUsable,1);await waitFor(()=>output.includes('reason=replayed_intent'),'duplicate click rejected');assert.equal(requests.length,1);
   result(1,2);await waitFor(()=>output.includes('AIM_INPUT_RESULT'),'independent Minecraft result');assert.equal(owned.size,1,'result is not an engine removal');

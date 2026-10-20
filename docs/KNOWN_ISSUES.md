@@ -14,8 +14,9 @@ Minecraft aiming passes isolated automatic tests, including an aimed break from
 the native C++ host through the new optional protocol. That host supplies synthetic
 coordinates. The optional KCD relay, Lua intent capture, permit selector and aimed
 HUD guest are connected through an explicit bounded controller. The actual HUD
-adapter also passes an automatic Minecraft run with a synthetic host. They still
-need an integrated KCD crosshair test. Continuous shared movement, general block rendering,
+adapter also passes an automatic Minecraft run with a synthetic host. One live
+KCD crosshair break now has client/server confirmation and engine removal, but
+earlier clicks expired and reliable aiming remains unfinished. Continuous shared movement, general block rendering,
 persistence, survival integration and multiplayer remain unfinished.
 
 The first integrated aimed attempt produced no confirmed action. Captured
@@ -24,7 +25,8 @@ stopped with a click-delivery failure and logged capture lock contention.
 The origin check now allows 0.25 metres while retaining Minecraft reach and
 current-host agreement checks; actual Minecraft passes 25 synthetic-host
 scenarios. Selective revision 4 repairs busy read-query handling and input
-recovery. These changes still require a fresh live KCD aimed test.
+recovery. The later run confirmed one aimed break after several refused clicks;
+the remaining capture/receipt delay is being repaired without extending expiry.
 
 Earlier failures below are retained for diagnosis. The latest verification status
 is in [progress and evidence](PROGRESS.md); successful bounded tests do not remove

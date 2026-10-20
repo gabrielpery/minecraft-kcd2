@@ -436,6 +436,9 @@ int wmain(int argc,wchar_t** argv) {
         if(aimed_stone) aimed_inputs.emplace(bridge,http,*stones,record,aimed_run);
         std::optional<minecome::protocol::Pose> current_world;
         std::string pending;
+        // A complete critical JSON record can precede KCD's next newline.
+        // Retain its exact bytes until that separator arrives; never replay it.
+        std::string processed_critical_tail;
         struct LoggedInput {
             minecome::protocol::StoneInputRequest request;
             std::uint64_t connection_generation{},reset_generation{};
@@ -468,29 +471,19 @@ int wmain(int argc,wchar_t** argv) {
             if(stones) stones->end(reason);
             record(std::string("World POSE invalidated; all validity flags cleared: ")+reason);
         };
-        while(Clock::now()<deadline&&(stop_file.empty()||!std::filesystem::exists(stop_file))) {
+        auto drain_game_log=[&] {
             const auto input_generation=bridge.drain_block_events(0);
-            try {
-                http.command("#MineCome.SamplePose()");
-                http_failures=0;
-            } catch(const std::exception& error) {
-                invalidate_world("official game HTTP endpoint unavailable");
-                if(++http_failures==1) record(std::string("Official HTTP temporarily unavailable: ")+error.what());
-                if(http_failures>=5) {
-                    record("Official HTTP recovery limit reached; shutting down bridge gracefully");
-                    break;
-                }
-                std::this_thread::sleep_for(200ms);
-                continue;
-            }
             const bool carried_partial=!pending.empty();
             pending+=new_log_bytes(game_log,offset);
             const auto input_log_read=Clock::now();
+            const auto after_read_generation=bridge.drain_block_events(0);
             const bool fresh_input_batch=input_log_read-last_input_log_read<=1s
                 &&input_generation.connection_generation==last_input_generation.connection_generation
-                &&input_generation.reset_generation==last_input_generation.reset_generation;
+                &&input_generation.reset_generation==last_input_generation.reset_generation
+                &&input_generation.connection_generation==after_read_generation.connection_generation
+                &&input_generation.reset_generation==after_read_generation.reset_generation;
             last_input_log_read=input_log_read;
-            last_input_generation=bridge.drain_block_events(0);
+            last_input_generation=after_read_generation;
             // KCD commonly writes a newline before the next record, leaving the
             // latest record unterminated. Taint belongs to that carried line,
             // not all future records in a buffer that may never become empty.
@@ -500,6 +493,14 @@ int wmain(int argc,wchar_t** argv) {
             while(true) {
                 const auto end=pending.find('\n');if(end==std::string::npos) break;
                 const auto line=pending.substr(0,end);pending.erase(0,end+1);
+                if(!processed_critical_tail.empty()) {
+                    if(line!=processed_critical_tail&&line!=processed_critical_tail+"\r") {
+                        invalidate_world("completed critical log record changed before separator");
+                        pending.clear();processed_critical_tail.clear();partial_input_stale=true;return;
+                    }
+                    processed_critical_tail.clear();
+                    line_input_stale=!fresh_input_batch;consumed_line=true;continue;
+                }
                 if(line.find("[MineComePing]")!=std::string::npos) record("KCD2_LOG "+line);
                 if(auto receipt=minecome::parse_stone_receipt(line)) {record("KCD2_LOG "+line);if(stones) stones->receipt(*receipt);}
                 if(aimed_inputs) {
@@ -540,12 +541,57 @@ int wmain(int argc,wchar_t** argv) {
                 line_input_stale=!fresh_input_batch;
                 consumed_line=true;
             }
-            if(pending.size()>8192) pending.clear();
+            if(!processed_critical_tail.empty()) {
+                if(pending!=processed_critical_tail&&pending!=processed_critical_tail+"\r") {
+                    invalidate_world("completed critical log tail changed before separator");
+                    pending.clear();processed_critical_tail.clear();partial_input_stale=true;return;
+                }
+            } else if(aimed_inputs&&!pending.empty()) {
+                // Only strict, bounded, end-anchored parsers can complete a tail.
+                // A marker or partially-written JSON object is not a record.
+                // Keep the carried line's first-read age/reset taint unchanged.
+                if(auto receipt=minecome::parse_aimed_lua_receipt(pending)) {
+                    record("KCD2_LOG "+pending);aimed_inputs->receipt(*receipt,!line_input_stale);
+                    processed_critical_tail=pending;
+                } else if(auto intent=minecome::parse_aimed_input_intent(pending)) {
+                    record("KCD2_LOG "+pending);aimed_inputs->intent(*intent,!line_input_stale);
+                    processed_critical_tail=pending;
+                }
+            }
+            if(pending.size()>8192) {pending.clear();processed_critical_tail.clear();}
             partial_input_stale=!pending.empty()&&line_input_stale;
             if(consumed_line||!carried_partial||pending.empty()) partial_input_received=input_log_read;
+        };
+        auto next_pose_request=Clock::now();
+        while(Clock::now()<deadline&&(stop_file.empty()||!std::filesystem::exists(stop_file))) {
+            // Read already-captured intent before another synchronous HTTP round
+            // trip, but only while the previous endpoint/world authority is fresh.
+            if(aimed_stone&&http_failures==0&&world_state_valid&&Clock::now()-last_world_sample<=500ms)
+                drain_game_log();
+            if(!aimed_stone||Clock::now()>=next_pose_request) {
+                try {
+                    http.command("#MineCome.SamplePose()");
+                    http_failures=0;
+                    // Faster log polling must not increase sampling HTTP rate.
+                    next_pose_request=Clock::now()+50ms;
+                } catch(const std::exception& error) {
+                    invalidate_world("official game HTTP endpoint unavailable");
+                    if(++http_failures==1) record(std::string("Official HTTP temporarily unavailable: ")+error.what());
+                    if(http_failures>=5) {
+                        record("Official HTTP recovery limit reached; shutting down bridge gracefully");
+                        break;
+                    }
+                    std::this_thread::sleep_for(200ms);
+                    continue;
+                }
+            }
+            drain_game_log();
             if(world_state_valid&&Clock::now()-last_world_sample>1s) invalidate_world("no fresh valid world sample for one second");
             if(stones) stones->update(current_world);
             if(aimed_inputs) aimed_inputs->update();
+            // Permit ACKs/captures written during those synchronous commands
+            // should not wait for another pose call or log separator.
+            if(aimed_stone) drain_game_log();
             while(!pending_inputs.empty()) {
                 const auto logged=pending_inputs.front();pending_inputs.pop_front();
                 const auto& input=logged.request;
@@ -583,7 +629,7 @@ int wmain(int argc,wchar_t** argv) {
                 catch(const std::exception& error) {record(std::string("In-game event acknowledgement unavailable: ")+error.what());}
                 acknowledged_events=events;
             }
-            std::this_thread::sleep_for(aimed_stone?50ms:200ms);
+            std::this_thread::sleep_for(aimed_stone?5ms:200ms);
         }
         pending_inputs.clear();
         if(aimed_inputs) aimed_inputs->end("relay shutting down");
@@ -599,6 +645,10 @@ int wmain(int argc,wchar_t** argv) {
                 while(true) {
                     const auto newline=pending.find('\n');if(newline==std::string::npos) break;
                     const auto line=pending.substr(0,newline);pending.erase(0,newline+1);
+                    if(!processed_critical_tail.empty()) {
+                        if(line!=processed_critical_tail&&line!=processed_critical_tail+"\r") record("Completed critical log record changed during cleanup");
+                        processed_critical_tail.clear();continue;
+                    }
                     if(auto receipt=minecome::parse_stone_receipt(line)) {record("KCD2_LOG "+line);stones->receipt(*receipt);}
                     if(aimed_inputs) if(auto receipt=minecome::parse_aimed_lua_receipt(line)) {record("KCD2_LOG "+line);aimed_inputs->receipt(*receipt,false);}
                 }

@@ -10,8 +10,8 @@ renderer bundle. It starts only the separate Minecraft client; no KCD launcher o
 renderer installation is part of this controller.
 
 Revision4 has been built, independently reviewed and installed unarmed on the
-development machine, with the previous runtime/add-on backed up. It has not yet
-been verified in a live KCD session. Existing revision3 artifacts and the earlier
+development machine, with the previous runtime/add-on backed up. A subsequent
+live session confirmed one aimed break but exposed unreliable timing. Existing revision3 artifacts and the earlier
 fixed-cell test evidence remain preserved.
 
 If preflight finds an expired arm from an earlier game process,
@@ -71,6 +71,20 @@ pre-dispatch reasons such as `original_permit_expired`.
 
 ## Latest verification and remaining live check
 
+Run `67b5fd8e70bc46ed97fc8f52d999489b` confirms physical request6/permit83 through
+the canonical socket journal, actual Minecraft client/server break, block event
+and engine removal acknowledgement. The user reported multiple clicks before
+disappearance. The other outcomes are native refusals (requests1–4 and7) and a
+guest transport stale refusal (request5), not confirmed actions. Original
+controller verification remains failed because it required every capture to
+produce an adapter request. The repaired validator passes 124 checks and a
+read-only replay of this evidence while preserving the original receipts.
+Earlier zero-action runs remain rejected. Native refusals, transport stale
+replies and confirmed adapter actions stay separate; any intermediate
+`cleanup_pending` receipt must match the later removal and acknowledgement.
+This establishes one aimed break, not reliable
+responsiveness or alignment on every block face.
+
 Revision4 run `0565b12d8af64ad7980a7999b870e844` admitted one physical click and
 captured ray, but native then reported `queued aim expired or reset` before
 writing any `AIM_REQUEST`. The user saw the stone disappear; the native ledger
@@ -86,6 +100,15 @@ Deterministic loopback regression verifies no write/result for an expired queued
 intent and successful processing of a later fresh request. Generation or stale
 pose authority still terminates. The bounded live validator reports any local
 drop explicitly and does not count it as a Minecraft action.
+
+KCD's latest log record can be complete JSON without a following newline. The
+aimed relay now processes such critical receipts immediately using its existing
+strict 4096-byte parsers. It retains the exact processed tail until the separator
+arrives, skips it once and invalidates changed suffixes. Incomplete fragments
+retain their original age and connection/reset history. Aimed log polling is
+5 ms; pose sampling remains at least 50 ms after the previous HTTP call
+completes. The simulated aimed, stone and interactive HTTP suites pass; this
+latency repair still needs a live responsiveness check.
 
 The saved KCD run `5334822edbd5464397d6131962ff576e` produced seven physical
 edges and four forwarded captures, but no `AIM_REQUEST` or `AIM_RESULT`.

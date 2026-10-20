@@ -25,14 +25,14 @@ The public repository contains source, build scripts and development procedures.
 | Minecraft stone in KCD2 | Actual Minecraft-derived stone appears and disappears in the official KCD2 development world after vanilla placement/breaking. |
 | Hotbar and Creative inventory | Minecraft's real UI is composited inside KCD2. Physical slot selection, inventory opening/closing, clicks, dragging and scrolling have passed live tests. |
 | Camera and block controls together | KCD camera look works outside inventory and stays still inside it. Right-click/place and left-click/break work in one fixed nearby cell during a bounded live session. |
-| Minecraft aiming | The standalone actual-Minecraft lab passes 25 targeting/cancellation scenarios. Separate labs pass aimed breaks through the native bridge and production HUD adapter, with client/server confirmation and cleanup. Host rays in these automatic labs are synthetic. The latest KCD aimed test produced no admitted aimed request; its repairs still need live verification. |
+| Minecraft aiming | One live KCD crosshair break reached Minecraft, received client/server confirmation, and removed the KCD replica. Earlier clicks expired, so responsiveness is still being repaired. The standalone actual-Minecraft lab also passes 25 targeting/cancellation scenarios with synthetic host rays. |
 | Movement groundwork | Separate labs verify Minecraft walking/jumping on sampled KCD ground, physical input forwarding, and a short KCD player-following test. These are not yet one continuous movement system. |
 
 Live checks above use the **official KCD2 1.5.5 development build**. The native
 **retail 1.5.6 route remains blocked** by its verified address-library/loader
 prerequisites. A successful development-world test does not establish retail support.
 
-General block rendering, live crosshair alignment, continuous shared movement,
+General block rendering, reliable aiming across block faces, continuous shared movement,
 world persistence, survival integration and multiplayer remain unfinished. KCD's
 own HUD and health systems still exist; selective widget replacement and showing
 KCD health in Minecraft's HUD are separate work. Current sessions are isolated,
