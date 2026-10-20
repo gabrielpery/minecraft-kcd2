@@ -305,6 +305,19 @@ void channels() {
     recovery_peer.write(0);recovery.poll();check(!recovery.ready()&&!recovery.arm(),"fresh ACK never rearms closed ownership");
     Sleep(270);check(recovery.poll()&&recovery.status().state==2,"closed rendezvous may await delayed ACK without ownership");
     recovery_peer.write(0,2);check(recovery.poll()&&recovery.status().ack.state==2,"delayed real closed acknowledgement observed");
+    auto movement_id=identity(7);ui::Writer movement;check(movement.create(movement_id,ui::Profile::movement),"explicit movement writer");
+    Guest movement_peer(movement_id);movement_peer.write(0);check(movement.poll()&&movement.arm(),"movement guest readiness arms");
+    check(!std::memcmp(movement_peer.bytes,"MCHUDI02",8)&&movement_peer.bytes[8]==2,"actual movement mapping explicit v2");
+    ui::Event forward{st::utc_ms(),ui::Kind::key_down,0x57};
+    check(movement.append(std::span<const ui::Event>(&forward,1))&&movement.status().sequence==1,"actual v2 movement down published");
+    movement_peer.write(1);movement.poll();forward.kind=ui::Kind::key_up;forward.captured=st::utc_ms();
+    check(movement.append(std::span<const ui::Event>(&forward,1))&&movement.status().sequence==2,"actual v2 movement up published");
+    movement.finish("test_complete");movement_peer.write(2,2);check(movement.poll()&&movement.status().ack.state==2,"movement closed acknowledgement");
+    auto legacy_id=identity(8);ui::Writer legacy;check(legacy.create(legacy_id),"v1 regression writer");
+    Guest legacy_peer(legacy_id);legacy_peer.write(0);legacy.poll();legacy.arm();
+    forward.captured=st::utc_ms();
+    check(!legacy.append(std::span<const ui::Event>(&forward,1))&&legacy.reason()=="invalid_or_stale_event","v1 writer rejects movement even on valid fresh session");
+    ui::Writer invalid;check(!invalid.create(identity(9),static_cast<ui::Profile>(3))&&invalid.reason()=="input_profile","unsupported writer profile refused");
 }
 }
 int main() {try{contract();background_receipts();offscreen_receipts();pointer_receipts();channels();std::cout<<"HUD_INPUT_TESTS checks="<<checks<<" PASS\n";return 0;}catch(const std::exception&e){std::cerr<<"HUD_INPUT_TESTS FAIL "<<checks<<" "<<e.what()<<'\n';return 1;}}

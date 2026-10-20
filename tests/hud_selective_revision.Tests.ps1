@@ -6,6 +6,7 @@ $root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 . (Join-Path $root 'scripts/HudMouseProfile.ps1')
 $script:checks=0
 $AimedStone=$false
+$PhysicalMovement=$false
 function Check([bool]$Value,[string]$Message){$script:checks++;if(-not $Value){throw $Message}}
 function Reject([scriptblock]$Action,[string]$Message){$failed=$false;try{& $Action}catch{$failed=$true};Check $failed $Message}
 function Parse-Script([string]$Name){
@@ -138,8 +139,10 @@ foreach($name in @('Update-HudCompositor','Disable-HudCompositor','Arm-HudStream
     $guards=@()
     foreach($statement in $asts[$name].EndBlock.Statements){
         if($statement -is [Management.Automation.Language.IfStatementAst]){$guards+=$statement.Extent.Text}
+        elseif($statement -is [Management.Automation.Language.AssignmentStatementAst] -and $statement.Left.Extent.Text -ceq '$inputProtocol'){continue}
         elseif($guards.Count){break}
     }
+    Check ($guards.Count -eq $(if($name -eq 'Arm-HudStream'){8}else{4})) 'All pure profile prerequisites isolated'
     $guard=[scriptblock]::Create($guards -join "`n")
     foreach($revision in @(2,3,4)){
         foreach($selective in @($false,$true)){

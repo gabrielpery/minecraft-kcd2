@@ -28,6 +28,14 @@ The public repository contains source, build scripts and development procedures.
 | Minecraft aiming | After fixing KCD's default stone rotation, a live right-click places on the original block's top face and the next two clicks break both blocks, with matching Minecraft/KCD records and user confirmation. The standalone actual-Minecraft lab passes 28 targeting/control scenarios with synthetic host rays, including hotbar changes while an action finishes. |
 | Movement groundwork | In an automatic two-game test, KCD follows walking/jumping from the Minecraft HUD world over sampled KCD ground, then returns the player to the starting position. The same save completes its HUD/inventory sequence. This bounded scripted mode uses a standalone HUD receiver; continuous shared movement remains unfinished. |
 
+A separate [physical HUD walking lab](kcd2/MOVEMENT-LAB.md#physical-walking-with-the-hud-in-kcd)
+is implemented, compiled and checked automatically. The latest live attempt
+records actual Minecraft walking, one applied KCD movement and restoration,
+but camera freshness still ends the test before a complete pass. It adds
+WASD/Space to the HUD session using sampled ground and fresh KCD camera direction.
+Movement lasts at most six seconds, including neutral settling, inside the
+30-second HUD check. The next work is reducing camera delivery delay.
+
 Live checks above use the **official KCD2 1.5.5 development build**. The native
 **retail 1.5.6 route remains blocked** by its verified address-library/loader
 prerequisites. A successful development-world test does not establish retail support.
@@ -85,6 +93,7 @@ before deployment, and do not load newer retail saves in the older development g
 - [HUD compositor and physical controls](docs/research/HUD-COMPOSITOR.md)
 - [Automatic movement and HUD lab](minecraft/README.md#standalone-hud-ground-movement-lab)
 - [HUD-world movement connected to KCD](minecraft/README.md#hud-world-coupled-movement-test)
+- [Physical walking with the HUD in KCD](kcd2/MOVEMENT-LAB.md#physical-walking-with-the-hud-in-kcd)
 - [Sampled-ground movement labs](kcd2/MOVEMENT-LAB.md)
 - [Current progress](docs/PROGRESS.md) and [known issues](docs/KNOWN_ISSUES.md)
 

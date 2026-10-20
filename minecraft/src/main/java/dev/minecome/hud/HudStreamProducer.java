@@ -41,6 +41,7 @@ public final class HudStreamProducer implements AutoCloseable {
     private final boolean offscreenPresentation,offscreenTrial;
     private final HudGroundMovementMode.Mode groundMovementMode;
     private final boolean standalone;
+    private final boolean physicalMovement;
     private final AtomicReference<Frame> latest=new AtomicReference<>();
     private final AtomicReference<String> terminal=new AtomicReference<>(),failure=new AtomicReference<>();
     private final AtomicReference<JsonObject> finalEvidence=new AtomicReference<>();
@@ -65,6 +66,8 @@ public final class HudStreamProducer implements AutoCloseable {
         if(inputMode<0 || inputMode>2)throw new IllegalArgumentException("Invalid input mode");
         this.root=root.normalize();this.directory=directory.normalize();this.identity=identity;this.save=save;this.genuine=genuine;this.inputMode=inputMode;
         groundMovementMode=HudGroundMovementMode.mode(System.getProperties());
+        physicalMovement=HudPhysicalMovementMode.require(System.getProperties());
+        if(physicalMovement && (!genuine || inputMode!=1))throw new IllegalArgumentException("Physical movement requires genuine live HUD input");
         standalone=Boolean.getBoolean("minecome.hudStreamStandalone");
         if(groundMovementMode!=HudGroundMovementMode.Mode.NONE && (!genuine || inputMode!=0))throw new IllegalArgumentException("Ground movement requires genuine standalone HUD pixels");
         liveMouse=Boolean.getBoolean("minecome.hudStreamLiveMouse");HudMousePolicy.enabled(inputMode!=0,inputMode==2,liveMouse);
@@ -144,7 +147,8 @@ public final class HudStreamProducer implements AutoCloseable {
             r.addProperty(groundMovementMode==HudGroundMovementMode.Mode.FIXTURE?"ui_ground_movement_fixture":"ui_ground_movement_coupled",true);
             r.addProperty("standalone",standalone);
         }
-        if(inputMode!=0){r.addProperty("ui_input_protocol",1);r.addProperty("ui_input_live_mouse",liveMouse);r.addProperty("ui_input_fixture",inputMode==2);r.addProperty("ui_input_delay_fixture",inputDelayFixture);r.addProperty("ui_input_pointer_fixture",inputPointerFixture);r.addProperty("ui_input_stone_bridge",stoneBridge);r.addProperty("ui_input_stone_fixture",stoneFixture);r.addProperty("ui_input_stone_live",stoneLive);r.addProperty("ui_input_aimed_stone_bridge",aimedStone);r.addProperty("ui_input_background_trial",backgroundTrial);r.addProperty("ui_input_offscreen_presentation",offscreenPresentation);r.addProperty("ui_input_offscreen_trial",offscreenTrial);}return r;
+        if(physicalMovement)r.addProperty("ui_input_physical_movement",true);
+        if(inputMode!=0){r.addProperty("ui_input_protocol",physicalMovement?2:1);r.addProperty("ui_input_live_mouse",liveMouse);r.addProperty("ui_input_fixture",inputMode==2);r.addProperty("ui_input_delay_fixture",inputDelayFixture);r.addProperty("ui_input_pointer_fixture",inputPointerFixture);r.addProperty("ui_input_stone_bridge",stoneBridge);r.addProperty("ui_input_stone_fixture",stoneFixture);r.addProperty("ui_input_stone_live",stoneLive);r.addProperty("ui_input_aimed_stone_bridge",aimedStone);r.addProperty("ui_input_background_trial",backgroundTrial);r.addProperty("ui_input_offscreen_presentation",offscreenPresentation);r.addProperty("ui_input_offscreen_trial",offscreenTrial);}return r;
     }
     private void run() {
         Kernel32 api=null;WinNT.HANDLE mapping=null,mutex=null;Pointer view=null;

@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "kind": "minecome_hud_physical_movement_profile_v1",
+  "ui_input_protocol": 2,
+  "mouse_capture_api": 2,
+  "runtime_sha256": "78ea20f737010753b4212f1362ac97c6a5e15774dddf850d5aada4ba7486b91b",
+  "addon_sha256": "869fc9a8c3d56cb2db16974184ccfffee7548d1f97366a7e3074f75d5520e657",
+  "shader_sha256": "ba09f039fbcd616200456f7f79a1fca913bbbe3e8bf672576dc5098c1c25d0b6",
+  "build_receipt_sha256": "ef46480a70f2653192bf4739f0ffbcd8989bc60aaa82c09d3a200e20349f882c"
+}

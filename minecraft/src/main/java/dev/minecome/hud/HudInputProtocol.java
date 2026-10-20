@@ -19,11 +19,14 @@ public final class HudInputProtocol {
     public record Snapshot(long lastSequence,long heartbeat,int hostState,List<Event> events) {}
     private HudInputProtocol(){}
     public static void validateEvent(Event e,long now,boolean fresh) {
+        validateEvent(e,now,fresh,false);
+    }
+    public static void validateEvent(Event e,long now,boolean fresh,boolean movement) {
         if(e.sequence()<=0 || e.capturedUtcMs()<=0 || e.kind()<1 || e.kind()>6 || !Float.isFinite(e.x()) || !Float.isFinite(e.y()) || e.x()<0 || e.x()>1 || e.y()<0 || e.y()>1)
             throw new IllegalArgumentException("Invalid input record");
         if(fresh && (e.capturedUtcMs()<now-250 || e.capturedUtcMs()>now+100))throw new IllegalArgumentException("Stale/future input event");
         if(e.kind()<=2) {
-            if(!((e.code()>=0x31 && e.code()<=0x39) || e.code()==0x45 || e.code()==0x1b) || e.x()!=0 || e.y()!=0 || e.value()!=0)
+            if(!((e.code()>=0x31 && e.code()<=0x39) || e.code()==0x45 || e.code()==0x1b || (movement && HudMovementKeys.movement(e.code()))) || e.x()!=0 || e.y()!=0 || e.value()!=0)
                 throw new IllegalArgumentException("Invalid input key");
         }else if(e.kind()==3) {
             if(e.code()!=0 || e.value()!=0)throw new IllegalArgumentException("Invalid pointer move");
@@ -32,10 +35,13 @@ public final class HudInputProtocol {
         }else if(e.code()!=0 || e.value()==0 || e.value()< -16 || e.value()>16)throw new IllegalArgumentException("Invalid pointer wheel");
     }
     public static Snapshot decode(byte[] bytes,Identity id,long lastFetched,long now,int previousHostState) {
+        return decode(bytes,id,lastFetched,now,previousHostState,false);
+    }
+    public static Snapshot decode(byte[] bytes,Identity id,long lastFetched,long now,int previousHostState,boolean movement) {
         if(bytes.length!=MAPPING_BYTES || lastFetched<0 || previousHostState<0 || previousHostState>2 || now<=250 || now>Long.MAX_VALUE-180_000 || now>=id.expires())
             throw new IllegalArgumentException("Invalid input mapping/time/lease");
         var b=ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
-        if(!new String(bytes,0,8,StandardCharsets.US_ASCII).equals("MCHUDI01") || b.getInt(8)!=1 || b.getInt(12)!=MAPPING_BYTES ||
+        if(!new String(bytes,0,8,StandardCharsets.US_ASCII).equals(movement?"MCHUDI02":"MCHUDI01") || b.getInt(8)!=(movement?2:1) || b.getInt(12)!=MAPPING_BYTES ||
                 !new String(bytes,16,32,StandardCharsets.US_ASCII).equals(id.run()) || b.getInt(48)!=id.producerPid() || b.getInt(52)!=id.targetPid() ||
                 b.getLong(56)!=id.producerStart() || b.getLong(64)!=id.targetStart() || b.getLong(72)!=id.expires())throw new IllegalArgumentException("Input mapping identity differs");
         for(int i=104;i<128;i++)if(bytes[i]!=0)throw new IllegalArgumentException("Nonzero host reserved bytes");
@@ -56,7 +62,7 @@ public final class HudInputProtocol {
             long seq=first+i;int at=HEADER_BYTES+(int)((seq-1)%CAPACITY)*RECORD_BYTES;
             var event=new Event(b.getLong(at),b.getLong(at+8),b.getInt(at+16),b.getInt(at+20),b.getFloat(at+24),b.getFloat(at+28),b.getInt(at+32));
             if(event.sequence()!=seq || b.getInt(at+36)!=0)throw new IllegalArgumentException("Missing/replaced input sequence or reserved record");
-            validateEvent(event,now,state!=2 && seq>lastFetched);
+            validateEvent(event,now,state!=2 && seq>lastFetched,movement);
             if(state==1 && seq>lastFetched)events.add(event);
         }
         return new Snapshot(last,heartbeat,state,List.copyOf(events));

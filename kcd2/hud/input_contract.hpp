@@ -8,6 +8,7 @@ namespace minecome::hud::input {
 inline constexpr std::size_t header_bytes=256, ring_count=64, record_bytes=40, mapping_bytes=2816;
 inline constexpr std::uint64_t fresh_ms=250, activation_ms=30000;
 using Identity=stream::Identity;
+enum class Profile : std::uint32_t { ui=1, movement=2 };
 enum class Kind : std::uint32_t { key_down=1,key_up=2,move=3,button_down=4,button_up=5,wheel=6 };
 struct Event {
     std::uint64_t captured=0;
@@ -20,11 +21,11 @@ struct Ack {
     std::uint64_t sequence=0,utc=0;
     std::uint32_t state=0,screen=0,selected=0;
 };
-bool valid_event(const Event &event,std::uint64_t now) noexcept;
+bool valid_event(const Event &event,std::uint64_t now,Profile profile=Profile::ui) noexcept;
 bool fresh(std::uint64_t captured,std::uint64_t now) noexcept;
-bool valid_key(std::uint32_t code) noexcept;
+bool valid_key(std::uint32_t code,Profile profile=Profile::ui) noexcept;
 void encode_host(std::span<std::uint8_t,128> bytes,const Identity &id,std::uint64_t sequence,
-                 std::uint64_t utc,std::uint32_t state);
+                 std::uint64_t utc,std::uint32_t state,Profile profile=Profile::ui);
 void encode_event(std::span<std::uint8_t,40> bytes,const Event &event,std::uint64_t sequence);
 bool decode_ack(std::span<const std::uint8_t,128> bytes,std::uint64_t last,std::uint64_t now,
                 const Ack &previous,Ack &ack,std::string &reason,bool require_fresh=true);

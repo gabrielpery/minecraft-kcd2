@@ -80,12 +80,15 @@ foreach($ast in @($arm,$update,$disable)){
 }
 # Execute only the initial, pure guards. Stop before the first dot-source or
 # assignment to a project path, so no helper discovery or game access occurs.
+# The pure protocol selection between mode guards is deliberately not executed.
 $guardText=@()
 foreach($statement in $arm.EndBlock.Statements){
     if($statement -is [Management.Automation.Language.IfStatementAst]){$guardText+=$statement.Extent.Text}
+    elseif($statement -is [Management.Automation.Language.AssignmentStatementAst] -and $statement.Left.Extent.Text -ceq '$inputProtocol'){continue}
     elseif($guardText.Count){break}
 }
-Check ($guardText.Count -eq 7) 'All arm configuration guards isolated'
+Check ($guardText.Count -eq 8) 'All arm configuration guards isolated'
+$PhysicalMovement=$false
 $SelectiveMouse=$false
 $SelectiveRevision=1
 $guards=[scriptblock]::Create($guardText -join "`n")
@@ -100,10 +103,10 @@ foreach($inputEnabled in @($false,$true)){
         }
     }
 }
-$updateGuard=$update.EndBlock.Statements|Where-Object{$_ -is [Management.Automation.Language.IfStatementAst]}|Select-Object -First 1
+$updateGuard=$update.EndBlock.Statements|Where-Object{$_ -is [Management.Automation.Language.IfStatementAst] -and $_.Extent.Text.StartsWith('if($WorldClicks ')}|Select-Object -First 1
 $WorldClicks=$true;$LiveMouse=$false;Reject {& ([scriptblock]::Create($updateGuard.Extent.Text))} 'World update accepted without mouse mode'
 $LiveMouse=$true;& ([scriptblock]::Create($updateGuard.Extent.Text));Check $true 'Explicit world update accepted'
-$disableGuard=$disable.EndBlock.Statements|Where-Object{$_ -is [Management.Automation.Language.IfStatementAst]}|Select-Object -First 1
+$disableGuard=$disable.EndBlock.Statements|Where-Object{$_ -is [Management.Automation.Language.IfStatementAst] -and $_.Extent.Text.StartsWith('if($WorldClicks ')}|Select-Object -First 1
 $LiveMouse=$false;Reject {& ([scriptblock]::Create($disableGuard.Extent.Text))} 'World rollback accepted without mouse mode'
 $LiveMouse=$true;& ([scriptblock]::Create($disableGuard.Extent.Text));Check $true 'Explicit world rollback accepted'
 foreach($ast in @($arm,$update,$archive)){

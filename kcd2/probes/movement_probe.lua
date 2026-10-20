@@ -140,6 +140,40 @@ local function camera_json(c)
     return '{"position":' .. vecjson(c and c.position.value) .. ',"forward":' .. vecjson(c and c.forward.value)
         .. ',"up":' .. vecjson(c and c.up.value) .. ',"fov":' .. number(c and c.fov.value) .. '}'
 end
+local function physical_camera(s)
+    return s and normal_camera(s.camera) and distance(s.camera.position.value,s.position.value) <= 3
+end
+-- Read-only view samples use the same inspected System getters as snapshot().
+-- The host timestamps its request, correlates this advancing sequence in fresh
+-- log bytes and binds the result to its exact process; engine time is not UTC.
+-- This sampler neither starts a follower nor extends its input/deadline leases.
+function MineCome.SamplePhysicalHudView(run)
+    if not token(run) then return false,"invalid_run" end
+    if state.active then return false,"busy" end
+    local follower = state.follower
+    if follower and (follower.run ~= run or follower.physical_movement ~= true or follower.terminal) then
+        return false,"wrong_or_nonphysical_follower"
+    end
+    local s,clock = snapshot(),now()
+    local unsafe = guards(s,follower and 6 or 0.05,true,not follower)
+    if not clock then unsafe = "clock_unavailable" end
+    if follower and (s.entity ~= follower.entity or s.id ~= follower.id) then unsafe = "player_changed" end
+    if unsafe then return false,unsafe end
+    local view = state.physical_view
+    if not view or view.run ~= run then
+        view = {run=run,entity=s.entity,id=s.id,created=clock,sequence=0}
+    elseif view.entity ~= s.entity or view.id ~= s.id then return false,"player_changed" end
+    if clock < view.created or (view.sampled and clock <= view.sampled) then return false,"clock_not_advancing" end
+    if clock-view.created >= 120 or view.sequence >= 1024 then return false,"view_budget_expired" end
+    local sequence = view.sequence+1
+    local text = '{"schema":1,"run":' .. quote(run) .. ',"seq":' .. number(sequence)
+        .. ',"result":"sampled","physical_movement":true,"sampled_engine_seconds":' .. number(clock)
+        .. ',"player":' .. vecjson(s.position.value) .. ',"camera":' .. camera_json(s.camera)
+        .. ',"camera_basis_valid":true}'
+    if not emit("[MineComeHudPhysicalView]",text) then return false,"log_failed" end
+    view.sequence,view.sampled = sequence,clock;state.physical_view = view
+    return true,"sampled"
+end
 local function receipt(p, stage, result, s, terminal)
     local clock = now()
     return emit("[MineComeMovementProbe]", '{"schema":1,"run":' .. quote(p.run) .. ',"stage":' .. quote(stage)
@@ -318,6 +352,13 @@ local function follower_receipt(p,event,result,s,seq,target,readback,follow_erro
     if p.records >= 128 then return false end
     local clock = now()
     local lease = p.latest and clock and math.max(0,(LEASE_SECONDS-(clock-p.latest.received))*1000) or 0
+    local physical = ""
+    if p.physical_movement then
+        target = target or (p.restoring and p.origin or p.last_owned)
+        physical = ',"physical_movement":true,"camera_mode":"native_look","camera_basis_valid":'
+            .. tostring(physical_camera(s) == true) .. ',"sampled_engine_seconds":' .. number(clock)
+            .. ',"player_readback_error":' .. number(distance(s and s.position.value,target))
+    end
     local text = '{"schema":1,"run":' .. quote(p.run) .. ',"event":' .. quote(event) .. ',"result":' .. quote(result)
         .. ',"terminal":' .. tostring(p.terminal == true) .. ',"seq":' .. number(seq or p.last_applied_seq or 0)
         .. ',"target":' .. vecjson(target or p.last_owned) .. ',"player":' .. vecjson(s and s.position.value)
@@ -325,7 +366,7 @@ local function follower_receipt(p,event,result,s,seq,target,readback,follow_erro
         .. ',"follow_error":' .. number(follow_error) .. ',"lease_ms":' .. number(lease)
         .. ',"hard_deadline_ms":8000,"elapsed_ms":' .. number(clock and (clock-p.created)*1000)
         .. ',"writes":' .. number(p.writes) .. ',"end_result":' .. quote(p.end_result or "none")
-        .. ',"timers_cancelled":' .. tostring(p.timers_cancelled ~= false) .. '}'
+        .. ',"timers_cancelled":' .. tostring(p.timers_cancelled ~= false) .. physical .. '}'
     local ok = emit("[MineComeMovementFollower]",text)
     if ok then p.records = p.records+1 end
     return ok
@@ -344,6 +385,10 @@ local function follower_finish(p,event,result,s,readback,follow_error)
     return follower_receipt(p,event,result,s,nil,nil,readback,follow_error)
 end
 local function follower_camera_error(p,s,target)
+    -- Physical native look may legitimately rotate the camera-to-actor offset.
+    -- Report the current normal basis instead of reusing the scripted fixed-
+    -- offset metric. No camera state or orientation is written by this module.
+    if p.physical_movement then return nil end
     if not normal_camera(s.camera) then return nil end
     return distance(s.camera.position.value,{x=p.camera_origin.x+target.x-p.origin.x,
         y=p.camera_origin.y+target.y-p.origin.y,z=p.camera_origin.z+target.z-p.origin.z})
@@ -367,7 +412,7 @@ local function follower_stop(p,reason)
     if not arm(p,"restored","MineCome_MovementFollowerRestored",TICK_MS) then return follower_finish(p,"restore_failed","post_restore_timer_failed",s,true) end
     return follower_receipt(p,"restoring","restored_position_pending_camera",s,nil,p.origin,true)
 end
-function MineCome.BeginMovementFollower(run)
+local function begin_follower(run,physical)
     if not token(run) then return false,"invalid_run" end
     if state.active or state.follower then return false,"busy" end
     local s,clock = snapshot(),now()
@@ -377,7 +422,8 @@ function MineCome.BeginMovementFollower(run)
     if not Script or type(Script.SetTimerForFunction) ~= "function" or type(Script.KillTimer) ~= "function" then unsafe = "timer_unavailable" end
     local p = {run=run,entity=s.entity,id=s.id,created=clock,deadline=clock and clock+8,origin=copy(s.position.value),
         camera_origin=copy(s.camera.position.value),last_owned=copy(s.position.value),last_snapshot=s,timers={},data={},
-        records=0,writes=0,last_queued_seq=0,last_applied_seq=0,last_heartbeat=clock,last_clock=clock}
+        records=0,writes=0,last_queued_seq=0,last_applied_seq=0,last_heartbeat=clock,last_clock=clock,
+        physical_movement=physical}
     if unsafe then p.terminal=true;follower_receipt(p,"rejected",unsafe,s,0,nil,false);return false,unsafe end
     state.follower = p
     -- This timer is armed once; Apply never reschedules or extends it.
@@ -389,6 +435,12 @@ function MineCome.BeginMovementFollower(run)
         follower_finish(p,"rejected","log_failed",s,false);return false,"log_failed"
     end
     return true,"begun"
+end
+function MineCome.BeginMovementFollower(run)
+    return begin_follower(run,false)
+end
+function MineCome.BeginPhysicalMovementFollower(run)
+    return begin_follower(run,true)
 end
 function MineCome.ApplyMovementFollower(run,seq,x,y,z)
     if not token(run) then return false,"invalid_run" end
@@ -474,6 +526,9 @@ function MineCome_MovementFollowerRestored(data)
     local s = snapshot();p.last_snapshot = s
     local confirmed = s.stable and s.entity == p.entity and s.id == p.id and distance(s.position.value,p.origin)<=0.05
     local error = follower_camera_error(p,s,p.origin)
+    if p.physical_movement and not physical_camera(s) then
+        return follower_finish(p,"restore_failed","normal_camera_unavailable_after_restore",s,confirmed,error)
+    end
     return follower_finish(p,confirmed and "restored" or "restore_failed",confirmed and "restored" or "delayed_restore_readback_failed",s,confirmed,error)
 end
 function MineCome.EndMovementFollower(run)

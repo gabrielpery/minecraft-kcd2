@@ -28,7 +28,9 @@ public final class HudInputReader implements AutoCloseable {
     private volatile long closedAckWaitMs;
     private volatile String closedAckFailure="not_closed";
     private Thread worker;
-    public HudInputReader(HudInputProtocol.Identity identity){this.identity=identity;}
+    private final boolean movement;
+    public HudInputReader(HudInputProtocol.Identity identity){this(identity,false);}
+    public HudInputReader(HudInputProtocol.Identity identity,boolean movement){this.identity=identity;this.movement=movement;}
     public synchronized void start(){if(worker!=null)throw new IllegalStateException("Input reader cannot restart");worker=new Thread(this::read,"MineComeHudInputReader");worker.start();}
     public HudInputProtocol.Event poll(){return queue.poll();}
     public void acknowledge(Acknowledgement value){acknowledgement.set(value);}
@@ -81,7 +83,7 @@ public final class HudInputReader implements AutoCloseable {
                 // or possible OS descheduling. Fresh host data must not look future.
                 now=System.currentTimeMillis();mono=System.nanoTime();
                 if(now>=identity.expires() || mono>=deadline)throw new IllegalStateException("Input immutable lease expired");
-                var snapshot=HudInputProtocol.decode(bytes,identity,lastFetched,now,state);state=snapshot.hostState();
+                var snapshot=HudInputProtocol.decode(bytes,identity,lastFetched,now,state,movement);state=snapshot.hostState();
                 if(snapshot.heartbeat()<heartbeat)throw new IllegalStateException("Host heartbeat regressed");
                 maxHostAgeMs=Math.max(maxHostAgeMs,now-snapshot.heartbeat());
                 if(state==0 && now-snapshot.heartbeat()>250)prearmOldHeartbeatPolls++;

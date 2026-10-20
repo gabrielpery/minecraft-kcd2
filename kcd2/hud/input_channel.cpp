@@ -5,8 +5,10 @@
 namespace minecome::hud::input {
 Writer::~Writer() {if(mapped_&&status_.state!=2)finish("host_shutdown");dispose();}
 void Writer::dispose() {if(mapped_){UnmapViewOfFile(mapped_);mapped_=nullptr;}mapping_.reset();mutex_.reset();producer_.reset();}
-bool Writer::create(const Identity &id) {
+bool Writer::create(const Identity &id,Profile profile) {
     if(consumed_)return false;consumed_=true;
+    if(profile!=Profile::ui&&profile!=Profile::movement){reason_="input_profile";return false;}
+    profile_=profile;
     const auto utc=stream::utc_ms();begun_=stream::steady_ms();
     if(!stream::valid_identity(id)||id.target_pid!=GetCurrentProcessId()||id.target_start!=stream::process_start()||
         id.expires_utc_ms<=utc||id.expires_utc_ms-utc>stream::max_lease_ms) {reason_="host_identity_or_expiry";return false;}
@@ -22,7 +24,7 @@ bool Writer::create(const Identity &id) {
     if(!mutex_||GetLastError()==ERROR_ALREADY_EXISTS) {reason_="mutex_exists_or_failed";dispose();return false;}
     mapped_=static_cast<std::uint8_t *>(MapViewOfFile(mapping_.value,FILE_MAP_WRITE|FILE_MAP_READ,0,0,mapping_bytes));
     if(!mapped_) {ReleaseMutex(mutex_.value);reason_="mapping_view_failed";dispose();return false;}
-    std::memset(mapped_,0,mapping_bytes);encode_host(owned_,id,0,utc,0);std::memcpy(mapped_,owned_.data(),128);
+    std::memset(mapped_,0,mapping_bytes);encode_host(owned_,id,0,utc,0,profile_);std::memcpy(mapped_,owned_.data(),128);
     if(!ReleaseMutex(mutex_.value)) {reason_="mutex_release_failed";dispose();return false;}
     status_.live=true;return true;
 }
@@ -58,7 +60,7 @@ bool Writer::transact(std::span<const Event> events,bool closing) {
     }
     if(wait==WAIT_ABANDONED) {
         status_.state=2;status_.live=false;reason_="mutex_abandoned";
-        encode_host(owned_,identity_,status_.sequence,utc,2);std::memcpy(mapped_,owned_.data(),128);ReleaseMutex(mutex_.value);return false;
+        encode_host(owned_,identity_,status_.sequence,utc,2,profile_);std::memcpy(mapped_,owned_.data(),128);ReleaseMutex(mutex_.value);return false;
     }
     if(wait!=WAIT_OBJECT_0) {status_.state=2;status_.live=false;reason_="mutex_failed";return false;}
     bool valid=true;
@@ -95,13 +97,13 @@ bool Writer::transact(std::span<const Event> events,bool closing) {
     if(valid&&ack.state==2&&status_.state!=2) {reason_="guest_closed";valid=false;}
     if(valid&&status_.state==1&&(!fresh(ack.utc,received_utc)||ack.state!=1)) {reason_="ack_not_ready";valid=false;}
     if(valid&&events.size()>ring_count-(status_.sequence-ack.sequence)) {reason_="ring_overflow";valid=false;}
-    if(valid)for(const auto &event:events)if(!valid_event(event,received_utc)){reason_="invalid_or_stale_event";valid=false;break;}
+    if(valid)for(const auto &event:events)if(!valid_event(event,received_utc,profile_)){reason_="invalid_or_stale_event";valid=false;break;}
     if(!valid) {status_.state=2;status_.live=false;}
     if(valid&&status_.state==1)for(const auto &event:events) {
         ++status_.sequence;
         encode_event(std::span<std::uint8_t,40>(mapped_+header_bytes+((status_.sequence-1)%ring_count)*record_bytes,40),event,status_.sequence);
     }
-    encode_host(owned_,identity_,status_.sequence,received_utc,status_.state);std::memcpy(mapped_,owned_.data(),128);
+    encode_host(owned_,identity_,status_.sequence,received_utc,status_.state,profile_);std::memcpy(mapped_,owned_.data(),128);
     if(!ReleaseMutex(mutex_.value)) {status_.state=2;status_.live=false;reason_="mutex_release_failed";return false;}
     return valid;
 }

@@ -4,6 +4,7 @@ import com.google.gson.*;
 import com.mojang.blaze3d.systems.RenderSystem;
 import dev.minecome.hud.mixin.HudWindowVsyncAccessor;
 import dev.minecome.terrain.HudGroundMovementFixture;
+import dev.minecome.terrain.HudPhysicalMovement;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.*;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.minecraft.client.MinecraftClient;
@@ -48,6 +49,8 @@ public final class HudStreamLab {
     private final boolean aimedStone=Boolean.getBoolean("minecome.hudAimedStoneBridge");
     private final HudGroundMovementMode.Mode groundMovementMode=HudGroundMovementMode.mode(System.getProperties());
     private HudGroundMovementFixture groundMovement;
+    private final boolean physicalMovementMode=HudPhysicalMovementMode.require(System.getProperties());
+    private HudPhysicalMovement physicalMovement;
     private final boolean backgroundTrial=Boolean.getBoolean("minecome.hudStreamBackgroundTrial");
     private final boolean offscreenPresentation=Boolean.getBoolean("minecome.hudStreamOffscreenPresentation"),offscreenTrial=Boolean.getBoolean("minecome.hudStreamOffscreenTrial");
     private final long initializedAt=System.nanoTime();
@@ -64,7 +67,7 @@ public final class HudStreamLab {
     private HudPointerFixture pointerFixture;
     private HudBlockBridge stoneBridge;
     private boolean stoneActionsEnabled;
-    private final HudInputGate inputGate=new HudInputGate();
+    private final HudInputGate inputGate=new HudInputGate(physicalMovementMode);
     private long armedAt,inputEventsApplied,pointerEventsApplied;
     private boolean fixtureTargetsSent,selectedNineVerified,inventoryOpened,inventoryClosed,serverSwapVerified;
     private JsonObject inputEndingProof;
@@ -156,9 +159,10 @@ public final class HudStreamLab {
         if(lab.offscreenPresentation && lab.windowHideRequested && !focused)lab.focusLossCallbacksAfterHide++;
         if((lab.backgroundTrial || lab.offscreenTrial) && focused){lab.focusGainEpoch++;if(lab.offscreenTrialEvidence!=null)lab.offscreenFocusInterruptions++;}
     }
-    public static void groundPositionCorrection(){var lab=active;if(lab!=null && lab.groundMovement!=null)lab.groundMovement.positionCorrection();}
+    public static void groundPositionCorrection(){var lab=active;if(lab!=null){if(lab.groundMovement!=null)lab.groundMovement.positionCorrection();if(lab.physicalMovement!=null)lab.physicalMovement.positionCorrection();}}
     private void timingTick(MinecraftClient client){
         if(groundMovement!=null && !stopping){try{groundMovement.beforeTick(client,System.nanoTime());}catch(Exception e){fail(client,"HUD ground movement: "+e.getMessage());}}
+        if(physicalMovement!=null && !stopping){try{physicalMovement.beforeTick(client,System.nanoTime());}catch(Exception e){fail(client,"HUD physical movement: "+e.getMessage());}}
         if(timing!=null && !stopping)timing.tick(armedAt!=0,client.isWindowFocused(),client.getOverlay()!=null,System.nanoTime());
     }
     public static boolean skipDesktopSwap(long window){
@@ -306,6 +310,16 @@ public final class HudStreamLab {
             if(backgroundTrial || offscreenPresentation)timing=new HudRenderTiming(Thread.currentThread(),RenderSystem::isFrozenAtPollEvents);
         }
         if(output.failure()!=null){fail(client,"HUD stream worker: "+output.failure());return;}
+        if(physicalMovementMode && !terminal && inputEndingProof==null && output.isReady()){
+            try{
+                if(physicalMovement==null){
+                    var wire=new HudInputProtocol.Identity(identity.run(),output.producerPid(),output.producerStart(),identity.targetPid(),identity.targetStart(),identity.expiresUtcMs());
+                    physicalMovement=new HudPhysicalMovement(Path.of(required("minecome.groundPatchFile")),Path.of(required("minecome.movementTraceFile")),
+                            Path.of(required("minecome.hudHostViewFile")),save,wire);
+                }
+                physicalMovement.afterTick(client,System.nanoTime());
+            }catch(Exception e){fail(client,"HUD physical movement: "+e.getMessage());return;}
+        }
         if(groundMovement!=null && !terminal){
             try{groundMovement.afterTick(client,now);}
             catch(Exception e){fail(client,"HUD ground movement: "+e.getMessage());return;}
@@ -378,6 +392,10 @@ public final class HudStreamLab {
                 inputEndingProof.addProperty("closed_ack_delay_ms",System.currentTimeMillis()-closeDelayStartUtc);
             }
             if(!input.isFinished()){if(now-terminalAt>1_500_000_000L)throw new IllegalStateException("Input cleanup1.5s timeout");return;}
+            if(physicalMovement!=null){
+                if(!physicalMovement.cleanupComplete()){if(now-terminalAt>1_500_000_000L)throw new IllegalStateException("Physical movement cleanup1.5s timeout");return;}
+                inputEndingProof.add("physical_movement",physicalMovement.evidence(client));
+            }
             inputEndingProof.addProperty("input_handles_closed",input.cleanupComplete());inputEndingProof.addProperty("closed_acknowledgement_published",input.closedAcknowledgementPublished());
             inputEndingProof.add("input_timing",input.diagnostics());inputEndingProof.addProperty("max_client_tick_gap_ms",maxInputTickGapMs);inputEndingProof.addProperty("max_own_image_age_ms",maxImageAgeMs);
             inputEndingProof.add("capture_pipeline",captureDiagnostics());inputEndingProof.add("publication_at_cleanup",output.diagnostics());
@@ -393,7 +411,7 @@ public final class HudStreamLab {
         }
         if(input==null && output.publishedFrames()>0){
             var wire=new HudInputProtocol.Identity(identity.run(),output.producerPid(),output.producerStart(),identity.targetPid(),identity.targetStart(),identity.expiresUtcMs());
-            input=new HudInputReader(wire);input.start();
+            input=new HudInputReader(wire,physicalMovementMode);input.start();
         }
         if(input==null)return;
         ui.synchronizeScreen(client);
@@ -419,6 +437,7 @@ public final class HudStreamLab {
         long imageAgeMs=(now-output.lastPublishedAt())/1_000_000;maxImageAgeMs=Math.max(maxImageAgeMs,imageAgeMs);
         boolean imageFresh=imageAgeMs<=250;
         boolean offscreenFocusReady=!offscreenPresentation || hiddenClientUnfocused(client);
+        if(physicalMovement!=null)physicalMovement.authority(client,now,hostState==1 && hostFresh && imageFresh && offscreenFocusReady);
         if(hostState==1 && !offscreenFocusReady)throw new IllegalStateException("Owned offscreen window is not actually unfocused");
         if(hostState==1 && !hostFresh)throw new IllegalStateException("Input host observation stale");
         if(hostState==1 && !imageFresh)throw new IllegalStateException("Own image publication stale");
@@ -432,7 +451,15 @@ public final class HudStreamLab {
                     observeHiddenWindow(client);
                     if(!hiddenClientUnfocused(client))throw new IllegalStateException("Owned window focus/visibility changed before input");
                 }
-                inputGate.apply(event,System.currentTimeMillis());ui.apply(client,event);inputEventsApplied++;
+                inputGate.apply(event,System.currentTimeMillis());
+                if(physicalMovement!=null && event.kind()<=2 && HudMovementKeys.movement(event.code())){
+                    try{physicalMovement.event(client,event,System.nanoTime());}
+                    catch(java.io.IOException e){throw new IllegalStateException("Physical movement trace: "+e.getMessage(),e);}
+                }else{
+                    if(physicalMovement!=null && event.kind()==1 && (event.code()==0x45 || event.code()==0x1b))physicalMovement.suspend(client);
+                    ui.apply(client,event);
+                }
+                inputEventsApplied++;
                 if(event.kind()>=3)pointerEventsApplied++;
                 if(offscreenPresentation)hiddenUnfocusedEvents++;
                 if(offscreenTrial){if(client.isWindowFocused())offscreenFocusedEvents++;else offscreenUnfocusedEvents++;}
@@ -450,7 +477,8 @@ public final class HudStreamLab {
         }else if(now-streamAt>=((backgroundTrial||offscreenTrial)?100_000_000_000L:60_000_000_000L)){finishInput(client,now,(backgroundTrial||offscreenTrial)?"waiting_100s_complete":"waiting_60s_complete");return;}
         // While waiting we own no controls. Old image/heartbeat/ticks make us
         // ineligible; only a later real fresh client tick can restore readiness.
-        if(!hostFresh || !imageFresh || !offscreenFocusReady){prearmIneligibleTicks++;return;}
+        if(!hostFresh || !imageFresh || !offscreenFocusReady ||
+                (physicalMovementMode && (physicalMovement==null || !physicalMovement.inputReady(System.nanoTime())))){prearmIneligibleTicks++;return;}
         if(inputDelayFixture && hostState==0 && firstReadyAckAt!=0){
             long elapsed=now-firstReadyAckAt;
             if(elapsed>=200_000_000L && elapsed<700_000_000L){
@@ -459,6 +487,7 @@ public final class HudStreamLab {
             if(elapsed>=700_000_000L && prearmDelayStartUtc!=0 && prearmDelayEndUtc==0)prearmDelayEndUtc=System.currentTimeMillis();
         }
         input.acknowledge(new HudInputReader.Acknowledgement(inputGate.sequence(),System.currentTimeMillis(),1,HudVanillaUiAdapter.inventory(client.currentScreen)?1:0,client.player.getInventory().selectedSlot));
+        if(physicalMovement!=null){try{physicalMovement.publishReady(outputDirectory,System.nanoTime());}catch(java.io.IOException e){throw new IllegalStateException("Physical readiness receipt: "+e.getMessage(),e);}}
         if(firstReadyAckAt==0)firstReadyAckAt=now;
     }
     private void finishInput(MinecraftClient client,long now,String reason){
@@ -491,6 +520,7 @@ public final class HudStreamLab {
         return true;
     }
     private void stopInput(MinecraftClient client){
+        if(physicalMovement!=null)physicalMovement.close(client);
         stoneActionsEnabled=false;if(stoneBridge!=null)stoneBridge.close();
         if(ui!=null)ui.releaseAndClose(client);inputGate.releaseAll();
         if(input!=null){publishClosedAck(client);input.close();}
@@ -512,7 +542,7 @@ public final class HudStreamLab {
         LevelInfo info=new LevelInfo(save,GameMode.CREATIVE,false,Difficulty.PEACEFUL,true,rules,DataConfiguration.SAFE_MODE);
         client.createIntegratedServerLoader().createAndStart(save,info,new GeneratorOptions(42,false,false),registries->{
             var dimensions=registries.get(RegistryKeys.WORLD_PRESET).get(WorldPresets.FLAT).createDimensionsRegistryHolder();
-            if(groundMovementMode==HudGroundMovementMode.Mode.NONE)return dimensions;
+            if(groundMovementMode==HudGroundMovementMode.Mode.NONE && !physicalMovementMode)return dimensions;
             var biome=registries.get(RegistryKeys.BIOME).getEntry(net.minecraft.world.biome.BiomeKeys.THE_VOID).orElseThrow();
             var config=new net.minecraft.world.gen.chunk.FlatChunkGeneratorConfig(Optional.of(net.minecraft.registry.entry.RegistryEntryList.of()),biome,List.of());
             config.updateLayerBlocks();
@@ -526,6 +556,7 @@ public final class HudStreamLab {
             var entity=source.getPlayerManager().getPlayer(owner.player());if(entity==null || entity.getWorld()!=source.getOverworld())throw new IllegalStateException("Stream server player identity changed");
             server.set(new Observation(entity.getWorld(),System.nanoTime(),entity.getInventory().selectedSlot,slots(entity.getInventory())));
             if(groundMovement!=null)groundMovement.observe(source);
+            if(physicalMovement!=null)physicalMovement.observe(source);
         }catch(Exception e){serverFailure.set(e.getMessage());}
     }
     private void restoreLayout(MinecraftClient client){
@@ -686,6 +717,7 @@ public final class HudStreamLab {
     private void fail(MinecraftClient client,String reason){
         if(stopping)return;
         if(groundMovement!=null)groundMovement.abort(client,reason);
+        if(physicalMovement!=null)physicalMovement.abort(client,reason);
         if(inputMode && input!=null && inputEndingProof==null && owned(client)){
             inputFailure=reason;var snapshot=new JsonObject();snapshot.add("capture_pipeline",captureDiagnostics());snapshot.add("publication",output.diagnostics());snapshot.add("input_timing",input.diagnostics());
             finishInput(client,System.nanoTime(),"failure");inputEndingProof.addProperty("failure",reason);inputEndingProof.add("failure_snapshot",snapshot);

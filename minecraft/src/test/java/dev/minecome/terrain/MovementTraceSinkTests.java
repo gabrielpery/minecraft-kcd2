@@ -107,6 +107,25 @@ final class MovementTraceSinkTests {
                 check(value.get("run").getAsString().equals("actual-patch-run") && value.get("patch_sha256").getAsString().equals("b".repeat(64)) &&
                         value.get("save").getAsString().equals(hudSave) && value.get("world").getAsString().equals(world),"HUD trace preserves immutable captured patch and owned world identities");
             }
+            var physical=new MovementTraceSink.Context("physical-patch","c".repeat(64),"live_kcd_ground_patch",hudSave,world,100,200,10,
+                    MovementTraceSink.Profile.HUD_PHYSICAL,0,64.375,0);
+            Path physicalFile=run.resolve("physical.ndjson");
+            try(var sink=MovementTraceSink.open(physicalFile,root,physical,0,1000)){
+                var origin=new MovementTraceSink.Motion(0,64.375,0,0,0,0,true,true);
+                check(sink.sample(0,1000,"SETTLING",origin,origin,1,0,true),"Physical exact grounded anchor recorded before movement");
+                check(!sink.sample(1,1000,"PASSED",origin,origin,1,0,true),"Physical completion cannot reuse initial observation");
+                check(sink.sample(200_000_000,1200,"PASSED",origin,origin,2,200_000_000,true),"Physical final proof uses fresh advancing sample");
+                sink.finish(1200,"passed","PASSED","Physical walk complete");
+            }
+            var physicalLines=Files.readAllLines(physicalFile);
+            check(JsonParser.parseString(physicalLines.getFirst()).getAsJsonObject().getAsJsonObject("anchor_mc").get("y").getAsDouble()==64.375,
+                    "Physical trace preserves actual settled terrain Y instead of fixed64");
+            for(String line:physicalLines)check(JsonParser.parseString(line).getAsJsonObject().get("source_kind").getAsString().equals("live_kcd_hud_physical_movement"),
+                    "Physical trace cannot masquerade as earlier scripted profile");
+            try{new MovementTraceSink.Context("run","a".repeat(64),"live_kcd_ground_patch",hudSave,world,100,200,10,MovementTraceSink.Profile.HUD_COUPLED,0,64.375,0);throw new AssertionError("Coupled anchor changed");}
+            catch(IllegalArgumentException expected){checks++;}
+            try{new MovementTraceSink.Context("run","a".repeat(64),"live_kcd_ground_patch",hudSave,world,100,200,10,MovementTraceSink.Profile.HUD_PHYSICAL,.5,64,0);throw new AssertionError("Physical horizontal hop accepted");}
+            catch(IllegalArgumentException expected){checks++;}
         } finally {
             // Only this fresh fixture directory is cleaned, using its resolved path.
             Path ownedRoot=temp.toRealPath();

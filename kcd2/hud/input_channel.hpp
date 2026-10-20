@@ -17,7 +17,7 @@ struct Status {
 class Writer {
 public:
     ~Writer();
-    bool create(const Identity &identity);
+    bool create(const Identity &identity,Profile profile=Profile::ui);
     bool poll();
     bool arm();
     bool append(std::span<const Event> events);
@@ -29,6 +29,7 @@ private:
     bool transact(std::span<const Event> events,bool closing=false);
     void dispose();
     Identity identity_;
+    Profile profile_=Profile::ui;
     stream::Handle mapping_,mutex_,producer_;
     std::uint8_t *mapped_=nullptr;
     std::array<std::uint8_t,128> owned_{};

@@ -32,9 +32,10 @@ local function fixture()
         if f.log_error then error("log failure") end;f.logs[#f.logs+1]=line end,
         GetViewCameraPos=function()
             if f.camera_bad then return nil end
-            local p=f.fixed_camera or player.position;return {x=p.x,y=p.y,z=p.z+1.7}
-        end,GetViewCameraDir=function() return {x=0,y=1,z=0} end,
-        GetViewCameraUpDir=function() return {x=0,y=0,z=1} end,GetViewCameraFov=function() return 1.1 end,
+            local p=f.fixed_camera or player.position;local offset=f.camera_offset or {x=0,y=0,z=0}
+            return {x=p.x+offset.x,y=p.y+offset.y,z=p.z+1.7+offset.z}
+        end,GetViewCameraDir=function() return f.forward or {x=0,y=1,z=0} end,
+        GetViewCameraUpDir=function() return f.up or {x=0,y=0,z=1} end,GetViewCameraFov=function() return 1.1 end,
         SetViewCamera=forbidden,ClearKeyState=forbidden,SpawnEntity=forbidden,RemoveEntity=forbidden}
     Script={SetTimerForFunction=function(ms,name,data,paused)
         eq(paused,true);assert(ms>=1 and ms<=(name=="MineCome_MovementFollowerExpiry" and 8000 or 750));f.schedules=f.schedules+1
@@ -286,5 +287,114 @@ test("follower stale callbacks cannot drive next session and reload preserves cu
     eq(MineCome.BeginMovementFollower("c"),true);local count=#f.writes;eq(MineCome_MovementFollowerTick(old),false);eq(#f.writes,count)
     eq(MineCome.ApplyMovementFollower("b",2,120.2,2040,56),false);eq(MineCome.EndMovementFollower("c"),true);f:advance(.08)
     eq(f:activeTimers(),0)
+end)
+test("physical view is read-only and requires verified actor and advancing engine time",function()
+    local f=fixture()
+    eq(MineCome.SamplePhysicalHudView("a1"),false);eq(#f.writes,0);eq(f:activeTimers(),0)
+    f:verify();eq(MineCome.SamplePhysicalHudView("b"),true)
+    local line=f:last();assert(line:find('[MineComeHudPhysicalView]',1,true))
+    assert(line:find('"seq":1,"result":"sampled","physical_movement":true',1,true))
+    assert(line:find('"sampled_engine_seconds":0',1,true));assert(line:find('"camera_basis_valid":true',1,true))
+    local count=#f.logs
+    eq(MineCome.SamplePhysicalHudView("b"),false);eq(#f.logs,count)
+    f:advance(.1);f.forward={x=1,y=0,z=0};eq(MineCome.SamplePhysicalHudView("b"),true)
+    assert(f:last():find('"seq":2',1,true));assert(f:last():find('"forward":{"x":1,"y":0,"z":0}',1,true))
+    eq(#f.writes,0);eq(f:activeTimers(),0);eq(f.rays,0)
+end)
+test("physical view rejects foreign follower token identity motion and invalid camera",function()
+    local f=fixture();f:verify();eq(MineCome.BeginMovementFollower("b"),true)
+    eq(MineCome.SamplePhysicalHudView("b"),false)
+    f=fixture();f:verify();eq(MineCome.BeginPhysicalMovementFollower("b"),true)
+    eq(MineCome.SamplePhysicalHudView("c"),false);eq(MineCome.SamplePhysicalHudView("b"),true)
+    for _,change in ipairs({function() player.id=io.stderr end,function() player.velocity.x=.05 end,
+        function(f) f.camera_bad=true end,function(f) f.forward={x=0,y=2,z=0} end,
+        function(f) f.up={x=0,y=1,z=0} end,function(f) f.camera_offset={x=4,y=0,z=0} end}) do
+        f=fixture();f:verify();change(f);eq(MineCome.SamplePhysicalHudView("b"),false)
+        eq(#f.writes,0);eq(f:activeTimers(),0)
+    end
+    f=fixture();f:verify();eq(MineCome.SamplePhysicalHudView('a"'),false)
+    eq(MineCome.BeginPhysicalMovementFollower('a"'),false);eq(#f.writes,0);eq(f:activeTimers(),0)
+end)
+test("physical view sequence deadline and failure remain bounded across reload",function()
+    local f=fixture();f:verify();f.log_error=true
+    eq(MineCome.SamplePhysicalHudView("b"),false);eq(MineCome._movement_probe.physical_view,nil)
+    f.log_error=false;eq(MineCome.SamplePhysicalHudView("b"),true)
+    dofile(MINECOME_MODULE_PATH);f:advance(.1);eq(MineCome.SamplePhysicalHudView("b"),true)
+    eq(MineCome._movement_probe.physical_view.sequence,2)
+    local count=#f.logs;f.time=.05;eq(MineCome.SamplePhysicalHudView("b"),false);eq(#f.logs,count)
+    f.time=120;eq(MineCome.SamplePhysicalHudView("b"),false);eq(#f.logs,count)
+    eq(MineCome.SamplePhysicalHudView("c"),true)
+    MineCome._movement_probe.physical_view.sequence=1024;f:advance(.1)
+    eq(MineCome.SamplePhysicalHudView("c"),false);eq(#f.writes,0);eq(f:activeTimers(),0)
+end)
+test("physical follower accepts native look while preserving player readback and restoration",function()
+    local f=fixture();f:verify();eq(MineCome.SamplePhysicalHudView("b"),true)
+    eq(MineCome.BeginPhysicalMovementFollower("b"),true)
+    eq(MineCome._movement_probe.follower.physical_movement,true)
+    local hard=MineCome._movement_probe.follower.timers.hard
+    eq(MineCome.ApplyMovementFollower("b",1,120.1,2040,56),true);f:advance(.04)
+    f.camera_offset={x=.6,y=0,z=0};f.forward={x=1,y=0,z=0}
+    f:advance(.04);assert(f:contains('"event":"applied","result":"applied_readback"'))
+    assert(f:last():find('"follow_error":null',1,true));assert(f:last():find('"camera_basis_valid":true',1,true))
+    assert(f:last():find('"player_readback_error":0',1,true));assert(f:last():find('"forward":{"x":1,"y":0,"z":0}',1,true))
+    eq(MineCome.SamplePhysicalHudView("b"),true);eq(MineCome._movement_probe.follower.timers.hard,hard)
+    eq(MineCome.EndMovementFollower("b"),true);f:advance(.08)
+    eq(player.position.x,120);eq(f:activeTimers(),0)
+    assert(f:last():find('"event":"restored","result":"restored","terminal":true',1,true))
+    assert(f:last():find('"target":{"x":120,"y":2040,"z":56}',1,true))
+    assert(f:last():find('"player_readback_error":0',1,true))
+    for _,line in ipairs(f.logs) do
+        if line:find('[MineComeMovementFollower]',1,true) then
+            assert(line:find('"physical_movement":true,"camera_mode":"native_look"',1,true))
+            assert(line:find('"sampled_engine_seconds":',1,true))
+        end
+    end
+    eq(MineCome.SamplePhysicalHudView("b"),true);eq(f:activeTimers(),0)
+end)
+test("physical follower keeps exact target and velocity guards and stale pose lease",function()
+    for _,change in ipairs({function() player.id=io.stderr end,function() player.position.x=120.451 end,
+        function() player.velocity.x=.201 end,function() player.actor.IsDead=function() return true end end}) do
+        local f=fixture();f:verify();eq(MineCome.BeginPhysicalMovementFollower("b"),true)
+        eq(MineCome.ApplyMovementFollower("b",1,120.1,2040,56),true);f:advance(.04)
+        local count=#f.writes;change();f:advance(.08)
+        eq(#f.writes,count);eq(f:activeTimers(),0);assert(f:contains('"event":"restore_failed"'))
+    end
+    local f=fixture();f:verify();eq(MineCome.BeginPhysicalMovementFollower("b"),true)
+    for _,point in ipairs({{122.01,2040,56},{120,2040,57.51},{120,2040,55.79}}) do
+        eq(MineCome.ApplyMovementFollower("b",1,point[1],point[2],point[3]),false)
+    end
+    eq(MineCome.ApplyMovementFollower("b",1,120.1,2040,56),true);f:advance(.2)
+    eq(MineCome.SamplePhysicalHudView("b"),true);f:advance(.3)
+    eq(player.position.x,120);eq(f:activeTimers(),0)
+    assert(f:contains('"end_result":"frame_lease_expired"'))
+end)
+test("physical follower hard deadline is unchanged and view sampling never extends it",function()
+    local f=fixture();f:verify();eq(MineCome.BeginPhysicalMovementFollower("b"),true)
+    local hard=MineCome._movement_probe.follower.timers.hard
+    for seq=1,80 do
+        if not MineCome._movement_probe.follower or MineCome._movement_probe.follower.restoring then break end
+        eq(MineCome.ApplyMovementFollower("b",seq,120.1,2040,56),true)
+        eq(MineCome.SamplePhysicalHudView("b"),true)
+        eq(MineCome._movement_probe.follower.timers.hard,hard);f:advance(.1)
+    end
+    f:advance(.1);eq(player.position.x,120);eq(f:activeTimers(),0);assert(#f.writes<=200)
+    assert(f:contains('"end_result":"hard_deadline"') or f:contains('"end_result":"write_budget"'))
+end)
+test("physical camera loss still restores safe player but does not claim camera success",function()
+    local f=fixture();f:verify();eq(MineCome.BeginPhysicalMovementFollower("b"),true)
+    eq(MineCome.ApplyMovementFollower("b",1,120.1,2040,56),true);f:advance(.04)
+    f.camera_bad=true;f:advance(.12)
+    eq(player.position.x,120);eq(f:activeTimers(),0)
+    assert(f:last():find('"event":"restore_failed","result":"normal_camera_unavailable_after_restore"',1,true))
+    assert(f:last():find('"camera_basis_valid":false',1,true));assert(f:last():find('"readback":true',1,true))
+end)
+test("legacy follower retains fixed camera offset metric and original receipt schema",function()
+    local f=fixture();f:verify();eq(MineCome.BeginMovementFollower("b"),true)
+    eq(MineCome.ApplyMovementFollower("b",1,120.1,2040,56),true);f:advance(.04)
+    f.camera_offset={x=.6,y=0,z=0};f:advance(.04)
+    assert(not f:last():find('"follow_error":null',1,true))
+    eq(MineCome.EndMovementFollower("b"),true);f:advance(.08)
+    assert(not f:contains('"physical_movement"'));assert(not f:contains('"camera_basis_valid"'))
+    eq(player.position.x,120);eq(f:activeTimers(),0)
 end)
 print(string.format("Verified %d standalone movement-probe cases in %s; engine bindings simulated",passed,_VERSION))

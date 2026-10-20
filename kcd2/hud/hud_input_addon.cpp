@@ -19,6 +19,9 @@
 #include "stream_channel.hpp"
 #include "input_channel.hpp"
 #include "input_diagnostics.hpp"
+#ifdef MINECOME_HUD_PHYSICAL_MOVEMENT
+#include "movement_forwarding.hpp"
+#endif
 #ifdef MINECOME_HUD_MOTION_FILTER
 #include "motion_diagnostics_api.hpp"
 #endif
@@ -212,7 +215,9 @@ struct Service {
     explicit Service(HMODULE module) {
         const auto path = st::module_path(module); const auto slash = path.find_last_of(L"/\\");
         if (slash != path.npos) config = path.substr(0,slash+1)+
-#ifdef MINECOME_HUD_SELECTIVE_MOUSE
+#ifdef MINECOME_HUD_PHYSICAL_MOVEMENT
+            L"MineComeHudMovement.ini";
+#elif defined(MINECOME_HUD_SELECTIVE_MOUSE)
             L"MineComeHudSelective.ini";
 #elif defined(MINECOME_HUD_WORLD_CLICKS)
             L"MineComeHudWorld.ini";
@@ -337,7 +342,11 @@ struct Service {
             session.store(accepted,std::memory_order_release); has_armed.store(true,std::memory_order_release);
             receipt("arm","accepted",identity.run);
             ui::Writer inputs;
-            bool input_created=inputs.create(identity),input_closed_logged=false,first_close_logged=false;
+            bool input_created=inputs.create(identity
+#ifdef MINECOME_HUD_PHYSICAL_MOVEMENT
+                ,ui::Profile::movement
+#endif
+                ),input_closed_logged=false,first_close_logged=false;
             if(!input_created) receipt("input",inputs.reason(),identity.run);
             input_status.store(std::make_shared<ui::Status>(inputs.status()),std::memory_order_release);
             std::vector<ui::Event> pending_input;pending_input.reserve(ui::ring_count);
@@ -452,6 +461,9 @@ struct RuntimeState {
     bool reshade_overlay=false;
     ui::KeyboardGate keyboard;
     std::uint32_t previous_keys=0;
+#ifdef MINECOME_HUD_PHYSICAL_MOVEMENT
+    ui::MovementGate movement;
+#endif
     std::uint32_t width=0,height=0,pitch=0;
     std::uint64_t next_fence=0,uploaded_sequence=0,uploaded_observation=0;
 #ifdef MINECOME_HUD_LIVE_MOUSE
@@ -511,6 +523,16 @@ bool queue_pointer(RuntimeState &state,const ui::PointerBatch &batch) {
     for(std::size_t i=0;i<batch.count;++i)if(!queue_input(state,batch.events[i]))return false;
     return true;
 }
+#ifdef MINECOME_HUD_PHYSICAL_MOVEMENT
+bool queue_movement(RuntimeState &state,const ui::MovementEdges &edges,std::uint64_t utc) {
+    // Releases precede any new presses, including before E/Esc reaches Java.
+    for(std::size_t i=0;i<ui::movement_keys.size();++i)if(edges.up&(1u<<i))
+        if(!queue_input(state,{utc,ui::Kind::key_up,ui::movement_keys[i],0,0,0}))return false;
+    for(std::size_t i=0;i<ui::movement_keys.size();++i)if(edges.down&(1u<<i))
+        if(!queue_input(state,{utc,ui::Kind::key_down,ui::movement_keys[i],0,0,0}))return false;
+    return true;
+}
+#endif
 #endif
 void close_keyboard(api::effect_runtime *runtime,ui::CloseCause cause,const ui::CloseSnapshot *snapshot=nullptr) noexcept {
     if(service&&service->input_owner.load(std::memory_order_acquire)==runtime) {
@@ -523,7 +545,12 @@ void capture_keyboard(api::effect_runtime *runtime,RuntimeState &state,bool comp
     if(!service)return;
     const auto peer=service->input_status.load(std::memory_order_acquire);
     if(!peer)return;
+    constexpr std::size_t ui_key_count=11;
+#ifdef MINECOME_HUD_PHYSICAL_MOVEMENT
+    constexpr std::array<std::uint32_t,16> keys{0x31,0x32,0x33,0x34,0x35,0x36,0x37,0x38,0x39,0x45,0x1b,0x57,0x41,0x53,0x44,0x20};
+#else
     constexpr std::array<std::uint32_t,11> keys{0x31,0x32,0x33,0x34,0x35,0x36,0x37,0x38,0x39,0x45,0x1b};
+#endif
     std::uint32_t held=0;
     for(std::size_t i=0;i<keys.size();++i)if(runtime->is_key_down(keys[i]))held|=1u<<i;
     const auto now=st::steady_ms();
@@ -645,7 +672,12 @@ void capture_keyboard(api::effect_runtime *runtime,RuntimeState &state,bool comp
         // Successful query/request has restored observation of the same lease.
         // Release only previously forwarded controls, never replay input from
         // the unavailable interval. New input requires two neutral frames.
-        for(std::size_t i=0;i<keys.size();++i)if(state.previous_keys&(1u<<i)){
+#ifdef MINECOME_HUD_PHYSICAL_MOVEMENT
+        if(!queue_movement(state,state.movement.update(false,held>>ui_key_count),utc)){
+            close_keyboard(runtime,ui::CloseCause::mailbox_overflow);release_mouse(runtime,state);return;
+        }
+#endif
+        for(std::size_t i=0;i<ui_key_count;++i)if(state.previous_keys&(1u<<i)){
             if(!queue_input(state,{utc,ui::Kind::key_up,keys[i],0,0,0})){
                 close_keyboard(runtime,ui::CloseCause::mailbox_overflow);release_mouse(runtime,state);return;
             }
@@ -661,7 +693,7 @@ void capture_keyboard(api::effect_runtime *runtime,RuntimeState &state,bool comp
 #ifdef MINECOME_HUD_LIVE_MOUSE
     if(state.transition&&peer->ack.sequence>=state.transition_sequence&&peer->ack.screen==static_cast<unsigned>(state.transition_screen)&&state.uploaded_screen==peer->ack.screen)
         state.transition=false;
-#ifndef MINECOME_HUD_WORLD_CLICKS
+#if !defined(MINECOME_HUD_WORLD_CLICKS) && !defined(MINECOME_HUD_SELECTIVE_MOUSE)
     if(state.mouse_leased){ // Also covers the bounded close-screen ACK interval.
         mouse::Snapshot renewed;
         const auto result=mouse_api->request(reinterpret_cast<std::uintptr_t>(state.window),reinterpret_cast<std::uintptr_t>(runtime),100,&renewed);
@@ -671,8 +703,17 @@ void capture_keyboard(api::effect_runtime *runtime,RuntimeState &state,bool comp
     }
 #endif
 #endif
+#ifdef MINECOME_HUD_PHYSICAL_MOVEMENT
+    // Movement must release before the UI toggle, including simultaneous W+E.
+    // Wait for both actual guest screen and its composed pixels to agree.
+    const bool movement_ready=!state.transition&&!toggle_edge&&peer->ack.screen==0&&state.uploaded_screen==0&&
+        state.selective_lease.allows(mouse::Mode::buttons);
+    if(!queue_movement(state,state.movement.update(movement_ready,held>>ui_key_count),utc)){
+        close_keyboard(runtime,ui::CloseCause::mailbox_overflow);release_mouse(runtime,state);return;
+    }
+#endif
     const auto changed=held^state.previous_keys;
-    for(std::size_t i=0;i<keys.size();++i)if(changed&(1u<<i)) {
+    for(std::size_t i=0;i<ui_key_count;++i)if(changed&(1u<<i)) {
         const ui::Event event{st::utc_ms(),(held&(1u<<i))?ui::Kind::key_down:ui::Kind::key_up,keys[i],0,0,0};
 #ifdef MINECOME_HUD_LIVE_MOUSE
         const bool toggle=event.kind==ui::Kind::key_down&&(keys[i]==0x45||keys[i]==0x1b);
@@ -690,7 +731,7 @@ void capture_keyboard(api::effect_runtime *runtime,RuntimeState &state,bool comp
         if(!service->input_mailbox.push(event)) {close_keyboard(runtime,ui::CloseCause::mailbox_overflow);return;}
 #endif
     }
-    state.previous_keys=held;
+    state.previous_keys=held&((1u<<ui_key_count)-1);
 #ifdef MINECOME_HUD_LIVE_MOUSE
     if(state.transition){
 #ifdef MINECOME_HUD_WORLD_CLICKS
@@ -714,7 +755,7 @@ void capture_keyboard(api::effect_runtime *runtime,RuntimeState &state,bool comp
         click.window=reinterpret_cast<std::uintptr_t>(state.window);click.token=reinterpret_cast<std::uintptr_t>(runtime);click.generation=state.mouse_generation;
         click.lease_deadline=now+world_capture.lease_remaining_ms;
         if(click.sequence&&!service->world_clicks.push(click)){close_keyboard(runtime,ui::CloseCause::mailbox_overflow);release_mouse(runtime,state);return;}
-#else
+#elif !defined(MINECOME_HUD_PHYSICAL_MOVEMENT)
         if(!mouse_buttons)release_mouse(runtime,state);
 #endif
         return;
@@ -973,7 +1014,10 @@ void on_begin(api::effect_runtime *runtime, api::command_list *commands, api::re
     } catch (...) { fail(state,5); hide(runtime,state); }
 }
 } // namespace
-#ifdef MINECOME_HUD_RAW_OWNER_FILTER
+#ifdef MINECOME_HUD_PHYSICAL_MOVEMENT
+extern "C" __declspec(dllexport) const char *NAME="MineCome bounded physical movement lab";
+extern "C" __declspec(dllexport) const char *DESCRIPTION="Exact KCD2 tools/D3D12 genuine HUD; explicit input v2 WASD/Space and UI keys, host camera look, full inventory capture; one F8 activation at most30 seconds, no stone click publication.";
+#elif defined(MINECOME_HUD_RAW_OWNER_FILTER)
 extern "C" __declspec(dllexport) const char *NAME="MineCome bounded Minecraft raw owner lab";
 extern "C" __declspec(dllexport) const char *DESCRIPTION="Exact KCD2 tools/D3D12 genuine HUD; registered helper motion follows the resolved capture owner; full inventory capture, one F8 activation, at most 30 seconds and sixteen clicks. Fixed-cell stone target.";
 #elif defined(MINECOME_HUD_MOTION_FILTER)

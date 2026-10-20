@@ -110,6 +110,22 @@ Never load newer retail1.5.6 saves into this older1.5.5 development game. Backup
 
 ## Gameplay scope
 
+- The separate physical HUD walking profile is implemented, compiled and checked
+  automatically. The latest run records client/server walking, one forwarded pose
+  and one delayed KCD applied readback, then verified restoration. It still fails
+  when camera sequence 290 reaches 322 ms old; the next publication arrives 7 ms after
+  rejection. The worker is reading promptly. Incremental log parsing removed the
+  growing-history cost, but roundtrip/controller publication still takes roughly
+  120–190ms. Profile console HTTP, guard and path-validation timing before further
+  human retries. The test has no complete walking pass.
+  The original 300 ms camera lifetime and 100 ms I/O retry limit are unchanged.
+  It connects WASD/Space, fresh KCD camera direction, sampled ground, vanilla
+  client/server movement and KCD HUD composition in one bounded lab. It permits up to five seconds of input
+  plus one second to settle, with earlier footprint/displacement stops, inside a
+  30-second HUD session. Inventory transitions release movement and require a
+  fresh neutral/repress. This is separate from aimed stone input and does not
+  establish continuous walking, physical-input exclusivity or full-world movement
+  authority. Native KCD physics remains enabled.
 - The same Minecraft world now passes scripted walking/jumping/landing on a
   synthetic ground patch while capturing the HUD, followed by its inventory
   sequence. This standalone fixture makes no KCD calls and does not establish
@@ -118,8 +134,9 @@ Never load newer retail1.5.6 saves into this older1.5.5 development game. Backup
   bounded KCD follower from that HUD world's server positions. It passes 21
   delayed movement readbacks, player/camera restoration, the subsequent inventory
   sequence and frame-cap restoration. Its HUD is checked by the standalone native
-  receiver; composition during movement and physical walking controls are not
-  yet integrated. Native KCD input and physics remain active.
+  receiver; this earlier scripted mode does not exercise composition during
+  movement or physical walking controls. Native KCD input and physics remain
+  active in that mode.
 - General input forwarding, full collision export, NPC/combat synchronization,
   mining terrain and persistence are not implemented.
 - HUD selection and stone actions now share an actual Minecraft world in a
@@ -136,8 +153,9 @@ Never load newer retail1.5.6 saves into this older1.5.5 development game. Backup
 - Physical W/Space/mouse forwarding and starting-camera alignment now pass in the
   isolated4×4m Minecraft lab. Fifteen delayed samples were discarded during the
   successful run; low-latency sustained control is not yet established. KCD still
-  handles its own input/physics. The input lab must remain separate from the KCD
-  player follower until exclusive control and engine menu state are established.
+  handles its own input/physics. That older input lab remains separate from the
+  follower; the new bounded physical HUD profile uses its own capture and
+  release guards rather than granting that lab movement authority.
 - Read-only live inspection confirms `ActionMapManager.EnableActionFilter` is
   absent from the official1.5.5 Lua runtime despite documentation for it.
   `g_gameRules.game.FreezeInput` and `player.EnablePhysics` exist, but their prior

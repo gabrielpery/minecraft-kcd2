@@ -117,8 +117,9 @@ function Assert-MineComeTraceClock {
 
 function New-MineComeTraceReceiver {
     [CmdletBinding()]
-    param([Parameter(Mandatory)][string]$PatchFile,[Parameter(Mandatory)]$MinimumUtcMs,[string]$ExpectedHudSave)
+    param([Parameter(Mandatory)][string]$PatchFile,[Parameter(Mandatory)]$MinimumUtcMs,[string]$ExpectedHudSave,[switch]$PhysicalMovement)
     Assert-MineComeTraceClock $MinimumUtcMs
+    if($PhysicalMovement -and -not $ExpectedHudSave){throw 'Physical movement trace requires one exact HUD save.'}
     if($PSBoundParameters.ContainsKey('ExpectedHudSave')) {
         $saveWorld=[Guid]::Empty
         if($ExpectedHudSave -cnotmatch '^MineCome-HudStream-(.+)$' -or
@@ -166,7 +167,7 @@ function New-MineComeTraceReceiver {
             if([Math]::Abs($x-($center.x+(($index-1)%5)-2)) -gt 0.0001 -or [Math]::Abs($y-($center.y+[Math]::Floor(($index-1)/5)-2)) -gt 0.0001 -or -not (Get-MineComeTraceBoolean $point 'valid') -or (Get-MineComeTraceString $point 'result') -cne 'hit') { throw 'Invalid patch coverage.' }
             foreach($axis in @('nx','ny','nz')) { [void](Get-MineComeTraceNumber $point $axis -1.01 1.01) }
         }
-        return [pscustomobject]@{ExpectedRun=$run;PatchHash=$hash;Center=$center;ExpectedHudSave=$ExpectedHudSave;MinimumUtcMs=[long]$MinimumUtcMs;LastSeq=[long]0;LastServerSeq=[long]0;LastFreshPassedSeq=[long]0;LastPassedUtcMs=[long]0;LastPassedServerAgeMs=[double]0;World=$null;Save=$null;Begun=$false;Ended=$false;GroundProved=$false;Bytes=0;Records=0}
+        return [pscustomobject]@{ExpectedRun=$run;PatchHash=$hash;Center=$center;ExpectedHudSave=$ExpectedHudSave;PhysicalMovement=[bool]$PhysicalMovement;Anchor=[pscustomobject]@{x=0.0;y=64.0;z=0.0};AnchorVerified=$false;MinimumUtcMs=[long]$MinimumUtcMs;LastSeq=[long]0;LastServerSeq=[long]0;LastFreshPassedSeq=[long]0;LastPassedUtcMs=[long]0;LastPassedServerAgeMs=[double]0;World=$null;Save=$null;Begun=$false;Ended=$false;GroundProved=$false;Bytes=0;Records=0}
     } finally { $document.Dispose() }
 }
 
@@ -191,7 +192,8 @@ function Receive-MineComeMovementTrace {
         }
         Assert-MineComeTraceKeys $root $keys
         [void](Get-MineComeTraceInteger $root 'schema' 1 1)
-        if((Get-MineComeTraceString $root 'run') -cne $State.ExpectedRun -or (Get-MineComeTraceString $root 'patch_sha256') -cne $State.PatchHash -or (Get-MineComeTraceString $root 'source_kind') -cne 'live_kcd_ground_patch') { throw 'Trace patch/run/source identity mismatch.' }
+        $sourceKind=if($State.PhysicalMovement){'live_kcd_hud_physical_movement'}else{'live_kcd_ground_patch'}
+        if((Get-MineComeTraceString $root 'run') -cne $State.ExpectedRun -or (Get-MineComeTraceString $root 'patch_sha256') -cne $State.PatchHash -or (Get-MineComeTraceString $root 'source_kind') -cne $sourceKind) { throw 'Trace patch/run/source identity mismatch.' }
         $world=Get-MineComeTraceString $root 'world';$save=Get-MineComeTraceString $root 'save';$uuid=[Guid]::Empty
         $expectedSave=if($State.ExpectedHudSave){$State.ExpectedHudSave}else{'MineCome-Ground-'+$world}
         $prefix=if($State.ExpectedHudSave){'MineCome-HudStream-'}else{'MineCome-Ground-'}
@@ -206,6 +208,7 @@ function Receive-MineComeMovementTrace {
         if($phase -cnotin @('SETTLING','WALKING','RESTING','JUMPING','LANDING','PASSED','FAILED','STOPPED')) { throw 'Invalid trace phase.' }
         $returnKind=$kind;$target=$null;$serverSeq=$State.LastServerSeq;$groundProved=$State.GroundProved
         $freshPassedSeq=[long]0;$passedUtc=[long]0;$passedServerAgeMs=[double]0
+        $anchorValue=$State.Anchor;$anchorVerified=$State.AnchorVerified
         if($kind -ceq 'begin') {
             if($State.Begun -or $seq -ne 1 -or $phase -cne 'SETTLING') { throw 'Begin must be first and SETTLING.' }
             [void](Get-MineComeTraceInteger $root 'started_monotonic_ns' ([long]::MinValue) ([long]::MaxValue))
@@ -215,8 +218,12 @@ function Receive-MineComeMovementTrace {
             foreach($axis in @('x','y','z')) {
                 if((Get-MineComeTraceNumber $center $axis -10000000 10000000) -ne $State.Center.$axis) { throw 'Begin center differs from captured patch.' }
                 $expected=if($axis -ceq 'y'){64}else{0}
-                [void](Get-MineComeTraceNumber $anchor $axis $expected $expected)
+                if($State.PhysicalMovement){
+                    $low=if($axis -ceq 'y'){52}else{-0.01};$high=if($axis -ceq 'y'){76}else{0.01}
+                    [void](Get-MineComeTraceNumber $anchor $axis $low $high)
+                }else{[void](Get-MineComeTraceNumber $anchor $axis $expected $expected)}
             }
+            $anchorValue=Convert-MineComeTraceValue $anchor
         } elseif($kind -ceq 'sample') {
             if(-not $State.Begun) { throw 'Sample precedes begin.' }
             [void](Get-MineComeTraceInteger $root 'monotonic_ns' ([long]::MinValue) ([long]::MaxValue))
@@ -233,6 +240,13 @@ function Receive-MineComeMovementTrace {
             }
             $server=Get-MineComeTraceField $root 'server'
             $grounded=(Get-MineComeTraceBoolean $server 'on_ground') -and (Get-MineComeTraceBoolean $server 'proxy_support')
+            if($State.PhysicalMovement -and -not $anchorVerified){
+                if($phase -cne 'SETTLING' -or -not $grounded){throw 'Physical movement must first report its grounded initial anchor.'}
+                foreach($axis in @('x','y','z')){
+                    if([Math]::Abs((Get-MineComeTraceNumber $server $axis -100 100)-$State.Anchor.$axis) -gt 0.01){throw 'Physical movement initial sample differs from its anchor.'}
+                }
+                $anchorVerified=$true
+            }
             $active=$false
             if($phase -cin @('WALKING','RESTING') -and $grounded) { $active=$true;$groundProved=$true }
             elseif($phase -cin @('JUMPING','LANDING') -and $groundProved) { $active=$true }
@@ -240,7 +254,8 @@ function Receive-MineComeMovementTrace {
             if($observationAgeMs -gt 300) { $returnKind='stale';$groundProved=$State.GroundProved }
             elseif(-not $active) { $returnKind='observe' }
             else {
-                $target=[pscustomobject]@{x=$State.Center.x+(Get-MineComeTraceNumber $server 'x' -2 2);y=$State.Center.y-(Get-MineComeTraceNumber $server 'z' -2 2);z=$State.Center.z+(Get-MineComeTraceNumber $server 'y' 52 76)-64}
+                $target=[pscustomobject]@{x=$State.Center.x+(Get-MineComeTraceNumber $server 'x' -2 2)-$State.Anchor.x;y=$State.Center.y-(Get-MineComeTraceNumber $server 'z' -2 2)+$State.Anchor.z;z=$State.Center.z+(Get-MineComeTraceNumber $server 'y' 52 76)-$State.Anchor.y}
+                if($State.PhysicalMovement -and (($target.x-$State.Center.x)*($target.x-$State.Center.x)+($target.y-$State.Center.y)*($target.y-$State.Center.y)+($target.z-$State.Center.z)*($target.z-$State.Center.z) -gt 4 -or $target.z-$State.Center.z -lt -0.2 -or $target.z-$State.Center.z -gt 1.5)){throw 'Physical movement target exceeds the unchanged follower bounds.'}
             }
             if($phase -ceq 'PASSED' -and $returnKind -cne 'stale' -and $groundProved -and $grounded) {
                 $freshPassedSeq=$seq;$passedUtc=$utc;$passedServerAgeMs=$serverAgeMs
@@ -262,6 +277,7 @@ function Receive-MineComeMovementTrace {
         $State.LastSeq=$seq;$State.LastServerSeq=$serverSeq;$State.Bytes+=$lineBytes+1;$State.Records++
         if($kind -ceq 'begin') { $State.Begun=$true;$State.World=$world;$State.Save=$save }
         $State.GroundProved=$groundProved
+        $State.Anchor=$anchorValue;$State.AnchorVerified=$anchorVerified
         $State.LastFreshPassedSeq=$freshPassedSeq;$State.LastPassedUtcMs=$passedUtc;$State.LastPassedServerAgeMs=$passedServerAgeMs
         if($kind -ceq 'end') { $State.Ended=$true }
         $answer=[pscustomobject]@{Kind=$returnKind;Record=$record}

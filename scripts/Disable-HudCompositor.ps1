@@ -2,21 +2,48 @@
 # Original reversible tools-only rollback. Never starts/stops a game or deletes a file.
 # Keeps the pinned proxy as dxgi.dll.minecome-disabled; configs, addon, shaders and logs remain.
 [CmdletBinding()]
-param([string]$BundleDirectory, [switch]$Preview, [switch]$LiveMouse, [switch]$WorldClicks, [switch]$SelectiveMouse, [ValidateSet(1,2,3,4)][int]$SelectiveRevision=1)
+param([string]$BundleDirectory, [switch]$Preview, [switch]$LiveMouse, [switch]$WorldClicks, [switch]$SelectiveMouse, [ValidateSet(1,2,3,4)][int]$SelectiveRevision=1, [switch]$PhysicalMovement)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+if($PhysicalMovement -and ($LiveMouse -or $WorldClicks -or $SelectiveMouse -or $SelectiveRevision -ne 1)){throw 'PhysicalMovement is a separate rollback profile.'}
 if($WorldClicks -and -not $LiveMouse){throw 'World rollback requires explicit LiveMouse and WorldClicks.'}
 if($SelectiveMouse -and (-not $WorldClicks -or -not $LiveMouse)){throw 'Selective rollback requires explicit LiveMouse and WorldClicks modes.'}
 if($SelectiveRevision -ge 2 -and -not $SelectiveMouse){throw 'A selective revision rollback requires explicit SelectiveMouse mode.'}
 $projectRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $runtimeRoot = Join-Path $projectRoot 'runtime'
-if (-not $BundleDirectory) { $BundleDirectory = Join-Path $runtimeRoot $(if($SelectiveMouse -and $SelectiveRevision -eq 4){'hud-compositor-selective-r4'}elseif($SelectiveMouse -and $SelectiveRevision -eq 3){'hud-compositor-selective-r3'}elseif($SelectiveMouse -and $SelectiveRevision -eq 2){'hud-compositor-selective-r2'}elseif($SelectiveMouse){'hud-compositor-selective'}elseif($WorldClicks){'hud-compositor-world'}elseif($LiveMouse){'hud-compositor-mouse'}else{'hud-compositor'}) }
+if (-not $BundleDirectory) { $BundleDirectory = Join-Path $runtimeRoot $(if($PhysicalMovement){'hud-compositor-walking'}elseif($SelectiveMouse -and $SelectiveRevision -eq 4){'hud-compositor-selective-r4'}elseif($SelectiveMouse -and $SelectiveRevision -eq 3){'hud-compositor-selective-r3'}elseif($SelectiveMouse -and $SelectiveRevision -eq 2){'hud-compositor-selective-r2'}elseif($SelectiveMouse){'hud-compositor-selective'}elseif($WorldClicks){'hud-compositor-world'}elseif($LiveMouse){'hud-compositor-mouse'}else{'hud-compositor'}) }
 $BundleDirectory = [IO.Path]::GetFullPath($BundleDirectory)
 $exeHash = 'a32d077e6b54e5cd0c5a5f3194f473779706ff266a711e4745ccdb598843340a'
 $proxyHash = '0cee63f9c9f13f3ac909c5b4903f4dbb4b719a7ab3b4f13b0deaf83c814b94f7'
-if($LiveMouse){. (Join-Path $PSScriptRoot 'HudMouseProfile.ps1');$mouseProfile=Get-MineComeMouseProfile -WorldClicks:$WorldClicks -SelectiveMouse:$SelectiveMouse -SelectiveRevision $SelectiveRevision;$proxyHash=$mouseProfile.runtime_sha256}
+if($PhysicalMovement){
+    . (Join-Path $PSScriptRoot 'HudPhysicalMovement.ps1')
+    $mouseProfile=Get-MineComePhysicalMovementProfile;$proxyHash=$mouseProfile.runtime_sha256
+}elseif($LiveMouse){. (Join-Path $PSScriptRoot 'HudMouseProfile.ps1');$mouseProfile=Get-MineComeMouseProfile -WorldClicks:$WorldClicks -SelectiveMouse:$SelectiveMouse -SelectiveRevision $SelectiveRevision;$proxyHash=$mouseProfile.runtime_sha256}
 $utf8 = [Text.UTF8Encoding]::new($false, $true)
 
+function Assert-MineComePhysicalMovementRollbackReceipt($Manifest,$Receipt,$Profile) {
+    Assert-MineComePhysicalMovementBundle $Manifest $Profile
+    if($Manifest.runtime.version -cne '6.8.0' -or $Manifest.runtime.full_addon_support -isnot [bool] -or
+        -not $Manifest.runtime.full_addon_support -or $Receipt.schema -ne 1 -or
+        $Receipt.kind -cne 'minecome_hud_install_v1' -or @($Receipt.files).Count -ne 6){
+        throw 'Exact physical movement bundle and installed receipt required for rollback.'
+    }
+    # The r4 proxy is shared, so its hash alone cannot identify the walking installation.
+    foreach($relative in @('dxgi.dll','ReShade.ini','MineComeHudPreset.ini','ReShade-LICENSE.txt',
+        'minecome-hud/addons/MineComeHudCompositor.addon64','minecome-hud/shaders/MineComeHud.fx')){
+        $staged=@($Manifest.files | Where-Object {$_.path -ceq $relative})
+        $owned=@($Receipt.files | Where-Object {$_.path -ceq $relative})
+        if($staged.Count -ne 1 -or $owned.Count -ne 1){throw 'Physical rollback requires all six exact file identities.'}
+        foreach($record in @($staged[0],$owned[0])){
+            if($record.sha256 -cnotmatch '^[0-9a-f]{64}$' -or
+                ($record.bytes -isnot [int] -and $record.bytes -isnot [long]) -or
+                $record.bytes -lt 1 -or $record.bytes -gt 64MB){throw 'Invalid physical rollback file record.'}
+        }
+        if($staged[0].sha256 -cne $owned[0].sha256 -or $staged[0].bytes -ne $owned[0].bytes){
+            throw 'Physical movement bundle differs from its installed receipt.'
+        }
+    }
+}
 function Assert-Unlinked([string]$Path) {
     $full = [IO.Path]::GetFullPath($Path)
     $cursor = $full
@@ -76,7 +103,9 @@ Assert-GameClosed
 Assert-ExactToolsExe
 $installedReceiptPath = Join-Path $BundleDirectory 'installed.json'
 $installed = Read-BoundedJson $installedReceiptPath
-if($LiveMouse){Assert-MineComeMouseBundle (Read-BoundedJson (Join-Path $BundleDirectory 'bundle.json')) $mouseProfile -WorldClicks:$WorldClicks -SelectiveMouse:$SelectiveMouse -SelectiveRevision $SelectiveRevision}
+if($PhysicalMovement){
+    Assert-MineComePhysicalMovementRollbackReceipt (Read-BoundedJson (Join-Path $BundleDirectory 'bundle.json')) $installed $mouseProfile
+}elseif($LiveMouse){Assert-MineComeMouseBundle (Read-BoundedJson (Join-Path $BundleDirectory 'bundle.json')) $mouseProfile -WorldClicks:$WorldClicks -SelectiveMouse:$SelectiveMouse -SelectiveRevision $SelectiveRevision}
 if ($installed.schema -ne 1 -or $installed.kind -cne 'minecome_hud_install_v1' -or
     -not ([IO.Path]::GetFullPath($installed.target_exe).Equals($gameExe,[StringComparison]::OrdinalIgnoreCase)) -or
     $installed.exe_sha256 -ine $exeHash -or
@@ -98,7 +127,9 @@ if (-not $sourceExists -and -not $destinationExists) { throw 'Neither owned prox
 if ($sourceExists) { Assert-OwnedProxy $source; $status = 'would_disable' }
 else { Assert-OwnedProxy $destination; $status = 'already_disabled' }
 if ($Preview) {
-    [pscustomobject]@{schema=1;kind='minecome_hud_rollback_preview_v1';status=$status;source=$source;disabled_path=$destination;sha256=$proxyHash;game_closed=$true;files_changed=$false} | ConvertTo-Json -Depth 4
+    $previewReceipt=[ordered]@{schema=1;kind='minecome_hud_rollback_preview_v1';status=$status;source=$source;disabled_path=$destination;sha256=$proxyHash;game_closed=$true;files_changed=$false}
+    if($PhysicalMovement){$previewReceipt.physical_movement=$true}
+    $previewReceipt | ConvertTo-Json -Depth 4
     Write-Output 'HUD_DISABLE_PREVIEW_PASS files_changed=false receipt_written=false'
     return
 }
@@ -132,6 +163,7 @@ try {
         source=$source;disabled_path=$destination;proxy_sha256=$proxyHash;proxy_bytes=$installedProxyBytes;renamed=$renamed;failure=$failure
         game_launched=$false;game_stopped=$false;configs_deleted=$false;addon_deleted=$false;evidence_preserved=$true;default_startup_verified=$false
     }
+    if($PhysicalMovement){$receipt.physical_movement=$true}
     $bytes = $utf8.GetBytes(($receipt | ConvertTo-Json -Depth 5)+"`n")
     $receiptFile = Join-Path $receiptDirectory 'rollback.json'
     $file = [IO.FileStream]::new($receiptFile,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)

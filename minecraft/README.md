@@ -274,6 +274,48 @@ Controls, collision installations and the original frame cap are restored;
 Minecraft exits normally. This remains a bounded scripted test. The standalone
 synthetic fixture above is unchanged.
 
+## Physical HUD walking test
+
+The opt-in `Start-HudWalkingLab.ps1` connects physical WASD/Space to vanilla
+Minecraft movement in the same fresh Creative world that supplies KCD's HUD.
+It authenticates a newly sampled KCD terrain patch, disables flying only in
+the owned lab world, and observes actual client and integrated-server movement.
+Fresh KCD camera samples set the Minecraft viewing direction; fresh server
+positions drive the separate bounded KCD follower.
+
+This uses a distinct walking add-on and protocol2 input channel. Existing
+protocol1 HUD/aimed-stone modes remain separate. Readiness must identify the
+physical mode explicitly; synthetic input, standalone HUD fixtures and stone
+profiles cannot be mixed into this session. Movement holds release on inventory
+transitions or lost authority and require neutral controls and a fresh press
+before resuming.
+
+Source compilation and automated checks pass. Latest live run
+`c427a5fc08bf4874a00f5f3cc64b04f4` records 0.75389 blocks of client walking,
+0.626906 on the server, one applied KCD pose and verified position restoration.
+Camera freshness then ends the failed run; a complete walking pass remains
+unverified. The test permits
+up to five seconds of movement input plus one second
+of neutral settling, with earlier footprint/displacement stops, inside the
+30-second HUD session. It verifies at least 0.15 blocks of walking on both
+Minecraft sides, fresh camera updates, no post-settle correction, terminal
+control/collision release and a passed immutable movement trace. Jump/landing
+observations are recorded, but walking success alone does not certify a jump.
+The controller separately verifies KCD readbacks, position restoration and
+restoration of the temporary frame cap.
+
+Use the [physical walking procedure](../kcd2/MOVEMENT-LAB.md#physical-walking-with-the-hud-in-kcd)
+after installing the separate walking profile. `Start-HudWalkingLab.ps1` supports
+`-PreflightOnly` and discovers PowerShell 7 from Windows PowerShell 5.1.
+Evidence remains under `runtime/evidence/hud-walking-*/`. Camera-file reads run
+off the game thread; transient sharing errors get a 100 ms retry bound while
+the original sample's 300 ms expiry remains unchanged. The reader now polls every
+5 ms and retains the exact sample/deadline diagnostics at rejection. The controller
+parses new complete log records once. The latest failure records a camera sample
+aged 322 ms with the next publication 7 ms late despite a prompt reader. Profile
+controller/HTTP delivery costs next, without extending the freshness limits.
+This is not continuous movement or a replacement for full-world collision streaming.
+
 ## Standalone aimed-stone lab
 
 From the repository root, run:

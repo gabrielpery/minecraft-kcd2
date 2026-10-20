@@ -1,5 +1,96 @@
 # MineCome progress — 2026-10-20
 
+**Wrap-up: partial physical walking reaches KCD; complete live check still fails.**
+Latest run `c427a5fc08bf4874a00f5f3cc64b04f4` records actual Minecraft walking
+of 0.75389 blocks on the client and 0.626906 on the integrated server before the
+camera lease expires. Its four-record trace produces one forwarded server pose.
+The saved KCD receipts contain one matching delayed `applied_readback`, sequence 3,
+at approximately 0.2495 metres displacement, followed by verified `explicit_end`
+restoration. The outer receipt reports `delayed_readbacks=0` because its success
+counting stage was never reached; that field does not erase the underlying
+applied receipt. This is partial movement evidence, not a completed walking pass.
+The user reports that Minecraft appeared to crash after walking began.
+
+The new diagnostic records camera sequence 290 at source age 322 ms: request
+UTC 1792512591788, observed by Java at 1792512591979, rejected at 1792512592110.
+Sequence 291 is published at 1792512592117, seven milliseconds after rejection.
+The worker's last read is only 1 ms old and its maximum polling gap is 42 ms, so this
+attempt does not indicate reader starvation. Incremental parsing fixed the
+growing-history cost, but camera roundtrip/controller publication still takes
+roughly 120–190 ms. The next step is to profile console HTTP, guard and path-validation
+timing before another human retry. Keep the original 300 ms camera lifetime and
+100 ms I/O retry bound; extending leases is not the planned repair.
+
+Evidence:
+`runtime/evidence/hud-walking-20261020-170855-731e410d62f944fc98f58fef5bd9b1b8/verification.json`
+and its `kcd-receipts.json`. Work stops here for the user's requested wrap-up;
+resume from this timing diagnosis. No further live test is claimed.
+
+**Physical HUD walking implementation and earlier camera timing repair.**
+The separate `Start-HudWalkingLab.ps1` connects physical WASD/Space events to
+vanilla Minecraft movement in the same fresh world that supplies the HUD.
+It captures real KCD ground, checks the owned client/server collision installations,
+and uses fresh, session-bound KCD camera direction for Minecraft yaw and pitch.
+Fresh integrated-server positions drive the bounded KCD follower while the
+existing compositor displays Minecraft's actual UI.
+
+This is an explicit walking profile with its own add-on and
+`MineComeHudMovement.ini`, reusing the frozen revision4 renderer. Its input
+protocol2 adds the five movement keys; protocol1 and the existing aimed/stone
+profiles retain their original scope. It does not publish stone-click intents.
+F8 requires all 16 watched keys to be neutral. Movement releases before inventory
+transitions, on lost authority and at completion; closing inventory requires
+neutral controls and a fresh press before movement can resume.
+
+The lab accepts movement for up to five seconds from the first accepted movement
+edge, followed by at most one second of neutral settling. It can stop earlier at
+the sampled footprint or displacement limit. The HUD remains bounded to 30 seconds
+after F8. The game-owned eight-second follower deadline and 400 ms lease remain;
+the controller verifies delayed player readbacks and return to the owned starting
+position. KCD camera look remains native. Neither `FreezeInput` nor a physics
+enable/disable method is used, and full-world or exclusive movement authority
+is not claimed. The temporary 60 FPS cap has its existing 120-second engine
+deadline and must restore.
+
+Native and Java sources compile and focused protocol, held-key, camera-file,
+collision ownership, trace and lifecycle checks pass. Independent native review
+passed. The four deployment/profile PowerShell suites pass 676 checks under
+both Windows PowerShell 5.1 and PowerShell 7, including the new explicit walking
+rollback and unchanged legacy profile cases. A startup failure caused by a
+Windows camera-file sharing race is repaired with a bounded 100 ms filesystem
+retry. Retrying retains the original sample and expiry; malformed data or wrong
+identity is still terminal and no input or camera lease is extended.
+
+Combined live check `1bbb94b95bf44903aec2ca23a1f64dcb` fails when the active
+camera lease expires after W. The user confirms the HUD appears and inventory
+works in the new profile, but walking does not. The controller records zero
+forwarded poses and zero delayed movement readbacks, so the KCD follower never
+starts. The temporary frame cap restores. The file-sharing exception is resolved;
+HUD/inventory visibility does not establish composition during actual walking.
+
+Investigation measured another timing cost: reparsing the growing camera log
+history took about 101 ms at 336 samples. The controller now uses an incremental
+cursor that parses each complete record once. It retains the unfinished UTF-8
+tail until a newline arrives, enforces the existing 8 MiB probe-log bound, rejects
+malformed records, and commits a batch to the cache only after parsing succeeds.
+All 59 cursor regressions pass. An unchanged poll against the actual saved
+335-record log measures 0.089 ms median and 0.26 ms at the 95th percentile.
+These are local parser measurements, not end-to-end input latency.
+
+The Java camera reader now polls every 5 ms and records the exact immutable sample,
+original deadline and worker timing at rejection. Independent review confirms
+these diagnostics grant no authority. The original 300 ms camera freshness and
+100 ms filesystem retry limits remain unchanged; repeated bytes cannot refresh
+either sample authority or its deadline. The later run above reaches partial
+movement but still expires, so these timing repairs do not complete the walking
+milestone.
+
+The original failed receipt is preserved at
+`runtime/evidence/hud-walking-20261020-170132-17025444a2274b4786836879fcb7bd41/verification.json`.
+A complete physical walking pass remains unverified. The earlier scripted pass
+below remains a separate milestone; this bounded lab is not the final continuous
+playable build.
+
 **HUD-world movement connected to the bounded KCD follower.** The new
 `Start-HudCoupledMovementLab.ps1` captures fresh KCD terrain, creates a new
 Minecraft HUD world over that patch, and forwards fresh integrated-server

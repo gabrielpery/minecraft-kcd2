@@ -11,22 +11,27 @@ void put64(std::span<std::uint8_t> b,std::size_t at,std::uint64_t value) { for(u
 std::uint32_t get32(std::span<const std::uint8_t> b,std::size_t at) { std::uint32_t v=0;for(unsigned i=0;i<4;++i)v|=std::uint32_t(b[at+i])<<(i*8);return v; }
 std::uint64_t get64(std::span<const std::uint8_t> b,std::size_t at) { std::uint64_t v=0;for(unsigned i=0;i<8;++i)v|=std::uint64_t(b[at+i])<<(i*8);return v; }
 }
-bool valid_key(std::uint32_t code) noexcept { return (code>=0x31&&code<=0x39)||code==0x45||code==0x1b; }
+bool valid_key(std::uint32_t code,Profile profile) noexcept {
+    if(profile!=Profile::ui&&profile!=Profile::movement)return false;
+    return (code>=0x31&&code<=0x39)||code==0x45||code==0x1b||
+        (profile==Profile::movement&&(code==0x57||code==0x41||code==0x53||code==0x44||code==0x20));
+}
 bool fresh(std::uint64_t timestamp,std::uint64_t now) noexcept {
     return timestamp && (timestamp<=now ? now-timestamp<=fresh_ms : timestamp-now<=100);
 }
-bool valid_event(const Event &e,std::uint64_t now) noexcept {
+bool valid_event(const Event &e,std::uint64_t now,Profile profile) noexcept {
+    if(profile!=Profile::ui&&profile!=Profile::movement)return false;
     if(!fresh(e.captured,now)||!std::isfinite(e.x)||!std::isfinite(e.y)||e.x<0||e.x>1||e.y<0||e.y>1)return false;
     switch(e.kind) {
-    case Kind::key_down:case Kind::key_up:return valid_key(e.code)&&e.x==0&&e.y==0&&e.wheel==0;
+    case Kind::key_down:case Kind::key_up:return valid_key(e.code,profile)&&e.x==0&&e.y==0&&e.wheel==0;
     case Kind::move:return e.code==0&&e.wheel==0;
     case Kind::button_down:case Kind::button_up:return e.code<=1&&e.wheel==0;
     case Kind::wheel:return e.code==0&&e.wheel>=-16&&e.wheel<=16&&e.wheel!=0;
     default:return false;
     }
 }
-void encode_host(std::span<std::uint8_t,128> b,const Identity &id,std::uint64_t sequence,std::uint64_t utc,std::uint32_t state) {
-    std::fill(b.begin(),b.end(),std::uint8_t{0});std::memcpy(b.data(),"MCHUDI01",8);put32(b,8,1);put32(b,12,mapping_bytes);
+void encode_host(std::span<std::uint8_t,128> b,const Identity &id,std::uint64_t sequence,std::uint64_t utc,std::uint32_t state,Profile profile) {
+    std::fill(b.begin(),b.end(),std::uint8_t{0});std::memcpy(b.data(),profile==Profile::movement?"MCHUDI02":"MCHUDI01",8);put32(b,8,static_cast<std::uint32_t>(profile));put32(b,12,mapping_bytes);
     std::memcpy(b.data()+16,id.run.data(),32);put32(b,48,id.producer_pid);put32(b,52,id.target_pid);
     put64(b,56,id.producer_start);put64(b,64,id.target_start);put64(b,72,id.expires_utc_ms);
     put64(b,80,sequence);put64(b,88,utc);put32(b,96,state);put32(b,100,static_cast<std::uint32_t>(std::min<std::uint64_t>(sequence,64)));

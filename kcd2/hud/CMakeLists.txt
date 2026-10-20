@@ -177,6 +177,32 @@ endif()
 add_custom_command(TARGET minecome_hud_raw_motion_compositor POST_BUILD
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/shaders/MineComeMouseHud.fx"
     "$<TARGET_FILE_DIR:minecome_hud_raw_motion_compositor>/MineComeHud.fx")
+
+# Physical movement is a new input-v2 addon, using the frozen r4 proxy/API2.
+# No WORLD_CLICKS definition: this profile never publishes stone intentions.
+add_library(minecome_hud_movement_compositor SHARED hud_input_addon.cpp)
+target_link_libraries(minecome_hud_movement_compositor PRIVATE minecome_hud_input user32)
+target_include_directories(minecome_hud_movement_compositor PRIVATE "${MINECOME_RESHADE_ROOT}/include")
+target_compile_definitions(minecome_hud_movement_compositor PRIVATE MINECOME_HUD_UI_INPUT=1 MINECOME_HUD_LIVE_MOUSE=1 MINECOME_HUD_SELECTIVE_MOUSE=1 MINECOME_HUD_MOTION_FILTER=1 MINECOME_HUD_RAW_OWNER_FILTER=1 MINECOME_HUD_PHYSICAL_MOVEMENT=1)
+set_target_properties(minecome_hud_movement_compositor PROPERTIES OUTPUT_NAME "MineComeHudCompositor" PREFIX "" SUFFIX ".addon64"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/movement" ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/movement"
+    PDB_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/movement")
+if(MSVC)
+    set_target_properties(minecome_hud_movement_compositor PROPERTIES MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    target_compile_options(minecome_hud_movement_compositor PRIVATE /W4 /permissive- /utf-8 /EHsc)
+endif()
+add_custom_command(TARGET minecome_hud_movement_compositor POST_BUILD
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/shaders/MineComeMouseHud.fx"
+    "$<TARGET_FILE_DIR:minecome_hud_movement_compositor>/MineComeHud.fx")
+if(BUILD_TESTING)
+    add_executable(minecome_hud_movement_tests movement_forwarding_tests.cpp)
+    target_link_libraries(minecome_hud_movement_tests PRIVATE minecome_hud_input)
+    if(MSVC)
+        set_target_properties(minecome_hud_movement_tests PROPERTIES MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+        target_compile_options(minecome_hud_movement_tests PRIVATE /W4 /permissive- /utf-8 /EHsc)
+    endif()
+    add_test(NAME hud_physical_movement_contract COMMAND minecome_hud_movement_tests)
+endif()
 if(BUILD_TESTING)
     add_executable(minecome_hud_selective_forwarding_tests selective_forwarding_tests.cpp)
     target_compile_features(minecome_hud_selective_forwarding_tests PRIVATE cxx_std_20)

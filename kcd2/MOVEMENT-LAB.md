@@ -101,6 +101,68 @@ KCD readbacks, player/camera restoration, 435 accepted HUD frames, the four-stat
 inventory sequence and frame-cap restoration. The earlier coupled test and
 standalone synthetic HUD fixture remain separate entry points.
 
+## Physical walking with the HUD in KCD
+
+`Start-HudWalkingLab.ps1` is a separate opt-in lab that sends physical WASD/Space
+to the actual Minecraft world supplying KCD's HUD. It uses a fresh 25-point KCD
+terrain capture, ordinary Minecraft movement/gravity/jumping on client and server,
+and fresh KCD camera direction for walking orientation. Only fresh server poses
+drive the KCD follower. Source compilation and automated contract/lifecycle checks
+pass. Latest live run `c427a5fc08bf4874a00f5f3cc64b04f4` records client/server
+walking and one applied KCD movement, followed by verified restoration, but
+fails when the camera sample expires. There is no completed physical walking pass.
+Incremental complete-record parsing and 5 ms camera-file polling are checked;
+the remaining work is profiling console HTTP, guard and path-validation costs
+before another human retry, keeping the existing freshness limits.
+
+This requires the separately prepared and installed `hud-compositor-walking`
+bundle. The normal revision4 aimed-stone add-on cannot accept walking input.
+The walking profile reuses that frozen renderer but has its own add-on, protocol2
+key channel and `MineComeHudMovement.ini`. Preparing/installing a bundle is
+separate from starting the lab; a source clone does not contain these artifacts.
+The deployment helpers use explicit `-PhysicalMovement` mode. See the
+[HUD guide](../docs/research/HUD-COMPOSITOR.md) for the renderer prerequisites.
+
+With the matching add-on loaded in a fresh supported KCD tools world, menus closed,
+the player stationary on gentle ground and any older MineCome client closed, run
+from the repository root:
+
+```powershell
+& .\scripts\Start-HudWalkingLab.ps1 -PreflightOnly
+& .\scripts\Start-HudWalkingLab.ps1
+```
+
+The wrapper finds an installed PowerShell 7 when invoked from Windows PowerShell
+5.1; no administrator mode is required. Wait for `HUD_WALKING_READY` before using
+F8. Keep KCD focused, release all controls and press F8 once. Briefly press and
+release W to walk; WASD and Space are the supported movement keys. Keep movements
+small: the collision patch covers only 4×4 metres and the lab stops input before
+its footprint/displacement limit. The current completion check requires walking
+on both Minecraft sides; an optional jump is recorded separately.
+
+Movement accepts new held input for at most five seconds from the first accepted
+movement edge, then allows at most one second for neutral settling. The HUD can
+continue for up to 30 seconds after F8. E opens inventory and Escape closes it;
+inventory transitions release movement, and a held key cannot silently resume
+when inventory closes. Native camera look remains available outside inventory.
+This profile does not publish block placement/breaking clicks.
+
+The KCD follower retains its independent eight-second deadline, 400 ms pose
+lease and actor/position guards. Normal completion requires delayed readbacks
+and verified return to the starting position; restoration only applies while
+the probe still owns that actor/position. The helper also verifies release of
+Minecraft controls/collision installations and restoration of the temporary
+60 FPS cap, whose engine deadline remains 120 seconds. The probe does not change
+KCD physics or call `FreezeInput`.
+
+Evidence is retained under `runtime/evidence/hud-walking-*/`. A controller
+`HUD_WALKING_PASS` must be reported separately from visual observations and
+physical-input exclusivity. The file-sharing startup repair retries filesystem
+reads for at most 100 ms without refreshing the original camera sample deadline.
+This remains a short development test; sustained movement, expanding terrain
+coverage, collision with placed blocks and a combined walking/aimed-stone mode
+remain unfinished.
+
 ## What this can establish
 
 The sampler uses25 downward terrain-only rays in a5×5 grid with1m spacing. Each

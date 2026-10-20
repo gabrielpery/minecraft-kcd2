@@ -41,6 +41,10 @@ loom {
                 vmArgs '-Dminecome.hudGroundMovementFixture=true'
             if (project.hasProperty('minecomeHudGroundMovementCoupled'))
                 vmArgs '-Dminecome.hudGroundMovementCoupled=true'
+            if (project.hasProperty('minecomeHudPhysicalMovement'))
+                vmArgs '-Dminecome.hudPhysicalMovement=true'
+            if (project.hasProperty('minecomeHudHostViewFile'))
+                vmArgs "-Dminecome.hudHostViewFile=${project.property('minecomeHudHostViewFile')}"
             if (project.hasProperty('minecomeHudStreamStandalone'))
                 vmArgs '-Dminecome.hudStreamStandalone=true'
             if (project.hasProperty('minecomeHudStreamInput'))
@@ -158,6 +162,12 @@ tasks.register('hudGroundMovementModeTest', JavaExec) {
     mainClass = 'dev.minecome.hud.HudGroundMovementModeTests'
 }
 check.dependsOn hudGroundMovementModeTest
+tasks.register('hudPhysicalMovementTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'dev.minecome.hud.HudPhysicalMovementTests'
+}
+check.dependsOn hudPhysicalMovementTest
 tasks.register('groundCollisionOwnershipTest', JavaExec) {
     dependsOn testClasses
     classpath = sourceSets.test.runtimeClasspath

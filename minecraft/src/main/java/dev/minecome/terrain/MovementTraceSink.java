@@ -10,20 +10,25 @@ final class MovementTraceSink implements AutoCloseable {
     static final int MAX_RECORDS=200,MAX_BYTES=64*1024,END_RESERVE=2048;
     static final long PERIOD_NS=100_000_000L,MAX_SERVER_AGE_NS=250_000_000L;
     enum Profile {
-        GROUND("MineCome-Ground-"),HUD_COUPLED("MineCome-HudStream-");
+        GROUND("MineCome-Ground-"),HUD_COUPLED("MineCome-HudStream-"),HUD_PHYSICAL("MineCome-HudStream-");
         private final String savePrefix;
         Profile(String savePrefix){this.savePrefix=savePrefix;}
     }
     record Context(String run,String patchSha256,String sourceKind,String save,String world,
-                   double centerX,double centerY,double centerZ,Profile profile) {
+                   double centerX,double centerY,double centerZ,Profile profile,double anchorX,double anchorY,double anchorZ) {
         Context(String run,String patchSha256,String sourceKind,String save,String world,double centerX,double centerY,double centerZ) {
             this(run,patchSha256,sourceKind,save,world,centerX,centerY,centerZ,Profile.GROUND);
+        }
+        Context(String run,String patchSha256,String sourceKind,String save,String world,double centerX,double centerY,double centerZ,Profile profile){
+            this(run,patchSha256,sourceKind,save,world,centerX,centerY,centerZ,profile,0,64,0);
         }
         Context {
             if(!run.matches("[A-Za-z0-9_-]{1,128}") || !patchSha256.matches("[0-9a-f]{64}") ||
                     !sourceKind.matches("[A-Za-z0-9_-]{1,64}") || !world.equals(UUID.fromString(world).toString()) ||
                     profile==null || !save.equals(profile.savePrefix+world) ||
-                    (profile==Profile.HUD_COUPLED && !sourceKind.equals("live_kcd_ground_patch")) || !finite(centerX,centerY,centerZ) ||
+                    (profile!=Profile.GROUND && !sourceKind.equals("live_kcd_ground_patch")) || !finite(centerX,centerY,centerZ,anchorX,anchorY,anchorZ) ||
+                    Math.abs(anchorX)>.01 || Math.abs(anchorZ)>.01 || anchorY<52 || anchorY>76 ||
+                    (profile!=Profile.HUD_PHYSICAL && (anchorX!=0 || anchorY!=64 || anchorZ!=0)) ||
                     Math.abs(centerX)>10_000_000 || Math.abs(centerY)>10_000_000 || Math.abs(centerZ)>10_000_000)
                 throw new IllegalArgumentException("Invalid movement trace context");
         }
@@ -57,7 +62,7 @@ final class MovementTraceSink implements AutoCloseable {
         try {
             String begin=sink.prefix("begin",utcMs)+",\"phase\":\"SETTLING\",\"started_monotonic_ns\":"+nowNs+
                     ",\"center\":{\"x\":"+context.centerX()+",\"y\":"+context.centerY()+",\"z\":"+context.centerZ()+"}"+
-                    ",\"anchor_mc\":{\"x\":0,\"y\":64,\"z\":0},\"approximate_heightfield\":true,\"full_collision_export_verified\":false}";
+                    ",\"anchor_mc\":{\"x\":"+context.anchorX()+",\"y\":"+context.anchorY()+",\"z\":"+context.anchorZ()+"},\"approximate_heightfield\":true,\"full_collision_export_verified\":false}";
             sink.write(begin,false);return sink;
         }catch(IOException|RuntimeException e){try{output.close();}catch(IOException close){e.addSuppressed(close);}throw e;}
     }
@@ -91,7 +96,7 @@ final class MovementTraceSink implements AutoCloseable {
     private String prefix(String kind,long utcMs) {
         if(utcMs<0)throw new IllegalArgumentException("Invalid UTC timestamp");
         return "{\"schema\":1,\"kind\":"+quote(kind)+",\"run\":"+quote(context.run())+
-                ",\"patch_sha256\":"+quote(context.patchSha256())+",\"source_kind\":"+quote(context.sourceKind())+
+                ",\"patch_sha256\":"+quote(context.patchSha256())+",\"source_kind\":"+quote(context.profile()==Profile.HUD_PHYSICAL?"live_kcd_hud_physical_movement":context.sourceKind())+
                 ",\"save\":"+quote(context.save())+",\"world\":"+quote(context.world())+
                 ",\"seq\":"+(sequence+1)+",\"utc_ms\":"+utcMs;
     }
