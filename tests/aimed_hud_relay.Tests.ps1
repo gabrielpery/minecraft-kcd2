@@ -104,6 +104,17 @@ function New-MixedCase {
     $audit=(Valid-Audit).Replace('130 session',"121 AIM_REQUEST arena=1 request=4 permit=9`n122 AIM_RESULT arena=1 request=4 result=3`n130 session")
     [pscustomobject]@{Session=$session;Guest=(Valid-Guest);Text=$text;Audit=$audit}
 }
+function New-BusyCase {
+    $mixed=New-MixedCase
+    $lines=@($mixed.Text.TrimEnd("`n") -split "`n")
+    $busy=@($lines|Where-Object{$_ -match '"permit":"8"' -or $_ -match 'permit=8 installed_' -or $_ -match '^AIM_INPUT_REJECTED .* request=3 permit=8$'})
+    Check ($busy.Count -eq 4) 'Busy fixture retains original permit, ACK, capture and refusal'
+    $remaining=@($lines|Where-Object{$_ -cnotin $busy})
+    $busy=$busy -creplace 'reason=unknown_or_consumed_permit','reason=engine_session_unready'
+    $removed=@($remaining|Where-Object{$_ -match '\[MineComeBlock\].*"result":"removed"'})[0]
+    $mixed.Text=(($remaining -join "`n")+"`n").Replace($removed,(($busy -join "`n")+"`n"+$removed))
+    return $mixed
+}
 $stone=Valid-Stone;Assert-MineComeHudAimedBridgeProof $stone;Check $true 'Valid isolated adapter proof accepted'
 $refused=Valid-Stone
 $refused.requests[0].result=3;$refused.requests[0].client_and_server=$false;$refused.requests[0].captured_age_ns=600000000L
@@ -232,6 +243,45 @@ foreach($case in @('rejection_run','rejection_missing_identity','rejection_reaso
     [IO.File]::WriteAllText($s.Stdout,$text);[IO.File]::WriteAllText((Join-Path $s.Home 'runtime/logs/tools-bridge.log'),$journal)
     Stop-MineComeHudAimedRelay $s
     Reject {Assert-MineComeHudAimedRelayGuest $s $g} "Mixed outcome tamper rejected: $case"
+}
+$busy=New-BusyCase;$s=$busy.Session
+[IO.File]::WriteAllText($s.Stdout,$busy.Text);[IO.File]::WriteAllText((Join-Path $s.Home 'runtime/logs/tools-bridge.log'),$busy.Audit)
+Stop-MineComeHudAimedRelay $s;Assert-MineComeHudAimedRelayGuest $s $busy.Guest
+$busyOutcome=$s.InputDisposition.outcomes[2];$interval=$busyOutcome.engine_pending_removal
+Check ($s.EngineMirroringVerified -and $s.InputDisposition.native_engine_busy_refused -eq 1 -and $s.InputDisposition.native_refused -eq 2 -and
+    $s.InputDisposition.wire_requests -eq 2 -and $s.InputDisposition.confirmed_network_actions -eq 1) 'Corroborated engine busy refusal stays separate from confirmed actions and guest stale refusal'
+Check ($busyOutcome.reason -ceq 'engine_session_unready' -and $null -eq $busyOutcome.guest_result -and $interval.session -eq 100 -and
+    $interval.sequence -eq 9 -and $interval.pending_line -lt $interval.removed_line -and $interval.removed_line -lt $interval.ack_line) 'Busy disposition retains exact pending-removal proof without inventing a guest result'
+foreach($case in @('no_pending','no_removed','no_ack','before_pending','after_removed','ack_before_removed','duplicate_interval','wrong_session','wrong_sequence','wrong_operation','wrong_pending_cell','wrong_removed_cell','wrong_position','not_remove','no_guest_confirmation','unknown_reason','wrong_identity','also_wire','also_guest')){
+    $busy=New-BusyCase;$s=$busy.Session;$g=$busy.Guest;$text=$busy.Text;$journal=$busy.Audit
+    $pendingLine=@($text -split "`n"|Where-Object{$_ -match '"result":"cleanup_pending"'})[0]
+    $removedLine=@($text -split "`n"|Where-Object{$_ -match '\[MineComeBlock\].*"result":"removed"'})[0]
+    $ackLine='STONE_ENGINE_ACK session=100 sequence=9 result=removed'
+    $busyLines=@($text.TrimEnd("`n") -split "`n"|Where-Object{$_ -match '"permit":"8"' -or $_ -match 'permit=8 installed_' -or $_ -match '^AIM_INPUT_REJECTED .* request=3 permit=8$'})
+    switch($case){
+        'no_pending'{$text=$text.Replace($pendingLine+"`n",'')}
+        'no_removed'{$text=$text.Replace($removedLine+"`n",'')}
+        'no_ack'{$text=$text.Replace($ackLine+"`n",'')}
+        'before_pending'{foreach($line in $busyLines){$text=$text.Replace($line+"`n",'')};$text=$text.Replace($pendingLine,(($busyLines -join "`n")+"`n"+$pendingLine))}
+        'after_removed'{foreach($line in $busyLines){$text=$text.Replace($line+"`n",'')};$text=$text.Replace($ackLine,($ackLine+"`n"+($busyLines -join "`n")))}
+        'ack_before_removed'{$text=$text.Replace($ackLine+"`n",'').Replace($removedLine,($ackLine+"`n"+$removedLine))}
+        'duplicate_interval'{$text=$text.Replace($pendingLine,($pendingLine+"`n"+$pendingLine))}
+        'wrong_session'{$text=$text.Replace($pendingLine,$pendingLine.Replace('"session":100','"session":101'))}
+        'wrong_sequence'{$text=$text.Replace($pendingLine,$pendingLine.Replace('"sequence":9','"sequence":8'))}
+        'wrong_operation'{$text=$text.Replace($pendingLine,$pendingLine.Replace('"operation":2','"operation":1'))}
+        'wrong_pending_cell'{$text=$text.Replace($pendingLine,$pendingLine.Replace('"mc":{"x":12','"mc":{"x":13'))}
+        'wrong_removed_cell'{$text=$text.Replace($removedLine,$removedLine.Replace('"mc":{"x":12','"mc":{"x":13'))}
+        'wrong_position'{$text=$text.Replace($pendingLine,$pendingLine.Replace('"x":101.5','"x":102.5'))}
+        'not_remove'{$text=$text.Replace($pendingLine,$pendingLine.Replace('"event":"remove"','"event":"place"'))}
+        'no_guest_confirmation'{$g.lab_evidence.stone_bridge.confirmations=@($g.lab_evidence.stone_bridge.confirmations[0])}
+        'unknown_reason'{$text=$text.Replace('reason=engine_session_unready','reason=arena_invalidated')}
+        'wrong_identity'{$text=$text.Replace("reason=engine_session_unready run=$run request=3 permit=8","reason=engine_session_unready run=$run request=3 permit=9")}
+        'also_wire'{$journal=$journal.Replace('121 AIM_REQUEST','123 AIM_REQUEST').Replace('122 AIM_RESULT','124 AIM_RESULT').Replace('123 AIM_REQUEST',"121 AIM_REQUEST arena=1 request=3 permit=8`n122 AIM_RESULT arena=1 request=3 result=3`n123 AIM_REQUEST")}
+        'also_guest'{$fake=Clone $g.lab_evidence.stone_bridge.requests[0];$fake.wire.requestId=3;$fake.wire.permitId=8;$g.lab_evidence.stone_bridge.requests+= $fake;$g.lab_evidence.stone_bridge.request_count=2}
+    }
+    [IO.File]::WriteAllText($s.Stdout,$text);[IO.File]::WriteAllText((Join-Path $s.Home 'runtime/logs/tools-bridge.log'),$journal)
+    Stop-MineComeHudAimedRelay $s
+    Reject {Assert-MineComeHudAimedRelayGuest $s $g} "Uncorroborated busy refusal rejected: $case"
 }
 # Failed shutdown preserves the owned bounded process; no broad Stop-Process.
 $s=New-Case;$s.Process.WillExit=$false;Stop-MineComeHudAimedRelay $s

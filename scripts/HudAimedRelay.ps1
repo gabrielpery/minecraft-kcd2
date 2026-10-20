@@ -319,7 +319,7 @@ function Assert-MineComeHudAimedRelayGuest($Session,$Guest) {
             if($i -eq 1 -and $lua.journal_line -le $native.input_cancels[0].line){throw 'Aimed end receipt precedes authority revocation.'}
         }
         $used=[Collections.Generic.HashSet[long]]::new();$lastId=0L;$lastOutcomeLine=0;$sentIndex=0;$guestIndex=0
-        $dispositions=[Collections.Generic.List[object]]::new();$nativeRefused=0;$protocolRefused=0
+        $dispositions=[Collections.Generic.List[object]]::new();$nativeRefused=0;$engineBusyRefused=0;$protocolRefused=0
         for($i=0;$i -lt $intents.Count;$i++){
             $intent=$intents[$i];$capture=$native.captures[$i]
             Assert-MineComeAimedFlag $intent.accepted $true
@@ -357,11 +357,31 @@ function Assert-MineComeHudAimedRelayGuest($Session,$Guest) {
                 # These exact pre-wire refusals consume the observed intent but
                 # cannot be treated as Minecraft requests, results or actions.
                 if($outcome.run -cne $Session.Run -or $outcome.permit_id -ne $intent.permit_id -or
-                    $outcome.reason -cnotin @('original_permit_expired','unknown_or_consumed_permit')){throw 'Aimed native rejection identity or reason cannot certify a refusal.'}
+                    $outcome.reason -cnotin @('original_permit_expired','unknown_or_consumed_permit','engine_session_unready')){throw 'Aimed native rejection identity or reason cannot certify a refusal.'}
+                $pendingRemoval=$null
+                if($outcome.reason -ceq 'engine_session_unready'){
+                    # Readiness also closes on invalidation. Certify only the
+                    # narrower busy case proved by a same-session deletion that
+                    # was pending here and later received its terminal ACK.
+                    # The complete event/guest correlation below validates this
+                    # chain's cell, operation, ordering and original ownership.
+                    if($native.begin_sessions.Count -ne 1){throw 'Aimed busy refusal lacks one engine session.'}
+                    $windows=@(foreach($phase in @($native.events|Where-Object{$_.result -ceq 'cleanup_pending'})){
+                        if($phase.session -ne $native.begin_sessions[0] -or $phase.operation -ne 2 -or $phase.event -cne 'remove' -or
+                            $phase.journal_line -ge $outcome.line){continue}
+                        $removed=@($native.events|Where-Object{$_.session -eq $phase.session -and $_.sequence -eq $phase.sequence -and $_.operation -eq 2 -and $_.result -ceq 'removed'})
+                        $acks=@($native.engine_acks|Where-Object{$_.session -eq $phase.session -and $_.sequence -eq $phase.sequence -and $_.result -ceq 'removed'})
+                        if($removed.Count -eq 1 -and $acks.Count -eq 1 -and $outcome.line -lt $removed[0].journal_line -and $removed[0].journal_line -lt $acks[0].line){
+                            [pscustomobject]@{session=$phase.session;sequence=$phase.sequence;pending_line=$phase.journal_line;removed_line=$removed[0].journal_line;ack_line=$acks[0].line}
+                        }
+                    })
+                    if($windows.Count -ne 1){throw 'Aimed busy refusal lacks one corroborated pending removal interval.'}
+                    $pendingRemoval=$windows[0];$engineBusyRefused++
+                }
                 if(@($audit.requests|Where-Object{$_.request_id -eq $intent.request_id}).Count -or
                     @($requests|Where-Object{$_.wire.requestId -eq $intent.request_id}).Count){throw 'Aimed rejected intent also claims a wire or guest request.'}
                 $nativeRefused++
-                $dispositions.Add([pscustomobject]@{request_id=$intent.request_id;permit_id=$intent.permit_id;action=$intent.action;outcome='native_rejected';reason=$outcome.reason;guest_result=$null})
+                $dispositions.Add([pscustomobject]@{request_id=$intent.request_id;permit_id=$intent.permit_id;action=$intent.action;outcome='native_rejected';reason=$outcome.reason;guest_result=$null;engine_pending_removal=$pendingRemoval})
                 continue
             }
             $dispatch=$outcome;$sent=$audit.requests[$sentIndex];$result=$audit.results[$sentIndex];$sentIndex++
@@ -435,7 +455,7 @@ function Assert-MineComeHudAimedRelayGuest($Session,$Guest) {
         }
         if($matchedPending -ne $pendingEvents.Count){throw 'Unmatched aimed pending removal receipt.'}
         if(-not $native.summary -or $native.summary.rejected -ne 0 -or $native.summary.placed -ne $stone.confirmed_places -or $native.summary.removed -ne $stone.confirmed_breaks){throw 'Aimed engine summary differs from confirmed guest actions.'}
-        $Session.InputDisposition=[pscustomobject]@{captured_intents=$intents.Count;native_refused=$nativeRefused;wire_requests=$sentIndex;guest_protocol_refused=$protocolRefused;guest_adapter_results=$guestIndex;confirmed_network_actions=$stone.confirmed_network_actions;removal_pending_receipts=$matchedPending;outcomes=@($dispositions.ToArray())}
+        $Session.InputDisposition=[pscustomobject]@{captured_intents=$intents.Count;native_refused=$nativeRefused;native_engine_busy_refused=$engineBusyRefused;wire_requests=$sentIndex;guest_protocol_refused=$protocolRefused;guest_adapter_results=$guestIndex;confirmed_network_actions=$stone.confirmed_network_actions;removal_pending_receipts=$matchedPending;outcomes=@($dispositions.ToArray())}
         $Session.GuestWorldCleanupComplete=$stone.guest_world_cleanup_complete;$Session.EngineMirroringVerified=$true
     }catch{$Session.GuestVerificationFailure=$_.Exception.Message;throw}
     finally{if(Test-Path -LiteralPath $Session.Home){Get-MineComeHudAimedRelayEvidence $Session|ConvertTo-Json -Depth 32|Set-Content -LiteralPath (Join-Path $Session.Home 'relay-result.json') -Encoding utf8NoBOM}}
