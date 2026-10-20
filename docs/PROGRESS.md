@@ -1,6 +1,28 @@
 # MineCome progress — 2026-10-20
 
-**One live aimed break confirmed; responsiveness remains unfinished.** Run
+**First-click aimed break verified after the latency repair.** Run
+`dc93d381b60b4461952d024017b186c7` passes the bounded live controller: one physical
+click, one captured ray, one canonical request, one confirmed Minecraft
+client/server break and the matching KCD removal acknowledgement. There are no
+native refusals, guest stale replies or queue drops. The user reports “barely any
+delay.” The hitbox and original 500 ms permit lifetime were unchanged.
+The controller observed the physical edge after 19 ms and sent its Lua capture
+after 69 ms. Minecraft admitted it at an original-permit age of 371.975 ms;
+the canonical request-to-result interval was 165.093 ms. These are separate
+measured intervals, not a complete click-to-displayed-frame latency.
+
+Java and native exit normally, the guest reports `input_completed`, world
+cleanup and independent input-end acknowledgement pass, and the temporary
+60 FPS cap is restored. The renderer recorded 108 uploaded frames and closed
+on foreground loss to Explorer 6.7 seconds after F8. This verifies the single
+break and prompt visual response; it does not establish 30-second stability,
+input exclusivity, placement across block faces or shared movement.
+Original evidence:
+`runtime/evidence/hud-input-20261020-132449-dc93d381b60b4461952d024017b186c7/verification.json`.
+The next targeting milestone is aimed placement and removal on multiple faces
+without moving the player's feet.
+
+**Earlier live aimed break confirmed after several refused clicks.** Run
 `67b5fd8e70bc46ed97fc8f52d999489b` records physical click 6, its original permit 83,
 the same-callback KCD camera ray, native `AIM_REQUEST`, a confirmed Minecraft
 client/server break, the matching block event and KCD removal acknowledgement.
@@ -32,8 +54,8 @@ incomplete fragments. Aimed log polling runs every 5 ms; pose requests remain
 at least 50 ms after completion of the previous request. Healthy endpoint/world
 guards and original permit expiry remain intact. All three tools HTTP integration
 suites pass, including a split closing brace, dispatch before any later newline,
-and no replay when the separator finally arrives. Live first-click responsiveness
-still needs confirmation.
+and no replay when the separator finally arrives. The subsequent first-click
+run above verifies prompt response in the actual games.
 
 **First revision 4 live attempt: click capture passed; aimed break not verified.**
 Run `0565b12d8af64ad7980a7999b870e844` admitted one physical break intent and

@@ -14,9 +14,10 @@ Minecraft aiming passes isolated automatic tests, including an aimed break from
 the native C++ host through the new optional protocol. That host supplies synthetic
 coordinates. The optional KCD relay, Lua intent capture, permit selector and aimed
 HUD guest are connected through an explicit bounded controller. The actual HUD
-adapter also passes an automatic Minecraft run with a synthetic host. One live
-KCD crosshair break now has client/server confirmation and engine removal, but
-earlier clicks expired and reliable aiming remains unfinished. Continuous shared movement, general block rendering,
+adapter also passes an automatic Minecraft run with a synthetic host. A single
+live KCD crosshair click now has client/server confirmation and engine removal,
+with barely any delay reported after the log-latency repair. Aimed placement
+across different block faces remains unverified. Continuous shared movement, general block rendering,
 persistence, survival integration and multiplayer remain unfinished.
 
 The first integrated aimed attempt produced no confirmed action. Captured
@@ -25,8 +26,9 @@ stopped with a click-delivery failure and logged capture lock contention.
 The origin check now allows 0.25 metres while retaining Minecraft reach and
 current-host agreement checks; actual Minecraft passes 25 synthetic-host
 scenarios. Selective revision 4 repairs busy read-query handling and input
-recovery. The later run confirmed one aimed break after several refused clicks;
-the remaining capture/receipt delay is being repaired without extending expiry.
+recovery. One run confirmed a break after several refused clicks; processing
+complete log records without waiting for another newline then allowed the next
+live test to confirm its first click, without extending permit expiry.
 
 Earlier failures below are retained for diagnosis. The latest verification status
 is in [progress and evidence](PROGRESS.md); successful bounded tests do not remove
@@ -90,8 +92,9 @@ Never load newer retail1.5.6 saves into this older1.5.5 development game. Backup
   receipts. Live arming still refuses fixture markers. General
   targeting and other block types remain unfinished. Physical world clicks and
   camera look subsequently passed in the fixed-cell live profile. The new
-  standalone aimed-stone component also passes actual Minecraft raycast/action
-  checks with synthetic host rays, but is not yet connected to the KCD crosshair.
+  aimed-stone component passes actual Minecraft raycast/action checks with synthetic
+  host rays and now confirms one-click KCD crosshair breaking. Aimed placement on
+  several faces and longer continuous sessions remain unverified in KCD.
 - Physical W/Space/mouse forwarding and starting-camera alignment now pass in the
   isolated4×4m Minecraft lab. Fifteen delayed samples were discarded during the
   successful run; low-latency sustained control is not yet established. KCD still

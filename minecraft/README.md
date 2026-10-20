@@ -253,14 +253,15 @@ The optional `minecomeHudAimedStoneBridge` development property selects a separa
 minor2 HUD guest with its own readiness and proof contracts. The explicit
 `Start-AimedHudLab.ps1` controller selects it with the revision4 renderer profile.
 That profile's add-on repair is built, reviewed and installed unarmed on the
-development machine. A live session now confirms one aimed break through
-client/server observation and KCD removal; capture delays still cause refused clicks.
+development machine. Following the relay timing repair, a live session confirms
+its first click through Minecraft client/server breaking and KCD removal. The
+user reported barely any delay; placement across different faces remains unverified.
 `Start-HudAimedBridgeLab.ps1`
 automatically checks the production adapter in a fresh Minecraft world against
 a synthetic C++ host: bootstrap, aimed break, client/server confirmation and
 final air pass with normal process exits. This fixture does not render the HUD
 or exercise KCD input. See [aimed controls](../docs/research/AIMED-CONTROLS.md)
-for commands and the remaining live crosshair verification.
+for commands and the remaining live targeting work.
 
 ## Aimed-stone network lab
 

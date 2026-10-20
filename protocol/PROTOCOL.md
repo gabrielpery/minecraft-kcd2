@@ -361,11 +361,10 @@ does not replace Minecraft selection of those stones.
 
 The bounded controller now loads the Lua modules, forwards physical clicks with
 their original acknowledged permits, and validates the separate aimed HUD proof.
-KCD run `67b5fd8e70bc46ed97fc8f52d999489b` confirms one physical aimed break
-through Minecraft client/server state and the matching engine removal. Earlier
-clicks were mostly refused before selection because their permits expired.
-The lower-latency log reader passes HTTP integration tests; first-click
-responsiveness still needs live verification.
+KCD run `dc93d381b60b4461952d024017b186c7` confirms a single physical click
+through Minecraft client/server breaking and the matching engine removal, with
+prompt response reported by the user. The lower-latency log reader passes HTTP
+integration tests and preserves the original 500 ms permit lifetime.
 Centre-ray alignment on several block faces while turning, and any later movement
 support, remain unverified. Standalone Minecraft selection and
 transport checks do not prove host camera timing, eye/feet alignment or KCD gameplay.

@@ -11,7 +11,8 @@ renderer installation is part of this controller.
 
 Revision4 has been built, independently reviewed and installed unarmed on the
 development machine, with the previous runtime/add-on backed up. A subsequent
-live session confirmed one aimed break but exposed unreliable timing. Existing revision3 artifacts and the earlier
+live session confirms prompt first-click breaking after a log-latency repair.
+Existing revision3 artifacts and the earlier
 fixed-cell test evidence remain preserved.
 
 If preflight finds an expired arm from an earlier game process,
@@ -71,6 +72,15 @@ pre-dispatch reasons such as `original_permit_expired`.
 
 ## Latest verification and remaining live check
 
+Run `dc93d381b60b4461952d024017b186c7` passes the live controller with one physical
+click, one wire request, one actual Minecraft client/server break and its KCD
+removal acknowledgement. No native refusals, guest stale replies or queue drops
+occurred; the user reported “barely any delay.” The guest closes normally with
+`input_completed`; engine cleanup, separate input-end acknowledgement and frame-cap
+restoration pass. The renderer uploaded 108 frames, then closed on foreground
+loss to Explorer 6.7 seconds after F8, so this is not a 30-second stability result.
+Next is aimed placement and removal across several faces while standing still.
+
 Run `67b5fd8e70bc46ed97fc8f52d999489b` confirms physical request6/permit83 through
 the canonical socket journal, actual Minecraft client/server break, block event
 and engine removal acknowledgement. The user reported multiple clicks before
@@ -107,8 +117,8 @@ strict 4096-byte parsers. It retains the exact processed tail until the separato
 arrives, skips it once and invalidates changed suffixes. Incomplete fragments
 retain their original age and connection/reset history. Aimed log polling is
 5 ms; pose sampling remains at least 50 ms after the previous HTTP call
-completes. The simulated aimed, stone and interactive HTTP suites pass; this
-latency repair still needs a live responsiveness check.
+completes. The simulated aimed, stone and interactive HTTP suites pass, followed
+by the successful first-click live check above.
 
 The saved KCD run `5334822edbd5464397d6131962ff576e` produced seven physical
 edges and four forwarded captures, but no `AIM_REQUEST` or `AIM_RESULT`.
@@ -197,5 +207,5 @@ ticking the live adapter after its completed action while it verifies the
 synthetic host's normal shutdown; production disconnect handling stays unchanged.
 
 See [progress](../PROGRESS.md) for the current build, simulated-engine and actual
-Minecraft results. A real KCD crosshair test is still required before claiming
-live aimed placement or breaking.
+Minecraft results. First-click aimed breaking is now verified in KCD; aimed
+placement across different faces remains the next live check.
