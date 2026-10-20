@@ -14,6 +14,9 @@ final class MovementTraceSinkTests {
         return new MovementTraceSink.Context("fixture-trace","a".repeat(64),"standalone_fixture","MineCome-Ground-"+world,world,100,200,10);
     }
     private static MovementTraceSink.Motion motion(double x){return new MovementTraceSink.Motion(x,64,0.5,0,0,0,true,true);}
+    private static MovementTraceSink.Context hudContext(String save,String world,String source){
+        return new MovementTraceSink.Context("actual-patch-run","b".repeat(64),source,save,world,100,200,10,MovementTraceSink.Profile.HUD_COUPLED);
+    }
     private static void rejectedOpen(Path target,Path root) throws Exception {
         try(var ignored=MovementTraceSink.open(target,root,context(),0,1000)){throw new AssertionError("Unsafe path accepted");}
         catch(IOException expected){checks++;}
@@ -71,6 +74,39 @@ final class MovementTraceSinkTests {
             try(var sink=MovementTraceSink.open(stopped,root,context(),0,1000)) {}
             var stoppedLines=Files.readAllLines(stopped);
             check(stoppedLines.size()==2 && JsonParser.parseString(stoppedLines.get(1)).getAsJsonObject().get("result").getAsString().equals("stopped"),"implicit close has explicit termination contract");
+            String world=context().world(),hudSave="MineCome-HudStream-"+world;
+            check(context().profile()==MovementTraceSink.Profile.GROUND,"Legacy context retains explicit Ground default");
+            var hud=hudContext(hudSave,world,"live_kcd_ground_patch");
+            check(hud.profile()==MovementTraceSink.Profile.HUD_COUPLED && hud.save().equals(hudSave),"HUD profile binds exact canonical save");
+            try{new MovementTraceSink.Context("run","a".repeat(64),"live_kcd_ground_patch",hudSave,world,100,200,10);throw new AssertionError("Legacy constructor accepted HUD save");}
+            catch(IllegalArgumentException expected){checks++;}
+            try{hudContext(context().save(),world,"live_kcd_ground_patch");throw new AssertionError("HUD profile accepted Ground save");}
+            catch(IllegalArgumentException expected){checks++;}
+            try{hudContext(hudSave,world,"standalone_fixture");throw new AssertionError("HUD profile accepted synthetic provenance");}
+            catch(IllegalArgumentException expected){checks++;}
+            try{hudContext(hudSave,world.toUpperCase(),"live_kcd_ground_patch");throw new AssertionError("Noncanonical HUD world accepted");}
+            catch(IllegalArgumentException expected){checks++;}
+            try{hudContext(hudSave,"bb32daa1-3972-4454-be0e-6d010ac2fd60","live_kcd_ground_patch");throw new AssertionError("HUD save/world mismatch accepted");}
+            catch(IllegalArgumentException expected){checks++;}
+            Path hudFile=run.resolve("hud-movement.ndjson");
+            try(var sink=MovementTraceSink.open(hudFile,root,hud,0,1000)){
+                check(sink.sample(0,1000,"SETTLING",motion(.5),motion(.5),1,0,true),"HUD forced initial observation flushed during settling");
+                check(sink.sample(2_000_000_000L,3000,"WALKING",motion(.4),motion(.5),2,2_000_000_000L,false),"HUD begins follower-eligible grounded phase only after settling");
+                check(!sink.sample(2_050_000_000L,3050,"PASSED",motion(.3),motion(.3),2,2_000_000_000L,true),"HUD final phase cannot replay the last server observation");
+                check(!sink.sample(2_500_000_000L,3500,"PASSED",motion(.3),motion(.3),3,2_200_000_000L,true),"HUD forced completion keeps original250ms age bound");
+                check(sink.sample(2_550_000_000L,3550,"PASSED",motion(.3),motion(.3),3,2_550_000_000L,true),"HUD final phase uses advancing fresh server sequence");
+                sink.finish(3550,"passed","PASSED","Movement ends before UI sequence");
+                byte[] closedBytes=Files.readAllBytes(hudFile);
+                check(!sink.sample(22_550_000_000L,23550,"PASSED",motion(.3),motion(.3),4,22_550_000_000L,true),"Later20s UI cannot append to closed movement trace");
+                check(Arrays.equals(closedBytes,Files.readAllBytes(hudFile)),"UI-time append refusal preserves exact closed trace bytes");
+            }
+            var hudLines=Files.readAllLines(hudFile);
+            check(hudLines.size()==5,"HUD profile retains existing begin/sample/sample/final/end format");
+            for(String line:hudLines){
+                var value=JsonParser.parseString(line).getAsJsonObject();
+                check(value.get("run").getAsString().equals("actual-patch-run") && value.get("patch_sha256").getAsString().equals("b".repeat(64)) &&
+                        value.get("save").getAsString().equals(hudSave) && value.get("world").getAsString().equals(world),"HUD trace preserves immutable captured patch and owned world identities");
+            }
         } finally {
             // Only this fresh fixture directory is cleaned, using its resolved path.
             Path ownedRoot=temp.toRealPath();

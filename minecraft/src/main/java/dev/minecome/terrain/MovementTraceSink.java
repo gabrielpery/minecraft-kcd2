@@ -9,12 +9,21 @@ import java.util.*;
 final class MovementTraceSink implements AutoCloseable {
     static final int MAX_RECORDS=200,MAX_BYTES=64*1024,END_RESERVE=2048;
     static final long PERIOD_NS=100_000_000L,MAX_SERVER_AGE_NS=250_000_000L;
+    enum Profile {
+        GROUND("MineCome-Ground-"),HUD_COUPLED("MineCome-HudStream-");
+        private final String savePrefix;
+        Profile(String savePrefix){this.savePrefix=savePrefix;}
+    }
     record Context(String run,String patchSha256,String sourceKind,String save,String world,
-                   double centerX,double centerY,double centerZ) {
+                   double centerX,double centerY,double centerZ,Profile profile) {
+        Context(String run,String patchSha256,String sourceKind,String save,String world,double centerX,double centerY,double centerZ) {
+            this(run,patchSha256,sourceKind,save,world,centerX,centerY,centerZ,Profile.GROUND);
+        }
         Context {
             if(!run.matches("[A-Za-z0-9_-]{1,128}") || !patchSha256.matches("[0-9a-f]{64}") ||
                     !sourceKind.matches("[A-Za-z0-9_-]{1,64}") || !world.equals(UUID.fromString(world).toString()) ||
-                    !save.equals("MineCome-Ground-"+world) || !finite(centerX,centerY,centerZ) ||
+                    profile==null || !save.equals(profile.savePrefix+world) ||
+                    (profile==Profile.HUD_COUPLED && !sourceKind.equals("live_kcd_ground_patch")) || !finite(centerX,centerY,centerZ) ||
                     Math.abs(centerX)>10_000_000 || Math.abs(centerY)>10_000_000 || Math.abs(centerZ)>10_000_000)
                 throw new IllegalArgumentException("Invalid movement trace context");
         }

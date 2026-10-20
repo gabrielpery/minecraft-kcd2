@@ -238,6 +238,42 @@ This establishes standalone terrain/movement/HUD integration with synthetic
 input. Shared KCD movement, physical input, placed-block collision and live
 composition during movement remain separate work.
 
+## HUD-world coupled movement test
+
+The separate `Start-HudCoupledMovementLab.ps1` uses a fresh 25-point KCD ground
+capture in the same new Creative save that generates the HUD. Scripted vanilla
+walking/jumping supplies fresh integrated-server poses to the existing KCD
+player/camera follower, which is bounded to eight seconds with a 400 ms pose
+lease and verifies return to the starting position. The trace closes before
+the subsequent 20-second hotbar/inventory sequence.
+
+With the source setup and standalone receiver prerequisites above complete,
+close any MineCome development client and load a fresh supported KCD tools
+world. Leave the player still on gentle ground with menus closed. From the
+repository root, run in PowerShell:
+
+```powershell
+& .\scripts\Start-HudCoupledMovementLab.ps1 -PreflightOnly
+& .\scripts\Start-HudCoupledMovementLab.ps1
+```
+
+The wrapper automatically selects an installed PowerShell 7 from Windows
+PowerShell 5.1. Preflight checks the running supported tools process without
+game writes. No F8 or physical input sequence is required. During the actual
+run, the helper applies a temporary 60 FPS KCD cap with a 120-second engine
+deadline, then verifies restoration of the prior value.
+
+HUD pixels go to the standalone native receiver; this mode does not composite
+them inside KCD. Native KCD input and physics remain active, so leave controls
+alone; this establishes no exclusive movement authority. Evidence is written
+under `runtime/evidence/coupled-movement-*/`, including the nested `hud-stream`
+receipts. Live run `391e9d463edc4789b6bb425eec84a183` passes: 21 forwarded
+server samples have 21 delayed KCD readbacks, followed by player/camera
+restoration. The native receiver accepts 435 HUD frames and all four UI states.
+Controls, collision installations and the original frame cap are restored;
+Minecraft exits normally. This remains a bounded scripted test. The standalone
+synthetic fixture above is unchanged.
+
 ## Standalone aimed-stone lab
 
 From the repository root, run:

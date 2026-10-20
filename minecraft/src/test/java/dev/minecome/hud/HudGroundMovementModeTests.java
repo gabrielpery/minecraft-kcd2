@@ -12,16 +12,33 @@ public final class HudGroundMovementModeTests {
         p.setProperty("minecome.hudStreamLab","true");p.setProperty("minecome.hudStreamStandalone","true");
         p.setProperty("minecome.groundPatchFile","synthetic-ground.json");return p;
     }
+    private static Properties coupled(){
+        var p=fixture();p.remove("minecome.hudGroundMovementFixture");
+        p.setProperty("minecome.hudGroundMovementCoupled","true");
+        p.setProperty("minecome.movementTraceFile","new-trace.ndjson");return p;
+    }
     private static void reject(Properties p,String message){
         try{HudGroundMovementMode.require(p);throw new AssertionError("Accepted "+message);}catch(IllegalArgumentException expected){checks++;}
+    }
+    private static void rejectPatch(HudGroundMovementMode.Mode mode,String hudRun,String patchRun,String source,String save){
+        try{HudGroundMovementMode.requirePatch(mode,hudRun,patchRun,source,save);throw new AssertionError("Invalid patch admitted");}
+        catch(IllegalArgumentException expected){checks++;}
     }
     public static void main(String[] args){
         check(!HudGroundMovementMode.require(new Properties()),"Legacy defaults remain inactive");
         check(HudGroundMovementMode.require(fixture()),"Explicit standalone fixture admitted");
+        check(HudGroundMovementMode.mode(coupled())==HudGroundMovementMode.Mode.COUPLED,"Explicit coupled mode selected separately");
+        check(!HudGroundMovementMode.require(coupled()),"Coupled mode does not claim synthetic fixture");
         for(String required:List.of("hudStreamLab","hudStreamStandalone","groundPatchFile")){
             var p=fixture();p.remove("minecome."+required);reject(p,"missing "+required);
         }
         var blank=fixture();blank.setProperty("minecome.groundPatchFile"," ");reject(blank,"blank patch");
+        var both=coupled();both.setProperty("minecome.hudGroundMovementFixture","true");reject(both,"both movement modes");
+        for(String required:List.of("hudStreamLab","hudStreamStandalone","groundPatchFile","movementTraceFile")){
+            var p=coupled();p.remove("minecome."+required);reject(p,"coupled missing "+required);
+        }
+        var missingTrace=coupled();missingTrace.setProperty("minecome.movementTraceFile"," ");reject(missingTrace,"blank trace");
+        var fixtureTrace=fixture();fixtureTrace.setProperty("minecome.movementTraceFile","trace.ndjson");reject(fixtureTrace,"synthetic fixture follower trace");
         for(String mode:List.of("hudStreamInput","hudStreamInputFixture","hudStreamLiveMouse","hudStreamInputPointerFixture",
                 "hudStreamInputDelayFixture","hudStreamBackgroundTrial","hudStreamOffscreenPresentation","hudStreamOffscreenTrial",
                 "hudStoneBridge","hudStoneFixture","hudStoneLive","hudAimedStoneBridge","groundMovementLab","externalInputLab",
@@ -30,7 +47,20 @@ public final class HudGroundMovementModeTests {
             var p=fixture();p.setProperty("minecome."+mode,"true");reject(p,mode);
             p.setProperty("minecome.hudGroundMovementFixture","false");
             check(!HudGroundMovementMode.require(p),"Existing mode not modified: "+mode);
+            var live=coupled();live.setProperty("minecome."+mode,"true");reject(live,"coupled conflict "+mode);
         }
+        String hudRun="a".repeat(32),patchRun="b".repeat(32),save="MineCome-HudStream-ab32daa1-3972-4454-be0e-6d010ac2fd60";
+        HudGroundMovementMode.requirePatch(HudGroundMovementMode.Mode.FIXTURE,hudRun,hudRun,"standalone_fixture",save);checks++;
+        HudGroundMovementMode.requirePatch(HudGroundMovementMode.Mode.COUPLED,hudRun,patchRun,"live_kcd_ground_patch",save);checks++;
+        rejectPatch(HudGroundMovementMode.Mode.FIXTURE,hudRun,patchRun,"standalone_fixture",save);
+        rejectPatch(HudGroundMovementMode.Mode.FIXTURE,hudRun,hudRun,"live_kcd_ground_patch",save);
+        rejectPatch(HudGroundMovementMode.Mode.COUPLED,hudRun,patchRun,"standalone_fixture",save);
+        rejectPatch(HudGroundMovementMode.Mode.COUPLED,hudRun,patchRun,"unknown",save);
+        rejectPatch(HudGroundMovementMode.Mode.NONE,hudRun,patchRun,"live_kcd_ground_patch",save);
+        rejectPatch(HudGroundMovementMode.Mode.COUPLED,"wrong-run",patchRun,"live_kcd_ground_patch",save);
+        rejectPatch(HudGroundMovementMode.Mode.COUPLED,hudRun,patchRun,"live_kcd_ground_patch",save.toUpperCase());
+        rejectPatch(HudGroundMovementMode.Mode.COUPLED,hudRun,patchRun,"live_kcd_ground_patch",save.replace("HudStream","Ground"));
+        rejectPatch(HudGroundMovementMode.Mode.COUPLED,hudRun,patchRun,"live_kcd_ground_patch","MineCome-HudStream-1-1-1-1-1");
         System.out.println("HUD_GROUND_MOVEMENT_MODE_TESTS_PASS checks="+checks);
     }
 }

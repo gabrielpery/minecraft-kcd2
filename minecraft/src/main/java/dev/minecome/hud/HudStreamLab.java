@@ -46,7 +46,7 @@ public final class HudStreamLab {
     private final boolean inputPointerFixture=Boolean.getBoolean("minecome.hudStreamInputPointerFixture");
     private final boolean stoneMode=Boolean.getBoolean("minecome.hudStoneBridge"),stoneFixture=Boolean.getBoolean("minecome.hudStoneFixture"),stoneLive=Boolean.getBoolean("minecome.hudStoneLive");
     private final boolean aimedStone=Boolean.getBoolean("minecome.hudAimedStoneBridge");
-    private final boolean groundMovementFixture=HudGroundMovementMode.require(System.getProperties());
+    private final HudGroundMovementMode.Mode groundMovementMode=HudGroundMovementMode.mode(System.getProperties());
     private HudGroundMovementFixture groundMovement;
     private final boolean backgroundTrial=Boolean.getBoolean("minecome.hudStreamBackgroundTrial");
     private final boolean offscreenPresentation=Boolean.getBoolean("minecome.hudStreamOffscreenPresentation"),offscreenTrial=Boolean.getBoolean("minecome.hudStreamOffscreenTrial");
@@ -126,8 +126,9 @@ public final class HudStreamLab {
         HudStoneMode.require(lab.stoneMode,lab.stoneFixture,lab.stoneLive,lab.inputMode,lab.inputFixture,lab.offscreenPresentation,
                 lab.offscreenTrial,lab.inputPointerFixture,lab.inputDelayFixture,lab.backgroundTrial,lab.liveMouse);
         HudAimedStoneMode.require(lab.aimedStone,lab.stoneMode,lab.stoneLive,lab.stoneFixture,lab.inputMode,lab.inputFixture);
-        if(lab.groundMovementFixture){
-            try{lab.groundMovement=new HudGroundMovementFixture(Path.of(required("minecome.groundPatchFile")),identity.run(),lab.save);}
+        if(lab.groundMovementMode!=HudGroundMovementMode.Mode.NONE){
+            try{lab.groundMovement=new HudGroundMovementFixture(Path.of(required("minecome.groundPatchFile")),identity.run(),lab.save,
+                    lab.groundMovementMode,lab.groundMovementMode==HudGroundMovementMode.Mode.COUPLED?Path.of(required("minecome.movementTraceFile")):null);}
             catch(java.io.IOException e){throw new IllegalArgumentException("HUD ground fixture patch invalid",e);}
         }
         ClientTickEvents.START_CLIENT_TICK.register(lab::timingTick);
@@ -511,7 +512,7 @@ public final class HudStreamLab {
         LevelInfo info=new LevelInfo(save,GameMode.CREATIVE,false,Difficulty.PEACEFUL,true,rules,DataConfiguration.SAFE_MODE);
         client.createIntegratedServerLoader().createAndStart(save,info,new GeneratorOptions(42,false,false),registries->{
             var dimensions=registries.get(RegistryKeys.WORLD_PRESET).get(WorldPresets.FLAT).createDimensionsRegistryHolder();
-            if(!groundMovementFixture)return dimensions;
+            if(groundMovementMode==HudGroundMovementMode.Mode.NONE)return dimensions;
             var biome=registries.get(RegistryKeys.BIOME).getEntry(net.minecraft.world.biome.BiomeKeys.THE_VOID).orElseThrow();
             var config=new net.minecraft.world.gen.chunk.FlatChunkGeneratorConfig(Optional.of(net.minecraft.registry.entry.RegistryEntryList.of()),biome,List.of());
             config.updateLayerBlocks();
@@ -684,7 +685,7 @@ public final class HudStreamLab {
     private static JsonArray jsonSlots(List<Slot> slots){var values=new JsonArray();for(Slot slot:slots){var value=new JsonObject();value.addProperty("slot",slot.slot());value.addProperty("item",slot.item());value.addProperty("count",slot.count());values.add(value);}return values;}
     private void fail(MinecraftClient client,String reason){
         if(stopping)return;
-        if(groundMovement!=null)groundMovement.close(client);
+        if(groundMovement!=null)groundMovement.abort(client,reason);
         if(inputMode && input!=null && inputEndingProof==null && owned(client)){
             inputFailure=reason;var snapshot=new JsonObject();snapshot.add("capture_pipeline",captureDiagnostics());snapshot.add("publication",output.diagnostics());snapshot.add("input_timing",input.diagnostics());
             finishInput(client,System.nanoTime(),"failure");inputEndingProof.addProperty("failure",reason);inputEndingProof.add("failure_snapshot",snapshot);

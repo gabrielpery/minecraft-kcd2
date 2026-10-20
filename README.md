@@ -26,7 +26,7 @@ The public repository contains source, build scripts and development procedures.
 | Hotbar and Creative inventory | Minecraft's real UI is composited inside KCD2. Physical slot selection, inventory opening/closing, clicks, dragging and scrolling have passed live tests. |
 | Camera and block controls together | KCD camera look works outside inventory and stays still inside it. Right-click/place and left-click/break work in one fixed nearby cell during a bounded live session. |
 | Minecraft aiming | After fixing KCD's default stone rotation, a live right-click places on the original block's top face and the next two clicks break both blocks, with matching Minecraft/KCD records and user confirmation. The standalone actual-Minecraft lab passes 28 targeting/control scenarios with synthetic host rays, including hotbar changes while an action finishes. |
-| Movement groundwork | An automatic Minecraft run now walks, jumps and lands on imported test ground in the same world that produces the HUD and inventory. Separate labs verify sampled KCD ground, physical input forwarding and a short KCD player-following test; continuous shared movement remains unfinished. |
+| Movement groundwork | In an automatic two-game test, KCD follows walking/jumping from the Minecraft HUD world over sampled KCD ground, then returns the player to the starting position. The same save completes its HUD/inventory sequence. This bounded scripted mode uses a standalone HUD receiver; continuous shared movement remains unfinished. |
 
 Live checks above use the **official KCD2 1.5.5 development build**. The native
 **retail 1.5.6 route remains blocked** by its verified address-library/loader
@@ -84,6 +84,7 @@ before deployment, and do not load newer retail saves in the older development g
 - [KCD stone display and console controls](kcd2/TOOLS-TEST.md)
 - [HUD compositor and physical controls](docs/research/HUD-COMPOSITOR.md)
 - [Automatic movement and HUD lab](minecraft/README.md#standalone-hud-ground-movement-lab)
+- [HUD-world movement connected to KCD](minecraft/README.md#hud-world-coupled-movement-test)
 - [Sampled-ground movement labs](kcd2/MOVEMENT-LAB.md)
 - [Current progress](docs/PROGRESS.md) and [known issues](docs/KNOWN_ISSUES.md)
 

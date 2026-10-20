@@ -26,12 +26,15 @@ param(
     [switch]$InputOffscreenTrial,
     [switch]$Standalone,
     [switch]$GroundMovementFixture,
-    [string]$GroundPatchFile
+    [switch]$GroundMovementCoupled,
+    [string]$GroundPatchFile,
+    [string]$MovementTraceFile
 )
 $ErrorActionPreference='Stop'
-function Assert-HudGroundChildMode([bool]$Fixture,[bool]$Standalone,[string]$Patch,[bool]$OtherMode) {
-    if($Fixture -and (-not $Standalone -or -not $Patch -or $OtherMode)){throw 'Ground movement fixture requires standalone HUD stream and its synthetic patch only.'}
-    if(-not $Fixture -and $Patch){throw 'Ground patch requires the explicit ground movement fixture.'}
+function Assert-HudGroundChildMode([bool]$Fixture,[bool]$Standalone,[string]$Patch,[bool]$OtherMode,[bool]$Coupled=$false,[string]$Trace='') {
+    if(($Fixture -and $Coupled) -or (($Fixture -or $Coupled) -and (-not $Standalone -or -not $Patch -or $OtherMode))){throw 'Ground movement requires exactly one standalone HUD movement mode and its patch.'}
+    if(-not ($Fixture -or $Coupled) -and $Patch){throw 'Ground patch requires explicit HUD ground movement.'}
+    if(($Coupled -and -not $Trace) -or (-not $Coupled -and $Trace)){throw 'Movement trace requires explicit coupled HUD mode.'}
 }
 $root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $minecraft=Join-Path $root 'minecraft'
@@ -54,10 +57,11 @@ try {
     if($InputBackgroundTrial -and (-not $InputFixture -or $InputDelayFixture)){throw 'Background timing requires a standalone fixture without synthetic delays.'}
     if($OffscreenPresentation -and (-not $InputMode -or $InputBackgroundTrial -or $InputDelayFixture)){throw 'Offscreen presentation requires UI input mode without other timing trials.'}
     if($InputOffscreenTrial -and (-not $InputFixture -or -not $OffscreenPresentation)){throw 'Offscreen timing requires an explicit offscreen standalone fixture.'}
-    Assert-HudGroundChildMode ([bool]$GroundMovementFixture) ([bool]$Standalone) $GroundPatchFile ([bool]($InputMode -or $LiveMouse -or $InputFixture -or $InputPointerFixture -or $StoneFixture -or $StoneLive -or $AimedStone -or $InputDelayFixture -or $InputBackgroundTrial -or $OffscreenPresentation -or $InputOffscreenTrial))
+    Assert-HudGroundChildMode ([bool]$GroundMovementFixture) ([bool]$Standalone) $GroundPatchFile ([bool]($InputMode -or $LiveMouse -or $InputFixture -or $InputPointerFixture -or $StoneFixture -or $StoneLive -or $AimedStone -or $InputDelayFixture -or $InputBackgroundTrial -or $OffscreenPresentation -or $InputOffscreenTrial)) ([bool]$GroundMovementCoupled) $MovementTraceFile
     $arguments=@('-p',$minecraft,'--no-daemon','runClient','-PminecomeHudStreamLab',"-PminecomeHudStreamRun=$Run","-PminecomeHudStreamTargetPid=$TargetPid","-PminecomeHudStreamTargetStart=$TargetStart","-PminecomeHudStreamExpiresUtcMs=$ExpiresUtcMs","-PminecomeHudStreamDirectory=$producerDirectory","-PminecomeHudStreamWidth=$Width","-PminecomeHudStreamHeight=$Height","-PminecomeHudStreamGuiScale=$GuiScale")
     if($Standalone){$arguments+='-PminecomeHudStreamStandalone'}
     if($GroundMovementFixture){$arguments+=@('-PminecomeHudGroundMovementFixture',"-PminecomeGroundPatchFile=$GroundPatchFile")}
+    if($GroundMovementCoupled){$arguments+=@('-PminecomeHudGroundMovementCoupled',"-PminecomeGroundPatchFile=$GroundPatchFile","-PminecomeMovementTraceFile=$MovementTraceFile")}
     if($InputMode){$arguments+='-PminecomeHudStreamInput'}
     if($LiveMouse){$arguments+='-PminecomeHudStreamLiveMouse'}
     if($InputFixture){$arguments+='-PminecomeHudStreamInputFixture'}

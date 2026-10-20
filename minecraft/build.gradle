@@ -39,6 +39,8 @@ loom {
                 vmArgs '-Dminecome.hudStreamLab=true'
             if (project.hasProperty('minecomeHudGroundMovementFixture'))
                 vmArgs '-Dminecome.hudGroundMovementFixture=true'
+            if (project.hasProperty('minecomeHudGroundMovementCoupled'))
+                vmArgs '-Dminecome.hudGroundMovementCoupled=true'
             if (project.hasProperty('minecomeHudStreamStandalone'))
                 vmArgs '-Dminecome.hudStreamStandalone=true'
             if (project.hasProperty('minecomeHudStreamInput'))

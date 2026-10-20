@@ -117,8 +117,16 @@ function Assert-MineComeTraceClock {
 
 function New-MineComeTraceReceiver {
     [CmdletBinding()]
-    param([Parameter(Mandatory)][string]$PatchFile,[Parameter(Mandatory)]$MinimumUtcMs)
+    param([Parameter(Mandatory)][string]$PatchFile,[Parameter(Mandatory)]$MinimumUtcMs,[string]$ExpectedHudSave)
     Assert-MineComeTraceClock $MinimumUtcMs
+    if($PSBoundParameters.ContainsKey('ExpectedHudSave')) {
+        $saveWorld=[Guid]::Empty
+        if($ExpectedHudSave -cnotmatch '^MineCome-HudStream-(.+)$' -or
+            -not [Guid]::TryParseExact($Matches[1],'D',[ref]$saveWorld) -or
+            $ExpectedHudSave -cne ('MineCome-HudStream-'+$saveWorld.ToString('D'))) {
+            throw 'HUD trace profile requires one exact canonical readiness save.'
+        }
+    }
     $path=(Resolve-Path -LiteralPath $PatchFile -ErrorAction Stop).Path
     $stream=[IO.File]::OpenRead($path)
     try {
@@ -158,7 +166,7 @@ function New-MineComeTraceReceiver {
             if([Math]::Abs($x-($center.x+(($index-1)%5)-2)) -gt 0.0001 -or [Math]::Abs($y-($center.y+[Math]::Floor(($index-1)/5)-2)) -gt 0.0001 -or -not (Get-MineComeTraceBoolean $point 'valid') -or (Get-MineComeTraceString $point 'result') -cne 'hit') { throw 'Invalid patch coverage.' }
             foreach($axis in @('nx','ny','nz')) { [void](Get-MineComeTraceNumber $point $axis -1.01 1.01) }
         }
-        return [pscustomobject]@{ExpectedRun=$run;PatchHash=$hash;Center=$center;MinimumUtcMs=[long]$MinimumUtcMs;LastSeq=[long]0;LastServerSeq=[long]0;LastFreshPassedSeq=[long]0;LastPassedUtcMs=[long]0;LastPassedServerAgeMs=[double]0;World=$null;Save=$null;Begun=$false;Ended=$false;GroundProved=$false;Bytes=0;Records=0}
+        return [pscustomobject]@{ExpectedRun=$run;PatchHash=$hash;Center=$center;ExpectedHudSave=$ExpectedHudSave;MinimumUtcMs=[long]$MinimumUtcMs;LastSeq=[long]0;LastServerSeq=[long]0;LastFreshPassedSeq=[long]0;LastPassedUtcMs=[long]0;LastPassedServerAgeMs=[double]0;World=$null;Save=$null;Begun=$false;Ended=$false;GroundProved=$false;Bytes=0;Records=0}
     } finally { $document.Dispose() }
 }
 
@@ -185,7 +193,10 @@ function Receive-MineComeMovementTrace {
         [void](Get-MineComeTraceInteger $root 'schema' 1 1)
         if((Get-MineComeTraceString $root 'run') -cne $State.ExpectedRun -or (Get-MineComeTraceString $root 'patch_sha256') -cne $State.PatchHash -or (Get-MineComeTraceString $root 'source_kind') -cne 'live_kcd_ground_patch') { throw 'Trace patch/run/source identity mismatch.' }
         $world=Get-MineComeTraceString $root 'world';$save=Get-MineComeTraceString $root 'save';$uuid=[Guid]::Empty
-        if(-not [Guid]::TryParseExact($world,'D',[ref]$uuid) -or $world -cne $uuid.ToString('D') -or $save -cne ('MineCome-Ground-'+$world)) { throw 'Invalid canonical world/save identity.' }
+        $expectedSave=if($State.ExpectedHudSave){$State.ExpectedHudSave}else{'MineCome-Ground-'+$world}
+        $prefix=if($State.ExpectedHudSave){'MineCome-HudStream-'}else{'MineCome-Ground-'}
+        if(-not [Guid]::TryParseExact($world,'D',[ref]$uuid) -or $world -cne $uuid.ToString('D') -or
+            $save -cne $expectedSave -or $save -cne ($prefix+$world)) { throw 'Invalid canonical world/save identity.' }
         if($State.Begun -and ($world -cne $State.World -or $save -cne $State.Save)) { throw 'Trace world/save changed.' }
         $seq=Get-MineComeTraceInteger $root 'seq' 1 200
         if($seq -ne $State.LastSeq+1 -or ($seq -eq 200 -and $kind -cne 'end')) { throw 'Noncontiguous trace sequence or missing end slot.' }

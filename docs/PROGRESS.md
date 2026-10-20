@@ -1,5 +1,56 @@
 # MineCome progress — 2026-10-20
 
+**HUD-world movement connected to the bounded KCD follower.** The new
+`Start-HudCoupledMovementLab.ps1` captures fresh KCD terrain, creates a new
+Minecraft HUD world over that patch, and forwards fresh integrated-server
+positions during its scripted walk/jump/landing sequence. Its movement trace ends
+before the later 20-second inventory sequence. The existing game-owned eight-second
+deadline, 400 ms lease, actor guards and return-to-origin behavior are unchanged.
+The HUD goes to the standalone native receiver; this mode does not arm composition
+in KCD or forward physical walking controls.
+
+Fresh two-game run `391e9d463edc4789b6bb425eec84a183` passes the complete
+controller. Both Minecraft sides walk 1.291498509 blocks, jump and land on the
+captured KCD ground without post-settle corrections. Twenty-one forwarded
+server samples have 21 matching delayed KCD readbacks covering walking and
+vertical jumping. The game-owned follower ends after 2.56 seconds, confirms the
+player's return and delayed camera following, and cancels its timers.
+
+HUD run `32757a254fbe4ebdbb31190c7c90a989` uses that exact Minecraft save and
+25-record movement trace. Completed readbacks include six walking, two jumping
+and 21 landing frames. The native receiver accepts 435 frames, all four expected
+hotbar/inventory states, stale-frame hiding, resumption and closure. Both collision
+installations and synthetic controls are released; Java/native/helper exit
+normally. The temporary 60 FPS cap remains owned until completion and its original
+value is restored. KCD stays open in the fresh test world.
+
+The source compiled and passed 2,872 focused Java checks, 134 HUD movement
+PowerShell checks, 80 coupled-proof checks, 16 receiver scenario groups and 68
+existing aimed-controller checks. Independent review passed, and Windows
+PowerShell 5.1 successfully handed preflight to PowerShell 7. This verifies the
+bounded scripted connection from the actual HUD world to KCD, not sustained
+movement authority, physical walking controls, placed-block collision or HUD
+composition during movement.
+
+Passing evidence:
+`runtime/evidence/coupled-movement-20261020-162621-391e9d463edc4789b6bb425eec84a183/verification.json`.
+
+The first two-game run, `010ae6c76ba342baa8716c79f7ff5b79`, fails the controller's
+new target-correlation check after 21 applied KCD readbacks and confirmed player/
+camera restoration. Minecraft's movement trace and HUD receiver independently
+pass, and the temporary 60 FPS cap is restored. All 69 target coordinates in
+21 applied and two heartbeat receipts exactly match the float32 conversion of
+the forwarded positions. The new validator incorrectly compared against the
+original double with a one-micrometre tolerance; the largest observed difference
+is 0.00000376425 metres. Its original failed receipt is preserved. The corrected
+comparison requires the exact float32 projection, rejecting unprojected doubles
+and adjacent float32 values. The official `SetWorldPos(Vec3)` documentation and
+inspected `Vec3_tpl<f32>`/script-value declarations corroborate that representation;
+no native ABI calls or gameplay tolerances changed.
+
+Evidence:
+`runtime/evidence/coupled-movement-20261020-162157-010ae6c76ba342baa8716c79f7ff5b79/verification.json`.
+
 **Walking, jumping and HUD capture verified in the same actual Minecraft world.**
 The new opt-in `Start-HudGroundMovementLab.ps1` passes run
 `bee8b2aae29f4b2787ba693c03994093`. It creates one fresh Creative save, imports

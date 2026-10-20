@@ -216,4 +216,28 @@ Test-TraceReceiver 'patch label does not authenticate fixture and complete finit
     $rejected=$false;try { New-MineComeTraceReceiver $fixtureOnly 1000 | Out-Null } catch { $rejected=$true };Assert-Equal $rejected $true
 }
 
+Test-TraceReceiver 'HUD profile requires explicit canonical exact readiness save and leaves legacy strict' {
+    $hudSave='MineCome-HudStream-'+$world
+    $record=New-TestRecord begin 1;$record.save=$hudSave
+    Assert-Rejected (New-TestState) (Convert-TestLine $record)
+    foreach($badSave in @('','MineCome-HudStream-any','MineCome-Ground-'+$world,('MineCome-HudStream-'+$world.ToUpperInvariant()))) {
+        $threw=$false
+        try{New-MineComeTraceReceiver $patchPath 1000 -ExpectedHudSave $badSave | Out-Null}catch{$threw=$true}
+        Assert-Equal $threw $true
+    }
+    $state=New-MineComeTraceReceiver $patchPath 1000 -ExpectedHudSave $hudSave
+    Assert-Equal (Receive-MineComeMovementTrace $state (Convert-TestLine $record) 1100).Kind 'begin'
+    Assert-Equal $state.Save $hudSave
+    $record=New-TestRecord sample 2
+    Assert-Rejected $state (Convert-TestLine $record)
+    $record.save=$hudSave
+    Assert-Equal (Receive-MineComeMovementTrace $state (Convert-TestLine $record) 1100).Kind 'sample'
+    $record=New-TestRecord sample 3 PASSED 1100 2;$record.save=$hudSave
+    Assert-Equal (Receive-MineComeMovementTrace $state (Convert-TestLine $record) 1100).Kind 'observe'
+    $record=New-TestRecord end 4 PASSED 1100 2;$record.save=$hudSave
+    Assert-Equal (Receive-MineComeMovementTrace $state (Convert-TestLine $record) 1100).Kind 'end'
+    $state=New-MineComeTraceReceiver $patchPath 1000 -ExpectedHudSave ('MineCome-HudStream-'+[guid]::NewGuid().ToString('D'))
+    $record=New-TestRecord begin 1;$record.save=$hudSave
+    Assert-Rejected $state (Convert-TestLine $record)
+}
 Write-Output "Verified $script:traceTestsPassed standalone movement-trace receiver cases. No game calls. Fixtures: $fixtureDirectory"

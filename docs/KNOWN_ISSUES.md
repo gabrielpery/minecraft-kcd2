@@ -114,6 +114,12 @@ Never load newer retail1.5.6 saves into this older1.5.5 development game. Backup
   synthetic ground patch while capturing the HUD, followed by its inventory
   sequence. This standalone fixture makes no KCD calls and does not establish
   continuous shared movement or collision against placed Minecraft blocks.
+- A separate coupled mode now uses fresh sampled KCD terrain and drives the
+  bounded KCD follower from that HUD world's server positions. It passes 21
+  delayed movement readbacks, player/camera restoration, the subsequent inventory
+  sequence and frame-cap restoration. Its HUD is checked by the standalone native
+  receiver; composition during movement and physical walking controls are not
+  yet integrated. Native KCD input and physics remain active.
 - General input forwarding, full collision export, NPC/combat synchronization,
   mining terrain and persistence are not implemented.
 - HUD selection and stone actions now share an actual Minecraft world in a

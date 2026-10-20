@@ -1,6 +1,7 @@
 package dev.minecome.terrain;
 
 import com.google.gson.JsonObject;
+import dev.minecome.hud.HudGroundMovementMode;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.entity.Entity;
 import net.minecraft.server.MinecraftServer;
@@ -13,6 +14,7 @@ import net.minecraft.world.World;
 import net.minecraft.world.gen.chunk.FlatChunkGenerator;
 
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.EnumMap;
 import java.util.UUID;
@@ -20,12 +22,16 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
-/** Scripted vanilla movement inside the HUD's own isolated world, with no transport or KCD calls. */
+/** Scripted vanilla movement in the owned HUD world. Optional bounded trace; no KCD calls. */
 public final class HudGroundMovementFixture {
     private static final double SPAWN_X=.5,SPAWN_Z=.5;
-    private record ServerSample(Object world,Object player,long at,GroundMovementSequence.Motion motion) {}
+    private record ServerSample(Object world,Object player,long sequence,long at,GroundMovementSequence.Motion motion) {}
     private final GroundPatch patch;
-    private final String save;
+    private final String save,hudRun;
+    private final HudGroundMovementMode.Mode mode;
+    private final Path traceFile;
+    private MovementTraceSink trace;
+    private String traceResult="not_started";
     private final AtomicLong corrections=new AtomicLong();
     private final AtomicReference<String> serverFailure=new AtomicReference<>();
     private final AtomicReference<ServerSample> sample=new AtomicReference<>();
@@ -37,15 +43,19 @@ public final class HudGroundMovementFixture {
     private GroundMovementSequence sequence;
     private GroundMovementSequence.Motion clientMotion;
     private GroundMovementSequence.Held held=GroundMovementSequence.Held.NONE;
-    private long setupAt,lastTickAt,inputLeaseUntil,settledCorrections,clientQueries,serverQueries;
+    private long setupAt,lastTickAt,inputLeaseUntil,settledCorrections,clientQueries,serverQueries,serverSequence;
+    private boolean firstTraceSamplePending;
     private boolean setupRequested,clientInstalled,teleportRequested,passed,clientReleased,controlsOwned;
     private volatile boolean closing;
 
     public HudGroundMovementFixture(Path file,String run,String save) throws IOException {
-        patch=GroundPatch.read(file);this.save=save;
-        if(!patch.sourceKind().equals("standalone_fixture") || !patch.run().equals(run) ||
-                !save.matches("MineCome-HudStream-[0-9a-f-]{36}"))
-            throw new IllegalArgumentException("HUD ground fixture requires its same-run synthetic patch and new HUD save");
+        this(file,run,save,HudGroundMovementMode.Mode.FIXTURE,null);
+    }
+    public HudGroundMovementFixture(Path file,String run,String save,HudGroundMovementMode.Mode mode,Path traceFile) throws IOException {
+        patch=GroundPatch.read(file);this.save=save;this.hudRun=run;this.mode=mode;this.traceFile=traceFile;
+        HudGroundMovementMode.requirePatch(mode,run,patch.run(),patch.sourceKind(),save);
+        if((mode==HudGroundMovementMode.Mode.COUPLED)!=(traceFile!=null) || (traceFile!=null && !traceFile.isAbsolute()))
+            throw new IllegalArgumentException("Only coupled HUD movement requires an absolute fresh trace path");
     }
     public void positionCorrection(){corrections.incrementAndGet();}
     public boolean passed(){return passed;}
@@ -69,7 +79,7 @@ public final class HudGroundMovementFixture {
             throw new IllegalStateException("HUD movement interrupted by menu/overlay/pause");
         apply(client,held);
     }
-    public void afterTick(MinecraftClient client,long now) {
+    public void afterTick(MinecraftClient client,long now) throws IOException {
         checkFailure();
         if(closing)return;
         if(clientWorld==null){
@@ -111,6 +121,7 @@ public final class HudGroundMovementFixture {
                 return;
             }
             sequence=new GroundMovementSequence(patch,now);
+            if(mode==HudGroundMovementMode.Mode.COUPLED)openTrace(client,now);
         }
         if(passed){release(client);return;}
         if(client.currentScreen!=null || client.getOverlay()!=null || client.isPaused())
@@ -121,11 +132,26 @@ public final class HudGroundMovementFixture {
         if(sequence.phase()==GroundMovementSequence.Phase.FAILED)throw new IllegalStateException(sequence.failure());
         lastTickAt=now;inputLeaseUntil=now+150_000_000L;
         if(sequence.phase()==GroundMovementSequence.Phase.PASSED){
-            passed=true;release(client);
+            release(client);
             if(captures.getOrDefault(GroundMovementSequence.Phase.WALKING,0L)==0 ||
                     captures.getOrDefault(GroundMovementSequence.Phase.JUMPING,0L)+captures.getOrDefault(GroundMovementSequence.Phase.LANDING,0L)==0)
                 throw new IllegalStateException("HUD was not captured during both walking and jump/landing");
-        }else apply(client,held);
+            if(trace!=null){
+                // The final phase can wait for the next advancing server sample,
+                // but never reuse a previous sample or extend the HUD deadline.
+                if(corrections.get()!=settledCorrections || !grounded(clientMotion) || !grounded(observed.motion()))
+                    throw new IllegalStateException("HUD movement final trace lost its grounded correction-free proof");
+                if(!writeTrace(observed,true))return;
+                trace.finish(System.currentTimeMillis(),"passed","PASSED","Actual HUD-world client and server walk/air/landing proof complete");
+                traceResult="passed";
+            }
+            // Ending here keeps the later20s UI sequence outside the KCD follower.
+            passed=true;
+        }else {
+            if(trace!=null && (firstTraceSamplePending || sequence.phase()!=GroundMovementSequence.Phase.SETTLING))
+                writeTrace(observed,firstTraceSamplePending);
+            apply(client,held);
+        }
     }
     private void prepareServer(){
         server.execute(()->{
@@ -162,7 +188,7 @@ public final class HudGroundMovementFixture {
             var entity=source.getPlayerManager().getPlayer(playerId);requireServer(source,entity);
             if(!allProxyCellsAir(source.getOverworld()) || entity.getAbilities().flying)
                 throw new IllegalStateException("HUD server ground air/non-flying contract changed");
-            sample.set(new ServerSample(entity.getWorld(),entity,System.nanoTime(),motion(entity,hasGround(source.getOverworld(),entity))));
+            sample.set(new ServerSample(entity.getWorld(),entity,++serverSequence,System.nanoTime(),motion(entity,hasGround(source.getOverworld(),entity))));
         }catch(Exception e){serverFailure.set("HUD ground observation: "+e.getMessage());}
     }
     private void requireServer(MinecraftServer source,net.minecraft.server.network.ServerPlayerEntity entity){
@@ -181,11 +207,15 @@ public final class HudGroundMovementFixture {
     public boolean finish(MinecraftClient client){
         close(client);checkFailure();return clientReleased && serverReleased.get();
     }
+    public void abort(MinecraftClient client,String reason){
+        terminateTrace("failed","FAILED",reason);close(client);
+    }
     public void close(MinecraftClient client){
         if(closing)return;closing=true;
         // KeyBinding state belongs to the client, not its current player. A
         // disconnect/replacement must release our synthetic holds as well.
         if(controlsOwned)release(client);
+        terminateTrace("stopped","STOPPED","HUD movement closed before explicit trace completion");
         if(clientInstalled){
             clientQueries=GroundCollision.queries(false);
             clientReleased=GroundCollision.clear((BlockView)clientWorld,patch.run(),false);
@@ -203,8 +233,14 @@ public final class HudGroundMovementFixture {
         }else serverReleased.set(true);
     }
     public JsonObject evidence(MinecraftClient client){
-        var e=new JsonObject();e.addProperty("schema",1);e.addProperty("kind","minecome_hud_ground_movement_fixture_v1");
+        var e=new JsonObject();e.addProperty("schema",1);e.addProperty("kind",
+                mode==HudGroundMovementMode.Mode.COUPLED?"minecome_hud_ground_movement_coupled_v1":"minecome_hud_ground_movement_fixture_v1");
         e.addProperty("save",save);e.addProperty("patch_run",patch.run());e.addProperty("patch_sha256",patch.sha256());
+        if(mode==HudGroundMovementMode.Mode.COUPLED){
+            e.addProperty("hud_run",hudRun);e.addProperty("trace_file",trace==null?traceFile.toString():trace.path().toString());
+            e.addProperty("trace_records",trace==null?0:trace.records());e.addProperty("trace_closed",trace!=null&&trace.closed());
+            e.addProperty("trace_result",traceResult);
+        }
         e.addProperty("ground_source_kind",patch.sourceKind());e.addProperty("synthetic_input",true);e.addProperty("kcd_calls",false);
         e.addProperty("kcd_movement_applied",false);e.addProperty("physical_input_verified",false);e.addProperty("phase",phase());
         e.addProperty("client_walk",sequence==null?0:sequence.clientWalk());e.addProperty("server_walk",sequence==null?0:sequence.serverWalk());
@@ -223,6 +259,37 @@ public final class HudGroundMovementFixture {
         if(clientMotion!=null)e.add("client_motion",motionJson(clientMotion));
         var observed=sample.get();if(observed!=null)e.add("server_motion",motionJson(observed.motion()));
         return e;
+    }
+    private void openTrace(MinecraftClient client,long now) throws IOException {
+        Path run=client.runDirectory.toPath().toAbsolutePath().normalize();
+        Path minecraft=run.getParent(),project=minecraft==null?null:minecraft.getParent();
+        if(project==null || !Files.isRegularFile(project.resolve("AGENTS.md")) ||
+                !Files.isRegularFile(project.resolve("minecraft/build.gradle")))
+            throw new IOException("HUD movement trace requires the owned workspace run directory");
+        String world=save.substring("MineCome-HudStream-".length());
+        var context=new MovementTraceSink.Context(patch.run(),patch.sha256(),patch.sourceKind(),save,world,
+                patch.centerX(),patch.centerY(),patch.centerZ(),MovementTraceSink.Profile.HUD_COUPLED);
+        trace=MovementTraceSink.open(traceFile,project.resolve("runtime/evidence"),context,now,System.currentTimeMillis());
+        traceResult="pending";firstTraceSamplePending=true;
+    }
+    private boolean writeTrace(ServerSample observed,boolean force) throws IOException {
+        var c=clientMotion;var s=observed.motion();
+        // Timestamp only after selecting the immutable authoritative observation.
+        boolean written=trace.sample(System.nanoTime(),System.currentTimeMillis(),sequence.phase().name(),
+                new MovementTraceSink.Motion(c.x(),c.y(),c.z(),c.vx(),c.vy(),c.vz(),c.onGround(),c.proxySupport()),
+                new MovementTraceSink.Motion(s.x(),s.y(),s.z(),s.vx(),s.vy(),s.vz(),s.onGround(),s.proxySupport()),
+                observed.sequence(),observed.at(),force);
+        if(written)firstTraceSamplePending=false;
+        return written;
+    }
+    private void terminateTrace(String result,String phase,String reason){
+        if(trace==null || trace.closed())return;
+        try{trace.finish(System.currentTimeMillis(),result,phase,reason);traceResult=result;}
+        catch(IOException|RuntimeException e){traceResult="failed";serverFailure.compareAndSet(null,"HUD movement trace termination: "+e.getMessage());}
+    }
+    private boolean grounded(GroundMovementSequence.Motion motion){
+        return motion.onGround() && motion.proxySupport() &&
+                Math.abs(motion.y()-patch.groundForFeet(motion.x(),motion.z(),.3))<.15;
     }
     private static JsonObject motionJson(GroundMovementSequence.Motion m){
         var e=new JsonObject();e.addProperty("x",m.x());e.addProperty("y",m.y());e.addProperty("z",m.z());

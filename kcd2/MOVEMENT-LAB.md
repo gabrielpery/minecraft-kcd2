@@ -65,6 +65,42 @@ camera following and restoration. This test supplies scripted Minecraft input.
 It does not yet make KCD2 keyboard/mouse actions control Minecraft, align view
 rotation, disable native KCD physics, or provide full-world collision streaming.
 
+## Coupled movement from the HUD world
+
+The new opt-in wrapper reuses that follower with the same fresh Creative
+Minecraft save that captures the HUD. It captures and authenticates a new
+25-point KCD ground patch, checks actual client/server walking and jumping,
+then forwards fresh server poses to KCD. The follower keeps its eight-second
+hard deadline and 400 ms pose lease, verifies return to the starting position,
+and ends before Minecraft's later 20-second inventory sequence.
+
+Complete the [HUD receiver prerequisites](../minecraft/README.md#standalone-hud-ground-movement-lab)
+first; the dated receiver binary is a local build artifact. Close any existing
+MineCome Minecraft client. With the fresh supported KCD tools world loaded,
+menus closed and the player stationary on gentle ground, run from the project root:
+
+```powershell
+& .\scripts\Start-HudCoupledMovementLab.ps1 -PreflightOnly
+& .\scripts\Start-HudCoupledMovementLab.ps1
+```
+
+Windows PowerShell 5.1 automatically hands off to an installed PowerShell 7.
+Preflight checks the running tools process without game writes. The test
+supplies scripted Minecraft input: no F8 or human key sequence is needed.
+Leave controls alone because KCD's normal input and physics remain active;
+the helper does not claim exclusive movement authority or suppress those systems.
+
+The helper temporarily caps KCD at 60 FPS, with an engine-owned 120-second
+deadline, and verifies restoration of the previous cap. HUD frames are checked
+by the standalone native receiver, **not composited inside KCD in this mode**.
+Minecraft closes normally after its checks; KCD stays open. Follower, terrain,
+HUD, process-exit and restoration evidence is retained together beneath
+`runtime/evidence/coupled-movement-*/`. Live run
+`391e9d463edc4789b6bb425eec84a183` passes 21 forwarded samples and 21 delayed
+KCD readbacks, player/camera restoration, 435 accepted HUD frames, the four-state
+inventory sequence and frame-cap restoration. The earlier coupled test and
+standalone synthetic HUD fixture remain separate entry points.
+
 ## What this can establish
 
 The sampler uses25 downward terrain-only rays in a5×5 grid with1m spacing. Each
