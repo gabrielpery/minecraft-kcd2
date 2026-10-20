@@ -20,6 +20,12 @@ with barely any delay reported after the log-latency repair. Aimed placement
 across different block faces remains unverified. Continuous shared movement, general block rendering,
 persistence, survival integration and multiplayer remain unfinished.
 
+Hotbar changes after aimed-action dispatch no longer invalidate confirmation
+solely because selection moved. Actual Minecraft passes 28 standalone scenarios,
+including placement and breaking while switching slots and rejection of an
+altered original stack. Rapid switching during an aimed KCD session still needs
+live coverage.
+
 The first integrated aimed attempt produced no confirmed action. Captured
 camera origins exceeded the previous mapped-eye allowance, and the HUD later
 stopped with a click-delivery failure and logged capture lock contention.

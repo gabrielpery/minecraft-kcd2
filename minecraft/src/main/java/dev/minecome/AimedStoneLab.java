@@ -12,6 +12,7 @@ import net.minecraft.block.Blocks;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.screen.GameMenuScreen;
 import net.minecraft.item.ItemStack;
+import net.minecraft.network.packet.c2s.play.UpdateSelectedSlotC2SPacket;
 import net.minecraft.registry.RegistryKeys;
 import net.minecraft.resource.DataConfiguration;
 import net.minecraft.util.math.BlockPos;
@@ -35,14 +36,18 @@ public final class AimedStoneLab {
     private static final int PLACE=Protocol.PLACE_STONE,BREAK=Protocol.BREAK_STONE;
     private record Step(String name,Vec3d eye,BlockPos aimedCell,BlockPos expectedCell,Direction face,int action,boolean dispatch,boolean allowed,String rayMode,boolean turn) {}
     private record TeleportProof(long number,Vec3d eye) {}
+    private record InventoryProof(int selectedSlot,int originalCount,boolean originalStone) {}
     private final String run,save;
     private final Path directory;
     private final AimedStoneArena arena=new AimedStoneArena(ALIGNMENT);
+    private final AimedStoneArena mutationArena=new AimedStoneArena(ALIGNMENT);
     private final JsonArray checks=new JsonArray(),teleports=new JsonArray();
     private final AtomicReference<TeleportProof> teleportProof=new AtomicReference<>();
     private final AtomicReference<String> serverFailure=new AtomicReference<>();
     private final AtomicReference<Set<BlockPos>> finalAir=new AtomicReference<>();
     private final AtomicReference<Set<BlockPos>> cancelledOwnedProof=new AtomicReference<>();
+    private final AtomicReference<InventoryProof> inventoryProof=new AtomicReference<>();
+    private final AtomicReference<Boolean> mutationAirProof=new AtomicReference<>();
     private final Set<BlockPos> everPlaced=new LinkedHashSet<>();
     private final long initializedAt=System.nanoTime();
     private final int producerPid;
@@ -60,6 +65,13 @@ public final class AimedStoneLab {
     private long selectionAge;
     private boolean teleported,queued;
     private boolean finalReadRequested;
+    private int awaitedSlot=-1,awaitedCount,mutationStage;
+    private boolean inventoryReading,switchApplied,switchRestored,switchReadRequested;
+    private long mutationStartedAt;
+    private InventoryProof lastInventoryProof;
+    private JsonObject selectionChange,mutationEvidence;
+    private Set<BlockPos> switchOwnedBefore;
+    private int switchConfirmationsBefore;
     private String failure="";
 
     private AimedStoneLab(String run,Path directory) throws Exception {
@@ -105,12 +117,19 @@ public final class AimedStoneLab {
         if(serverFailure.get()!=null){fail(client,serverFailure.get());return;}
         if(!inventoryGiven) {
             if(now-worldAt<2_000_000_000L || !client.player.isOnGround())return;
-            var stone=new ItemStack(Blocks.STONE,64);int slot=client.player.getInventory().selectedSlot;
-            client.player.getInventory().setStack(slot,stone);client.interactionManager.clickCreativeStack(stone,36+slot);
-            inventoryGiven=true;inventoryAt=now;
+            fixtureInventory(client,0,64);
+            inventoryGiven=true;inventoryAt=now;return;
         }
+        if(awaitedSlot>=0 && !inventoryAgreed(client))return;
+        if(!mutationCheck(client))return;
         arena.tick(client);
         if(arena.failed()){fail(client,"Aimed arena failed: "+arena.failure());return;}
+        if(current!=null && queued && afterDispatchSwitch(current) && !switchApplied
+                && arena.lastResult()!=null && arena.lastResult().status().equals("dispatched")) {
+            // This runs after the actual vanilla dispatch, before any subsequent
+            // arena tick can consume its asynchronous server postproof.
+            changeSelection(client,"after_dispatch","dispatched");return;
+        }
         if(!arena.ready() || now-inventoryAt<500_000_000L)return;
         if(!bootstrapQueued) {
             var decision=arena.bootstrap(client,++requestId);
@@ -143,6 +162,7 @@ public final class AimedStoneLab {
         }
         if(current==null) {
             current=steps.get(stepIndex);stepAt=now;teleported=false;queued=false;selected=null;
+            switchApplied=false;switchRestored=false;switchReadRequested=false;selectionChange=null;cancelledOwnedProof.set(null);
             requestTeleport(client,current.eye(),center(current.aimedCell()));return;
         }
         require(now-stepAt<6_000_000_000L,"Scenario deadline: "+current.name());
@@ -182,6 +202,13 @@ public final class AimedStoneLab {
                 });
                 return;
             }
+            if(current.name().equals("slot_changed_before_dispatch")) {
+                switchOwnedBefore=arena.ownedCells();switchConfirmationsBefore=arena.evidence().getAsJsonArray("confirmations").size();
+                var decision=arena.request(client,++requestId,current.action(),ray);
+                require(decision.queued(),"Slot-switch refusal must first queue a valid action");
+                // No arena tick or vanilla dispatch is possible before this change.
+                changeSelection(client,"before_dispatch","queued");return;
+            }
             if(!current.dispatch()) {
                 AimedStoneArena.Result result=null;
                 if(!selected.allowed() && !current.rayMode().equals("view_origin_over_limit")) {
@@ -210,13 +237,166 @@ public final class AimedStoneLab {
             for(BlockPos cell:proof)require(client.world.isChunkLoaded(cell) && client.world.getBlockState(cell).isOf(Blocks.STONE),"Cancelled action mutated client cell");
             record(current,selected,arena.lastResult());next();return;
         }
+        if(current.name().equals("slot_changed_before_dispatch")) {
+            if(arena.pending())return;
+            var result=arena.lastResult();
+            require(result.id()==requestId && result.status().equals("rejected") && result.reason().equals("selected_stack_changed")
+                    && !result.clientAndServer(),"Pre-dispatch slot switch did not refuse normally");
+            require(arena.ownedCells().equals(switchOwnedBefore)
+                    && arena.evidence().getAsJsonArray("confirmations").size()==switchConfirmationsBefore,"Slot-switch refusal changed ownership");
+            if(!switchReadRequested) {
+                switchReadRequested=true;var server=client.getServer();var cells=switchOwnedBefore;
+                server.execute(()->{try {
+                    require(server==serverIdentity && save.equals(server.getSaveProperties().getLevelName()),"Slot-switch proof server changed");
+                    for(var cell:cells)require(server.getOverworld().isChunkLoaded(cell)
+                            && server.getOverworld().getBlockState(cell).isOf(Blocks.STONE),"Slot-switch refusal changed authoritative cell");
+                    cancelledOwnedProof.set(cells);
+                }catch(Exception e){serverFailure.set(e.getMessage());}});return;
+            }
+            if(cancelledOwnedProof.get()==null)return;
+            for(var cell:switchOwnedBefore)require(client.world.isChunkLoaded(cell)
+                    && client.world.getBlockState(cell).isOf(Blocks.STONE),"Slot-switch refusal changed client cell");
+            if(!restoreSelection(client))return;
+            record(current,selected,result);next();return;
+        }
         if(queued && !arena.pending()) {
             var result=arena.lastResult();
             require(result!=null && result.id()==requestId && result.status().equals("confirmed") && result.clientAndServer(),current.name()+": no authoritative confirmation: "+result);
             require(result.target().equals(selected.target()) && result.hit().block().equals(selected.hit().block()) && result.hit().side()==selected.hit().side(),current.name()+": queued ray retargeted after dispatch");
+            if(afterDispatchSwitch(current)) {
+                require(switchApplied,"Post-dispatch scenario never observed the dispatched phase");
+                var confirmations=arena.evidence().getAsJsonArray("confirmations");
+                var inventory=confirmations.get(confirmations.size()-1).getAsJsonObject().getAsJsonObject("confirmation_inventory");
+                require(inventory.get("client_selected_slot").getAsInt()==1,"Postproof did not observe changed client selection");
+                require(inventory.get("client_original_count").getAsInt()==64 && inventory.get("server_original_count").getAsInt()==64,"Postproof original stack differs");
+                if(!restoreSelection(client))return;
+            }
             if(result.action()==PLACE)everPlaced.add(result.target());
             record(current,selected,result);next();
         }
+    }
+    private static boolean afterDispatchSwitch(Step step) {
+        return step.name().equals("slot_changed_after_place") || step.name().equals("slot_changed_after_break");
+    }
+    private void changeSelection(MinecraftClient client,String phase,String status) {
+        require(client.player.getInventory().selectedSlot==0 && client.player.getInventory().getStack(0).isOf(Blocks.STONE.asItem())
+                && client.player.getInventory().getStack(0).getCount()==64,"Fixture original selected stack differs");
+        selectionChange=new JsonObject();selectionChange.addProperty("phase",phase);selectionChange.addProperty("observed_status",status);
+        selectionChange.addProperty("before_slot",0);selectionChange.addProperty("after_slot",1);selectionChange.addProperty("original_slot",0);
+        selectionChange.addProperty("original_item","minecraft:stone");selectionChange.addProperty("original_count",64);
+        switchApplied=true;fixtureInventory(client,1,64);
+    }
+    private boolean restoreSelection(MinecraftClient client) {
+        if(!switchRestored){
+            var original=client.player.getInventory().getStack(0);
+            require(original.isOf(Blocks.STONE.asItem()) && original.getCount()==64,"Slot-switch fixture cannot repair a changed original stack");
+            switchRestored=true;fixtureInventory(client,0,64);return false;
+        }
+        require(awaitedSlot<0 && lastInventoryProof.selectedSlot()==0 && lastInventoryProof.originalCount()==64,"Selection restore lacks server agreement");
+        return true;
+    }
+    /** Explicit fixture inventory changes use vanilla Creative inventory/selection packets, never block writes. */
+    private void fixtureInventory(MinecraftClient client,int slot,int count) {
+        require(awaitedSlot<0,"Overlapping fixture inventory transition");
+        var original=client.player.getInventory().getStack(0);
+        if(!original.isOf(Blocks.STONE.asItem()) || original.getCount()!=count) {
+            var stone=new ItemStack(Blocks.STONE,count);
+            client.player.getInventory().setStack(0,stone);client.interactionManager.clickCreativeStack(stone,36);
+        }
+        client.player.getInventory().selectedSlot=slot;
+        // Inspected 1.21.1/Yarn build.3 bytecode: ClientPlayerInteractionManager.syncSelectedSlot
+        // sends this same public (int) packet; ServerPlayNetworkHandler applies it on the server thread.
+        client.getNetworkHandler().sendPacket(new UpdateSelectedSlotC2SPacket(slot));
+        awaitedSlot=slot;awaitedCount=count;inventoryProof.set(null);inventoryReading=false;
+    }
+    private boolean inventoryAgreed(MinecraftClient client) {
+        var proof=inventoryProof.getAndSet(null);
+        if(proof!=null) {
+            inventoryReading=false;
+            var original=client.player.getInventory().getStack(0);
+            if(proof.selectedSlot()==awaitedSlot && proof.originalCount()==awaitedCount && proof.originalStone()
+                    && client.player.getInventory().selectedSlot==awaitedSlot && original.isOf(Blocks.STONE.asItem()) && original.getCount()==awaitedCount) {
+                lastInventoryProof=proof;
+                if(selectionChange!=null) {
+                    String prefix=awaitedSlot==1?"changed":"restored";
+                    selectionChange.addProperty(prefix.equals("changed")?"client_changed_slot":"restored_client_slot",awaitedSlot);
+                    selectionChange.addProperty(prefix.equals("changed")?"server_changed_slot":"restored_server_slot",proof.selectedSlot());
+                }
+                awaitedSlot=-1;return true;
+            }
+        }
+        if(!inventoryReading) {
+            inventoryReading=true;var server=client.getServer();var playerId=client.player.getUuid();
+            server.execute(()->{try {
+                var player=server.getPlayerManager().getPlayer(playerId);
+                require(server==serverIdentity && save.equals(server.getSaveProperties().getLevelName())
+                        && player!=null && player.getWorld()==server.getOverworld() && player.isCreative(),"Fixture inventory server identity changed");
+                var original=player.getInventory().getStack(0);
+                inventoryProof.set(new InventoryProof(player.getInventory().selectedSlot,original.getCount(),original.isOf(Blocks.STONE.asItem())));
+            }catch(Exception e){serverFailure.set(e.getMessage());}});
+        }
+        return false;
+    }
+    /** A separate expected-failure arena cannot poison main ownership or manufacture a confirmation. */
+    private boolean mutationCheck(MinecraftClient client) {
+        if(mutationStage==5)return true;
+        long now=System.nanoTime();
+        if(mutationStartedAt==0)mutationStartedAt=now;
+        require(now-mutationStartedAt<10_000_000_000L,"Original-stack mutation fixture deadline");
+        if(mutationStage<=2) {
+            mutationArena.tick(client);
+            require(!mutationArena.failed(),"Auxiliary arena failed before deliberate stack mutation");
+        }
+        if(mutationStage==0) {
+            if(!mutationArena.ready())return false;
+            require(mutationArena.bootstrap(client,1).queued(),"Auxiliary vanilla bootstrap refused");mutationStage=1;return false;
+        }
+        if(mutationStage==1) {
+            if(mutationArena.pending())return false;
+            var result=mutationArena.lastResult();
+            require(result.id()==1 && result.status().equals("confirmed") && result.clientAndServer(),"Auxiliary bootstrap lacks client/server confirmation");
+            var seed=mutationArena.seedCell();var eye=client.player.getEyePos();
+            var host=ALIGNMENT.toKcd(new AimGeometry.Ray(protocol(eye),protocol(center(seed).subtract(eye).normalize()),4.5));
+            var ray=new AimedStoneArena.HostRay(System.nanoTime(),ALIGNMENT,host,AimedStoneArena.Occlusion.clear());
+            require(mutationArena.request(client,2,BREAK,ray).queued(),"Auxiliary break refused");mutationStage=2;return false;
+        }
+        if(mutationStage==2) {
+            var result=mutationArena.lastResult();
+            require(mutationArena.pending(),"Auxiliary action finished before observing dispatch");
+            if(!result.status().equals("dispatched"))return false;
+            require(result.id()==2 && result.action()==BREAK && result.target().equals(mutationArena.seedCell()),"Auxiliary dispatched target differs");
+            mutationEvidence=new JsonObject();mutationEvidence.addProperty("schema",1);mutationEvidence.addProperty("kind","minecome_aimed_stack_mutation_fixture_v1");
+            mutationEvidence.addProperty("expected_failure",true);mutationEvidence.addProperty("observed_dispatched",true);mutationEvidence.addProperty("mutation_after_dispatch",true);
+            mutationEvidence.addProperty("original_slot",0);mutationEvidence.addProperty("original_item","minecraft:stone");
+            mutationEvidence.addProperty("before_count",64);mutationEvidence.addProperty("mutated_count",63);
+            fixtureInventory(client,0,63);mutationStage=3;return false;
+        }
+        if(mutationStage==3) {
+            require(lastInventoryProof.originalCount()==63 && client.player.getInventory().getStack(0).getCount()==63,"Deliberate mutation lacks client/server inventory agreement");
+            mutationEvidence.addProperty("client_mutated_count",63);mutationEvidence.addProperty("server_mutated_count",lastInventoryProof.originalCount());
+            mutationArena.tick(client);
+            if(!mutationArena.failed())return false;
+            require(mutationArena.failure().equals("selected_stack_changed_during_action") && !mutationArena.pending(),"Auxiliary mutation failed for unrelated reason");
+            require(mutationArena.evidence().getAsJsonArray("confirmations").size()==1
+                    && mutationArena.ownedCells().equals(Set.of(mutationArena.seedCell())),"Failed break manufactured ownership/confirmation");
+            var server=client.getServer();var seed=mutationArena.seedCell();
+            server.execute(()->{try {
+                require(server==serverIdentity && save.equals(server.getSaveProperties().getLevelName())
+                        && server.getOverworld().isChunkLoaded(seed) && server.getOverworld().getBlockState(seed).isAir(),"Auxiliary vanilla break did not clean authoritative seed");
+                mutationAirProof.set(true);
+            }catch(Exception e){serverFailure.set(e.getMessage());}});
+            mutationStage=4;return false;
+        }
+        if(mutationAirProof.get()==null)return false;
+        var seed=mutationArena.seedCell();
+        require(client.world.isChunkLoaded(seed) && client.world.getBlockState(seed).isAir(),"Auxiliary vanilla break did not clean client seed");
+        if(!mutationEvidence.has("closed")) {
+            mutationArena.close();mutationEvidence.addProperty("client_server_seed_air",true);mutationEvidence.addProperty("closed",true);
+            mutationEvidence.add("arena",mutationArena.evidence());fixtureInventory(client,0,64);return false;
+        }
+        require(lastInventoryProof.originalCount()==64 && client.player.getInventory().getStack(0).getCount()==64,"Auxiliary inventory restoration lacks client/server agreement");
+        mutationEvidence.addProperty("inventory_restored",true);mutationEvidence.addProperty("restored_client_count",64);mutationEvidence.addProperty("restored_server_count",lastInventoryProof.originalCount());
+        mutationStage=5;LOG.info("AIMED_STONE_STACK_MUTATION expectedFailure=selected_stack_changed_during_action clientServerSeedAir=true inventoryRestored=true");return true;
     }
     private void next(){stepIndex++;current=null;}
     private void create(MinecraftClient client) {
@@ -304,6 +484,9 @@ public final class AimedStoneLab {
         result.add(selection("view_origin_over_limit",s,new Vec3d(-2,2.5,.5),top,null,null,false,"view_origin_over_limit"));
         result.add(selection("cancel_before_dispatch",s,new Vec3d(4,2.5,.5),top,east,Direction.EAST,true,"clear"));
         result.add(action("turn_while_pending",s,new Vec3d(4,2.5,.5),top,east,Direction.EAST,BREAK,true));
+        result.add(selection("slot_changed_before_dispatch",s,new Vec3d(-2,2.5,.5),top,top,Direction.WEST,true,"clear"));
+        result.add(action("slot_changed_after_place",s,new Vec3d(3.5,2.5,.5),top,east,Direction.EAST,PLACE,false));
+        result.add(action("slot_changed_after_break",s,new Vec3d(4,2.5,.5),top,east,Direction.EAST,BREAK,false));
         result.add(action("cleanup_top",s,new Vec3d(-2,2.5,.5),top,top,Direction.WEST,BREAK,false));
         return List.copyOf(result);
     }
@@ -318,10 +501,11 @@ public final class AimedStoneLab {
         record.addProperty("vanilla_dispatch",step.dispatch());record.addProperty("client_and_server_confirmed",result!=null && result.clientAndServer());
         record.addProperty("view_turned_after_queue",step.turn());
         record.addProperty("rejected_request_checked",!selection.allowed() && !step.rayMode().equals("view_origin_over_limit"));record.addProperty("rejected_id_replay_checked",step.name().equals("miss"));
-        if(step.name().equals("cancel_before_dispatch")) {
+        if(step.name().equals("cancel_before_dispatch") || step.name().equals("slot_changed_before_dispatch")) {
             record.addProperty("queued_then_cancelled",true);record.addProperty("cancellation_reason",result.reason());
             record.addProperty("client_server_cells_unchanged",true);
         }
+        if(selectionChange!=null)record.add("selection_change",selectionChange.deepCopy());
         var rayRecord=new JsonObject();rayRecord.add("host_origin",protocolVector(selectedRay.hostRay().origin()));rayRecord.add("host_direction",protocolVector(selectedRay.hostRay().direction()));rayRecord.addProperty("host_range",selectedRay.hostRay().range());
         rayRecord.add("minecraft_anchor",protocolVector(selectedRay.alignment().minecraftAnchor()));rayRecord.add("host_anchor",protocolVector(selectedRay.alignment().kcdAnchor()));rayRecord.addProperty("blocks_per_host_unit",selectedRay.alignment().blocksPerUnit());
         rayRecord.addProperty("age_at_selection_ns",selectionAge);
@@ -345,7 +529,7 @@ public final class AimedStoneLab {
             require(previousFps==null || client.options.getMaxFps().getValue().equals(previousFps),"FPS option restoration failed");
             var cleanup=new JsonArray();if(finalAir.get()!=null)for(var cell:finalAir.get())cleanup.add(position(cell));
             receipt.add("final_client_server_air_cells",cleanup);
-            receipt.add("arena",arena.evidence());write("aimed-stone.json",receipt);
+            receipt.add("arena",arena.evidence());receipt.add("original_stack_mutation",mutationEvidence);write("aimed-stone.json",receipt);
             finished=true;
             LOG.info("AIMED_STONE_TERMINAL run={} result={} checks={} failure={}",run,result,checks.size(),failure);
         }catch(Exception e){

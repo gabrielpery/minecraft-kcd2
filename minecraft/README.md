@@ -229,6 +229,18 @@ controller requires normal Java and wrapper exit, a matching fresh save, balance
 confirmed placements/removals and no remaining owned stones. Failure evidence and
 the isolated save are retained. The working HUD and fixed-cell paths are separate.
 
+Latest run `3e32c1486caf41e4ad1d712ed4e112e4` passes **28 scenarios**. It adds
+pre-dispatch slot-change refusal and confirmed placement/breaking after switching
+slots, followed by another successful action. Confirmation checks the original
+slot's unchanged stack on client and server. The main arena records 20 requests,
+five confirmed placements and five breaks, then zero owned stones and final air.
+A separate auxiliary arena deliberately mutates the original stack after dispatch,
+verifies the expected failure and independently observes an empty seed cell on both
+threads before restoring inventory. The validator passes 98 checks in PowerShell
+5.1 and 7. Source hashes, restored options, persisted save and normal exits pass;
+KCD is not connected. Evidence:
+`runtime/evidence/aimed-stone-20261020-143821-3e32c1486caf41e4ad1d712ed4e112e4`.
+
 Verified run `96d8cf1be9224d2d95dac6fc314c99e1` passes all 22 scenarios, including
 six-face selection, actual UP/EAST placement, seven refusal cases, rejected-ID
 replay, a camera turn while an action is pending, and authority revocation before

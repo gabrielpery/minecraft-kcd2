@@ -69,7 +69,7 @@ public final class AimedStoneArena implements AutoCloseable {
     private record Plan(long id, int action, long at, boolean bootstrap, HostRay ray,
                         BlockPos target, Hit hit, Stack selected, Map<BlockPos, CellState> before) {}
     private record Observation(long id, String phase, long at, Map<BlockPos, CellState> cells,
-                               Stack selected, Hit hit, String failure) {}
+                               Stack selected, Stack originalSlot, Hit hit, String failure) {}
 
     private final AimGeometry.Alignment alignment;
     private final String ownedHudSave;
@@ -302,7 +302,11 @@ public final class AimedStoneArena implements AutoCloseable {
         if (!loaded(client.world, plan.before.keySet())) { fail("confirmation_chunk_unavailable"); return; }
         Map<BlockPos, CellState> clientStates = states(client, plan.before.keySet());
         if (!clientStates.equals(proof.cells)) return;
-        if (!plan.selected.equals(proof.selected) || !plan.selected.equals(selected(client.player))) { fail("selected_stack_changed_during_action"); return; }
+        // Vanilla has already consumed the action with the proved selected slot.
+        // Later hotbar selection cannot retarget it, but the original Creative
+        // stack must still be unchanged on both sides of the action.
+        Stack originalSlot = stack(client.player, plan.selected.slot);
+        if (!plan.selected.equals(proof.originalSlot) || !plan.selected.equals(originalSlot)) { fail("selected_stack_changed_during_action"); return; }
         for (var entry : plan.before.entrySet()) {
             CellState after = proof.cells.get(entry.getKey());
             if (entry.getKey().equals(plan.target)) {
@@ -311,7 +315,17 @@ public final class AimedStoneArena implements AutoCloseable {
         }
         if (plan.action == Protocol.PLACE_STONE) owned.add(plan.target); else owned.remove(plan.target);
         lastResult = new Result(plan.id, plan.action, "confirmed", "client_and_integrated_server", plan.target, plan.hit, true);
-        append(confirmations, plannedReceipt(plan, lastResult)); append(requests, plannedReceipt(plan, lastResult));
+        JsonObject receipt = plannedReceipt(plan, lastResult);
+        var inventory = new JsonObject();
+        inventory.addProperty("original_slot", plan.selected.slot);
+        inventory.addProperty("client_selected_slot", client.player.getInventory().selectedSlot);
+        inventory.addProperty("server_selected_slot", proof.selected.slot);
+        inventory.addProperty("client_original_item", originalSlot.item);
+        inventory.addProperty("client_original_count", originalSlot.count);
+        inventory.addProperty("server_original_item", proof.originalSlot.item);
+        inventory.addProperty("server_original_count", proof.originalSlot.count);
+        receipt.add("confirmation_inventory", inventory);
+        append(confirmations, receipt); append(requests, receipt.deepCopy());
         pending = null; dispatched = false;
     }
 
@@ -338,9 +352,10 @@ public final class AimedStoneArena implements AutoCloseable {
                         hit = blockHit(authoritative, entity, alignment.toMinecraft(plan.ray.hostRay));
                     }
                 }
-                observation.set(new Observation(id, phase, System.nanoTime(), states(authoritative, cells), selected(entity), hit, null));
+                Stack originalSlot = plan == null ? null : stack(entity, plan.selected.slot);
+                observation.set(new Observation(id, phase, System.nanoTime(), states(authoritative, cells), selected(entity), originalSlot, hit, null));
             } catch (Exception error) {
-                observation.set(new Observation(id, phase, System.nanoTime(), Map.of(), null, null, error.getMessage()));
+                observation.set(new Observation(id, phase, System.nanoTime(), Map.of(), null, null, null, error.getMessage()));
             } finally { reading.set(false); }
         });
     }
@@ -377,7 +392,10 @@ public final class AimedStoneArena implements AutoCloseable {
         return Map.copyOf(values);
     }
     private static Stack selected(PlayerEntity entity) {
-        int slot = entity.getInventory().selectedSlot; ItemStack stack = entity.getInventory().getStack(slot);
+        return stack(entity, entity.getInventory().selectedSlot);
+    }
+    private static Stack stack(PlayerEntity entity, int slot) {
+        ItemStack stack = entity.getInventory().getStack(slot);
         return new Stack(slot, Registries.ITEM.getId(stack.getItem()).toString(), stack.getCount());
     }
     private Decision rejected(long id, int action, String reason, BlockPos target, Hit hit) {

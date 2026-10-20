@@ -329,6 +329,9 @@ peer is permitted to create a Minecraft block state directly.
    re-reading a moving crosshair while waiting for server confirmation. Each
    block event remains an actual Minecraft state transition; no native or Lua
    aim code may synthesize a gameplay block mutation.
+   The selected slot/stack must agree before dispatch and immediately after the
+   vanilla call. Later selection changes do not retarget the action: confirmation
+   checks the original slot's unchanged item/count on both client and server.
 
 For anchors `M` (Minecraft) and `K` (KCD), and scale `s` blocks/KCD unit:
 

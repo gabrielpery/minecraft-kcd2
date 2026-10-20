@@ -157,11 +157,19 @@ vanilla is cancelled when HUD authority ends or an inventory screen opens.
 An already-dispatched action still requires authoritative observation; stopping
 does not convert an uncertain action into a successful result.
 
-The Arena still requires the selected slot/stack to match through authoritative
-confirmation. Changing it after vanilla dispatch but before that confirmation
-can end this experimental HUD session, even when the block transition succeeds.
-The integrated controller needs a focused transition check before this mode can
-claim normal rapid slot switching during block actions.
+Selection must match through the pre-dispatch proof and the immediate return
+from the vanilla call. After dispatch, confirmation checks the original slot's
+unchanged item/count on client and server, independently of current selection.
+A harmless hotbar switch therefore does not invalidate an action already underway.
+Changing the original stack still fails confirmation.
+
+Actual Minecraft run `3e32c1486caf41e4ad1d712ed4e112e4` passes 28 standalone
+scenarios, including refusal before dispatch, successful placement/breaking with
+selection changed afterward, and a subsequent action. Both switched confirmations
+observed the new selection on client and server. A separate expected-failure
+arena verifies original-stack mutation is still rejected, with independent
+client/server air and inventory-restoration proof. These synthetic-host tests
+do not establish rapid slot switching during an aimed KCD session.
 
 On shutdown, native request authority is revoked before ending the Lua session.
 Requests already written to the guest cannot be recalled. A stone cleanup ACK

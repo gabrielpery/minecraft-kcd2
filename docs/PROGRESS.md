@@ -1,5 +1,34 @@
 # MineCome progress — 2026-10-20
 
+**Hotbar changes after dispatch: implemented and verified in actual Minecraft.**
+The aimed arena now checks the original slot's item/count on both client and
+server during confirmation, independently of the currently selected slot.
+Selection must still match before dispatch and immediately after the vanilla
+call. Target, ownership, ray, reach, freshness and world/player checks remain.
+
+Run `3e32c1486caf41e4ad1d712ed4e112e4` passes **28 standalone scenarios**:
+switching before dispatch produces a normal refusal; switching after placement
+or breaking preserves confirmation; the following action remains usable.
+Both switched actions observed slot 1 selected on client and server while the
+original slot 0 retained 64 stone. The main arena records 20 requests and
+10 confirmed actions (five placements and five breaks), zero owned/pending
+stones and final air at all four used cells.
+
+A separate auxiliary arena places and breaks its seed through vanilla APIs,
+then deliberately changes the original stack after dispatch. The expected
+`selected_stack_changed_during_action` failure remains enforced. Its stale
+ownership receipt is preserved; independent client/server air observations
+prove the block is gone, and inventory restoration is verified before the main
+scenarios start. No direct block writes are used.
+
+The Fabric build/remap and existing automated suites pass, including 3,819
+protocol checks. The receipt validator passes 98 checks in PowerShell 5.1 and 7.
+The actual fixture recompiles the final sources, verifies their hashes, restores
+options, saves the isolated world and exits normally. KCD is not connected to
+this fixture; rapid slot switching during an aimed KCD action still needs live
+coverage. Evidence:
+`runtime/evidence/aimed-stone-20261020-143821-3e32c1486caf41e4ad1d712ed4e112e4/verification.json`.
+
 **First-click aimed break verified after the latency repair.** Run
 `dc93d381b60b4461952d024017b186c7` passes the bounded live controller: one physical
 click, one captured ray, one canonical request, one confirmed Minecraft

@@ -12,20 +12,23 @@ function Ray($name){
     return @{host_origin=$origin;host_direction=(V 1.0 0.0 0.0);host_range=4.5;minecraft_anchor=$anchor;host_anchor=(V 0.0 0.0 0.0);blocks_per_host_unit=1.0;occlusion_kind=$kind;host_obstruction_distance=$distance;age_at_selection_ns=$age}
 }
 $seed=V 0 0 0;$middle=V 0 1 0;$top=V 0 2 0;$east=V 1 2 0
-$ids=@(1,2,3,4,5,6,15,16);$actions=@(1,1,1,2,2,1,2,2);$targets=@($seed,$middle,$top,$seed,$middle,$east,$east,$top)
-$hits=@((V 0 -1 0),$seed,$middle,$seed,$middle,$top,$east,$top);$faces=@('UP','UP','UP','WEST','WEST','EAST','EAST','WEST')
-$confirmations=@(for($i=0;$i -lt 8;$i++){
+$ids=@(1,2,3,4,5,6,15,17,18,19);$actions=@(1,1,1,2,2,1,2,1,2,2);$targets=@($seed,$middle,$top,$seed,$middle,$east,$east,$east,$east,$top)
+$hits=@((V 0 -1 0),$seed,$middle,$seed,$middle,$top,$east,$top,$east,$top);$faces=@('UP','UP','UP','WEST','WEST','EAST','EAST','EAST','EAST','WEST')
+$confirmations=@(for($i=0;$i -lt $ids.Count;$i++){
     $h=$hits[$i];$point=@(($h.x+0.5),($h.y+0.5),($h.z+0.5));if($faces[$i] -eq 'UP'){$point[1]=$h.y+1.0}elseif($faces[$i] -eq 'WEST'){$point[0]=[double]$h.x}else{$point[0]=$h.x+1.0}
     $r=@{id=$ids[$i];action=$actions[$i];status='confirmed';reason='client_and_integrated_server';client_and_server=$true;bootstrap=($i -eq 0);target=$targets[$i];hit_block=$h;face=$faces[$i];hit_point=$point;selected_slot=0;selected_item='minecraft:stone';selected_count=64}
+    $selected=0;if($ids[$i] -in @(17,18)){$selected=1}
+    $r.confirmation_inventory=@{original_slot=0;client_selected_slot=$selected;server_selected_slot=$selected;client_original_item='minecraft:stone';client_original_count=64;server_original_item='minecraft:stone';server_original_count=64}
     if($i -gt 0){$r.host_ray=@{origin=(V 0.0 0.0 0.0);direction=(V 1.0 0.0 0.0);range=4.5;age_at_queue_ns=100L;host_obstruction='KNOWN_CLEAR';host_obstruction_distance=0.0}}
     $r
 })
 $reasons=@('ray_miss','unowned_hit','host_obstructed','host_obstruction_unavailable','ray_stale','ray_origin_disagrees_with_eye','alignment_changed')
 $requests=@($confirmations[0..5])+@(@{id=7;action=2;status='rejected';reason=$reasons[0];client_and_server=$false},@{id=7;action=2;status='rejected';reason='request_id_not_increasing';client_and_server=$false})
 for($i=1;$i -lt 7;$i++){$requests+=@{id=7+$i;action=2;status='rejected';reason=$reasons[$i];client_and_server=$false}}
-$requests+=@(@{id=14;action=2;status='rejected';reason='actions_disabled_before_dispatch';client_and_server=$false},$confirmations[6],$confirmations[7])
-$names=@('column_middle','column_top','remove_seed','remove_middle','face_down','face_up','face_north','face_south','face_west','face_east','place_east','nearest','miss','unowned_floor','host_occluded','host_occlusion_unavailable','stale_ray','origin_mismatch','alignment_changed','view_origin_measured','view_origin_boundary','view_origin_over_limit','cancel_before_dispatch','turn_while_pending','cleanup_top')
-$dispatch=@{column_middle=1;column_top=2;remove_seed=3;remove_middle=4;place_east=5;turn_while_pending=6;cleanup_top=7}
+$preSwitch=@{id=16;action=2;status='rejected';reason='selected_stack_changed';client_and_server=$false;bootstrap=$false;target=$top;hit_block=$top;face='WEST';hit_point=@(0.0,2.5,0.5);selected_slot=0;selected_item='minecraft:stone';selected_count=64;host_ray=@{origin=(V 0.0 0.0 0.0);direction=(V 1.0 0.0 0.0);range=4.5;age_at_queue_ns=100L;host_obstruction='KNOWN_CLEAR';host_obstruction_distance=0.0}}
+$requests+=@(@{id=14;action=2;status='rejected';reason='actions_disabled_before_dispatch';client_and_server=$false},$confirmations[6],$preSwitch,$confirmations[7],$confirmations[8],$confirmations[9])
+$names=@('column_middle','column_top','remove_seed','remove_middle','face_down','face_up','face_north','face_south','face_west','face_east','place_east','nearest','miss','unowned_floor','host_occluded','host_occlusion_unavailable','stale_ray','origin_mismatch','alignment_changed','view_origin_measured','view_origin_boundary','view_origin_over_limit','cancel_before_dispatch','turn_while_pending','slot_changed_before_dispatch','slot_changed_after_place','slot_changed_after_break','cleanup_top')
+$dispatch=@{column_middle=1;column_top=2;remove_seed=3;remove_middle=4;place_east=5;turn_while_pending=6;slot_changed_after_place=7;slot_changed_after_break=8;cleanup_top=9}
 $checks=@();$teleports=@();$negativeId=7
 for($i=0;$i -lt $names.Count;$i++){
     $name=$names[$i];$negative=$i -ge 12 -and $i -le 18;$d=$dispatch.ContainsKey($name)
@@ -37,13 +40,29 @@ for($i=0;$i -lt $names.Count;$i++){
     if($name -in @('view_origin_measured','view_origin_boundary')){$c.target=$top;$c.hit_block=$top;$c.face='west'}
     if($name -eq 'view_origin_over_limit'){$c.selection_allowed=$false;$c.reason='ray_origin_disagrees_with_eye'}
     if($name -eq 'cancel_before_dispatch'){$c.request_id=14;$c.action=2;$c.queued_then_cancelled=$true;$c.cancellation_reason='actions_disabled_before_dispatch';$c.client_server_cells_unchanged=$true;$c.target=$east;$c.hit_block=$east;$c.face='east'}
+    if($name -eq 'slot_changed_before_dispatch'){$c.request_id=16;$c.action=2;$c.queued_then_cancelled=$true;$c.cancellation_reason='selected_stack_changed';$c.client_server_cells_unchanged=$true;$c.target=$top;$c.hit_block=$top;$c.face='west'}
+    if($name.StartsWith('slot_changed_')){
+        $phase='after_dispatch';$status='dispatched';if($name -eq 'slot_changed_before_dispatch'){$phase='before_dispatch';$status='queued'}
+        $c.selection_change=@{phase=$phase;observed_status=$status;before_slot=0;after_slot=1;client_changed_slot=1;server_changed_slot=1;original_slot=0;original_item='minecraft:stone';original_count=64;restored_client_slot=0;restored_server_slot=0}
+    }
     $checks+=$c;$teleports+=@{scenario=$name;eye=(V 0.0 0.0 0.0);client_server_eye_agreed=$true}
 }
 $save='MineCome-AimedStone-'+[guid]::ParseExact($run,'N').ToString('D')
 $valid=@{schema=1;kind='minecome_aimed_stone_fixture_v1';run=$run;save=$save;producer_pid=42;producer_start_filetime=$start;result='passed';failure='';synthetic_host_rays=$true;kcd_connected=$false;bootstrap_confirmed=$true;options_restored=$true;world_block_writes=$false;checks=$checks;fixture_teleports=$teleports;final_client_server_air_cells=@($seed,$middle,$top,$east);arena=@{schema=1;kind='minecome_aimed_stone_arena_v1';save=$save;failure=$null;ready=$true;bootstrapped=$true;vanilla_outline_raycast=$true;pending=$false;live_transport_enabled=$false;owned_count=0;omitted_receipts=0;block_writes=0;inventory_writes=0;camera_writes=0;max_owned_count=16;max_ray_age_ms=500;eye_tolerance=0.25;max_host_ray_range=4.5;fluid_raycast='NONE';owned_cells=@();seed=$seed;arena_minimum=(V -2 -2 -2);arena_maximum_inclusive=(V 2 2 2);alignment=@{minecraft_anchor=(V 0.0 0.0 0.0);host_anchor=(V 0.0 0.0 0.0);blocks_per_host_unit=1.0};confirmations=$confirmations;requests=$requests}}
+$auxArena=CloneReceipt $valid.arena
+$auxArena.failure='selected_stack_changed_during_action';$auxArena.ready=$false;$auxArena.owned_count=1;$auxArena.owned_cells=@($seed)
+$auxRefused=CloneReceipt $confirmations[3];$auxRefused.id=2;$auxRefused.status='rejected';$auxRefused.reason='selected_stack_changed_during_action';$auxRefused.client_and_server=$false;$auxRefused.PSObject.Properties.Remove('confirmation_inventory')
+$auxArena.confirmations=@($confirmations[0]);$auxArena.requests=@($confirmations[0],$auxRefused)
+$valid.original_stack_mutation=@{schema=1;kind='minecome_aimed_stack_mutation_fixture_v1';expected_failure=$true;observed_dispatched=$true;mutation_after_dispatch=$true;original_slot=0;original_item='minecraft:stone';before_count=64;mutated_count=63;client_mutated_count=63;server_mutated_count=63;client_server_seed_air=$true;closed=$true;inventory_restored=$true;restored_client_count=64;restored_server_count=64;arena=$auxArena}
 $count=0
 function Check($value){Assert-MineComeAimedStoneReceipt -Receipt $value -Run $run -ProducerPid 42 -ProducerStart $start}
 Check $valid;$count++;Check (CloneReceipt $valid);$count++
+# A server postproof may precede the later selection packet; the original slot
+# remains independently proved. Both truthful ordering outcomes must be accepted.
+$earlyPostproof=CloneReceipt $valid
+foreach($index in @(7,8)){$earlyPostproof.arena.confirmations[$index].confirmation_inventory.server_selected_slot=0}
+foreach($index in @(17,18)){$earlyPostproof.arena.requests[$index].confirmation_inventory.server_selected_slot=0}
+Check $earlyPostproof;$count++
 $mutations=@(
     {param($r)$r.arena.PSObject.Properties.Remove('failure')},
     {param($r)$r.producer_pid='42'},
@@ -87,7 +106,59 @@ $mutations=@(
     {param($r)$r.checks[20].selection_allowed=$false},
     {param($r)$r.checks[21].selection_allowed=$true},
     {param($r)$r.checks[21].synthetic_ray.host_origin.x=0.25},
-    {param($r)$r.checks[21].rejected_request_checked=$true}
+    {param($r)$r.checks[21].rejected_request_checked=$true},
+    {param($r)$r.arena.confirmations[7].PSObject.Properties.Remove('confirmation_inventory')},
+    {param($r)$r.arena.confirmations[7].confirmation_inventory.original_slot=1},
+    {param($r)$r.arena.confirmations[7].confirmation_inventory.client_selected_slot=0},
+    {param($r)$r.arena.confirmations[8].confirmation_inventory.server_selected_slot=2},
+    {param($r)$r.arena.confirmations[7].confirmation_inventory.server_selected_slot='1'},
+    {param($r)$r.arena.confirmations[7].confirmation_inventory.client_original_count=63},
+    {param($r)$r.arena.confirmations[8].confirmation_inventory.server_original_count=63},
+    {param($r)$r.arena.confirmations[8].confirmation_inventory.client_original_item='minecraft:dirt'},
+    {param($r)$r.arena.confirmations[7].confirmation_inventory.server_original_item='minecraft:air'},
+    {param($r)$r.arena.confirmations[0].confirmation_inventory.client_selected_slot=1},
+    {param($r)$r.arena.requests[17].confirmation_inventory.server_selected_slot=0},
+    {param($r)$r.arena.requests[18].confirmation_inventory.client_original_count=63},
+    {param($r)$r.arena.requests[16].reason='actions_disabled_before_dispatch'},
+    {param($r)$r.arena.requests[16].target.x=1},
+    {param($r)$r.arena.requests[16].selected_slot=1},
+    {param($r)$r.checks[24].PSObject.Properties.Remove('selection_change')},
+    {param($r)$r.checks[24].selection_change.phase='after_dispatch'},
+    {param($r)$r.checks[25].selection_change.observed_status='queued'},
+    {param($r)$r.checks[26].selection_change.before_slot=1},
+    {param($r)$r.checks[25].selection_change.server_changed_slot=0},
+    {param($r)$r.checks[25].selection_change.client_changed_slot='1'},
+    {param($r)$r.checks[26].selection_change.original_count=63},
+    {param($r)$r.checks[26].selection_change.restored_server_slot=1},
+    {param($r)$r.checks[24].client_server_cells_unchanged=$false},
+    {param($r)$r.checks[24].vanilla_dispatch=$true},
+    {param($r)$r.checks[25].client_and_server_confirmed=$false},
+    {param($r)$r.PSObject.Properties.Remove('original_stack_mutation')},
+    {param($r)$r.original_stack_mutation.expected_failure=$false},
+    {param($r)$r.original_stack_mutation.observed_dispatched=$false},
+    {param($r)$r.original_stack_mutation.mutation_after_dispatch=$false},
+    {param($r)$r.original_stack_mutation.client_mutated_count=64},
+    {param($r)$r.original_stack_mutation.server_mutated_count=64},
+    {param($r)$r.original_stack_mutation.client_server_seed_air=$false},
+    {param($r)$r.original_stack_mutation.closed=$false},
+    {param($r)$r.original_stack_mutation.inventory_restored=$false},
+    {param($r)$r.original_stack_mutation.restored_server_count=63},
+    {param($r)$r.original_stack_mutation.arena.save='MineCome-AimedStone-other'},
+    {param($r)$r.original_stack_mutation.arena.failure=$null},
+    {param($r)$r.original_stack_mutation.arena.ready=$true},
+    {param($r)$r.original_stack_mutation.arena.pending=$true},
+    {param($r)$r.original_stack_mutation.arena.owned_count=0},
+    {param($r)$r.original_stack_mutation.arena.owned_cells=@()},
+    {param($r)$r.original_stack_mutation.arena.block_writes=1},
+    {param($r)$r.original_stack_mutation.arena.inventory_writes=1},
+    {param($r)$r.original_stack_mutation.arena.confirmations+= $r.original_stack_mutation.arena.requests[1]},
+    {param($r)$r.original_stack_mutation.arena.requests[1].client_and_server=$true},
+    {param($r)$r.original_stack_mutation.arena.requests[1].status='confirmed'},
+    {param($r)$r.original_stack_mutation.arena.requests[1].reason='selected_stack_changed'},
+    {param($r)$r.original_stack_mutation.arena.requests[1].target.y=1},
+    {param($r)$r.original_stack_mutation.arena.requests[1].selected_count=63},
+    {param($r)$r.original_stack_mutation.arena.requests[1].host_ray.age_at_queue_ns=500000001L},
+    {param($r)$r.original_stack_mutation.arena.confirmations[0].confirmation_inventory.server_original_count=63}
 )
 foreach($mutate in $mutations){$r=CloneReceipt $valid;& $mutate $r;$rejected=$false;try{Check $r}catch{$rejected=$true};if(-not $rejected){throw "Malformed aimed receipt accepted, case $count"};$count++}
 Write-Output "AIMED_STONE_RECEIPT_TESTS_PASS checks=$count"
