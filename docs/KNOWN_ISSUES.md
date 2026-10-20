@@ -88,7 +88,19 @@ Automatic approval review rejected the next explicit visible launch with
 `-devmode +map trosecko`, reporting only **blocked by policy**. The action was not
 performed or retried through another route. The user subsequently launched the
 prepared helper successfully and provided a live frame. Further agent-controlled
-launches remain subject to the same review limitation.
+launches had remained manual until the 2026-10-20 access check. In that check the
+standard `Start-Kcd2ToolsTest.ps1` command succeeded under the current session
+permissions, using the exact supported executable. Computer Use then brought the
+game forward and captured its loaded test world. No permission settings were
+changed. The historical denial is not evidence that every current launch is
+blocked; evaluate the actual result and never work around a fresh denial.
+
+Desktop input is not yet verified for autonomous gameplay. Computer Use accepted
+Escape key dispatches, but no pause menu appeared in the subsequent captures.
+Its documented interface also lacks button-free relative mouse movement and a
+configurable key-hold duration. Window access therefore does not establish that
+FPS aiming or all game controls work. Future automated input must be recorded as
+Computer Use input, separately from human physical-input verification.
 
 Never load newer retail1.5.6 saves into this older1.5.5 development game. Backups of
 982 existing save/profile files were copied and SHA256 verified before testing.

@@ -1,5 +1,17 @@
 # MineCome progress — 2026-10-20
 
+**Agent launch and visual access verified; desktop gameplay input remains
+unverified.** On the user's request to enable autonomous demos, the normal
+`Start-Kcd2ToolsTest.ps1` launch succeeded for the exact supported executable
+(PID 47364). Computer Use selected the returned official-tools window, brought
+it forward and captured the loaded Trosky test world. No permission settings,
+renderer bounds or game files were changed. An initial `GetCursorPos` access
+error cleared on the documented single recovery attempt. Escape dispatches
+returned successfully but did not visibly open a menu, so this check does not
+establish keyboard or mouse gameplay control. The next automation check should
+verify hotbar/inventory input receipts before attempting precise world aiming;
+the documented desktop API has no button-free relative mouse movement.
+
 **Top-face targeting verified after correcting the entity rotation.** Live run
 `7ab72119af9e4401bed3cbbb6337aa42` passes the intended three-action sequence:
 one right-click hits the original seed's UP face and places directly above it;
