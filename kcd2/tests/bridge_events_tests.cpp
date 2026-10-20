@@ -17,6 +17,14 @@
 #include <string>
 #include <thread>
 
+namespace minecome {
+struct BridgeQueueTestAccess {
+    static std::unique_lock<std::mutex> hold_dispatch(Bridge& bridge) {
+        return std::unique_lock<std::mutex>(bridge.input_dispatch_);
+    }
+};
+}
+
 namespace {
 using namespace std::chrono_literals;
 using Clock=std::chrono::steady_clock;
@@ -513,6 +521,66 @@ int wmain(int argc,wchar_t** argv) {
         require(std::string(minecome::aimed_input_rejection_name(Rejection::guest_view_origin))=="guest_view_origin"
             &&std::string(minecome::aimed_input_rejection_name(Rejection::host_pose_origin))=="host_pose_origin","bounded refusal names changed");
         view_origins.close();await([&]{return !bridge.connected();},"view-origin fixture disconnect missing");
+
+        // Hold the real dispatch fence to reproduce admission before the original
+        // deadline followed by expiry in the native queue. No clock or permit
+        // timestamps are rewritten, and all network peers remain synthetic.
+        auto journal=[&] {std::ifstream file(logfile);return std::string(std::istreambuf_iterator<char>(file),{});};
+        Peer queue_expiry(port,protocol::Role::minecraft,token,2,2);const auto queue_session=ready_aim(queue_expiry);
+        queue_expiry.send(protocol::Type::block_event,protocol::encode(block(1,303)));fresh_aim(queue_expiry);
+        const auto seed_receipts=bridge.drain_block_events();require(seed_receipts.events.size()==1,"queue expiry seed missing");
+        queue_expiry.send(protocol::Type::aim_permit,protocol::encode(protocol::AimPermit{123,1}));
+        await([&]{return bridge.latest_aimed_permit().has_value();},"queue expiry permit missing");
+        const auto queue_permit=*bridge.latest_aimed_permit();
+        std::this_thread::sleep_until(queue_permit.received+350ms);fresh_aim(queue_expiry);
+        const protocol::AimedStoneRequest expiring_request{123,101,1,2,protocol::AimOcclusion::clear,host.camera,{1,0,0},4.5,0};
+        {
+            auto dispatch=minecome::BridgeQueueTestAccess::hold_dispatch(bridge);
+            require(bridge.request_aimed_stone(expiring_request,queue_permit,Clock::now()),"fresh request not admitted before held dispatch");
+            std::this_thread::sleep_until(queue_permit.received+550ms);
+        }
+        const std::regex drop_record("AIM_QUEUE_DROPPED arena=123 request=101 permit=1 reason=permit_expired admission_age_us=([0-9]+) dispatch_age_us=([0-9]+)");
+        await([&]{return std::regex_search(journal(),drop_record);},"unsent expired request was not retired explicitly");
+        std::smatch dropped;const auto after_drop=journal();require(std::regex_search(after_drop,dropped,drop_record),"queue expiry diagnostic missing");
+        require(std::stoull(dropped[1])<=500000&&std::stoull(dropped[2])>500000,"queue expiry ages lost original deadline");
+        require(after_drop.find("AIM_REQUEST arena=123 request=101 ")==std::string::npos
+            &&after_drop.find("AIM_RESULT arena=123 request=101 ")==std::string::npos,"queue expiry fabricated wire request or result");
+        fresh_aim(queue_expiry);
+        require(bridge.connected()&&bridge.connection_generation()==queue_session.connection_generation
+            &&bridge.aimed_arena()&&bridge.drain_aimed_results().empty(),"natural queue expiry reset arena or invented guest result");
+        require(bridge.game_write_allowed(seed_receipts.events[0])&&bridge.drain_block_events().events.empty(),"queue expiry revoked seed or fabricated block change");
+        queue_expiry.send(protocol::Type::aim_permit,protocol::encode(protocol::AimPermit{123,2}));fresh_aim(queue_expiry);
+        const auto retry_permit=*bridge.latest_aimed_permit();
+        auto retry_request=expiring_request;retry_request.permit_id=2;
+        require(!bridge.request_aimed_stone(retry_request,retry_permit,Clock::now(),&admission_reason)
+            &&admission_reason==Rejection::replayed_request,"queue drop restored consumed request ID");
+        retry_request.request_id=102;
+        require(!bridge.request_aimed_stone(expiring_request,queue_permit,Clock::now()),"expired original permit/request became reusable");
+        require(bridge.request_aimed_stone(retry_request,retry_permit,Clock::now()),"fresh later request blocked by retired queue entry");
+        require(queue_expiry.receive(protocol::Type::aimed_stone_request).second==protocol::encode(retry_request),"retired request reached peer or fresh request changed");
+        queue_expiry.send(protocol::Type::aimed_stone_result,protocol::encode(protocol::AimedStoneResult{123,102,2,protocol::AimedStoneResultCode::confirmed}));fresh_aim(queue_expiry);
+        const auto retry_results=bridge.drain_aimed_results();require(retry_results.size()==1&&retry_results[0].result.request_id==102,"fresh request after expiry lacked independent result");
+        queue_expiry.send(protocol::Type::block_event,protocol::encode(block(2,303)));fresh_aim(queue_expiry);
+        const auto removed_seed=bridge.drain_block_events();require(removed_seed.events.size()==1&&removed_seed.events[0].event.operation==2,"queue expiry lost native seed ownership");
+        queue_expiry.close();await([&]{return !bridge.connected();},"queue expiry fixture disconnect missing");
+
+        // A stale pose is still a terminal loss of authority, even if the permit
+        // also expires while queued. Only healthy unsent natural expiry is local.
+        Peer stale_queue(port,protocol::Role::minecraft,token,2,2);ready_aim(stale_queue);
+        stale_queue.send(protocol::Type::aim_permit,protocol::encode(protocol::AimPermit{123,1}));
+        await([&]{return bridge.latest_aimed_permit().has_value();},"stale queue permit missing");
+        const auto stale_queue_permit=*bridge.latest_aimed_permit();
+        {
+            auto dispatch=minecome::BridgeQueueTestAccess::hold_dispatch(bridge);
+            auto request=expiring_request;request.request_id=201;
+            require(bridge.request_aimed_stone(request,stale_queue_permit,Clock::now()),"stale queue fixture admission failed");
+            std::this_thread::sleep_until(stale_queue_permit.received+550ms);
+        }
+        await([&]{return !bridge.connected();},"stale queued authority retained transport");
+        require(journal().find("session ended: queued aim authority unavailable admission_age_us=")!=std::string::npos
+            &&journal().find("AIM_QUEUE_DROPPED arena=123 request=201 ")==std::string::npos,"stale authority was mislabeled as harmless permit expiry");
+        require(!bridge.aimed_arena()&&bridge.drain_aimed_results().empty(),"stale queued authority survived disconnect");
+        stale_queue.close();
 
         for(int violation=0;violation<17;++violation) {
             Peer invalid(port,protocol::Role::minecraft,token,2,2);

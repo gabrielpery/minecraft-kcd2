@@ -79,7 +79,7 @@ function ConvertFrom-MineComeHudAimedRelayLog([string]$Text,[string]$Run,[switch
 
 function ConvertFrom-MineComeHudAimedAudit([string]$Text,[switch]$Completed) {
     if($Text.Length -gt 2MB -or ($Completed -and $Text.Length -gt 0 -and -not $Text.EndsWith("`n"))){throw 'Aimed audit extent or final line invalid.'}
-    $hello=0;$anchor=$null;$ended=$false;$lastTime=0L;$requests=[Collections.Generic.List[object]]::new();$results=[Collections.Generic.List[object]]::new()
+    $hello=0;$anchor=$null;$ended=$false;$lastTime=0L;$requests=[Collections.Generic.List[object]]::new();$results=[Collections.Generic.List[object]]::new();$queueDrops=[Collections.Generic.List[object]]::new()
     $lastId=0L;$permits=[Collections.Generic.HashSet[long]]::new()
     foreach($line in ($Text -split "`n"|Select-Object -SkipLast 1)){
         $line=$line.TrimEnd("`r")
@@ -95,8 +95,15 @@ function ConvertFrom-MineComeHudAimedAudit([string]$Text,[switch]$Completed) {
             $anchor=[pscustomobject]@{arena=$values[0];connection=$values[1];reset=$values[2]}
         }elseif($body -cmatch '^AIM_REQUEST arena=([1-9][0-9]{0,15}) request=([1-9][0-9]{0,15}) permit=([1-9][0-9]{0,15})$'){
             $arena=[long]$Matches[1];$id=[long]$Matches[2];$permit=[long]$Matches[3];foreach($n in @($arena,$id,$permit)){Assert-MineComeAimedInteger $n 1}
-            if(-not $anchor -or $ended -or $arena -ne $anchor.arena -or $id -le $lastId -or -not $permits.Add($permit) -or $requests.Count -ne $results.Count -or $requests.Count -ge 16){throw 'Aimed audit dispatch identity/order invalid.'}
+            if(-not $anchor -or $ended -or $arena -ne $anchor.arena -or $id -le $lastId -or -not $permits.Add($permit) -or $requests.Count -ne $results.Count -or $requests.Count+$queueDrops.Count -ge 16){throw 'Aimed audit dispatch identity/order invalid.'}
             $requests.Add([pscustomobject]@{arena=$arena;request_id=$id;permit_id=$permit});$lastId=$id
+        }elseif($body -cmatch '^AIM_QUEUE_DROPPED arena=([1-9][0-9]{0,15}) request=([1-9][0-9]{0,15}) permit=([1-9][0-9]{0,15}) reason=permit_expired admission_age_us=(0|[1-9][0-9]{0,18}) dispatch_age_us=([1-9][0-9]{0,18})$'){
+            $arena=[long]$Matches[1];$id=[long]$Matches[2];$permit=[long]$Matches[3];$admission=[long]$Matches[4];$dispatch=[long]$Matches[5]
+            foreach($n in @($arena,$id,$permit)){Assert-MineComeAimedInteger $n 1}
+            Assert-MineComeAimedInteger $admission 0 500000;Assert-MineComeAimedInteger $dispatch 500001 ([long]::MaxValue)
+            if(-not $anchor -or $ended -or $arena -ne $anchor.arena -or $id -le $lastId -or -not $permits.Add($permit) -or $requests.Count -ne $results.Count -or $requests.Count+$queueDrops.Count -ge 16){throw 'Aimed audit queue-drop identity/order invalid.'}
+            # This consumes an unsent intent, never a guest request or result.
+            $queueDrops.Add([pscustomobject]@{arena=$arena;request_id=$id;permit_id=$permit;reason='permit_expired';admission_age_us=$admission;dispatch_age_us=$dispatch});$lastId=$id
         }elseif($body -cmatch '^AIM_RESULT arena=([1-9][0-9]{0,15}) request=([1-9][0-9]{0,15}) result=(10|[1-9])$'){
             $arena=[long]$Matches[1];$id=[long]$Matches[2];$code=[int]$Matches[3]
             if(-not $anchor -or $ended -or $arena -ne $anchor.arena -or $requests.Count -ne $results.Count+1 -or $id -ne $requests[-1].request_id){throw 'Aimed audit result lacks current dispatched request.'}
@@ -106,7 +113,7 @@ function ConvertFrom-MineComeHudAimedAudit([string]$Text,[switch]$Completed) {
         }else{throw 'Malformed or wrong-protocol aimed audit record.'}
     }
     if($Completed -and ($hello -ne 1 -or -not $anchor -or $requests.Count -ne $results.Count)){throw 'Incomplete aimed canonical audit.'}
-    [pscustomobject]@{authenticated=($hello -eq 1 -and $null -ne $anchor);arena=$anchor;requests=@($requests.ToArray());results=@($results.ToArray());ended=$ended;completed=[bool]$Completed}
+    [pscustomobject]@{authenticated=($hello -eq 1 -and $null -ne $anchor);arena=$anchor;requests=@($requests.ToArray());results=@($results.ToArray());queue_drops=@($queueDrops.ToArray());ended=$ended;completed=[bool]$Completed}
 }
 
 function New-MineComeHudAimedRelay($Context,[string]$Directory,[string]$Run,[long]$ExpiresUtcMs,[ValidateRange(1,65535)][int]$Port=38765) {
@@ -289,6 +296,7 @@ function Assert-MineComeHudAimedRelayGuest($Session,$Guest) {
         Assert-MineComeHudAimedBridgeProof $stone
         if($stone.save -cne $Guest.save -or $stone.confirmed_network_actions -lt 1){throw 'Live aimed check lacks an actual confirmed physical interaction.'}
         $native=$Session.Native;$audit=$Session.ReceiptAudit;$requests=@($stone.requests);$intents=@($Session.Intents.ToArray());$offer=$stone.arena_offer
+        if($audit.queue_drops.Count){throw 'Bounded aimed verification contains an expired unsent intent; no guest action is claimed for it.'}
         if(-not $native.fresh_world -or -not $audit.completed -or $audit.arena.arena -ne $offer.arenaId -or $native.rejections.Count -ne 0 -or
             $requests.Count -ne $intents.Count -or $native.captures.Count -ne $intents.Count -or $native.dispatches.Count -ne $intents.Count -or $audit.requests.Count -ne $intents.Count -or $audit.results.Count -ne $intents.Count){throw 'Aimed source/dispatch/canonical guest count or arena mismatch.'}
         if($native.input_begins.Count -ne 1 -or $native.input_ends.Count -ne 1 -or $native.input_cancels.Count -ne 1 -or $native.input_begins[0].arena -ne $offer.arenaId -or $native.input_ends[0].arena -ne $offer.arenaId -or $native.input_cancels[0].arena -ne $offer.arenaId -or $native.input_begins[0].line -ge $native.input_cancels[0].line -or $native.input_cancels[0].line -ge $native.input_ends[0].line){throw 'Aimed independent input begin/revocation/end chain differs.'}

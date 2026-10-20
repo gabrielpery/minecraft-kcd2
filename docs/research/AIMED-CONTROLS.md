@@ -71,6 +71,22 @@ pre-dispatch reasons such as `original_permit_expired`.
 
 ## Latest verification and remaining live check
 
+Revision4 run `0565b12d8af64ad7980a7999b870e844` admitted one physical click and
+captured ray, but native then reported `queued aim expired or reset` before
+writing any `AIM_REQUEST`. The user saw the stone disappear; the native ledger
+shows this was session cleanup, with no confirmed guest break. The original
+aggregate error cannot isolate permit expiry from pose/generation failure.
+The mouse/camera rejection did not recur on that click. Cleanup and frame-cap
+restoration passed, but the overall live check failed.
+
+The native queue repair now consumes expired unsent intents without destroying
+an otherwise valid arena, and journals their original permit ages separately.
+It polls minor2 outbound work every 5 ms while preserving the 500 ms lifetime.
+Deterministic loopback regression verifies no write/result for an expired queued
+intent and successful processing of a later fresh request. Generation or stale
+pose authority still terminates. The bounded live validator reports any local
+drop explicitly and does not count it as a Minecraft action.
+
 The saved KCD run `5334822edbd5464397d6131962ff576e` produced seven physical
 edges and four forwarded captures, but no `AIM_REQUEST` or `AIM_RESULT`.
 Its native journal records three `bridge_refused` entries and one

@@ -210,7 +210,7 @@ bool Bridge::request_aimed_stone(const protocol::AimedStoneRequest& request,cons
     const auto& a=*aimed_arena_;
     const protocol::Vec3 eye{a.minecraft_anchor.x+request.origin.x-a.kcd_anchor.x,a.minecraft_anchor.y+request.origin.z-a.kcd_anchor.z,a.minecraft_anchor.z-request.origin.y+a.kcd_anchor.y};
     if(!close_point(eye,client_pose_->camera,aimed_view_origin_tolerance)) return refuse(AimedInputRejection::guest_view_origin);
-    queued_aim_=PendingAim{request,connection_generation_,event_reset_generation_,captured,permit.received,{}};
+    queued_aim_=PendingAim{request,connection_generation_,event_reset_generation_,captured,permit.received,now,{}};
     aim_permits_.erase(found);last_aim_request_id_=request.request_id;return true;
 }
 std::vector<AimedStoneResultReceipt> Bridge::drain_aimed_results() {
@@ -239,7 +239,10 @@ void Bridge::run(std::stop_token stop,std::uint16_t port,std::promise<bool> star
                 while(!stop.stop_requested()) {
                     if(Clock::now()-last_received>6s) throw std::runtime_error(handshake?"heartbeat expired":"HELLO timed out");
                     if(partial_since&&Clock::now()-*partial_since>6s) throw std::runtime_error("partial frame timed out");
-                    if(ready(client.value,false,25)) {
+                    // Aimed requests share a 500 ms original permit budget.
+                    // Bound local-mailbox polling to 5 ms without changing the
+                    // established minor 0/1 socket cadence or any expiry.
+                    if(ready(client.value,false,negotiated_minor==2?5:25)) {
                         std::array<std::uint8_t,8192> chunk{};int n=recv(client.value,reinterpret_cast<char*>(chunk.data()),static_cast<int>(chunk.size()),0);
                         if(n==0) throw std::runtime_error("peer disconnected");
                         if(n==SOCKET_ERROR) {if(WSAGetLastError()!=WSAEWOULDBLOCK) throw std::runtime_error("receive failed");}
@@ -397,8 +400,28 @@ void Bridge::run(std::stop_token stop,std::uint16_t port,std::promise<bool> star
                                 std::lock_guard l(mailbox_);
                                 if(inflight_aim_&&Clock::now()-inflight_aim_->dispatched>3s) throw std::runtime_error("aimed result timed out");
                                 if(queued_aim_) {
-                                    if(!aimed_ready_locked()||queued_aim_->connection_generation!=connection_generation_||queued_aim_->reset_generation!=event_reset_generation_||Clock::now()-queued_aim_->permit_received>500ms) throw std::runtime_error("queued aim expired or reset");
-                                    queued_aim_->dispatched=Clock::now();inflight_aim_=queued_aim_;input=queued_aim_->request;queued_aim_.reset();
+                                    const auto now=Clock::now();
+                                    const auto age_us=[&](Clock::time_point time){return std::chrono::ceil<std::chrono::microseconds>(time-queued_aim_->permit_received).count();};
+                                    const auto ages=" admission_age_us="+std::to_string(age_us(queued_aim_->admitted))
+                                        +" dispatch_age_us="+std::to_string(age_us(now));
+                                    if(queued_aim_->connection_generation!=connection_generation_||queued_aim_->reset_generation!=event_reset_generation_)
+                                        throw std::runtime_error("queued aim generation changed"+ages);
+                                    if(!aimed_ready_locked()) {
+                                        const auto host_age=std::chrono::duration_cast<std::chrono::microseconds>(now-host_pose_time_).count();
+                                        const auto guest_age=std::chrono::duration_cast<std::chrono::microseconds>(now-client_pose_time_).count();
+                                        throw std::runtime_error("queued aim authority unavailable"+ages+" host_pose_age_us="+std::to_string(host_age)+" guest_pose_age_us="+std::to_string(guest_age));
+                                    }
+                                    if(now-queued_aim_->permit_received>500ms) {
+                                        // The request was never sent. Consume its original ID/permit
+                                        // without inventing a guest result or invalidating a healthy
+                                        // arena merely because its bounded queue delay used the lease.
+                                        const auto& request=queued_aim_->request;
+                                        log("AIM_QUEUE_DROPPED arena="+std::to_string(request.arena_id)+" request="+std::to_string(request.request_id)
+                                            +" permit="+std::to_string(request.permit_id)+" reason=permit_expired"+ages);
+                                        queued_aim_.reset();
+                                    } else {
+                                        queued_aim_->dispatched=now;inflight_aim_=queued_aim_;input=queued_aim_->request;queued_aim_.reset();
+                                    }
                                 }
                             }
                             if(input) {emit(protocol::Type::aimed_stone_request,protocol::encode(*input));log("AIM_REQUEST arena="+std::to_string(input->arena_id)+" request="+std::to_string(input->request_id)+" permit="+std::to_string(input->permit_id));}

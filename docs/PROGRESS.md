@@ -1,5 +1,29 @@
 # MineCome progress — 2026-10-20
 
+**First revision 4 live attempt: click capture passed; aimed break not verified.**
+Run `0565b12d8af64ad7980a7999b870e844` admitted one physical break intent and
+its KCD camera sample without the previous origin/capture rejection. The user
+reported that the stone disappeared when clicked. However, native logged
+`queued aim expired or reset` before any `AIM_REQUEST`; Minecraft received no
+aimed action. The disappearance was engine-session cleanup after transport
+closure, not a confirmed vanilla break. The guest exited normally with an
+explicit failed-session receipt. Engine cleanup, independent input-end
+acknowledgement and frame-cap restoration passed.
+
+The saved log combines queue expiry, pose readiness and generation checks, so it
+cannot establish which condition fired. The observed click-to-Lua dispatch was
+80 ms, while permit installation to camera capture already took 275 ms.
+The native repair now separates expired unsent intents from authority failure,
+records original permit ages, and reduces the minor2 receive wait from 25 to 5 ms.
+The bridge suite passes 1,806 checks, including a deterministic loopback case
+that holds an admitted request beyond 500 ms, verifies no socket request/result
+and retained arena/seed state, then completes a new fresh request. Stale authority
+still closes the session. Simulated HTTP aimed integration also passes.
+The PowerShell audit passes 88 checks and keeps local drops separate from guest
+actions; the strict bounded live proof cannot certify a dropped intent.
+A new live test is still required; no successful crosshair result is claimed
+from this run.
+
 **Aimed-control repair: actual Minecraft regression passed; revised renderer
 awaits live KCD verification.** The interrupted October 13 run
 `5334822edbd5464397d6131962ff576e` bootstrapped its seed stone, but confirmed no

@@ -110,6 +110,9 @@ public:
     std::uint64_t received_poses() const { return poses_.load(); }
     std::uint64_t received_events() const { return events_.load(); }
 private:
+    // Deterministic loopback tests may hold the existing dispatch fence while
+    // an admitted request ages. This adds no production timing override.
+    friend struct BridgeQueueTestAccess;
     void run(std::stop_token, std::uint16_t, std::promise<bool>);
     void log(const std::string&);
     void reset_events_locked(EventResetReason, bool clear_pose = true);
@@ -150,7 +153,7 @@ private:
     struct PendingAim {
         protocol::AimedStoneRequest request;
         std::uint64_t connection_generation{}, reset_generation{};
-        std::chrono::steady_clock::time_point captured, permit_received, dispatched;
+        std::chrono::steady_clock::time_point captured, permit_received, admitted, dispatched;
     };
     std::optional<PendingAim> queued_aim_, inflight_aim_;
     std::deque<AimedStoneResultReceipt> aimed_results_;

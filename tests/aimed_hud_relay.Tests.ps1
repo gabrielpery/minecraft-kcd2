@@ -103,6 +103,26 @@ foreach($case in @('minor','harness','twice','noanchor','partial','wrongarena','
     }
     Reject {ConvertFrom-MineComeHudAimedAudit $text -Completed} "Reject bad canonical audit: $case"
 }
+$dropLine='105 AIM_QUEUE_DROPPED arena=1 request=1 permit=6 reason=permit_expired admission_age_us=499999 dispatch_age_us=500001'
+$dropAudit=(Valid-Audit).Replace('110 AIM_REQUEST',$dropLine+"`n110 AIM_REQUEST")
+$parsed=ConvertFrom-MineComeHudAimedAudit $dropAudit -Completed
+Check ($parsed.queue_drops.Count -eq 1 -and $parsed.requests.Count -eq 1 -and $parsed.results.Count -eq 1) 'Expired unsent intent is separate from subsequent wire request/result'
+$onlyDrop=$dropAudit -replace '(?m)^11[0-9] .*\n','' -replace '(?m)^120 .*\n',''
+$parsed=ConvertFrom-MineComeHudAimedAudit $onlyDrop -Completed
+Check ($parsed.queue_drops.Count -eq 1 -and $parsed.requests.Count -eq 0 -and $parsed.results.Count -eq 0) 'Local drop cannot invent a guest action'
+foreach($case in @('wrongarena','sameid','samepermit','lateadmission','earlydrop','negativeage','fractionage','unknownreason','replay','postend','fake_result','pending')){
+    $text=$dropAudit
+    switch($case){
+        'wrongarena'{$text=$text.Replace('DROPPED arena=1','DROPPED arena=2')};'sameid'{$text=$text.Replace('DROPPED arena=1 request=1','DROPPED arena=1 request=2')}
+        'samepermit'{$text=$text.Replace('request=1 permit=6','request=1 permit=7')};'lateadmission'{$text=$text.Replace('admission_age_us=499999','admission_age_us=500001')}
+        'earlydrop'{$text=$text.Replace('dispatch_age_us=500001','dispatch_age_us=500000')};'negativeage'{$text=$text.Replace('admission_age_us=499999','admission_age_us=-1')}
+        'fractionage'{$text=$text.Replace('dispatch_age_us=500001','dispatch_age_us=500001.1')};'unknownreason'{$text=$text.Replace('reason=permit_expired','reason=reset')}
+        'replay'{$text=$text.Replace('110 AIM_REQUEST',$dropLine+"`n110 AIM_REQUEST")};'postend'{$text=(Valid-Audit)+$dropLine.Replace('105 ','140 ')+"`n"}
+        'fake_result'{$text=$onlyDrop.Replace('130 session','120 AIM_RESULT arena=1 request=1 result=1'+"`n130 session")}
+        'pending'{$text=(Valid-Audit).Replace('120 AIM_RESULT',$dropLine.Replace('105 ','115 ').Replace('request=1 permit=6','request=3 permit=8')+"`n120 AIM_RESULT")}
+    }
+    Reject {ConvertFrom-MineComeHudAimedAudit $text -Completed} "Invalid local queue-drop audit refused: $case"
+}
 Reject {ConvertFrom-MineComeHudAimedRelayLog ((Valid-Log).Replace('"request":"2"','"request":"2","request":"2"')) $run -Completed} 'Duplicate JSON keys rejected'
 Reject {ConvertFrom-MineComeHudAimedRelayLog ((Valid-Log).Replace('permit=7 installed','permit=9007199254740992 installed')) $run -Completed} 'Oversized permit rejected'
 Reject {ConvertFrom-MineComeHudAimedRelayLog ((Valid-Log).Replace("AIM_INPUT_RESULT run=$run",('AIM_INPUT_RESULT run='+('f'*32)))) $run -Completed} 'Wrong native run rejected'
@@ -110,6 +130,10 @@ Reject {ConvertFrom-MineComeHudAimedRelayLog ((Valid-Log).TrimEnd("`n")) $run -C
 $s=New-Case;Stop-MineComeHudAimedRelay $s;Assert-MineComeHudAimedRelayGuest $s (Valid-Guest)
 Check ($s.CleanupVerified -and $s.InputCleanupVerified -and $s.EngineMirroringVerified -and $s.GuestWorldCleanupComplete) 'Engine cleanup, independent input end and real guest proof correlated'
 Stop-MineComeHudAimedRelay $s;Check ($s.Process.WaitCalls -eq 1) 'Stop remains idempotent'
+$s=New-Case
+[IO.File]::WriteAllText((Join-Path $s.Home 'runtime/logs/tools-bridge.log'),$dropAudit)
+Stop-MineComeHudAimedRelay $s
+Reject {Assert-MineComeHudAimedRelayGuest $s (Valid-Guest)} 'Strict bounded check cannot certify an unmatched local drop as a guest action'
 foreach($case in @('missing_input_end','missing_cleanup','missing_lua_permit','missing_lua_end','wrong_lua_begin','renewed_permit','expired_capture','numeric_lua_token','wrong_permit','late_permit','bad_ray','wrong_position','wrong_cell','wrong_action','no_native_result','bad_audit_result','bad_count','same_ms','stale_edge','invented_permit','wrong_run','bootstrap_only','wrong_polled','unavailable_capture')){
     $s=New-Case;$g=Valid-Guest;$text=Valid-Log;$journal=Valid-Audit
     switch($case){

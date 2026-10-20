@@ -278,6 +278,15 @@ expired or unavailable samples cannot become vanilla actions. Only one aimed
 request is pending; the host's matching result deadline is three seconds. The
 guest's output mailbox is bounded and overflow closes the session.
 
+If an admitted native request expires before any socket write while arena,
+generation and pose authority remain valid, the host consumes and discards that
+unsent request without disconnecting the healthy arena. It records
+`AIM_QUEUE_DROPPED` with the original permit's admission/dispatch ages. This is
+local diagnostic evidence, not an `AIM_REQUEST` or a Minecraft result. A later
+physical click needs a new request ID and permit. Generation/authority failures
+still terminate the session. Minor2 polls for local outbound work every 5 ms;
+minor0/1 retain their 25 ms cadence. No expiry has been extended.
+
 Native minor2 block events are stone-only, inside the agreed bounds, with the first
 placement at the seed. Duplicate additions, removal of unowned cells, more than16
 owned cells or events before the reset/arena ACK are rejected. Neither network

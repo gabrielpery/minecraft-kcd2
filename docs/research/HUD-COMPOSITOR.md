@@ -61,6 +61,15 @@ unarmed. Update receipt:
 `runtime/evidence/hud-update-20261020-125526-34e342eb6e6344f89bd0a956d1767c3d/update.json`.
 No game was launched by the update. Revision 4 still needs live verification.
 
+In the subsequent user-started KCD test
+`0565b12d8af64ad7980a7999b870e844`, revision 4 rendered the HUD and forwarded one
+physical world click. The native camera guard admitted it, but the bridge closed
+with `queued aim expired or reset` before sending it to Minecraft. The renderer
+then recorded `guest_closed`; it did not report another click-delivery or
+capture-contention failure. The user-observed stone disappearance was engine
+cleanup after that disconnect. This demonstrates the single input path, not a
+completed aimed action or a full-length renderer stability result.
+
 ## Selective camera capture — 2026-10-13
 
 The separate `-SelectiveMouse -WorldClicks` profile uses API v2 and its own
