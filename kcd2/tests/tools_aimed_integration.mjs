@@ -85,6 +85,8 @@ const arena=Buffer.alloc(100);arena.writeBigUInt64LE(1n);
 let socket,poseTimer,permitTimer,seq=1,permitId=0,arenaAck=false,hostPose=false;
 const requests=[];
 const send=(type,payload)=>socket.write(frame(type,seq++,payload));
+const sendPermit=()=>{const body=Buffer.alloc(16);body.writeBigUInt64LE(1n);body.writeBigUInt64LE(BigInt(++permitId),8);send(14,body);return String(permitId);};
+const installCalls=()=>commands.filter(c=>c.startsWith('#MineCome.InstallAimedPermit('));
 const event=operation=>{const id=Buffer.from('minecraft:stone'),body=Buffer.alloc(18);body.writeUInt32LE(operation);body.writeInt32LE(12,4);body.writeInt32LE(64,8);body.writeInt32LE(20,12);body.writeUInt16LE(id.length,16);send(5,Buffer.concat([body,id]));};
 const result=(id,action)=>{const body=Buffer.alloc(24);body.writeBigUInt64LE(1n);body.writeBigUInt64LE(BigInt(id),8);body.writeUInt32LE(action,16);body.writeUInt32LE(1,20);send(13,body);};
 function readyPermits(){return [...output.matchAll(/^AIM_PERMIT_READY run=([0-9a-f]{32}) arena=([1-9][0-9]*) permit=([1-9][0-9]*) installed_utc_ms=([1-9][0-9]*)$/gm)].map(m=>({run:m[1],arena:m[2],permit:m[3],utc:Number(m[4])}));}
@@ -120,9 +122,23 @@ try{
   pose();poseTimer=setInterval(pose,50);
   await waitFor(()=>hostPose,'fresh host pose');send(10,arena);await waitFor(()=>arenaAck,'byte-identical arena ACK');
   assert.equal(beginCount,0,'no input permits before confirmed bootstrap event');event(1);
-  permitTimer=setInterval(()=>{const body=Buffer.alloc(16);body.writeBigUInt64LE(1n);body.writeBigUInt64LE(BigInt(++permitId),8);send(14,body);},100);
+  permitTimer=setInterval(sendPermit,100);
   const first=await newestPermit();assert.equal(first.run,run);assert.equal(first.arena,'1');
   assert.ok(output.indexOf('STONE_ENGINE_ACK')<output.indexOf('AIM_INPUT_BEGIN_ACK'));
+  // Faster installation polling must not reinstall the same latest permit or
+  // invent/renew authority while the peer is quiet. Observe real polling via
+  // pose calls rather than asserting a scheduler-sensitive latency cutoff.
+  clearInterval(permitTimer);permitTimer=null;
+  await waitFor(()=>readyPermits().some(p=>p.permit===String(permitId)),'latest original permit acknowledged');
+  const installsWhileQuiet=installCalls().length;
+  const posesWhileQuiet=commands.filter(c=>c==='#MineCome.SamplePose()').length;
+  await waitFor(()=>commands.filter(c=>c==='#MineCome.SamplePose()').length>=posesWhileQuiet+2,'polling with unchanged latest permit');
+  assert.equal(installCalls().length,installsWhileQuiet,'unchanged latest permit must not be installed repeatedly');
+  const replacement=sendPermit();
+  await waitFor(()=>readyPermits().some(p=>p.permit===replacement),'fresh replacement acknowledged without another peer permit');
+  assert.equal(installCalls().length,installsWhileQuiet+1,'one new permit must cause exactly one installation');
+  assert.equal(installCalls().at(-1),`#MineCome.InstallAimedPermit('${run}','1','${replacement}')`,'replacement must retain its original ID');
+  permitTimer=setInterval(sendPermit,100);
   log('[MineComeAimSession]',{schema:1,run,arena:'1',event:'end',result:'ended',engine_time:clock(),expires_engine_time:null});
   await delay(70);assert.ok(!output.includes('AIM_INPUT_END_ACK'),'unsolicited end must not become cleanup evidence');
   capture(first,99,2,{result:'unavailable',reason:'ray_unavailable',occlusion:0});
@@ -177,6 +193,7 @@ try{
   assert.ok(output.includes('AIM_INPUT_END_ACK run='+run+' arena=1'),'late input gate ACK must be read after stone cleanup');
   assert.ok(output.indexOf('STONE_CLEANUP_ACK')<output.indexOf('AIM_INPUT_END_ACK'));
   assert.ok(output.includes('Aimed input cleanup acknowledgement: true'));
+  assert.equal(new Set(installCalls()).size,installCalls().length,'no original permit may ever be reinstalled');
   fs.writeFileSync(path.join(root,'verification.json'),JSON.stringify({schema:1,result:'passed',synthetic_engine:true,synthetic_minecraft_peer:true,kcd_connected:false,requests:requests.length,engine_cleanup:true},null,2));
   console.log('TOOLS_AIMED_INTEGRATION_PASS synthetic_engine=true synthetic_minecraft_peer=true requests=2 cleanup=true');
 }finally{

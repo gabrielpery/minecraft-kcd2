@@ -16,8 +16,11 @@ coordinates. The optional KCD relay, Lua intent capture, permit selector and aim
 HUD guest are connected through an explicit bounded controller. The actual HUD
 adapter also passes an automatic Minecraft run with a synthetic host. A single
 live KCD crosshair click now has client/server confirmation and engine removal,
-with barely any delay reported after the log-latency repair. Aimed placement
-across different block faces remains unverified. Continuous shared movement, general block rendering,
+with barely any delay reported after the log-latency repair. A later run records
+confirmed WEST- and UP-face placements and both added blocks breaking, but the
+user did not identify the top placement and the session ended before the final
+seed break. Reliable, visually confirmed placement across faces remains pending.
+Continuous shared movement, general block rendering,
 persistence, survival integration and multiplayer remain unfinished.
 
 Hotbar changes after aimed-action dispatch no longer invalidate confirmation

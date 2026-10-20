@@ -284,7 +284,7 @@ class AimedInputRelay {
     std::deque<Installed> installed_;
     std::uint64_t last_permit_{},last_request_{};
     bool end_acknowledged_{};
-    Clock::time_point began_{},last_install_{};
+    Clock::time_point began_{};
     bool same_arena() const {
         auto current=bridge_.aimed_arena();
         return current&&arena_&&current->connection_generation==arena_->connection_generation&&current->reset_generation==arena_->reset_generation
@@ -324,12 +324,16 @@ public:
         if(now-began_>60s) {end("bounded input session complete");return;}
         if(phase_==Phase::begin) {if(now-began_>1s) end("Lua begin acknowledgement unavailable");return;}
         std::erase_if(installed_,[&](const Installed& value){return now-value.original.received>500ms;});
-        if(!stones_.ready_for_aim()||now-last_install_<100ms) return;
+        if(!stones_.ready_for_aim()) return;
         auto permit=bridge_.latest_aimed_permit();
         if(!permit||permit->permit.permit_id<=last_permit_||permit->connection_generation!=arena_->connection_generation||permit->reset_generation!=arena_->reset_generation||now-permit->received>250ms||installed_.size()>=16) return;
+        // The guest already paces issuance. Install its newest permit as soon as
+        // it is eligible; a second timer here spends the unchanged 500 ms lease
+        // waiting for a different clock phase. IDs suppress duplicate work,
+        // latest-only selection coalesces backlog, and installed_ remains bounded.
         // Record the immutable receipt before HTTP dispatch. A later log record
         // must match this original permit; observing an ACK never renews it.
-        installed_.push_back({*permit});last_permit_=permit->permit.permit_id;last_install_=now;
+        installed_.push_back({*permit});last_permit_=permit->permit.permit_id;
         try {command(minecome::aimed_permit_command(run_,permit->permit));}
         catch(const std::exception&) {end("Lua permit dispatch unavailable");}
     }

@@ -1,5 +1,50 @@
 # MineCome progress — 2026-10-20
 
+**Face-placement attempt: two faces confirmed in the records; full live check
+failed.** Run `3c111cfc7ed242089dff99066a0ca7ae` confirms placement against the
+seed's WEST face, then against the new block's UP face, followed by breaking both
+added blocks. Requests 2, 3, 10 and 12 have matching original rays, Minecraft
+client/server confirmations, adjacent cells and mapped KCD acknowledgements
+(sequences 601, 643, 735 and 762). The user saw front-face placement and both
+breaks, but did not identify a successful top placement. This does not verify
+the intended top-first sequence or reliable response.
+
+The first click reached Minecraft at an original-permit age of 508.3593 ms and
+was refused before selection. Another request reached the adapter at 437.8217 ms
+but expired before dispatch; three later placements were rejected by the vanilla
+interaction. Repeated clicks exhausted the bounded physical-click allowance.
+The final seed-break request was cancelled on closure, leaving one guest-owned
+stone and one cancelled pending action. The original controller receipt remains
+failed. Java and native exited normally; KCD replica cleanup, independent
+input-end acknowledgement and frame-cap restoration succeeded. Replica cleanup
+is not evidence of a Minecraft break.
+
+Evidence:
+`runtime/evidence/hud-input-20261020-135644-3c111cfc7ed242089dff99066a0ca7ae/verification.json`.
+The renderer snapshot is preserved as `capture/reshade-observed.log`, SHA256
+`898c2065de7ec0d4c4c81bea20582ba9a1152626ba10dde1bb2af47494b2c61a`.
+The next live check isolates the original seed's top face with three actions:
+place once, break the added upper block, then break the seed.
+
+**Permit-install delay repair: built and simulated integration verified; live
+retry pending.** Minecraft already issues permits every 100 ms. The native relay
+also waited 100 ms between installations, adding a second scheduling delay while
+the original permit aged. Native now installs the newest eligible permit without
+that extra timer. Monotonic IDs prevent repeated installation; latest-only
+selection coalesces backlog, and the retained records remain bounded at 16.
+Original receipt times, generation checks, 500 ms expiry and single-use physical
+capture are unchanged. This is a bounded work path, not a strict 10 HTTP calls
+per second limit against an authenticated peer sending faster permits.
+
+The release tools host builds and all three simulated HTTP suites pass (stone,
+interactive stone and aimed input). Added integration checks cover one
+installation per original ID, no installation while the peer is quiet despite
+continued polling, and acknowledgement of a new permit without further peer
+issuance. They do not measure live latency. Native executable SHA256:
+`cfc98a194e1a50bb948f39a481a65926cabc89cacc5553a4bcb7bb50e3e091f0`.
+The expired failed-run arm was archived with KCD closed; no renderer change or
+game launch was needed for this repair.
+
 **Hotbar changes after dispatch: implemented and verified in actual Minecraft.**
 The aimed arena now checks the original slot's item/count on both client and
 server during confirmation, independently of the currently selected slot.

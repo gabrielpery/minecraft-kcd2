@@ -41,7 +41,11 @@ numbers. Loading or reloading the module revokes permits and begins no session.
 1. Minecraft issues a single-use permit with a 500 ms lifetime measured by its
    own monotonic clock. The native relay retains the original receipt and generation.
 2. After the first stone's engine acknowledgement, the relay installs a permit
-   in Lua. Only a matching Lua acknowledgement produces `AIM_PERMIT_READY`.
+   in Lua. The guest paces issuance at 100 ms; native installs each newest eligible
+   ID without a second 100 ms scheduling gate. Latest-only selection, monotonic
+   IDs and at most 16 retained records bound the work without renewing receipts.
+   This is not a strict HTTP rate limit against a faster authenticated peer.
+   Only a matching Lua acknowledgement produces `AIM_PERMIT_READY`.
    Its UTC time records when the native relay observed that acknowledgement.
 3. The physical-edge selector in `scripts/AimedWorldClicks.ps1` accepts only an
    unused acknowledgement strictly earlier than the edge. Equal millisecond
@@ -72,6 +76,38 @@ pre-dispatch reasons such as `original_permit_expired`.
 
 ## Latest verification and remaining live check
 
+Run `3c111cfc7ed242089dff99066a0ca7ae` is an incomplete face-placement attempt.
+The user saw placement on the face toward them and both added blocks breaking,
+but did not identify top placement. The recorded confirmed actions are:
+
+| Request | Minecraft selection/action | KCD acknowledgement |
+|---|---|---|
+| 2 | WEST of seed `(8,-60,1)`; place at `(7,-60,1)` | 601 |
+| 3 | UP of added block `(7,-60,1)`; place at `(7,-59,1)` | 643 |
+| 10 | Break upper added block `(7,-59,1)` | 735 |
+| 12 | Break lower added block `(7,-60,1)` | 762 |
+
+Each has matching original captured ray, canonical request/result, client/server
+confirmation and mapped engine event. The UP placement was on the added side
+block, not the original seed's top. Request 1 expired at 508.3593 ms before guest
+selection; request 4 entered at 437.8217 ms but expired before vanilla dispatch.
+Three further placements returned `vanilla_dispatch_rejected`. These outcomes
+do not establish a hitbox error.
+
+Repeated attempts reached the physical-click limit; closure cancelled the final
+seed-break request. The guest retained one owned stone and one cancelled pending
+action. The controller remains failed even though native/Java exited normally and
+KCD cleanup, independent input-end acknowledgement and cap restoration passed.
+The next check isolates one placement on the original seed's UP face, then breaks
+the added block and seed, waiting for each visible result.
+
+The redundant native installation timer has been removed and the release tools
+host rebuilt. All three simulated HTTP suites pass, including new checks that
+quiet-peer polling cannot reinstall a permit and a new ID receives exactly one
+installation without further peer issuance. Original expiry and single-use
+authority remain unchanged. This repair awaits the top-only live retry; the
+simulated checks make no end-to-end latency claim.
+
 Run `dc93d381b60b4461952d024017b186c7` passes the live controller with one physical
 click, one wire request, one actual Minecraft client/server break and its KCD
 removal acknowledgement. No native refusals, guest stale replies or queue drops
@@ -79,7 +115,7 @@ occurred; the user reported “barely any delay.” The guest closes normally wi
 `input_completed`; engine cleanup, separate input-end acknowledgement and frame-cap
 restoration pass. The renderer uploaded 108 frames, then closed on foreground
 loss to Explorer 6.7 seconds after F8, so this is not a 30-second stability result.
-Next is aimed placement and removal across several faces while standing still.
+The later face-placement attempt above does not yet complete that milestone.
 
 Run `67b5fd8e70bc46ed97fc8f52d999489b` confirms physical request6/permit83 through
 the canonical socket journal, actual Minecraft client/server break, block event
