@@ -31,7 +31,10 @@ import java.util.concurrent.atomic.AtomicReference;
  */
 public final class AimedStoneArena implements AutoCloseable {
     public static final long MAX_RAY_AGE_NS = 500_000_000L;
-    public static final double EYE_TOLERANCE = .15;
+    // A captured host view may shift slightly during look. This allowance only
+    // compares the unchanged mapped request origin with the real player eye;
+    // it never rebases the arena, moves the player, or changes vanilla reach.
+    public static final double MAX_REQUEST_VIEW_ORIGIN_OFFSET = .25;
     public static final double MAX_HOST_RAY_RANGE = 4.5;
     private static final long PROOF_TIMEOUT_NS = 3_000_000_000L;
     private static final int MAX_RECEIPTS = 96;
@@ -257,7 +260,7 @@ public final class AimedStoneArena implements AutoCloseable {
         if (ray.hostRay.range() > MAX_HOST_RAY_RANGE) return "host_ray_range_exceeded";
         if (ray.occlusion.kind == OcclusionKind.UNAVAILABLE) return "host_obstruction_unavailable";
         if (ray.occlusion.kind == OcclusionKind.HIT && ray.occlusion.distance > ray.hostRay.range()) return "invalid_host_obstruction";
-        if (vec(alignment.toMinecraft(ray.hostRay).origin()).distanceTo(entity.getEyePos()) > EYE_TOLERANCE) return "ray_origin_disagrees_with_eye";
+        if (vec(alignment.toMinecraft(ray.hostRay).origin()).distanceTo(entity.getEyePos()) > MAX_REQUEST_VIEW_ORIGIN_OFFSET) return "ray_origin_disagrees_with_eye";
         return null;
     }
 
@@ -437,7 +440,7 @@ public final class AimedStoneArena implements AutoCloseable {
         var value = new JsonObject(); value.addProperty("schema", 1); value.addProperty("kind", "minecome_aimed_stone_arena_v1");
         value.addProperty("save", save); value.addProperty("ready", ready()); value.addProperty("failure", failure);
         value.addProperty("pending", pending()); value.addProperty("bootstrapped", bootstrapped); value.addProperty("owned_count", owned.size());
-        value.addProperty("max_owned_count", AimGeometry.MAX_OWNED_CELLS); value.addProperty("eye_tolerance", EYE_TOLERANCE);
+        value.addProperty("max_owned_count", AimGeometry.MAX_OWNED_CELLS); value.addProperty("eye_tolerance", MAX_REQUEST_VIEW_ORIGIN_OFFSET);
         value.addProperty("max_host_ray_range", MAX_HOST_RAY_RANGE);
         var pinned = new JsonObject(); pinned.add("minecraft_anchor", vector(alignment.minecraftAnchor()));
         pinned.add("host_anchor", vector(alignment.kcdAnchor())); pinned.addProperty("blocks_per_host_unit", alignment.blocksPerUnit()); value.add("alignment", pinned);

@@ -18,6 +18,14 @@ adapter also passes an automatic Minecraft run with a synthetic host. They still
 need an integrated KCD crosshair test. Continuous shared movement, general block rendering,
 persistence, survival integration and multiplayer remain unfinished.
 
+The first integrated aimed attempt produced no confirmed action. Captured
+camera origins exceeded the previous mapped-eye allowance, and the HUD later
+stopped with a click-delivery failure and logged capture lock contention.
+The origin check now allows 0.25 metres while retaining Minecraft reach and
+current-host agreement checks; actual Minecraft passes 25 synthetic-host
+scenarios. Selective revision 4 repairs busy read-query handling and input
+recovery. These changes still require a fresh live KCD aimed test.
+
 Earlier failures below are retained for diagnosis. The latest verification status
 is in [progress and evidence](PROGRESS.md); successful bounded tests do not remove
 the remaining gameplay limits.

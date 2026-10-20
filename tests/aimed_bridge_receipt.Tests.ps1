@@ -78,7 +78,7 @@ $script:validGuest = @{
         ready=$true; bootstrapped=$true; vanilla_outline_raycast=$true; pending=$false
         live_transport_enabled=$false; owned_count=0; omitted_receipts=0; block_writes=0
         inventory_writes=0; camera_writes=0; max_owned_count=16; max_ray_age_ms=500
-        eye_tolerance=0.15; max_host_ray_range=4.5; fluid_raycast='NONE'; owned_cells=@()
+        eye_tolerance=0.25; max_host_ray_range=4.5; fluid_raycast='NONE'; owned_cells=@()
         seed=$seed; arena_minimum=(Point 0 62 -2); arena_maximum_inclusive=(Point 4 66 2)
         alignment=@{ minecraft_anchor=$mcEye; host_anchor=$hostEye; blocks_per_host_unit=1.0 }
         confirmations=@($bootstrap,$broken); requests=@($bootstrap,$broken)

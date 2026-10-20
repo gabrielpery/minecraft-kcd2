@@ -41,7 +41,7 @@ function Assert-MineComeAimedStoneReceipt {
     foreach($field in @('pending','live_transport_enabled')){Bool $arena $field $false}
     foreach($field in @('owned_count','omitted_receipts','block_writes','inventory_writes','camera_writes')){Integer $arena $field 0}
     Integer $arena max_owned_count 16;Integer $arena max_ray_age_ms 500
-    Near (Number $arena.eye_tolerance 0 1) 0.15;Near (Number $arena.max_host_ray_range 0 32) 4.5;Text $arena fluid_raycast 'NONE'
+    Near (Number $arena.eye_tolerance 0 1) 0.25;Near (Number $arena.max_host_ray_range 0 32) 4.5;Text $arena fluid_raycast 'NONE'
     if(@($arena.owned_cells).Count -ne 0){throw 'Aimed arena cleanup incomplete.'}
     Cell $arena.seed;$seed=$arena.seed;$middle=Offset $seed 0 1 0;$top=Offset $seed 0 2 0;$east=Offset $seed 1 2 0
     SameCell $arena.arena_minimum (Offset $seed -2 -2 -2);SameCell $arena.arena_maximum_inclusive (Offset $seed 2 2 2)
@@ -51,8 +51,8 @@ function Assert-MineComeAimedStoneReceipt {
     $cleanup=@($Receipt.final_client_server_air_cells);$expectedCells=@($seed,$middle,$top,$east)
     if($cleanup.Count -ne 4){throw 'Final client/server cleanup count differs.'}
     foreach($expected in $expectedCells){$matches=0;foreach($actual in $cleanup){Cell $actual;if($actual.x -eq $expected.x -and $actual.y -eq $expected.y -and $actual.z -eq $expected.z){$matches++}};if($matches -ne 1){throw 'Final client/server cleanup cells differ.'}}
-    $names=@('column_middle','column_top','remove_seed','remove_middle','face_down','face_up','face_north','face_south','face_west','face_east','place_east','nearest','miss','unowned_floor','host_occluded','host_occlusion_unavailable','stale_ray','origin_mismatch','alignment_changed','cancel_before_dispatch','turn_while_pending','cleanup_top')
-    $rejections=@{miss='ray_miss';unowned_floor='unowned_hit';host_occluded='host_obstructed';host_occlusion_unavailable='host_obstruction_unavailable';stale_ray='ray_stale';origin_mismatch='ray_origin_disagrees_with_eye';alignment_changed='alignment_changed'}
+    $names=@('column_middle','column_top','remove_seed','remove_middle','face_down','face_up','face_north','face_south','face_west','face_east','place_east','nearest','miss','unowned_floor','host_occluded','host_occlusion_unavailable','stale_ray','origin_mismatch','alignment_changed','view_origin_measured','view_origin_boundary','view_origin_over_limit','cancel_before_dispatch','turn_while_pending','cleanup_top')
+    $rejections=@{miss='ray_miss';unowned_floor='unowned_hit';host_occluded='host_obstructed';host_occlusion_unavailable='host_obstruction_unavailable';stale_ray='ray_stale';origin_mismatch='ray_origin_disagrees_with_eye';alignment_changed='alignment_changed';view_origin_over_limit='ray_origin_disagrees_with_eye'}
     $dispatch=@{column_middle=1;column_top=1;remove_seed=2;remove_middle=2;place_east=1;turn_while_pending=2;cleanup_top=2}
     if(@($Receipt.checks).Count -ne $names.Count -or @($Receipt.fixture_teleports).Count -ne $names.Count){throw 'Aimed scenario/teleport count mismatch.'}
     $confirmations=@($arena.confirmations);$requests=@($arena.requests)
@@ -85,8 +85,9 @@ function Assert-MineComeAimedStoneReceipt {
         $c=$Receipt.checks[$i];$name=$names[$i];$t=$Receipt.fixture_teleports[$i];$negative=$rejections.ContainsKey($name);$doesDispatch=$dispatch.ContainsKey($name)
         Text $c name $name;Text $t scenario $name;Bool $t client_server_eye_agreed $true;Bool $c passed $true
         Bool $c selection_allowed (-not $negative);Bool $c vanilla_dispatch $doesDispatch;Bool $c client_and_server_confirmed $doesDispatch
-        Bool $c view_turned_after_queue ($name -eq 'turn_while_pending');Bool $c rejected_request_checked $negative;Bool $c rejected_id_replay_checked ($name -eq 'miss')
-        if($negative){Text $c reason $rejections[$name];Integer $c request_id $negativeId;Integer $c action 2;$negativeId++}else{Text $c reason 'selected'}
+        $selectionOnlyRefusal=$name -eq 'view_origin_over_limit'
+        Bool $c view_turned_after_queue ($name -eq 'turn_while_pending');Bool $c rejected_request_checked ($negative -and -not $selectionOnlyRefusal);Bool $c rejected_id_replay_checked ($name -eq 'miss')
+        if($negative){Text $c reason $rejections[$name];if(-not $selectionOnlyRefusal){Integer $c request_id $negativeId;Integer $c action 2;$negativeId++}}else{Text $c reason 'selected'}
         if($name -eq 'cancel_before_dispatch'){
             Integer $c request_id 14;Integer $c action 2;Bool $c queued_then_cancelled $true
             Text $c cancellation_reason 'actions_disabled_before_dispatch';Bool $c client_server_cells_unchanged $true
@@ -94,6 +95,7 @@ function Assert-MineComeAimedStoneReceipt {
         }
         if($name.StartsWith('face_')){Text $c face $name.Substring(5);SameCell $c.hit_block $top;SameCell $c.target $top}
         if($name -eq 'nearest'){SameCell $c.target $east;SameCell $c.hit_block $east;Text $c face 'east'}
+        if($name -in @('view_origin_measured','view_origin_boundary')){SameCell $c.target $top;SameCell $c.hit_block $top;Text $c face 'west'}
         if($doesDispatch){$proof=$confirmations[$actionIndex++];Integer $c request_id $proof.id;Integer $c action $dispatch[$name];SameCell $c.target $proof.target;SameCell $c.hit_block $proof.hit_block;Text $c face $proof.face.ToLowerInvariant()}
         Need $c @('synthetic_ray');$ray=$c.synthetic_ray
         Need $ray @('host_origin','host_direction','host_range','minecraft_anchor','host_anchor','blocks_per_host_unit','occlusion_kind','host_obstruction_distance','age_at_selection_ns')
@@ -102,7 +104,8 @@ function Assert-MineComeAimedStoneReceipt {
         Near ($direction[0]*$direction[0]+$direction[1]*$direction[1]+$direction[2]*$direction[2]) 1
         for($a=0;$a -lt 3;$a++){Near $hostAnchor[$a] 0;$expectedAnchor=0;if($name -eq 'alignment_changed' -and $a -eq 0){$expectedAnchor=1};Near $anchor[$a] $expectedAnchor}
         $mapped=@($origin[0],$origin[2],(-$origin[1]));$errorSquared=0.0
-        for($a=0;$a -lt 3;$a++){$expected=$eye[$a];if($name -eq 'origin_mismatch' -and $a -eq 0){$expected++};$errorSquared+=($mapped[$a]-$expected)*($mapped[$a]-$expected)}
+        $viewOffset=switch($name){view_origin_measured{0.17794543}view_origin_boundary{0.25}view_origin_over_limit{0.250001}default{0.0}}
+        for($a=0;$a -lt 3;$a++){$expected=$eye[$a];if($name -eq 'origin_mismatch' -and $a -eq 0){$expected++};if($a -eq 0){$expected+=$viewOffset};$errorSquared+=($mapped[$a]-$expected)*($mapped[$a]-$expected);if($name.StartsWith('view_origin_')){Near $mapped[$a] $expected 0.0000001}}
         if($errorSquared -gt 0.0225){throw 'Synthetic ray origin does not correlate to fixture eye.'}
         $age=Number $ray.age_at_selection_ns 0 10000000000
         if($name -eq 'stale_ray'){if($age -le 500000000){throw 'Stale scenario ray was fresh.'}}elseif($age -gt 500000000){throw 'Fresh scenario ray was stale.'}

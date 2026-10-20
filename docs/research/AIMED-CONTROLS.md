@@ -4,10 +4,23 @@ This is an opt-in development path. The verified live HUD still uses its existin
 fixed-cell controls by default. The explicit `-AimedStone` controller mode now
 validates the distinct guest proof and carries the acknowledged permit into each
 physical click. `Start-AimedHudLab.ps1` selects the required capped, offscreen,
-selective revision3 profile and automatically uses the installed PowerShell 7.
+selective revision4 profile and automatically uses the installed PowerShell 7.
 It requires an already-running official KCD2 test world and the matching installed
 renderer bundle. It starts only the separate Minecraft client; no KCD launcher or
 renderer installation is part of this controller.
+
+Revision4 has been built, independently reviewed and installed unarmed on the
+development machine, with the previous runtime/add-on backed up. It has not yet
+been verified in a live KCD session. Existing revision3 artifacts and the earlier
+fixed-cell test evidence remain preserved.
+
+If preflight finds an expired arm from an earlier game process,
+`Archive-HudArm.ps1 -ReceiptPath <its stream-arming.json> -ExpiredPriorProcess`
+can preserve it in that run's evidence directory without restarting the new game.
+This explicit option checks the exact file and receipt, expiry, absence of both
+old process IDs, and one newer official-tools process started after expiry. It
+cannot rearm a process that already accepted a session. The default archive path
+still requires KCD to be closed.
 
 ## One alignment, one captured intent
 
@@ -48,6 +61,39 @@ numbers. Loading or reloading the module revokes permits and begins no session.
    vanilla interaction APIs. Client/server confirmation, block events and KCD
    replica acknowledgements remain separate evidence.
 
+The mapped request origin may be up to 0.25 Minecraft blocks from the actual
+guest eye. The immutable arena anchors still require 0.15-unit agreement, and
+the captured origin must remain within 0.15 KCD units of the current fresh host
+camera pose. The original ray, vanilla reach, ownership and 500 ms permit lifetime
+are unchanged. Native refusals now identify the failed check, including
+`bridge_guest_view_origin` and `bridge_host_pose_origin`, with separate
+pre-dispatch reasons such as `original_permit_expired`.
+
+## Latest verification and remaining live check
+
+The saved KCD run `5334822edbd5464397d6131962ff576e` produced seven physical
+edges and four forwarded captures, but no `AIM_REQUEST` or `AIM_RESULT`.
+Its native journal records three `bridge_refused` entries and one
+`stale_or_unready_capture`. The three bridge-refused rays map to guest-eye
+offsets of approximately 0.177945, 0.157205 and 0.150575 blocks, exceeding the old
+0.15-block limit. Those captured values explain a concrete rejection condition;
+they do not establish why the camera origin changed or which branch rejected
+the fourth capture. Bootstrap replica cleanup and the separate Lua input-end
+acknowledgement succeeded, but no aimed action was verified.
+
+The native and guest request-view allowance is now 0.25 blocks. Native regression
+tests use the three saved ray origins, exact/over-limit boundaries and unchanged
+current-host/anchor limits. The actual Minecraft standalone run
+`7291a5e04c4c44ec983f44be9e50447e` passes 25 scenarios, including measured-offset
+and boundary selection checks. Its synthetic host rays produce the same 17
+request records and eight confirmed actions as before: four placements and four
+breaks, followed by empty ownership and normal Java/wrapper exit.
+
+The revision4 capture-contention repair passes seven native test suites and
+requires two neutral input frames after capture observation recovers. These
+automated results do not establish live KCD targeting or identify the exact
+thread/caller responsible for the earlier capture contention.
+
 ## HUD integration boundary
 
 The `minecomeHudAimedStoneBridge` development property selects a separate guest
@@ -78,7 +124,7 @@ but the live controller does not certify cleanup without the acknowledgement.
 
 ## Running the bounded controller
 
-From the repository root, after the already-installed selective revision3 profile
+From the repository root, after the matching selective revision4 profile
 has loaded in a fresh official development world:
 
 ```powershell

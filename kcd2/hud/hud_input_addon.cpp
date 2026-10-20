@@ -244,20 +244,40 @@ struct Service {
                 &&!(capture.flags&mouse::draining)&&capture.mode==mouse::Mode::buttons
 #endif
                 ,capture.token,capture.generation);
-            const bool live=!closed&&accepted.live(utc,now)&&peer.live&&peer.ack.state==1&&ui::fresh(peer.ack.utc,utc)&&
-                now>=peer.observed&&now-peer.observed<=ui::fresh_ms&&rendered&&now>=rendered&&now-rendered<=ui::fresh_ms&&
-                frame&&st::uploaded_fresh(frame->observation,now)&&captured&&!world_clicks.overflowed();
-            const auto outcome=world::delivery(pending_click,live,utc,peer.ack.sequence,peer.ack.screen);
-            if(outcome==world::Delivery::wait)return;
-            if(outcome==world::Delivery::drop){
-                pending_click={};
+            const bool session_live=accepted.live(utc,now),ack_fresh=ui::fresh(peer.ack.utc,utc),
+                observation_fresh=now>=peer.observed&&now-peer.observed<=ui::fresh_ms,
+                render_fresh=rendered&&now>=rendered&&now-rendered<=ui::fresh_ms,
+                image_fresh=frame&&st::uploaded_fresh(frame->observation,now),overflow=world_clicks.overflowed();
+            const bool live=!closed&&session_live&&peer.live&&peer.ack.state==1&&ack_fresh&&
+                observation_fresh&&render_fresh&&image_fresh&&!overflow;
+            const auto decision=world::delivery_with_capture(pending_click,live,utc,now,peer.ack.sequence,peer.ack.screen,
+                captured?world::Capture::matched:capture_result==mouse::Result::busy?world::Capture::busy:world::Capture::unavailable);
+            if(decision.outcome==world::Delivery::wait)return;
+            if(decision.outcome==world::Delivery::drop){
                 // Never silently skip an in-session sequence and emit later
                 // clicks. Closed-session records are discarded without IO.
                 if(!closed){
+                    std::ostringstream details;
+                    details<<"[MineComeWorldInputDiagnostic] {\"schema\":1,\"run\":\""<<accepted.identity.run
+                        <<"\",\"event\":\"delivery_dropped\",\"reason\":\""<<world::name(decision.reason)
+                        <<"\",\"sequence\":"<<pending_click.sequence<<",\"utc_ms\":"<<utc<<",\"click_utc_ms\":"<<pending_click.utc
+                        <<",\"lease_deadline_ms\":"<<pending_click.lease_deadline<<",\"steady_ms\":"<<now
+                        <<",\"session_live\":"<<session_live<<",\"peer_live\":"<<peer.live<<",\"ack_state\":"<<peer.ack.state
+                        <<",\"ack_sequence\":"<<peer.ack.sequence<<",\"required_ack_sequence\":"<<pending_click.ui_sequence
+                        <<",\"ack_screen\":"<<peer.ack.screen<<",\"ack_fresh\":"<<ack_fresh
+                        <<",\"ack_observation_fresh\":"<<observation_fresh<<",\"render_fresh\":"<<render_fresh
+                        <<",\"image_fresh\":"<<image_fresh<<",\"queue_overflow\":"<<overflow
+                        <<",\"capture_result\":"<<static_cast<unsigned>(capture_result)<<",\"capture_reason\":"<<capture.reason
+                        <<",\"capture_flags\":"<<capture.flags<<",\"capture_generation\":"<<capture.generation
+                        <<",\"required_capture_generation\":"<<pending_click.generation
+                        <<",\"capture_owner_matches\":"<<(capture.token==pending_click.token)
+                        <<",\"capture_lease_remaining_ms\":"<<capture.lease_remaining_ms<<'}';
+                    reshade::log::message(reshade::log::level::info,details.str().c_str());
                     record_close(ui::CloseCause::mouse_transition);input_force_close.store(true,std::memory_order_release);
                     inputs.finish("world_click_delivery_failed");
                     receipt("world_click","delivery_failed",accepted.identity.run);
                 }
+                pending_click={};
                 continue;
             }
             std::ostringstream line;
@@ -444,6 +464,7 @@ struct RuntimeState {
 #ifdef MINECOME_HUD_SELECTIVE_MOUSE
     mouse::ForwardingLease selective_lease;
     mouse::ModeGate selective_mode;
+    mouse::ObservationRecovery observation_recovery;
 #endif
 #ifdef MINECOME_HUD_WORLD_CLICKS
     world::Gate world_click;
@@ -526,7 +547,8 @@ void capture_keyboard(api::effect_runtime *runtime,RuntimeState &state,bool comp
 #ifdef MINECOME_HUD_LIVE_MOUSE
     if(!state.keyboard.consumed()&&(!mouse_capable||mouse_buttons))failures|=512u;
 #ifdef MINECOME_HUD_SELECTIVE_MOUSE
-    if(state.mouse_leased&&!state.selective_lease.observe(mouse_query,mouse_status,reinterpret_cast<std::uintptr_t>(runtime),now))failures|=1024u;
+    const bool defer_mouse_query=state.mouse_leased&&state.selective_lease.defer_busy(mouse_query,now);
+    if(state.mouse_leased&&!defer_mouse_query&&!state.selective_lease.observe(mouse_query,mouse_status,reinterpret_cast<std::uintptr_t>(runtime),now))failures|=1024u;
 #else
     if(state.mouse_leased&&(!mouse_capable||!(mouse_status.flags&mouse::active)||mouse_status.generation!=state.mouse_generation))failures|=1024u;
 #endif
@@ -570,9 +592,19 @@ void capture_keyboard(api::effect_runtime *runtime,RuntimeState &state,bool comp
     // fully neutral frames before forwarding UI edges. F8 itself may reach KCD.
     runtime->block_input_next_frame();
 #ifdef MINECOME_HUD_SELECTIVE_MOUSE
+    if(defer_mouse_query){
+        // Preserve only the already-owned bounded lease. No capture renewal or
+        // keyboard/pointer/world edge is authorized by a busy observation.
+        // A button held across this uncertainty must release before rearming.
+#ifdef MINECOME_HUD_WORLD_CLICKS
+        state.world_click.suspend();
+#endif
+        state.observation_recovery.defer();
+        return;
+    }
     // Enter full capture before forwarding E/Esc. The native device callbacks
     // drain old state on a mode change; no world/pointer edge crosses that drain.
-    const bool toggle_edge=((held&~state.previous_keys)&((1u<<9)|(1u<<10)))!=0;
+    const bool toggle_edge=!state.observation_recovery.pending()&&((held&~state.previous_keys)&((1u<<9)|(1u<<10)))!=0;
     const auto desired=state.selective_mode.update(step==ui::KeyboardGate::Step::active&&peer->state==1,
         state.transition,peer->ack.screen,state.uploaded_screen,toggle_edge,mouse_buttons,
         state.selective_lease.allows(mouse::Mode::buttons));
@@ -608,6 +640,24 @@ void capture_keyboard(api::effect_runtime *runtime,RuntimeState &state,bool comp
     if(!state.mouse_leased){state.mouse_generation=world_capture.generation;state.mouse_leased=true;mouse_receipt("world_mouse_acquired",capture_result,world_capture);}
 #endif
     if(step!=ui::KeyboardGate::Step::active||peer->state!=1)return;
+#ifdef MINECOME_HUD_SELECTIVE_MOUSE
+    if(state.observation_recovery.pending()){
+        // Successful query/request has restored observation of the same lease.
+        // Release only previously forwarded controls, never replay input from
+        // the unavailable interval. New input requires two neutral frames.
+        for(std::size_t i=0;i<keys.size();++i)if(state.previous_keys&(1u<<i)){
+            if(!queue_input(state,{utc,ui::Kind::key_up,keys[i],0,0,0})){
+                close_keyboard(runtime,ui::CloseCause::mailbox_overflow);release_mouse(runtime,state);return;
+            }
+        }
+        state.previous_keys=0;
+        ui::PointerBatch releases;state.pointer.close(utc,releases);
+        if(!queue_pointer(state,releases)){close_keyboard(runtime,ui::CloseCause::mailbox_overflow);release_mouse(runtime,state);return;}
+        std::uint32_t recovery_x=0,recovery_y=0;std::int16_t recovery_wheel=0;
+        runtime->get_mouse_cursor_position(&recovery_x,&recovery_y,&recovery_wheel);
+        if(!state.observation_recovery.update(held,mouse_buttons,recovery_wheel))return;
+    }
+#endif
 #ifdef MINECOME_HUD_LIVE_MOUSE
     if(state.transition&&peer->ack.sequence>=state.transition_sequence&&peer->ack.screen==static_cast<unsigned>(state.transition_screen)&&state.uploaded_screen==peer->ack.screen)
         state.transition=false;
@@ -662,6 +712,7 @@ void capture_keyboard(api::effect_runtime *runtime,RuntimeState &state,bool comp
             ,mouse_buttons,utc,now,state.forwarded_events);
         if(state.world_click.failure()!=world::Gate::Failure::none){close_keyboard(runtime,ui::CloseCause::mouse_transition);release_mouse(runtime,state);return;}
         click.window=reinterpret_cast<std::uintptr_t>(state.window);click.token=reinterpret_cast<std::uintptr_t>(runtime);click.generation=state.mouse_generation;
+        click.lease_deadline=now+world_capture.lease_remaining_ms;
         if(click.sequence&&!service->world_clicks.push(click)){close_keyboard(runtime,ui::CloseCause::mailbox_overflow);release_mouse(runtime,state);return;}
 #else
         if(!mouse_buttons)release_mouse(runtime,state);

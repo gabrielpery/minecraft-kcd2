@@ -5,7 +5,7 @@
 param(
     [ValidateSet('Fixture','Live')][string]$Mode='Fixture',
     [string]$JavaHome,[string]$BundleDirectory,[switch]$PreflightOnly,[switch]$DelayFixture,[switch]$BackgroundTrial,[switch]$OffscreenPresentation,[switch]$OffscreenTrial,[switch]$HostGpuBudget,[switch]$HideHostHud,[switch]$PointerFixture,[switch]$LiveMouse,[switch]$StoneFixture,[switch]$StoneLive,[switch]$WorldClicks,[switch]$SelectiveMouse,[switch]$AimedStone,
-    [ValidateSet(1,2,3)][int]$SelectiveRevision=1,
+    [ValidateSet(1,2,3,4)][int]$SelectiveRevision=1,
     [ValidateRange(320,1920)][int]$Width=1280,
     [ValidateRange(240,1080)][int]$Height=720,
     [ValidateRange(1,4)][int]$GuiScale=2
@@ -46,15 +46,15 @@ function Assert-HudStoneMode([object]$Receipt,[bool]$Expected,[bool]$LiveExpecte
         if($Receipt.ui_input_aimed_stone_bridge -isnot [bool] -or $Receipt.ui_input_aimed_stone_bridge -ne $AimedExpected){throw 'Aimed stone readiness does not match the explicit controller mode.'}
     }elseif($AimedExpected){throw 'Aimed stone readiness marker missing.'}
 }
-function Assert-HudStoneConfiguration([string]$Mode,[bool]$StoneFixture,[bool]$StoneLive,[bool]$LiveMouse,[bool]$OffscreenPresentation,[bool]$OffscreenTrial,[bool]$HostGpuBudget,[bool]$PointerFixture,[bool]$DelayFixture,[bool]$BackgroundTrial,[bool]$HideHostHud,[bool]$WorldClicks=$false,[bool]$SelectiveMouse=$false,[ValidateSet(1,2,3)][int]$SelectiveRevision=1,[bool]$AimedStone=$false){
-    if($AimedStone -and (-not $StoneLive -or -not $WorldClicks -or -not $SelectiveMouse -or $SelectiveRevision -ne 3)){throw 'AimedStone requires StoneLive, WorldClicks and the SelectiveMouse revision3 capped profile.'}
+function Assert-HudStoneConfiguration([string]$Mode,[bool]$StoneFixture,[bool]$StoneLive,[bool]$LiveMouse,[bool]$OffscreenPresentation,[bool]$OffscreenTrial,[bool]$HostGpuBudget,[bool]$PointerFixture,[bool]$DelayFixture,[bool]$BackgroundTrial,[bool]$HideHostHud,[bool]$WorldClicks=$false,[bool]$SelectiveMouse=$false,[ValidateSet(1,2,3,4)][int]$SelectiveRevision=1,[bool]$AimedStone=$false){
+    if($AimedStone -and (-not $StoneLive -or -not $WorldClicks -or -not $SelectiveMouse -or $SelectiveRevision -notin @(3,4))){throw 'AimedStone requires StoneLive, WorldClicks and the SelectiveMouse revision3/4 capped profile.'}
     if($SelectiveRevision -ge 2 -and -not $SelectiveMouse){throw 'A selective revision requires an explicit SelectiveMouse session.'}
     if($SelectiveMouse -and -not $WorldClicks){throw 'SelectiveMouse requires the explicit WorldClicks session and its separate capture profile.'}
     if($WorldClicks -and -not $StoneLive){throw 'WorldClicks requires the explicit capped StoneLive session.'}
     if($StoneFixture -and ($StoneLive -or $Mode -ne 'Fixture' -or -not $OffscreenTrial -or $PointerFixture -or $LiveMouse -or $DelayFixture -or $BackgroundTrial -or $HostGpuBudget -or $HideHostHud)){throw 'StoneFixture requires its separate standalone OffscreenTrial without other fixture/live modes.'}
     if($StoneLive -and ($StoneFixture -or $Mode -ne 'Live' -or -not $LiveMouse -or -not $OffscreenPresentation -or -not $HostGpuBudget -or $OffscreenTrial -or $PointerFixture -or $DelayFixture -or $BackgroundTrial)){throw 'StoneLive requires the capped live mouse profile without fixture modes.'}
 }
-function Assert-HudSelectiveArm($Receipt,[bool]$Expected,[ValidateSet(1,2,3)][int]$SelectiveRevision=1){
+function Assert-HudSelectiveArm($Receipt,[bool]$Expected,[ValidateSet(1,2,3,4)][int]$SelectiveRevision=1){
     # Arm-HudStream returns an ordered dictionary directly; stored JSON reads
     # as PSCustomObject. Validate keys in both representations without coercion.
     $fields=if($Receipt -is [Collections.IDictionary]){@($Receipt.Keys)}else{@($Receipt.PSObject.Properties.Name)}
@@ -365,7 +365,7 @@ if($Mode -eq 'Fixture'){
     if($AimedStone){. (Join-Path $PSScriptRoot 'AimedWorldClicks.ps1');. (Join-Path $PSScriptRoot 'HudAimedRelay.ps1')}
     $context=Get-MineComeProbeContext
     if($StoneLive){$null=Test-MineComeHudStoneRelayPreflight $context}
-    if(-not $BundleDirectory){$BundleDirectory=Join-Path $root $(if($SelectiveMouse -and $SelectiveRevision -eq 3){'runtime/hud-compositor-selective-r3'}elseif($SelectiveMouse -and $SelectiveRevision -eq 2){'runtime/hud-compositor-selective-r2'}elseif($SelectiveMouse){'runtime/hud-compositor-selective'}elseif($WorldClicks){'runtime/hud-compositor-world'}elseif($LiveMouse){'runtime/hud-compositor-mouse'}else{'runtime/hud-compositor-input-waitfix'})}
+    if(-not $BundleDirectory){$BundleDirectory=Join-Path $root $(if($SelectiveMouse -and $SelectiveRevision -eq 4){'runtime/hud-compositor-selective-r4'}elseif($SelectiveMouse -and $SelectiveRevision -eq 3){'runtime/hud-compositor-selective-r3'}elseif($SelectiveMouse -and $SelectiveRevision -eq 2){'runtime/hud-compositor-selective-r2'}elseif($SelectiveMouse){'runtime/hud-compositor-selective'}elseif($WorldClicks){'runtime/hud-compositor-world'}elseif($LiveMouse){'runtime/hud-compositor-mouse'}else{'runtime/hud-compositor-input-waitfix'})}
     & (Join-Path $PSScriptRoot 'Arm-HudStream.ps1') -InputMode -LiveMouse:$LiveMouse -StoneLive:$StoneLive -WorldClicks:$WorldClicks -SelectiveMouse:$SelectiveMouse -SelectiveRevision $SelectiveRevision -AimedStone:$AimedStone -BundleDirectory $BundleDirectory -OffscreenPresentation:$OffscreenPresentation -PreflightOnly
 }
 if($PreflightOnly){Write-Output "HUD_INPUT_PREFLIGHT_PASS mode=$Mode no_process_started=true";return}

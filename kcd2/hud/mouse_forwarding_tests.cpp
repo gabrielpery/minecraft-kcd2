@@ -1,5 +1,6 @@
 #include "mouse_forwarding.hpp"
 #include "mouse_diagnostics.hpp"
+#include "selective_forwarding.hpp"
 #include <iostream>
 #include <limits>
 #include <stdexcept>
@@ -30,6 +31,18 @@ int main(){
     pointer.update(true,true,0,p,0,utc);pointer.update(true,true,0,p,0,utc);
     check(pointer.update(true,true,1,outside,0,utc).count==0&&!pointer.active());
     check(pointer.update(true,true,1,p,0,utc).count==0); // outside press must not turn into click on reentry.
+    pointer={};pointer.update(true,true,0,p,0,utc);pointer.update(true,true,0,p,0,utc);
+    batch=pointer.update(true,true,3,p,0,utc);check(batch.count==2&&pointer.held()==3);
+    minecome::selective::ObservationRecovery recovery;recovery.defer();
+    check(pointer.held()==3&&recovery.pending()); // Busy observation emits no synthetic release.
+    releases={};pointer.close(utc+1,releases);
+    check(releases.count==2&&releases.events[0].kind==ui::Kind::button_up&&releases.events[1].kind==ui::Kind::button_up);
+    check(!pointer.held()&&!pointer.active());
+    check(!recovery.update(0,3,0)&&!recovery.update(0,0,1)); // Held buttons/wheel cannot replay.
+    check(!recovery.update(0,0,0)&&recovery.update(0,0,0));
+    check(pointer.update(true,true,0,p,0,utc+2).count==0);
+    check(pointer.update(true,true,0,p,0,utc+3).count==1);
+    batch=pointer.update(true,true,1,p,0,utc+4);check(batch.count==1&&batch.events[0].kind==ui::Kind::button_down);
     minecome::mouse::Notices notices;minecome::mouse::Notice notice;
     check(!notices.pop(notice));
     for(unsigned i=0;i<32;++i){minecome::mouse::Snapshot snapshot;snapshot.generation=i;check(notices.push({"test",minecome::mouse::Result::ok,snapshot}));}

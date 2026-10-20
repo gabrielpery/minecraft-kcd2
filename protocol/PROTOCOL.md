@@ -260,6 +260,15 @@ acknowledgement, and writes the exact arena ACK before admitting events/permits.
 Changed or duplicate offers/ACKs fail; an unacknowledged offer expires after six
 seconds. Reset, world loss and disconnect revoke the arena and its requests.
 
+Anchor agreement at negotiation remains within 0.15 units in each anchor's
+coordinate system. A captured request origin must also remain within 0.15 KCD
+units of the current fresh host camera pose. Separately, its mapped Minecraft
+origin may differ from the actual guest eye by at most 0.25 blocks. The native
+bridge checks this against the guest pose; Minecraft repeats it during client
+selection, authoritative prestate observation and client predispatch. This
+request-view allowance does not move either anchor, clamp or replace the ray,
+or extend vanilla interaction reach.
+
 After ACK, the guest issues one-use, increasing permits with a 500 ms local lifetime.
 At most16 permits are retained. The host captures a ray only after receiving its
 permit and requires fresh poses plus a matching session, arena and permit immediately
@@ -341,11 +350,11 @@ include host obstacles; the terrain-only sampler cannot establish wall
 occlusion. Mirrored stones currently have `physics=false`, so the host ray
 does not replace Minecraft selection of those stones.
 
-Live work still needed before this feature can be claimed in KCD: build the bounded
-controller that loads the new Lua modules, forwards each physical click with its
-original acknowledged permit, and validates the separate aimed HUD proof; then
-check centre-ray alignment on
-several block faces while turning/stepping. Standalone Minecraft selection and
+The bounded controller now loads the Lua modules, forwards physical clicks with
+their original acknowledged permits, and validates the separate aimed HUD proof.
+The latest KCD run did not admit an aimed request; fixes still need a live test.
+Centre-ray alignment on several block faces while turning, and any later movement
+support, remain unverified. Standalone Minecraft selection and
 transport checks do not prove host camera timing, eye/feet alignment or KCD gameplay.
 
 ### Read-only host aim sample implemented (no aimed request enabled)
@@ -381,8 +390,9 @@ ray origin away from the actual Minecraft player and invalidate reach assumption
 the existing fixed-cell bridge. It pins one immutable alignment and a fresh
 Creative world, allows at most 16 confirmed owned stones within a 5×5×5 cell
 volume, and requires a host ray no longer than 4.5 units and no older than 500 ms.
-The mapped origin must agree with the actual Minecraft player's eye within
-0.15 blocks on both the client and integrated server. Host obstruction is
+The mapped request origin must agree with the actual Minecraft player's eye within
+0.25 blocks on both the client and integrated server; the captured ray and
+vanilla player-reach checks remain unchanged. Host obstruction is
 explicitly clear, hit, or unavailable; unavailable samples cannot act.
 
 Selection calls Minecraft's real `World.raycast` with `OUTLINE` and `NONE`.
@@ -405,6 +415,13 @@ teleports. It opens no bridge connection and makes no KCD calls. The default
 minor 0/1 path, live fixed-cell controls and installed renderer are unchanged.
 This original standalone lab does not enable the new minor2 wire extension.
 Paired live host click/sample and KCD replica verification remain unfinished.
+
+The 2026-10-20 standalone run `7291a5e04c4c44ec983f44be9e50447e` passes
+25 scenarios with actual client/server observations and synthetic host rays.
+Added selection-only cases accept a measured 0.17794543-block request-origin
+offset and the 0.25-block boundary, and reject 0.250001 blocks. The fixture still
+retains 17 request records, eight confirmed actions, four placements/four breaks and
+final empty ownership. It makes no KCD connection.
 
 ### Actual-Minecraft network fixture
 

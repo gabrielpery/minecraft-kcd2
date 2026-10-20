@@ -11,7 +11,7 @@ struct Click {
     std::uint64_t sequence=0,utc=0,ui_sequence=0;
     std::uint32_t action=0;
     std::uintptr_t window=0;
-    std::uint64_t token=0,generation=0;
+    std::uint64_t token=0,generation=0,lease_deadline=0;
 };
 class Gate {
 public:
@@ -80,5 +80,38 @@ inline Delivery delivery(const Click &click,bool live,std::uint64_t now,std::uin
     if(!live||screen!=0||click.sequence==0||click.sequence>max_clicks||click.action<1||click.action>2||
        click.utc==0||click.utc>now||now-click.utc>250)return Delivery::drop;
     return ack_sequence<click.ui_sequence?Delivery::wait:Delivery::emit;
+}
+enum class Capture { matched,busy,unavailable };
+enum class DeliveryReason { ready,ack_pending,capture_busy,not_live,screen,invalid_click,clock,click_stale,capture_deadline,capture_mismatch };
+struct Decision {Delivery outcome;DeliveryReason reason;};
+inline const char *name(DeliveryReason reason) noexcept {
+    switch(reason){
+    case DeliveryReason::ready:return "ready";
+    case DeliveryReason::ack_pending:return "ack_pending";
+    case DeliveryReason::capture_busy:return "capture_busy";
+    case DeliveryReason::not_live:return "not_live";
+    case DeliveryReason::screen:return "screen";
+    case DeliveryReason::invalid_click:return "invalid_click";
+    case DeliveryReason::clock:return "clock";
+    case DeliveryReason::click_stale:return "click_stale";
+    case DeliveryReason::capture_deadline:return "capture_deadline";
+    default:return "capture_mismatch";
+    }
+}
+// Busy observation carries no authority. The captured lease deadline never
+// advances even if a later render callback renews the same owner/generation.
+inline Decision delivery_with_capture(const Click &click,bool live,std::uint64_t utc,std::uint64_t steady,
+    std::uint64_t ack_sequence,unsigned screen,Capture capture) noexcept {
+    if(!live)return {Delivery::drop,DeliveryReason::not_live};
+    if(screen!=0)return {Delivery::drop,DeliveryReason::screen};
+    if(!click.sequence||click.sequence>max_clicks||click.action<1||click.action>2||!click.utc)
+        return {Delivery::drop,DeliveryReason::invalid_click};
+    if(click.utc>utc)return {Delivery::drop,DeliveryReason::clock};
+    if(utc-click.utc>250)return {Delivery::drop,DeliveryReason::click_stale};
+    if(!click.lease_deadline||steady>=click.lease_deadline)return {Delivery::drop,DeliveryReason::capture_deadline};
+    if(capture==Capture::busy)return {Delivery::wait,DeliveryReason::capture_busy};
+    if(capture!=Capture::matched)return {Delivery::drop,DeliveryReason::capture_mismatch};
+    if(ack_sequence<click.ui_sequence)return {Delivery::wait,DeliveryReason::ack_pending};
+    return {Delivery::emit,DeliveryReason::ready};
 }
 } // namespace minecome::hud::world

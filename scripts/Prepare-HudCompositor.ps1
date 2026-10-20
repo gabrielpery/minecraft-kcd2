@@ -13,7 +13,7 @@ param(
     [string]$OutputDirectory,
     [string]$InstallerPath,
     [ValidateSet('Static','Stream','Input','Mouse','World','Selective')][string]$Mode='Static',
-    [ValidateSet(1,2,3)][int]$SelectiveRevision=1,
+    [ValidateSet(1,2,3,4)][int]$SelectiveRevision=1,
     [string]$CustomBuildReceipt
 )
 $ErrorActionPreference = 'Stop'
@@ -33,7 +33,7 @@ if($Mode -in @('Mouse','World','Selective')) {
     $runtimeHash=$mouseProfile.runtime_sha256
 } elseif($CustomBuildReceipt){throw 'Custom renderer receipt requires explicit Mouse, World or Selective mode.'}
 if (-not $ShaderPath) { $ShaderPath = Join-Path $projectRoot $(if($Mode -in @('Mouse','World','Selective')){'kcd2/hud/shaders/MineComeMouseHud.fx'}else{'kcd2/hud/shaders/MineComeHud.fx'}) }
-if (-not $OutputDirectory) { $OutputDirectory = Join-Path $runtimeRoot $(if($Mode -eq 'Selective' -and $SelectiveRevision -eq 3){'hud-compositor-selective-r3'}elseif($Mode -eq 'Selective' -and $SelectiveRevision -eq 2){'hud-compositor-selective-r2'}elseif($Mode -eq 'Selective'){'hud-compositor-selective'}elseif($Mode -eq 'World'){'hud-compositor-world'}elseif($Mode -eq 'Mouse'){'hud-compositor-mouse'}else{'hud-compositor'}) }
+if (-not $OutputDirectory) { $OutputDirectory = Join-Path $runtimeRoot $(if($Mode -eq 'Selective' -and $SelectiveRevision -eq 4){'hud-compositor-selective-r4'}elseif($Mode -eq 'Selective' -and $SelectiveRevision -eq 3){'hud-compositor-selective-r3'}elseif($Mode -eq 'Selective' -and $SelectiveRevision -eq 2){'hud-compositor-selective-r2'}elseif($Mode -eq 'Selective'){'hud-compositor-selective'}elseif($Mode -eq 'World'){'hud-compositor-world'}elseif($Mode -eq 'Mouse'){'hud-compositor-mouse'}else{'hud-compositor'}) }
 $AddonPath = [IO.Path]::GetFullPath($AddonPath)
 $ShaderPath = [IO.Path]::GetFullPath($ShaderPath)
 $OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)

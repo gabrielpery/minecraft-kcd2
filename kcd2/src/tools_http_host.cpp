@@ -359,11 +359,19 @@ public:
         const auto found=std::find_if(installed_.begin(),installed_.end(),[&](const Installed& value){return value.original.permit.permit_id==request.permit_id;});
         if(found==installed_.end()) {refuse("unknown_or_consumed_permit");return;}
         const auto original=*found;installed_.erase(found);
-        if(!fresh||phase_!=Phase::ready||!original.acknowledged||!same_arena()||!stones_.ready_for_aim()
-            ||Clock::now()-original.original.received>500ms||std::abs(original.engine_time-intent.permit_engine_time)>.000001) {refuse("stale_or_unready_capture");return;}
+        if(!fresh) {refuse("stale_log_batch");return;}
+        if(phase_!=Phase::ready) {refuse("input_session_unready");return;}
+        if(!original.acknowledged) {refuse("permit_unacknowledged");return;}
+        if(!same_arena()) {refuse("arena_invalidated");return;}
+        if(!stones_.ready_for_aim()) {refuse("engine_session_unready");return;}
+        if(Clock::now()-original.original.received>500ms) {refuse("original_permit_expired");return;}
+        if(std::abs(original.engine_time-intent.permit_engine_time)>.000001) {refuse("permit_clock_mismatch");return;}
         // Permit receipt precedes installation and the observed click callback;
         // using that original time is conservative in the shared 500 ms budget.
-        if(!bridge_.request_aimed_stone(request,original.original,original.original.received)) {refuse("bridge_refused");return;}
+        minecome::AimedInputRejection reason{};
+        if(!bridge_.request_aimed_stone(request,original.original,original.original.received,&reason)) {
+            refuse((std::string("bridge_")+minecome::aimed_input_rejection_name(reason)).c_str());return;
+        }
         record_("AIM_INPUT_DISPATCH run="+run_+" arena="+std::to_string(request.arena_id)+" request="+std::to_string(request.request_id)+" permit="+std::to_string(request.permit_id)+" click="+std::to_string(intent.click)+" action="+std::to_string(request.action));
     }
 };

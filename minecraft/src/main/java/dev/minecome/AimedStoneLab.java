@@ -184,7 +184,7 @@ public final class AimedStoneLab {
             }
             if(!current.dispatch()) {
                 AimedStoneArena.Result result=null;
-                if(!selected.allowed()) {
+                if(!selected.allowed() && !current.rayMode().equals("view_origin_over_limit")) {
                     var ownedBefore=arena.ownedCells();int confirmations=arena.evidence().getAsJsonArray("confirmations").size();
                     var decision=arena.request(client,++requestId,current.action(),ray);result=arena.lastResult();
                     require(!decision.queued() && decision.reason().equals(selected.reason()) && result.id()==requestId && result.status().equals("rejected") && !arena.pending(),"Refused selection entered vanilla dispatch");
@@ -253,6 +253,15 @@ public final class AimedStoneLab {
     }
     private AimedStoneArena.HostRay ray(MinecraftClient client,Step step) {
         Vec3d eye=client.player.getEyePos(),target=center(step.aimedCell());
+        // Fixture-only captured view origins. The actual client/server player,
+        // fixed alignment and original resulting ray remain unchanged.
+        double viewOffset=switch(step.rayMode()){
+            case "view_origin_measured" -> .17794543;
+            case "view_origin_boundary" -> .25;
+            case "view_origin_over_limit" -> .250001;
+            default -> 0;
+        };
+        eye=eye.add(viewOffset,0,0);
         Vec3d direction=step.rayMode().equals("miss")?new Vec3d(0,1,0):target.subtract(eye).normalize();
         var mcRay=new AimGeometry.Ray(protocol(eye),protocol(direction),4.5);
         var occlusion=switch(step.rayMode()) {
@@ -267,7 +276,7 @@ public final class AimedStoneLab {
         return new AimedStoneArena.HostRay(captured,alignment,host,occlusion);
     }
     private static String expectedRejection(String mode) {
-        return switch(mode){case "miss"->"ray_miss";case "floor"->"unowned_hit";case "occluded"->"host_obstructed";case "unavailable"->"host_obstruction_unavailable";case "stale"->"ray_stale";case "origin_mismatch"->"ray_origin_disagrees_with_eye";case "alignment_changed"->"alignment_changed";default->throw new IllegalArgumentException("Unspecified rejection case");};
+        return switch(mode){case "miss"->"ray_miss";case "floor"->"unowned_hit";case "occluded"->"host_obstructed";case "unavailable"->"host_obstruction_unavailable";case "stale"->"ray_stale";case "origin_mismatch","view_origin_over_limit"->"ray_origin_disagrees_with_eye";case "alignment_changed"->"alignment_changed";default->throw new IllegalArgumentException("Unspecified rejection case");};
     }
     private static List<Step> steps(BlockPos s) {
         var result=new ArrayList<Step>();BlockPos top=s.up(2),east=top.east();
@@ -290,6 +299,9 @@ public final class AimedStoneLab {
         result.add(selection("stale_ray",s,new Vec3d(-2,2.5,.5),top,null,null,false,"stale"));
         result.add(selection("origin_mismatch",s,new Vec3d(-2,2.5,.5),top,null,null,false,"origin_mismatch"));
         result.add(selection("alignment_changed",s,new Vec3d(-2,2.5,.5),top,null,null,false,"alignment_changed"));
+        result.add(selection("view_origin_measured",s,new Vec3d(-2,2.5,.5),top,top,Direction.WEST,true,"view_origin_measured"));
+        result.add(selection("view_origin_boundary",s,new Vec3d(-2,2.5,.5),top,top,Direction.WEST,true,"view_origin_boundary"));
+        result.add(selection("view_origin_over_limit",s,new Vec3d(-2,2.5,.5),top,null,null,false,"view_origin_over_limit"));
         result.add(selection("cancel_before_dispatch",s,new Vec3d(4,2.5,.5),top,east,Direction.EAST,true,"clear"));
         result.add(action("turn_while_pending",s,new Vec3d(4,2.5,.5),top,east,Direction.EAST,BREAK,true));
         result.add(action("cleanup_top",s,new Vec3d(-2,2.5,.5),top,top,Direction.WEST,BREAK,false));
@@ -305,7 +317,7 @@ public final class AimedStoneLab {
         var record=new JsonObject();record.addProperty("name",step.name());record.addProperty("passed",true);record.addProperty("selection_allowed",selection.allowed());record.addProperty("reason",selection.reason());
         record.addProperty("vanilla_dispatch",step.dispatch());record.addProperty("client_and_server_confirmed",result!=null && result.clientAndServer());
         record.addProperty("view_turned_after_queue",step.turn());
-        record.addProperty("rejected_request_checked",!selection.allowed());record.addProperty("rejected_id_replay_checked",step.name().equals("miss"));
+        record.addProperty("rejected_request_checked",!selection.allowed() && !step.rayMode().equals("view_origin_over_limit"));record.addProperty("rejected_id_replay_checked",step.name().equals("miss"));
         if(step.name().equals("cancel_before_dispatch")) {
             record.addProperty("queued_then_cancelled",true);record.addProperty("cancellation_reason",result.reason());
             record.addProperty("client_server_cells_unchanged",true);

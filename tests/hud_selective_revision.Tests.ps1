@@ -22,7 +22,7 @@ function Load-Function($Ast,[string]$Name){
 function New-Profile([int]$Revision){
     $value=[ordered]@{runtime_sha256=('a'*64);addon_sha256=('b'*64);shader_sha256=('c'*64);build_receipt_sha256=('d'*64);patch_sha256=('e'*64);api_sha256=('f'*64)}
     if($Revision -ge 2){$value.selective_revision=$Revision;$value.diagnostics_api_sha256='1'*64}
-    if($Revision -eq 3){$value.raw_diagnostics_api_sha256='6'*64}
+    if($Revision -ge 3){$value.raw_diagnostics_api_sha256='6'*64}
     return $value
 }
 function New-Manifest([int]$Revision,$Profile=(New-Profile $Revision)){
@@ -35,8 +35,8 @@ function New-Manifest([int]$Revision,$Profile=(New-Profile $Revision)){
     return $value
 }
 function New-Receipt($Manifest){[ordered]@{schema=1;kind='minecome_hud_install_v1';files=@($Manifest.files|ForEach-Object{[ordered]@{path=$_.path;bytes=$_.bytes;sha256=$_.sha256}})}}
-foreach($declared in @(1,2,3)){
-    foreach($requested in @(1,2,3)){
+foreach($declared in @(1,2,3,4)){
+    foreach($requested in @(1,2,3,4)){
         foreach($json in @($false,$true)){
             $manifest=New-Manifest $declared;$profile=New-Profile $requested
             if($json){$manifest=$manifest|ConvertTo-Json -Depth 8|ConvertFrom-Json}
@@ -56,7 +56,7 @@ foreach($arguments in @(@{},@{WorldClicks=$true})){
     Reject {Get-MineComeMouseProfile @arguments -SelectiveRevision 2} 'Revision 2 implicitly enabled selective mode'
     Reject {Assert-MineComeMouseBundle (New-Manifest 2) (New-Profile 2) @arguments -SelectiveRevision 2} 'Revision 2 bundle enabled an undeclared mode'
 }
-foreach($revision in @(0,4)){
+foreach($revision in @(0,5)){
     Reject {Get-MineComeMouseProfile -WorldClicks -SelectiveMouse -SelectiveRevision $revision} 'Unsupported revision accepted'
 }
 function New-BuildReceipt {
@@ -132,7 +132,7 @@ $asts=@{}
 foreach($name in @('Build-SelectiveReShade','Prepare-HudCompositor','Update-HudCompositor','Disable-HudCompositor','Arm-HudStream','Start-HudInputLab')){
     $ast=Parse-Script $name;$asts[$name]=$ast
     $parameter=@($ast.ParamBlock.Parameters|Where-Object{$_.Name.VariablePath.UserPath -eq 'SelectiveRevision'})
-    Check ($parameter.Count -eq 1 -and $parameter[0].DefaultValue.Extent.Text -ceq '1' -and $parameter[0].Extent.Text.Contains('ValidateSet(1,2,3)')) "Closed revision selector/default missing: $name"
+    Check ($parameter.Count -eq 1 -and $parameter[0].DefaultValue.Extent.Text -ceq '1' -and $parameter[0].Extent.Text.Contains('ValidateSet(1,2,3,4)')) "Closed revision selector/default missing: $name"
 }
 foreach($name in @('Update-HudCompositor','Disable-HudCompositor','Arm-HudStream')){
     $guards=@()
@@ -141,7 +141,7 @@ foreach($name in @('Update-HudCompositor','Disable-HudCompositor','Arm-HudStream
         elseif($guards.Count){break}
     }
     $guard=[scriptblock]::Create($guards -join "`n")
-    foreach($revision in @(2,3)){
+    foreach($revision in @(2,3,4)){
         foreach($selective in @($false,$true)){
             $SelectiveRevision=$revision;$SelectiveMouse=$selective;$WorldClicks=$true;$LiveMouse=$true;$InputMode=$true;$OffscreenPresentation=$true;$StoneLive=$true
             if($selective){& $guard;Check $true 'Explicit revision prerequisites accepted'}else{Reject {& $guard} 'Revision accepted without explicit selective mode'}
@@ -154,21 +154,21 @@ foreach($name in @('Prepare-HudCompositor','Update-HudCompositor','Disable-HudCo
     $node=$asts[$name].Find({param($n)$n -is [Management.Automation.Language.IfStatementAst] -and $n.Extent.Text -match ('^if\s*\(\s*-not \$'+$variable+'\)')},$true)
     Check ($null -ne $node) "Bundle default not found: $name"
     $default=[scriptblock]::Create($node.Extent.Text)
-    foreach($revision in @(1,2,3)){
+    foreach($revision in @(1,2,3,4)){
         $SelectiveRevision=$revision;$BundleDirectory=$null;$OutputDirectory=$null;$Mode='Selective'
         . $default
         $actual=if($variable -eq 'OutputDirectory'){$OutputDirectory}else{$BundleDirectory}
-        $expected=if($revision -eq 3){'hud-compositor-selective-r3'}elseif($revision -eq 2){'hud-compositor-selective-r2'}else{'hud-compositor-selective'}
+        $expected=if($revision -ge 2){'hud-compositor-selective-r'+$revision}else{'hud-compositor-selective'}
         Check ((Split-Path -Leaf $actual) -ceq $expected) "Wrong revision bundle default: $name"
     }
 }
 $update=$asts['Update-HudCompositor']
 $defaultPrior=$update.Find({param($n)$n -is [Management.Automation.Language.IfStatementAst] -and $n.Extent.Text.StartsWith('if(-not $PreviousBundleDirectory)')},$true)
 Check ($null -ne $defaultPrior) 'Predecessor default found'
-foreach($revision in @(1,2,3)){
+foreach($revision in @(1,2,3,4)){
     $SelectiveRevision=$revision;$PreviousBundleDirectory=$null
     . ([scriptblock]::Create($defaultPrior.Extent.Text))
-    $expected=if($revision -eq 3){'hud-compositor-selective-r2'}elseif($revision -eq 2){'hud-compositor-selective'}else{'hud-compositor-world'}
+    $expected=if($revision -ge 3){'hud-compositor-selective-r'+($revision-1)}elseif($revision -eq 2){'hud-compositor-selective'}else{'hud-compositor-world'}
     Check ((Split-Path -Leaf $PreviousBundleDirectory) -ceq $expected) 'Exact revision predecessor default selected'
 }
 $prepareGuard=$asts['Prepare-HudCompositor'].EndBlock.Statements|Where-Object{$_ -is [Management.Automation.Language.IfStatementAst]}|Select-Object -First 1
@@ -204,15 +204,38 @@ foreach($wrongRevision in @(1,3)){
     Reject {& $priorGuard} 'Wrong revision predecessor accepted for revision 3'
 }
 $controller=$asts['Start-HudInputLab']
+$revision3Profile=Get-MineComeMouseProfile -WorldClicks -SelectiveMouse -SelectiveRevision 3
+$SelectiveRevision=4
+$script:priorManifest=New-Manifest 3 $revision3Profile;$old=New-Receipt $script:priorManifest
+. $priorGuard;Check ($previousProxyHash -ceq $revision3Profile.runtime_sha256) 'Revision 4 selects exact frozen revision 3 runtime'
+foreach($index in @(0,1,2,3,4,5)){
+    $old=New-Receipt $script:priorManifest;$old.files[$index].sha256='8'*64
+    Reject {& $priorGuard} 'Changed revision 3 predecessor file accepted'
+}
+foreach($wrongRevision in @(1,2,4)){
+    $script:priorManifest=New-Manifest $wrongRevision $revision3Profile;$old=New-Receipt $script:priorManifest
+    Reject {& $priorGuard} 'Wrong predecessor accepted for revision 4'
+}
+foreach($json in @($false,$true)){
+    $build=New-RawBuildReceipt;$build.selective_revision=4;$build.version='6.8.0.6'
+    if($json){$build=$build|ConvertTo-Json -Depth 8|ConvertFrom-Json}
+    Assert-MineComeSelectiveBuildReceipt $build (New-Profile 4) -SelectiveRevision 4;Check $true 'Exact revision 4 receipt accepted'
+    Reject {Assert-MineComeSelectiveBuildReceipt $build (New-Profile 3) -SelectiveRevision 3} 'Revision 4 accepted as frozen revision 3'
+    Reject {Assert-MineComeSelectiveBuildReceipt (New-RawBuildReceipt) (New-Profile 4) -SelectiveRevision 4} 'Frozen revision 3 accepted as revision 4'
+}
+foreach($invalid in @($null,$false,$true,'4',[double]4,0,1,2,3,5)){
+    $manifest=New-Manifest 4;$manifest.selective_revision=$invalid
+    Reject {Assert-MineComeMouseBundle $manifest (New-Profile 4) -WorldClicks -SelectiveMouse -SelectiveRevision 4} 'Untyped/wrong revision 4 marker accepted'
+}
 . (Load-Function $controller 'Assert-HudSelectiveArm')
 . (Load-Function $controller 'Assert-HudStoneConfiguration')
 foreach($representation in @('ordered','hashtable','json')){
-    foreach($revision in @(1,2,3)){
+    foreach($revision in @(1,2,3,4)){
         $receipt=[ordered]@{selective_mouse=$true};if($revision -ge 2){$receipt.selective_revision=$revision}
         if($representation -eq 'hashtable'){$copy=@{};foreach($key in $receipt.Keys){$copy[$key]=$receipt[$key]};$receipt=$copy}
         if($representation -eq 'json'){$receipt=$receipt|ConvertTo-Json|ConvertFrom-Json}
         Assert-HudSelectiveArm $receipt $true $revision;Check $true 'Direct/stored arm revision accepted'
-        foreach($other in @(1,2,3)|Where-Object{$_ -ne $revision}){Reject {Assert-HudSelectiveArm $receipt $true $other} 'Wrong direct/stored arm revision accepted'}
+        foreach($other in @(1,2,3,4)|Where-Object{$_ -ne $revision}){Reject {Assert-HudSelectiveArm $receipt $true $other} 'Wrong direct/stored arm revision accepted'}
     }
 }
 foreach($invalid in @($null,$false,$true,'2',[double]2,0,1,3)){
@@ -220,6 +243,9 @@ foreach($invalid in @($null,$false,$true,'2',[double]2,0,1,3)){
 }
 foreach($invalid in @($null,$false,$true,'3',[double]3,0,1,2,4)){
     Reject {Assert-HudSelectiveArm ([ordered]@{selective_mouse=$true;selective_revision=$invalid}) $true 3} 'Untyped/wrong revision 3 arm accepted'
+}
+foreach($invalid in @($null,$false,$true,'4',[double]4,0,1,2,3,5)){
+    Reject {Assert-HudSelectiveArm ([ordered]@{selective_mouse=$true;selective_revision=$invalid}) $true 4} 'Untyped/wrong revision 4 arm accepted'
 }
 Reject {Assert-HudSelectiveArm ([ordered]@{selective_mouse=$false;selective_revision=2}) $false 2} 'Revision 2 arm accepted without selective mode'
 $configuration=@{Mode='Live';StoneFixture=$false;StoneLive=$true;LiveMouse=$true;OffscreenPresentation=$true;OffscreenTrial=$false;HostGpuBudget=$true;PointerFixture=$false;DelayFixture=$false;BackgroundTrial=$false;HideHostHud=$true;WorldClicks=$true;SelectiveMouse=$true;SelectiveRevision=2}
@@ -231,6 +257,11 @@ $configuration.SelectiveRevision=3
 Assert-HudStoneConfiguration @configuration;Check $true 'Revision 3 controller prerequisites accepted'
 foreach($field in @('SelectiveMouse','WorldClicks','StoneLive','LiveMouse','OffscreenPresentation','HostGpuBudget')){
     $configuration[$field]=$false;Reject {Assert-HudStoneConfiguration @configuration} 'Missing revision 3 controller prerequisite accepted';$configuration[$field]=$true
+}
+$configuration.SelectiveRevision=4
+Assert-HudStoneConfiguration @configuration;Check $true 'Revision 4 controller prerequisites accepted'
+foreach($field in @('SelectiveMouse','WorldClicks','StoneLive','LiveMouse','OffscreenPresentation','HostGpuBudget')){
+    $configuration[$field]=$false;Reject {Assert-HudStoneConfiguration @configuration} 'Missing revision 4 controller prerequisite accepted';$configuration[$field]=$true
 }
 $calls=@($controller.FindAll({param($n)$n -is [Management.Automation.Language.CommandAst] -and $n.Extent.Text.StartsWith('& (Join-Path') -and $n.Extent.Text.Contains("'Arm-HudStream.ps1'")},$true))
 Check ($calls.Count -eq 2) 'Preflight and live arm call sites found'
@@ -247,4 +278,9 @@ Check ($rawProfile.selective_revision -eq 3 -and $rawProfile.mouse_capture_api -
 foreach($field in @('runtime_sha256','addon_sha256','build_receipt_sha256','patch_sha256')){Check ($rawProfile.$field -cne $revision2Profile.$field) 'Revision 3 runtime/add-on/receipt/patch separately pinned'}
 foreach($field in @('api_sha256','shader_sha256','diagnostics_api_sha256')){Check ($rawProfile.$field -ceq $revision2Profile.$field) 'Existing API2 ABI, motion diagnostics and HUD shader preserved'}
 Check ($revision2Profile.runtime_sha256 -ceq '7a0464fc9f32cbed3e37efb924144dd6128d894f3a1f24fb9eb943e392609774' -and $revision2Profile.addon_sha256 -ceq '960c9493b0836ab916c57f7592745ec265bf0f2fcae78b55d2a350fbc92755e0') 'Frozen revision 2 profile preserved'
+$contentionProfile=Get-MineComeMouseProfile -WorldClicks -SelectiveMouse -SelectiveRevision 4
+Check ($contentionProfile.selective_revision -eq 4 -and $contentionProfile.mouse_capture_api -eq 2) 'Revision 4 profile frozen'
+foreach($field in @('runtime_sha256','addon_sha256','build_receipt_sha256')){Check ($contentionProfile.$field -cne $rawProfile.$field) 'Revision 4 runtime/add-on/receipt separately pinned'}
+foreach($field in @('api_sha256','shader_sha256','patch_sha256','diagnostics_api_sha256','raw_diagnostics_api_sha256')){Check ($contentionProfile.$field -ceq $rawProfile.$field) 'Existing ABI, hooks, diagnostics and HUD shader preserved'}
+Check ($rawProfile.runtime_sha256 -ceq '4d38a46f495709a6e08051ab04d114f109dba7ff1915fe7ba4dd9fa08bbe4623' -and $rawProfile.addon_sha256 -ceq '9d3c51e5cff6214d0e31ee9214b7ed7c96292f986474e117f3535f9be68df030') 'Frozen revision 3 profile preserved'
 Write-Output "HUD_SELECTIVE_REVISION_TEST_PASS checks=$checks no_game=true deployment=false"

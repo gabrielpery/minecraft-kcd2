@@ -15,6 +15,52 @@ restoration verified. The separate strict mouse profile has now completed a full
 host-HUD appearance, general input exclusivity and health integration remain unverified. Detailed evidence
 and the earlier failed runs are recorded below.
 
+## Capture query contention — 2026-10-20
+
+The first aimed live attempt (`5334822edbd5464397d6131962ff576e`) ended with
+`world_click_delivery_failed` after about 11 seconds. Its renderer log records
+`mouse_release` with reason `lock_contention`. The old capture API scheduled
+revocation whenever its lock was busy, including a read-only query. A worker
+query also treated a busy result as unavailable capture. The logs establish the
+failure and revocation, but do not identify which caller contended.
+
+Revision 4 makes a busy read return no snapshot without scheduling revocation.
+Failed requests and releases retain the conservative revocation behavior.
+Render-side forwarding may defer only within the last valid lease and emits
+nothing while capture is uncertain. Queued world clicks retain their original
+capture deadline; a later renewal cannot extend it. Delivery requires a fresh
+successful query with matching window, owner, generation and world mode, the
+corresponding UI acknowledgement, and the existing click-freshness limits.
+Distinct diagnostics report expired capture, mismatched capture, stale click
+and other rejection reasons through a separate log tag.
+
+The runtime is built from the pinned ReShade commit and unchanged revision 3
+hook patch, with the revised capture adapter. It retains API v2 and versioned
+diagnostics; runtime version is `6.8.0.6`. Build receipt:
+`runtime/dependencies/reshade-selective-r4-6.8.0/evidence/20261020-134918-d81d458a86424c2d81a5757e544141fd/verification.json`.
+The runtime SHA-256 is
+`78ea20f737010753b4212f1362ac97c6a5e15774dddf850d5aada4ba7486b91b`.
+Build verification confirms that the installed proxy, original reference and
+pristine sources were unchanged.
+
+Review caught and fixed a recovery edge case before installation: keyboard and
+inventory pointer state also needed a neutral baseline after a busy query.
+The add-on now sends only cleanup releases for already-forwarded held controls
+after successful capture validation, then waits for two neutral frames across
+keys, buttons and wheel. E/Escape mode toggles remain suppressed until recovery.
+The seven focused native suites pass 1,897 checks. The final add-on SHA-256 is
+`f85ef3719c376e8dc244b320aa2402ec60934a0f633395feb002c69af9e76dbc`.
+
+`config/hud-selective-profile-r4.json` pins the new runtime, add-on and build
+receipt while retaining the same shader and API/diagnostic hashes. The revision
+matrix passes 369 checks under PowerShell 5.1 and 7; existing world/selective
+profile checks pass 110/142. The aimed controller passes 68 checks.
+With KCD closed, the updater verified the exact six-file revision 3 installation,
+disabled its proxy, backed up the two changed files and installed revision 4
+unarmed. Update receipt:
+`runtime/evidence/hud-update-20261020-125526-34e342eb6e6344f89bd0a956d1767c3d/update.json`.
+No game was launched by the update. Revision 4 still needs live verification.
+
 ## Selective camera capture — 2026-10-13
 
 The separate `-SelectiveMouse -WorldClicks` profile uses API v2 and its own

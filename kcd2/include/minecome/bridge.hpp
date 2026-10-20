@@ -55,12 +55,24 @@ struct AimedStoneResultReceipt {
     protocol::AimedStoneResult result;
     std::uint64_t connection_generation{}, reset_generation{}, wire_sequence{};
 };
+// Admission diagnostics are local and bounded; no wire format or caller-side
+// authority changes. The existing Boolean API remains the dispatch decision.
+enum class AimedInputRejection {
+    none, invalid_request, unready, busy, wrong_arena, replayed_request,
+    permit_generation, permit_identity, capture_time, expired_permit,
+    host_pose_origin, unknown_permit, guest_view_origin
+};
+const char* aimed_input_rejection_name(AimedInputRejection) noexcept;
 
 class Bridge {
 public:
     static constexpr std::size_t block_event_capacity = 256;
     static constexpr std::size_t maximum_event_drain = 64;
     static constexpr std::size_t stone_input_capacity = 16;
+    // KCD's rendered camera can move with look/head animation while Minecraft's
+    // authoritative player eye stays fixed. This bounds only that request view
+    // origin difference; current-host-pose and arena-anchor checks remain 0.15 m.
+    static constexpr double aimed_view_origin_tolerance = 0.25;
     Bridge() = default;
     ~Bridge();
     Bridge(const Bridge&) = delete;
@@ -92,7 +104,7 @@ public:
     // revoked on reset/disconnect; local monotonic capture follows permit receipt.
     std::optional<AimedArenaReceipt> aimed_arena() const;
     std::optional<AimPermitReceipt> latest_aimed_permit() const;
-    bool request_aimed_stone(const protocol::AimedStoneRequest&, const AimPermitReceipt&, std::chrono::steady_clock::time_point captured_at);
+    bool request_aimed_stone(const protocol::AimedStoneRequest&, const AimPermitReceipt&, std::chrono::steady_clock::time_point captured_at, AimedInputRejection* rejection=nullptr);
     std::vector<AimedStoneResultReceipt> drain_aimed_results();
     bool connected() const { return connected_.load(); }
     std::uint64_t received_poses() const { return poses_.load(); }

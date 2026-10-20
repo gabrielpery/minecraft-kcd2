@@ -1,8 +1,55 @@
-# MineCome progress — 2026-10-13
+# MineCome progress — 2026-10-20
+
+**Aimed-control repair: actual Minecraft regression passed; revised renderer
+awaits live KCD verification.** The interrupted October 13 run
+`5334822edbd5464397d6131962ff576e` bootstrapped its seed stone, but confirmed no
+aimed action. Four physical clicks reached native validation: three were refused
+by the bridge and one was stale or unready. The three captured origins were
+0.177945, 0.157205 and 0.150575 metres from the mapped guest eye, exceeding its
+previous 0.15 allowance. The HUD ended after about 11 seconds with
+`world_click_delivery_failed`; the saved renderer log also records capture
+revocation for lock contention. The log does not identify the contending caller.
+Java and native processes exited normally, engine cleanup and input-end
+acknowledgements passed, and the temporary frame cap was restored.
+
+Mapped request-view origins now allow 0.25 metres on both native and guest
+paths. This preserves the captured ray, 0.15 anchor/current-host agreement,
+4.5-unit range, original permit expiry, ownership and Minecraft's actual
+interaction-reach checks. Specific native refusal reasons replace the previous
+generic bridge refusal. Actual Minecraft run
+`7291a5e04c4c44ec983f44be9e50447e` passes **25 scenarios**, including the measured
+offset, the 0.25 boundary and rejection immediately beyond it. It retains four
+confirmed placements and four breaks, final air, zero owned/pending work,
+restored options and normal exits. Host rays are synthetic; KCD was not connected.
+
+Selective renderer revision 4 separates read-query contention from failed
+capture mutations. A busy query grants no authority and cannot extend the
+original lease; forwarding waits for validated capture and neutral controls.
+Capture request/release contention still revokes ownership. World-click
+diagnostics record distinct refusal reasons without creating physical-input
+records. The revised renderer has its own build and profile; revisions 1–3
+remain frozen. See the [renderer repair record](research/HUD-COMPOSITOR.md#capture-query-contention--2026-10-20)
+for deployment and verification status.
+
+Revision 4 is now built, independently reviewed and installed unarmed, with both
+changed revision 3 files backed up. Seven native renderer/input suites pass
+1,897 checks; the revision matrix passes 369 checks under PowerShell 5.1 and 7.
+Existing world/selective profiles pass 110/142 checks, and the aimed controller
+passes 68. The native bridge and simulated HTTP aimed integration pass, as do
+the full Fabric build/remap and 3,819 protocol checks. Build/installation
+success does not establish live targeting.
+
+With KCD closed on October 20, the expired arm from the failed run was preserved
+in its original evidence directory using the default closed-game archival path.
+No new KCD test has run during these repairs. The next manual check is one
+stationary, aimed break of the seed stone; previously verified hotbar/inventory
+and fixed-cell interactions do not need a separate repeat.
+
+## Earlier implementation and verification
 
 **Bounded aimed HUD controller: implemented; actual HUD adapter verified in
 Minecraft. Actual KCD crosshair verification is next.** `Start-AimedHudLab.ps1`
-selects the existing selective revision3 renderer, offscreen presentation and
+initially selected the selective revision3 renderer, offscreen presentation and
 temporary 60 FPS host cap. Its explicit mode routes physical click edges through
 the original acknowledged Minecraft permit and validates separate guest, native
 and engine receipts. Legacy fixed-cell defaults are preserved. Both the controller
@@ -45,6 +92,25 @@ with the crosshair. The seed lies along world +X, independently of the initial
 camera direction. Automatic reseeding and rapid inventory changes during a
 pending block action remain outside this first check. Commands and limits are in
 [aimed controls](research/AIMED-CONTROLS.md).
+
+The read-only host sampler now has an actual KCD receipt:
+`runtime/evidence/aim-probe-20261013-202430-c09cec132527421f8f934ad8ba36f361`.
+It verifies the current camera origin/forward and a known-clear 4.5-unit
+`ent_all` segment with player exclusion in official tools PID2140. The source
+snapshot matches its hash, and camera/obstruction share the same engine time.
+No movement, block mutation or aimed action was dispatched; this sample does not
+establish visual crosshair alignment.
+
+Preflight then found the expired activation from run
+`70ed9e3b395d44a48993f9d59c89dac5`. The newly started renderer logged
+`config_target`, so that old PID/start pair had never activated this process.
+The explicit `Archive-HudArm.ps1 -ExpiredPriorProcess` path now checks the exact
+receipt/INI identities, expired lease, absent original target and producer IDs,
+and the pinned newer official-tools process before preserving the file in its
+original evidence directory. It passes 29 pure checks under PowerShell 5.1 and 7
+and existing profile regressions. Actual archival passed with PID2140 left open,
+and the aimed controller's preflight then passed. This does not permit a second
+accepted HUD session in one game process; default closed-game archival is unchanged.
 
 **Earlier aimed host-control milestone: implemented and compiled before the
 bounded live controller above.**

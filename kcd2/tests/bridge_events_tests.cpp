@@ -448,7 +448,9 @@ int wmain(int argc,wchar_t** argv) {
         aimed.send(protocol::Type::aim_permit,protocol::encode(protocol::AimPermit{123,2}));fresh_aim(aimed);
         const auto expired=*bridge.latest_aimed_permit();std::this_thread::sleep_for(510ms);fresh_aim(aimed);
         aimed_request.request_id=2;aimed_request.permit_id=2;
-        require(!bridge.latest_aimed_permit()&&!bridge.request_aimed_stone(aimed_request,expired,Clock::now()),"expired permit accepted with fresh poses");
+        minecome::AimedInputRejection admission_reason{};
+        require(!bridge.latest_aimed_permit()&&!bridge.request_aimed_stone(aimed_request,expired,Clock::now(),&admission_reason)
+            &&admission_reason==minecome::AimedInputRejection::expired_permit,"expired permit accepted or wrongly diagnosed with fresh poses");
         aimed.close();await([&]{return !bridge.connected();},"aimed disconnect missing");
         require(!bridge.aimed_arena()&&!bridge.latest_aimed_permit()&&bridge.drain_aimed_results().empty(),"aimed state survived disconnect");
         Peer aimed_reconnect(port,protocol::Role::minecraft,token,2,2);const auto aimed_replacement=ready_aim(aimed_reconnect);
@@ -463,14 +465,66 @@ int wmain(int argc,wchar_t** argv) {
         bridge.cancel_stone_inputs();require(!bridge.aimed_arena()&&!bridge.latest_aimed_permit(),"cancellation kept aimed authority");
         require(!bridge.game_write_allowed(owned_receipts.events[0]),"copied aimed event retained write authority after cancellation");
         aimed_reconnect.send(protocol::Type::aimed_stone_result,protocol::encode(protocol::AimedStoneResult{123,1,2,protocol::AimedStoneResultCode::confirmed}));await([&]{return !bridge.connected();},"post-cancel result not rejected");aimed_reconnect.close();
-        for(int violation=0;violation<16;++violation) {
+
+        // Actual saved live samples moved 15–18 cm from the fixed alignment eye
+        // while looking. Keep those immutable ray offsets, allow only 25 cm at
+        // the guest eye, and independently retain the tighter current-host test.
+        Peer view_origins(port,protocol::Role::minecraft,token,2,2);ready_aim(view_origins);
+        using Rejection=minecome::AimedInputRejection;
+        struct ViewCase {protocol::Vec3 delta;double host_gap;Rejection expected;};
+        const std::array<ViewCase,7> view_cases{{
+            {{120.67510986328125-120.536362,2042.2144775390625-2042.28357,57.542263031005859-57.6296692},0,Rejection::none},
+            {{120.66345977783203-120.536362,2042.25146484375-2042.28357,57.542900085449219-57.6296692},0,Rejection::none},
+            {{120.66017913818359-120.536362,2042.2110595703125-2042.28357,57.584014892578125-57.6296692},0,Rejection::none},
+            {{.25,0,0},0,Rejection::none},
+            {{.250001,0,0},0,Rejection::guest_view_origin},
+            {{0,0,0},.150001,Rejection::host_pose_origin},
+            {{0,0,0},.149999,Rejection::none}
+        }};
+        std::uint64_t view_id=0;
+        for(const auto& check:view_cases) {
+            const protocol::Vec3 origin{100+check.delta.x,200+check.delta.y,50+check.delta.z};
+            host.camera=origin;host.camera.x+=check.host_gap;fresh_aim(view_origins);
+            view_origins.send(protocol::Type::aim_permit,protocol::encode(protocol::AimPermit{123,++view_id}));
+            await([&]{auto p=bridge.latest_aimed_permit();return p&&p->permit.permit_id==view_id;},"view-origin permit missing");
+            const auto permit=*bridge.latest_aimed_permit();
+            const protocol::AimedStoneRequest request{123,view_id,view_id,2,protocol::AimOcclusion::clear,origin,{1,0,0},4.5,0};
+            auto reason=Rejection::invalid_request;
+            const auto accepted=bridge.request_aimed_stone(request,permit,Clock::now(),&reason);
+            require(accepted==(check.expected==Rejection::none)&&reason==check.expected,"view-origin boundary or exact rejection diagnosis changed");
+            if(accepted) {
+                require(view_origins.receive(protocol::Type::aimed_stone_request).second==protocol::encode(request),"view allowance clamped or rewrote actual camera ray");
+                view_origins.send(protocol::Type::aimed_stone_result,protocol::encode(protocol::AimedStoneResult{123,view_id,2,protocol::AimedStoneResultCode::confirmed}));fresh_aim(view_origins);
+                const auto results=bridge.drain_aimed_results();require(results.size()==1&&results[0].result.request_id==view_id,"view-origin request lost synthetic confirmation");
+            }
+        }
+        // The wider guest-view bound does not change the protocol ray limit or
+        // consume the permit when a malformed request is refused.
+        host.camera={100,200,50};fresh_aim(view_origins);
+        view_origins.send(protocol::Type::aim_permit,protocol::encode(protocol::AimPermit{123,++view_id}));
+        await([&]{auto p=bridge.latest_aimed_permit();return p&&p->permit.permit_id==view_id;},"range-boundary permit missing");
+        auto view_permit=*bridge.latest_aimed_permit();
+        protocol::AimedStoneRequest too_long{123,view_id,view_id,2,protocol::AimOcclusion::clear,host.camera,{1,0,0},4.500001,0};
+        require(!bridge.request_aimed_stone(too_long,view_permit,Clock::now(),&admission_reason)&&admission_reason==Rejection::invalid_request,"view allowance widened range or lost malformed diagnosis");
+        too_long.range=4.5;require(bridge.request_aimed_stone(too_long,view_permit,Clock::now(),&admission_reason)&&admission_reason==Rejection::none,"valid request lost original permit after refusal");
+        view_origins.receive(protocol::Type::aimed_stone_request);
+        view_origins.send(protocol::Type::aimed_stone_result,protocol::encode(protocol::AimedStoneResult{123,view_id,2,protocol::AimedStoneResultCode::confirmed}));fresh_aim(view_origins);
+        require(bridge.drain_aimed_results().size()==1,"range-boundary result missing");
+        require(std::string(minecome::aimed_input_rejection_name(Rejection::guest_view_origin))=="guest_view_origin"
+            &&std::string(minecome::aimed_input_rejection_name(Rejection::host_pose_origin))=="host_pose_origin","bounded refusal names changed");
+        view_origins.close();await([&]{return !bridge.connected();},"view-origin fixture disconnect missing");
+
+        for(int violation=0;violation<17;++violation) {
             Peer invalid(port,protocol::Role::minecraft,token,2,2);
             if(violation==0) {
                 auto reset=connected_reset(bridge,protocol::Role::minecraft);bridge.acknowledge_event_reset(reset.reset_generation);fresh_aim(invalid);
                 invalid.send(protocol::Type::block_event,protocol::encode(block(1,303)));
             } else if(violation==1) {
                 auto reset=connected_reset(bridge,protocol::Role::minecraft);bridge.acknowledge_event_reset(reset.reset_generation);fresh_aim(invalid);
-                auto wrong=offered;wrong.minecraft_anchor.x+=1;invalid.send(protocol::Type::arena_offer,protocol::encode(wrong));
+                auto wrong=offered;wrong.minecraft_anchor.x+=.150001;invalid.send(protocol::Type::arena_offer,protocol::encode(wrong));
+            } else if(violation==16) {
+                auto reset=connected_reset(bridge,protocol::Role::minecraft);bridge.acknowledge_event_reset(reset.reset_generation);fresh_aim(invalid);
+                auto wrong=offered;wrong.kcd_anchor.x+=.150001;invalid.send(protocol::Type::arena_offer,protocol::encode(wrong));
             } else if(violation>=14) {
                 auto reset=connected_reset(bridge,protocol::Role::minecraft);bridge.acknowledge_event_reset(reset.reset_generation);fresh_aim(invalid);
                 if(violation==14) {auto missing=host;missing.flags=9;bridge.publish(missing);}

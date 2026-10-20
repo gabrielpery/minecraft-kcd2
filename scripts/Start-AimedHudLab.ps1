@@ -1,4 +1,4 @@
-# Bounded live crosshair lab using the already-installed selective revision3 renderer.
+# Bounded live crosshair lab using the already-installed selective revision4 renderer.
 # Starts only an isolated Minecraft client; KCD2 must already be in its fresh test world.
 [CmdletBinding()]
 param([string]$JavaHome,[string]$BundleDirectory,[switch]$PreflightOnly)
@@ -11,7 +11,7 @@ if($PSVersionTable.PSVersion.Major -lt 7){
 $ErrorActionPreference='Stop'
 $options=@{
     Mode='Live';LiveMouse=$true;StoneLive=$true;WorldClicks=$true;SelectiveMouse=$true
-    SelectiveRevision=3;AimedStone=$true;OffscreenPresentation=$true;HostGpuBudget=$true
+    SelectiveRevision=4;AimedStone=$true;OffscreenPresentation=$true;HostGpuBudget=$true
     Width=1280;Height=720;GuiScale=2;PreflightOnly=[bool]$PreflightOnly
 }
 if($JavaHome){$options.JavaHome=$JavaHome}

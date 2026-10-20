@@ -173,17 +173,43 @@ std::optional<AimPermitReceipt> Bridge::latest_aimed_permit() const {
     std::lock_guard l(mailbox_);if(!aimed_ready_locked()||aim_permits_.empty()||Clock::now()-aim_permits_.back().received>500ms) return {};
     return aim_permits_.back();
 }
-bool Bridge::request_aimed_stone(const protocol::AimedStoneRequest& request,const AimPermitReceipt& permit,Clock::time_point captured) {
-    try {(void)protocol::encode(request);}catch(const std::exception&) {return false;}
+const char* aimed_input_rejection_name(AimedInputRejection reason) noexcept {
+    switch(reason) {
+        case AimedInputRejection::none:return "none";
+        case AimedInputRejection::invalid_request:return "invalid_request";
+        case AimedInputRejection::unready:return "unready";
+        case AimedInputRejection::busy:return "busy";
+        case AimedInputRejection::wrong_arena:return "wrong_arena";
+        case AimedInputRejection::replayed_request:return "replayed_request";
+        case AimedInputRejection::permit_generation:return "permit_generation";
+        case AimedInputRejection::permit_identity:return "permit_identity";
+        case AimedInputRejection::capture_time:return "capture_time";
+        case AimedInputRejection::expired_permit:return "expired_permit";
+        case AimedInputRejection::host_pose_origin:return "host_pose_origin";
+        case AimedInputRejection::unknown_permit:return "unknown_permit";
+        case AimedInputRejection::guest_view_origin:return "guest_view_origin";
+    }
+    return "invalid_reason";
+}
+bool Bridge::request_aimed_stone(const protocol::AimedStoneRequest& request,const AimPermitReceipt& permit,Clock::time_point captured,AimedInputRejection* rejection) {
+    if(rejection) *rejection=AimedInputRejection::none;
+    auto refuse=[&](AimedInputRejection reason){if(rejection) *rejection=reason;return false;};
+    try {(void)protocol::encode(request);}catch(const std::exception&) {return refuse(AimedInputRejection::invalid_request);}
     std::lock_guard l(mailbox_);const auto now=Clock::now();
-    if(!aimed_ready_locked()||queued_aim_||inflight_aim_||!aimed_results_.empty()||request.arena_id!=aimed_arena_->arena_id||request.request_id<=last_aim_request_id_
-        ||permit.connection_generation!=connection_generation_||permit.reset_generation!=event_reset_generation_||permit.permit.arena_id!=request.arena_id||permit.permit.permit_id!=request.permit_id
-        ||captured<permit.received||captured>now||now-permit.received>500ms||!close_point(request.origin,host_pose_->camera)) return false;
+    if(!aimed_ready_locked()) return refuse(AimedInputRejection::unready);
+    if(queued_aim_||inflight_aim_||!aimed_results_.empty()) return refuse(AimedInputRejection::busy);
+    if(request.arena_id!=aimed_arena_->arena_id) return refuse(AimedInputRejection::wrong_arena);
+    if(request.request_id<=last_aim_request_id_) return refuse(AimedInputRejection::replayed_request);
+    if(permit.connection_generation!=connection_generation_||permit.reset_generation!=event_reset_generation_) return refuse(AimedInputRejection::permit_generation);
+    if(permit.permit.arena_id!=request.arena_id||permit.permit.permit_id!=request.permit_id) return refuse(AimedInputRejection::permit_identity);
+    if(captured<permit.received||captured>now) return refuse(AimedInputRejection::capture_time);
+    if(now-permit.received>500ms) return refuse(AimedInputRejection::expired_permit);
+    if(!close_point(request.origin,host_pose_->camera)) return refuse(AimedInputRejection::host_pose_origin);
     const auto found=std::find_if(aim_permits_.begin(),aim_permits_.end(),[&](const AimPermitReceipt& p){return p.permit.permit_id==request.permit_id&&p.received==permit.received;});
-    if(found==aim_permits_.end()) return false;
+    if(found==aim_permits_.end()) return refuse(AimedInputRejection::unknown_permit);
     const auto& a=*aimed_arena_;
     const protocol::Vec3 eye{a.minecraft_anchor.x+request.origin.x-a.kcd_anchor.x,a.minecraft_anchor.y+request.origin.z-a.kcd_anchor.z,a.minecraft_anchor.z-request.origin.y+a.kcd_anchor.y};
-    if(!close_point(eye,client_pose_->camera)) return false;
+    if(!close_point(eye,client_pose_->camera,aimed_view_origin_tolerance)) return refuse(AimedInputRejection::guest_view_origin);
     queued_aim_=PendingAim{request,connection_generation_,event_reset_generation_,captured,permit.received,{}};
     aim_permits_.erase(found);last_aim_request_id_=request.request_id;return true;
 }

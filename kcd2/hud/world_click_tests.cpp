@@ -55,5 +55,33 @@ int main(){
         auto missing=owned;if(field==0)missing.window=0;else if(field==1)missing.token=0;else missing.generation=0;
         check(!world::capture_matches(missing,true,missing.token,missing.generation));
     }
+    auto leased=owned;leased.lease_deadline=2100;
+    auto decide=[&](world::Capture capture,std::uint64_t steady=2001,std::uint64_t utc=1001,bool live=true,std::uint64_t ack=7,unsigned screen=0){
+        return world::delivery_with_capture(leased,live,utc,steady,ack,screen,capture);
+    };
+    check(decide(world::Capture::busy).outcome==world::Delivery::wait);
+    check(decide(world::Capture::busy).reason==world::DeliveryReason::capture_busy);
+    check(decide(world::Capture::busy,2099,1099).outcome==world::Delivery::wait);
+    check(leased.lease_deadline==2100&&leased.utc==1000&&leased.sequence==1);
+    check(decide(world::Capture::matched,2099,1099).outcome==world::Delivery::emit);
+    for(auto capture:{world::Capture::matched,world::Capture::busy,world::Capture::unavailable}){
+        check(decide(capture,2100,1100).outcome==world::Delivery::drop);
+        check(decide(capture,2100,1100).reason==world::DeliveryReason::capture_deadline);
+        check(decide(capture,2001,1001,false).reason==world::DeliveryReason::not_live);
+        check(decide(capture,2001,1001,true,7,1).reason==world::DeliveryReason::screen);
+        check(decide(capture,2001,999).reason==world::DeliveryReason::clock);
+        check(decide(capture,2001,1251).reason==world::DeliveryReason::click_stale);
+    }
+    check(decide(world::Capture::unavailable).reason==world::DeliveryReason::capture_mismatch);
+    check(decide(world::Capture::matched,2001,1001,true,6).reason==world::DeliveryReason::ack_pending);
+    check(decide(world::Capture::busy,2001,1001,true,6).reason==world::DeliveryReason::capture_busy);
+    check(decide(world::Capture::matched,2100,1100,true,6).outcome==world::Delivery::drop);
+    leased.lease_deadline=0;check(decide(world::Capture::busy).reason==world::DeliveryReason::capture_deadline);
+    leased=owned;leased.lease_deadline=2100;leased.sequence=0;
+    check(decide(world::Capture::busy).reason==world::DeliveryReason::invalid_click);
+    // New owner/generation can never turn a deferred physical click into an emit.
+    leased=owned;leased.lease_deadline=2100;
+    for(auto actual:{world::capture_matches(leased,true,457,789),world::capture_matches(leased,true,456,790),world::capture_matches(leased,false,456,789)})
+        check(decide(actual?world::Capture::matched:world::Capture::unavailable).outcome==world::Delivery::drop);
     std::cout<<"WORLD_CLICK_TEST_PASS checks="<<checks<<" no_game=true\n";
 }

@@ -238,9 +238,23 @@ breaks have matching client/server proof and final cleanup. The receipt validato
 passes 37 direct/JSON/tamper checks with `tests/aimed_stone_receipt.Tests.ps1` under
 both PowerShell 5.1 and 7. No live aimed protocol capability is enabled by this run.
 
+The 2026-10-20 run `7291a5e04c4c44ec983f44be9e50447e` passes the expanded
+**25-scenario** standalone fixture in actual Minecraft with synthetic host rays.
+Three selection-only checks accept a measured 0.17794543-block origin offset and
+the exact 0.25-block limit, and reject 0.250001 blocks. The mapped request ray stays
+unchanged; vanilla reach and owned-cell checks still apply. These added checks
+perform no extra gameplay actions: the receipt retains 17 request records,
+eight confirmed actions (four placements and four breaks), and zero owned stones
+at completion. Java and wrapper exit normally. Evidence is local at
+`runtime/evidence/aimed-stone-20261020-134755-7291a5e04c4c44ec983f44be9e50447e`.
+This verifies the guest allowance and existing scenarios, without connecting to KCD.
+
 The optional `minecomeHudAimedStoneBridge` development property selects a separate
 minor2 HUD guest with its own readiness and proof contracts. The explicit
-`Start-AimedHudLab.ps1` controller now selects it. `Start-HudAimedBridgeLab.ps1`
+`Start-AimedHudLab.ps1` controller selects it with the revision4 renderer profile.
+That profile's add-on repair is built, reviewed and installed unarmed on the
+development machine; it has not yet been verified in a live game.
+`Start-HudAimedBridgeLab.ps1`
 automatically checks the production adapter in a fresh Minecraft world against
 a synthetic C++ host: bootstrap, aimed break, client/server confirmation and
 final air pass with normal process exits. This fixture does not render the HUD

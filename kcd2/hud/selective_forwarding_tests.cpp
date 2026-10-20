@@ -1,4 +1,5 @@
 #include "selective_forwarding.hpp"
+#include <array>
 #include <cstdlib>
 #include <iostream>
 using namespace minecome::selective;
@@ -73,5 +74,30 @@ int main(){
     pending.flags=draining;pending.token=0;pending.lease_remaining_ms=0;
     check(!lost.observe(Result::ok,pending,123,111),"released/expired pending cleanup is not owned capture");
     check(lost.accept(Result::draining,pending,Mode::buttons,123,111)==Step::failed,"cannot reacquire unowned drain");
+    auto busy=full();
+    check(busy.deadline()==200&&busy.defer_busy(Result::busy,100),"owned read contention can defer");
+    check(busy.defer_busy(Result::busy,199)&&busy.deadline()==200,"repeated deferral never advances deadline");
+    check(!busy.defer_busy(Result::busy,200)&&!busy.defer_busy(Result::busy,99),"expiry and clock regression refuse deferral");
+    for(auto result:{Result::ok,Result::bad_argument,Result::unavailable,Result::foreign_owner,Result::draining})
+        check(!busy.defer_busy(result,110),"only contention can defer");
+    check(!ForwardingLease{}.defer_busy(Result::busy,110),"unowned query cannot defer acquisition");
+    busy.released();check(!busy.defer_busy(Result::busy,110),"release cannot defer");
+    busy=full();pending=sample(Mode::full,11,active|draining);
+    check(busy.accept(Result::draining,pending,Mode::buttons,123,110)==Step::pending&&busy.defer_busy(Result::busy,209),"owned drain can defer within original lease");
+    check(!busy.defer_busy(Result::busy,210),"busy pending drain cannot renew lease");
+    check(busy.accept(Result::draining,pending,Mode::buttons,123,350)==Step::pending,"explicit successful renewal remains separate");
+    check(!busy.defer_busy(Result::busy,361),"pending transition lifetime stays bounded despite renewal");
+    ObservationRecovery recovery;
+    check(recovery.update(1,1,1)&&!recovery.pending(),"normal input has no recovery barrier");
+    recovery.defer();check(recovery.pending(),"busy observation starts recovery barrier");
+    // Each nonneutral case covers held keys, pointer/world buttons or wheel;
+    // none may be forwarded on the first successful observation after busy.
+    for(const auto held:std::array<std::array<int,3>,5>{{{1,0,0},{1<<9,0,0},{1<<10,0,0},{0,1,0},{0,0,-1}}}){
+        check(!recovery.update(held[0],held[1],held[2])&&recovery.pending(),"held control cannot resume after unknown interval");
+        check(!recovery.update(0,0,0)&&recovery.pending(),"one neutral frame cannot resume input");
+    }
+    recovery.defer();check(!recovery.update(0,0,0),"a repeated busy observation resets neutral progress");
+    check(recovery.update(0,0,0)&&!recovery.pending(),"two consecutive neutral frames reopen all routes");
+    check(recovery.update(1<<9,1,1),"a later new edge is allowed");
     std::cout<<"Selective forwarding checks: "<<checks<<'\n';
 }

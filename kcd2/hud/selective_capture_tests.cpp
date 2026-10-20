@@ -171,5 +171,43 @@ void contract_tests(){
     buffer.overflow=true;buffer.clear();check(!buffer.size()&&!buffer.overflow,"clear resets queue and overflow");
     check(!MineComeSelectiveCursorLook(),"no actual owned foreground lease cannot bypass cursor hooks");
 }
+void contention_tests(){
+    // Hidden, process-owned test HWND. No focus changes, OS input or game.
+    const auto window=CreateWindowExW(0,L"STATIC",L"MineCome capture contention test",0,0,0,1,1,nullptr,nullptr,GetModuleHandleW(nullptr),nullptr);
+    check(window!=nullptr,"contention fixture HWND created");
+    const auto owner=reinterpret_cast<std::uintptr_t>(window);
+    auto prepare=[&]{
+        a::revoke_pending=false;a::policy=ready();a::policy.cooperative(1,owner);
+        check(a::policy.request(owner,9,100,m::Mode::buttons,1000,true)==m::Result::ok,"contention fixture captured");
+        return a::policy.snapshot(owner,1000,true).generation;
+    };
+    auto generation=prepare();m::Snapshot snapshot;
+    AcquireSRWLockExclusive(&a::mutex);
+    const auto observed=a::query(owner,9,&snapshot);
+    ReleaseSRWLockExclusive(&a::mutex);
+    check(observed==m::Result::busy&&snapshot.flags==0&&snapshot.reason==static_cast<unsigned>(m::Reason::lock_contention),"busy query certifies no capture");
+    check(!a::revoke_pending.load(),"busy read cannot revoke original capture");
+    {a::Guard lock;}
+    snapshot=a::policy.snapshot(owner,1050,true);
+    check(snapshot.generation==generation&&(snapshot.flags&m::active)&&snapshot.lease_remaining_ms==50,"read contention preserves generation and original deadline");
+    snapshot=a::policy.snapshot(owner,1100,true);
+    check(!(snapshot.flags&m::active)&&snapshot.reason==static_cast<unsigned>(m::Reason::lease_expired),"busy query never renews expired ownership");
+    for(const bool release:{false,true}){
+        generation=prepare();snapshot={};
+        AcquireSRWLockExclusive(&a::mutex);
+        const auto result=release?a::release(owner,9,&snapshot):a::request(owner,9,100,m::Mode::buttons,&snapshot);
+        ReleaseSRWLockExclusive(&a::mutex);
+        check(result==m::Result::busy&&snapshot.flags==0&&a::revoke_pending.load(),"mutating contention remains fail closed");
+        {a::Guard lock;}
+        snapshot=a::policy.snapshot(owner,1001,true);
+        check(!(snapshot.flags&m::active)&&snapshot.generation==generation+1&&snapshot.reason==static_cast<unsigned>(m::Reason::lock_contention),"failed mutation invalidates existing generation");
+    }
+    prepare();a::revoke_pending=true;snapshot={};
+    AcquireSRWLockExclusive(&a::mutex);a::query(owner,9,&snapshot);ReleaseSRWLockExclusive(&a::mutex);
+    check(a::revoke_pending.load(),"busy read cannot clear pending mutation revocation");
+    {a::Guard lock;}
+    check(!(a::policy.snapshot(owner,1001,true).flags&m::active),"pending revocation survives read deferral");
+    a::policy={};a::revoke_pending=false;DestroyWindow(window);
 }
-int main(){try{policy_tests();buffered_tests();immediate_tests();contract_tests();std::cout<<"SELECTIVE_CAPTURE_TESTS checks="<<checks<<" PASS\n";return 0;}catch(const std::exception &e){std::cerr<<"SELECTIVE_CAPTURE_TESTS FAIL "<<checks<<" "<<e.what()<<'\n';return 1;}}
+}
+int main(){try{policy_tests();buffered_tests();immediate_tests();contract_tests();contention_tests();std::cout<<"SELECTIVE_CAPTURE_TESTS checks="<<checks<<" PASS\n";return 0;}catch(const std::exception &e){std::cerr<<"SELECTIVE_CAPTURE_TESTS FAIL "<<checks<<" "<<e.what()<<'\n';return 1;}}

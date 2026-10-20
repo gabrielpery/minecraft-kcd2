@@ -17,7 +17,7 @@ const stopFile=path.join(root,'stop.request');
 const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const log=(marker,value)=>fs.appendFileSync(gameLog,`\r\n${marker} ${JSON.stringify(value)}`);
 const commands=[],owned=new Map(),installations=new Map();
-let beginCount=0,bootstrapAckSent=false,refusePermitAck=false,session=0;
+let beginCount=0,bootstrapAckSent=false,refusePermitAck=false,session=0,lastAcknowledgedPermit='0';
 const started=performance.now();
 const clock=()=>Math.fround(100+(performance.now()-started)/1000);
 const sessionLog=(event,id,result)=>log('[MineComeBlockSession]',{schema:1,event,session:id,result,owned_count:owned.size,pending_count:0});
@@ -52,7 +52,7 @@ const server=http.createServer((request,response)=>{
   if(permit){
     assert.equal(beginCount,1);assert.equal(permit[1],run);assert.equal(permit[2],'1');
     const now=clock();installations.set(permit[3],now);
-    if(!refusePermitAck)log('[MineComeAimPermit]',{schema:1,run,arena:'1',permit:permit[3],result:'installed',engine_time:now,expires_engine_time:Math.fround(now+.5)});
+    if(!refusePermitAck){lastAcknowledgedPermit=permit[3];log('[MineComeAimPermit]',{schema:1,run,arena:'1',permit:permit[3],result:'installed',engine_time:now,expires_engine_time:Math.fround(now+.5)});}
   }
   // Deliberately arrive after the independent stone cleanup receipt.
   if(command===`#MineCome.EndAimedInput('${run}','1')`)setTimeout(()=>log('[MineComeAimSession]',{schema:1,run,arena:'1',event:'end',result:'ended',engine_time:clock(),expires_engine_time:null}),350);
@@ -133,15 +133,23 @@ try{
   result(1,2);await waitFor(()=>output.includes('AIM_INPUT_RESULT'),'independent Minecraft result');assert.equal(owned.size,1,'result is not an engine removal');
   event(2);await waitFor(()=>output.includes('result=removed'),'actual block event engine acknowledgement');
   const stale=await newestPermit(first.permit);await delay(550);capture(stale,2);
-  await waitFor(()=>output.includes('reason=unknown_or_consumed_permit')||output.includes('reason=stale_or_unready_capture'),'expired original permit rejected');assert.equal(requests.length,1);
+  await waitFor(()=>output.includes('reason=unknown_or_consumed_permit')||output.includes('reason=original_permit_expired'),'expired original permit rejected');assert.equal(requests.length,1);
   const fresh=await newestPermit(stale.permit);capture(fresh,3,1,{run:'f'.repeat(32)});
   await waitFor(()=>output.includes('reason=wrong_run_or_arena'),'wrong run rejected');
   capture(fresh,3,1);await waitFor(()=>requests.length===2,'fresh permit after stale capture');assert.equal(requests[1].id,3n);assert.equal(requests[1].action,1);assert.equal(requests[1].permit,BigInt(fresh.permit));
   result(3,1);event(1);await waitFor(()=>owned.size===1&&output.includes('AIM_INPUT_RESULT run='+run+' arena=1 request=3'),'second actual block transition');
-  refusePermitAck=true;const readyBefore=readyPermits().at(-1).permit;
-  await delay(650);assert.equal(readyPermits().at(-1).permit,readyBefore,'HTTP dispatch without Lua ACK must not announce readiness');
+  await waitFor(()=>[...output.matchAll(/^STONE_ENGINE_ACK /gm)].length===3,'second placement engine acknowledgement');
+  const detached=await newestPermit(fresh.permit);
+  capture(detached,4,2,{origin:{x:100.16,y:200,z:51.7}});
+  await waitFor(()=>output.includes('reason=bridge_host_pose_origin'),'specific current-host-origin refusal');
+  assert.equal(requests.length,2,'wider guest view allowance must preserve the tighter current-host pose guard');
+  refusePermitAck=true;const lastAllowedReady=lastAcknowledgedPermit;
+  // A valid ACK already appended to the simulated engine log can still be in
+  // flight when suppression begins. None of the subsequently unacknowledged
+  // permit IDs may become ready; do not confuse delayed observation with renewal.
+  await delay(650);assert.ok(readyPermits().every(p=>BigInt(p.permit)<=BigInt(lastAllowedReady)),'HTTP dispatch without Lua ACK must not announce readiness');
   const unacknowledged={permit:String(permitId-1)};
-  if(installations.has(unacknowledged.permit)){capture(unacknowledged,4);await delay(150);assert.equal(requests.length,2,'unacknowledged permit cannot dispatch');}
+  if(installations.has(unacknowledged.permit)){capture(unacknowledged,5);await delay(150);assert.equal(requests.length,2,'unacknowledged permit cannot dispatch');}
   fs.writeFileSync(stopFile,'Owned synthetic fixture stop');const code=await finished;assert.equal(code,0,output);
   assert.equal(owned.size,0);assert.ok(output.includes('cleanup_ack=true'));assert.ok(commands.includes(`#MineCome.EndAimedInput('${run}','1')`));
   assert.ok(output.includes('AIM_INPUT_END_ACK run='+run+' arena=1'),'late input gate ACK must be read after stone cleanup');

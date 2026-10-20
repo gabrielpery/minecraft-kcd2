@@ -2,7 +2,7 @@
 # Original bounded stream arm. Input mode still requires a physical F8 latch.
 # No game launch, movement or process injection.
 [CmdletBinding()]
-param([string]$ReadyManifest, [string]$BundleDirectory, [switch]$PreflightOnly, [switch]$InputMode, [switch]$OffscreenPresentation, [switch]$LiveMouse, [switch]$StoneLive, [switch]$WorldClicks, [switch]$SelectiveMouse, [ValidateSet(1,2,3)][int]$SelectiveRevision=1, [switch]$AimedStone)
+param([string]$ReadyManifest, [string]$BundleDirectory, [switch]$PreflightOnly, [switch]$InputMode, [switch]$OffscreenPresentation, [switch]$LiveMouse, [switch]$StoneLive, [switch]$WorldClicks, [switch]$SelectiveMouse, [ValidateSet(1,2,3,4)][int]$SelectiveRevision=1, [switch]$AimedStone)
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 if($OffscreenPresentation -and -not $InputMode){throw 'Offscreen presentation requires explicit input mode.'}
@@ -11,7 +11,7 @@ if($StoneLive -and (-not $LiveMouse -or -not $InputMode -or -not $OffscreenPrese
 if($WorldClicks -and (-not $LiveMouse -or -not $StoneLive)){throw 'World clicks require explicit LiveMouse and StoneLive modes.'}
 if($SelectiveMouse -and (-not $WorldClicks -or -not $LiveMouse)){throw 'Selective mouse requires explicit LiveMouse and WorldClicks modes.'}
 if($SelectiveRevision -ge 2 -and -not $SelectiveMouse){throw 'A selective revision arming requires explicit SelectiveMouse mode.'}
-if($AimedStone -and (-not $StoneLive -or -not $WorldClicks -or -not $SelectiveMouse -or $SelectiveRevision -ne 3)){throw 'Aimed stone arming requires the explicit live revision3 world-click profile.'}
+if($AimedStone -and (-not $StoneLive -or -not $WorldClicks -or -not $SelectiveMouse -or $SelectiveRevision -notin @(3,4))){throw 'Aimed stone arming requires the explicit live revision3/4 world-click profile.'}
 function Assert-HudAimedArmMode($Ready,[bool]$AimedExpected){
     if($Ready.PSObject.Properties.Name -contains 'ui_input_aimed_stone_bridge'){
         if($Ready.ui_input_aimed_stone_bridge -isnot [bool] -or $Ready.ui_input_aimed_stone_bridge -ne $AimedExpected){throw 'Aimed stone guest does not match the explicitly requested arming mode.'}
@@ -21,7 +21,7 @@ function Assert-HudAimedArmMode($Ready,[bool]$AimedExpected){
 $root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $runtimeRoot=Join-Path $root 'runtime'
 $evidenceRoot=Join-Path $runtimeRoot 'evidence'
-if(-not $BundleDirectory) {$BundleDirectory=Join-Path $runtimeRoot $(if($SelectiveMouse -and $SelectiveRevision -eq 3){'hud-compositor-selective-r3'}elseif($SelectiveMouse -and $SelectiveRevision -eq 2){'hud-compositor-selective-r2'}elseif($SelectiveMouse){'hud-compositor-selective'}elseif($WorldClicks){'hud-compositor-world'}elseif($LiveMouse){'hud-compositor-mouse'}elseif($InputMode){'hud-compositor-input-waitfix'}else{'hud-compositor-stream'})}
+if(-not $BundleDirectory) {$BundleDirectory=Join-Path $runtimeRoot $(if($SelectiveMouse -and $SelectiveRevision -eq 4){'hud-compositor-selective-r4'}elseif($SelectiveMouse -and $SelectiveRevision -eq 3){'hud-compositor-selective-r3'}elseif($SelectiveMouse -and $SelectiveRevision -eq 2){'hud-compositor-selective-r2'}elseif($SelectiveMouse){'hud-compositor-selective'}elseif($WorldClicks){'hud-compositor-world'}elseif($LiveMouse){'hud-compositor-mouse'}elseif($InputMode){'hud-compositor-input-waitfix'}else{'hud-compositor-stream'})}
 $expectedArm=if($SelectiveMouse){'minecome-hud/addons/MineComeHudSelective.ini'}elseif($WorldClicks){'minecome-hud/addons/MineComeHudWorld.ini'}elseif($LiveMouse){'minecome-hud/addons/MineComeHudMouse.ini'}elseif($InputMode){'minecome-hud/addons/MineComeHudInput.ini'}else{'minecome-hud/addons/MineComeHudStream.ini'}
 $exeHash='a32d077e6b54e5cd0c5a5f3194f473779706ff266a711e4745ccdb598843340a'
 $proxyHash='0cee63f9c9f13f3ac909c5b4903f4dbb4b719a7ab3b4f13b0deaf83c814b94f7'
