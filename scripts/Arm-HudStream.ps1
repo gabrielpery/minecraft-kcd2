@@ -17,6 +17,14 @@ function Assert-HudAimedArmMode($Ready,[bool]$AimedExpected){
         if($Ready.ui_input_aimed_stone_bridge -isnot [bool] -or $Ready.ui_input_aimed_stone_bridge -ne $AimedExpected){throw 'Aimed stone guest does not match the explicitly requested arming mode.'}
     }elseif($AimedExpected){throw 'Aimed stone guest readiness marker missing.'}
 }
+function Assert-HudNonFixtureArm($Ready){
+    foreach($field in @('ui_ground_movement_fixture','standalone')){
+        $property=$Ready.PSObject.Properties[$field]
+        if($null -ne $property -and ($property.Value -isnot [bool] -or $property.Value)){
+            throw 'Standalone/ground fixture producer cannot arm live KCD composition.'
+        }
+    }
+}
 . (Join-Path $PSScriptRoot 'KcdToolsProbeHelpers.ps1')
 $root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $runtimeRoot=Join-Path $root 'runtime'
@@ -89,6 +97,7 @@ if(-not $ReadyManifest) {throw 'A fresh actual Minecraft stream-ready.json is re
 $ReadyManifest=Assert-Unlinked $ReadyManifest
 if(-not $ReadyManifest.StartsWith($evidenceRoot+'\',[StringComparison]::OrdinalIgnoreCase) -or [IO.Path]::GetFileName($ReadyManifest) -cne 'stream-ready.json') {throw 'Readiness must come from workspace stream evidence.'}
 $ready=Read-Receipt $ReadyManifest
+Assert-HudNonFixtureArm $ready
 if($InputMode){
     if($ready.PSObject.Properties.Name -notcontains 'ui_input_protocol' -or $ready.ui_input_protocol -ne 1){throw 'Input mode requires explicit genuine guest readiness.'}
     if($ready.PSObject.Properties.Name -notcontains 'ui_input_fixture' -or $ready.ui_input_fixture -isnot [bool] -or $ready.ui_input_fixture -ne $false){throw 'Fixture producer cannot arm live KCD input.'}

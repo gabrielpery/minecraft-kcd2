@@ -202,6 +202,42 @@ camera basis and coordinate conversion. The initial server teleport applies the
 angles once; READY verifies them independently on client/server. Subsequent input
 uses the ordinary mouse path. No continuous host-pose or camera writes are added.
 
+## Standalone HUD ground-movement lab
+
+`Start-HudGroundMovementLab.ps1` checks vanilla walking, jumping and landing
+while capturing the real HUD in the **same new Minecraft world**. It then runs
+the existing hotbar/inventory sequence and closes automatically. Ground comes
+from a fresh synthetic 25-sample heightfield; movement uses scripted key states.
+KCD2 is not needed or called, and this mode cannot arm the live compositor.
+
+Complete [source setup](../docs/SETUP.md) first. The current controller also
+requires the previously built standalone receiver at exactly
+`build/hud-stream-20261012/kcd2/hud/stream/Release/minecome_hud_stream_receiver.exe`,
+plus `runtime/environment.json` and an installed JDK 21 or 24. That dated build
+directory and binary are local artifacts, not supplied by a fresh clone.
+Close any existing MineCome development client, then run from the repository root:
+
+```powershell
+& .\scripts\Start-HudGroundMovementLab.ps1 -PreflightOnly
+& .\scripts\Start-HudGroundMovementLab.ps1
+```
+
+The wrapper discovers an existing PowerShell 7 installation when called from
+Windows PowerShell 5.1. Pass `-JavaHome '<installed JDK directory>'` if needed.
+It writes `runtime/evidence/hud-stream-*/verification.json` and retains the
+isolated save. Success requires matching client/server movement and landing,
+HUD frames during movement, all four expected UI states at the native receiver,
+stale-frame hiding/resumption, normal exits and release of its controls and
+world-specific collision proxies.
+
+Actual run `bee8b2aae29f4b2787ba693c03994093` passed on 2026-10-20: client and
+server walked 1.291498509 blocks, jumped and landed without post-settle position
+corrections. Captures include six walking, two jumping and 22 landing frames;
+the receiver accepted 434 frames and verified all four UI states and closure.
+This establishes standalone terrain/movement/HUD integration with synthetic
+input. Shared KCD movement, physical input, placed-block collision and live
+composition during movement remain separate work.
+
 ## Standalone aimed-stone lab
 
 From the repository root, run:
@@ -267,7 +303,10 @@ minor2 HUD guest with its own readiness and proof contracts. The explicit
 That profile's add-on repair is built, reviewed and installed unarmed on the
 development machine. Following the relay timing repair, a live session confirms
 its first click through Minecraft client/server breaking and KCD removal. The
-user reported barely any delay; placement across different faces remains unverified.
+user reported barely any delay. After correcting the KCD stone's default rotation,
+live run `7ab72119af9e4401bed3cbbb6337aa42` also confirms placement on the original
+seed's top face, then breaking the upper block and seed, with matching Minecraft
+and KCD receipts and user confirmation. Complete face coverage remains unverified.
 `Start-HudAimedBridgeLab.ps1`
 automatically checks the production adapter in a fresh Minecraft world against
 a synthetic C++ host: bootstrap, aimed break, client/server confirmation and

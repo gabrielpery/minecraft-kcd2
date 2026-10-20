@@ -35,5 +35,13 @@ public final class GroundCollision {
         var own=serverSide?server:client;return own!=null && own.world()==world;
     }
     public static long queries(boolean serverSide){var own=serverSide?server:client;return own==null?0:own.queries().get();}
+    public static boolean available(boolean serverSide){return (serverSide?server:client)==null;}
+    /** A fixture may release only the installation it created, on that world's owning thread. */
+    public static boolean clear(BlockView world,String run,boolean serverSide) {
+        var own=serverSide?server:client;
+        if(own==null || own.world()!=world || !own.run().equals(run))return false;
+        if(serverSide)server=null;else client=null;
+        return true;
+    }
     public static void clear(){client=null;server=null;}
 }

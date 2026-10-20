@@ -39,6 +39,7 @@ public final class HudStreamProducer implements AutoCloseable {
     private final boolean inputDelayFixture,inputPointerFixture,liveMouse,stoneBridge,stoneFixture,stoneLive,aimedStone;
     private final boolean backgroundTrial;
     private final boolean offscreenPresentation,offscreenTrial;
+    private final boolean groundMovementFixture,standalone;
     private final AtomicReference<Frame> latest=new AtomicReference<>();
     private final AtomicReference<String> terminal=new AtomicReference<>(),failure=new AtomicReference<>();
     private final AtomicReference<JsonObject> finalEvidence=new AtomicReference<>();
@@ -62,6 +63,9 @@ public final class HudStreamProducer implements AutoCloseable {
             throw new IllegalArgumentException("Invalid owned stream output path/save");
         if(inputMode<0 || inputMode>2)throw new IllegalArgumentException("Invalid input mode");
         this.root=root.normalize();this.directory=directory.normalize();this.identity=identity;this.save=save;this.genuine=genuine;this.inputMode=inputMode;
+        groundMovementFixture=HudGroundMovementMode.require(System.getProperties());
+        standalone=Boolean.getBoolean("minecome.hudStreamStandalone");
+        if(groundMovementFixture && (!genuine || inputMode!=0))throw new IllegalArgumentException("Ground movement requires genuine standalone HUD pixels");
         liveMouse=Boolean.getBoolean("minecome.hudStreamLiveMouse");HudMousePolicy.enabled(inputMode!=0,inputMode==2,liveMouse);
         inputDelayFixture=inputMode==2 && Boolean.getBoolean("minecome.hudStreamInputDelayFixture");
         inputPointerFixture=inputMode==2 && Boolean.getBoolean("minecome.hudStreamInputPointerFixture");
@@ -135,6 +139,7 @@ public final class HudStreamProducer implements AutoCloseable {
         r.addProperty("target_start_filetime",Long.toUnsignedString(identity.targetStart()));r.addProperty("expires_utc_ms",identity.expiresUtcMs());
         r.addProperty("mapping",identity.mappingName());r.addProperty("mapping_name",identity.mappingName());r.addProperty("mutex_name",identity.mutexName());r.addProperty("mapping_bytes",MAPPING_BYTES);
         r.addProperty("save",save);r.addProperty("source_kind",genuine?"minecraft_vanilla_ui_stream_v1":"standalone_transport_fixture");
+        if(groundMovementFixture){r.addProperty("ui_ground_movement_fixture",true);r.addProperty("standalone",standalone);}
         if(inputMode!=0){r.addProperty("ui_input_protocol",1);r.addProperty("ui_input_live_mouse",liveMouse);r.addProperty("ui_input_fixture",inputMode==2);r.addProperty("ui_input_delay_fixture",inputDelayFixture);r.addProperty("ui_input_pointer_fixture",inputPointerFixture);r.addProperty("ui_input_stone_bridge",stoneBridge);r.addProperty("ui_input_stone_fixture",stoneFixture);r.addProperty("ui_input_stone_live",stoneLive);r.addProperty("ui_input_aimed_stone_bridge",aimedStone);r.addProperty("ui_input_background_trial",backgroundTrial);r.addProperty("ui_input_offscreen_presentation",offscreenPresentation);r.addProperty("ui_input_offscreen_trial",offscreenTrial);}return r;
     }
     private void run() {

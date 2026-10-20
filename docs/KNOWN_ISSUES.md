@@ -97,6 +97,9 @@ blocked; evaluate the actual result and never work around a fresh denial.
 
 Desktop input is not yet verified for autonomous gameplay. Computer Use accepted
 Escape key dispatches, but no pause menu appeared in the subsequent captures.
+The subsequent F8 attempt missed the guest's 60-second activation window by four
+seconds, so it provides no evidence about F8 delivery. Alt+F4 did close the owned
+KCD test window normally, with process absence confirmed.
 Its documented interface also lacks button-free relative mouse movement and a
 configurable key-hold duration. Window access therefore does not establish that
 FPS aiming or all game controls work. Future automated input must be recorded as
@@ -107,6 +110,10 @@ Never load newer retail1.5.6 saves into this older1.5.5 development game. Backup
 
 ## Gameplay scope
 
+- The same Minecraft world now passes scripted walking/jumping/landing on a
+  synthetic ground patch while capturing the HUD, followed by its inventory
+  sequence. This standalone fixture makes no KCD calls and does not establish
+  continuous shared movement or collision against placed Minecraft blocks.
 - General input forwarding, full collision export, NPC/combat synchronization,
   mining terrain and persistence are not implemented.
 - HUD selection and stone actions now share an actual Minecraft world in a

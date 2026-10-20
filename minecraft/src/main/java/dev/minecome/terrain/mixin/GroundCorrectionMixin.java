@@ -16,5 +16,6 @@ public abstract class GroundCorrectionMixin {
     private void minecome$groundCorrection(PlayerPositionLookS2CPacket packet,CallbackInfo ci) {
         GroundMovementLab.positionCorrection();
         dev.minecome.input.ExternalInputLab.positionCorrection();
+        dev.minecome.hud.HudStreamLab.groundPositionCorrection();
     }
 }

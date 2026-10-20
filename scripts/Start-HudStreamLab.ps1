@@ -3,10 +3,12 @@
 # Optional composition only arms an already-running, separately installed renderer.
 # Never launches, stops, injects input into, or moves KCD2.
 [CmdletBinding()]
-param([string]$JavaHome, [switch]$Standalone, [switch]$Composite, [string]$BundleDirectory, [switch]$PreflightOnly,
+param([string]$JavaHome, [switch]$Standalone, [switch]$Composite, [string]$BundleDirectory, [switch]$PreflightOnly, [switch]$GroundMovementFixture,
     [ValidateRange(320,1920)][int]$Width=1280,[ValidateRange(240,1080)][int]$Height=720,[ValidateRange(1,4)][int]$GuiScale=2)
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
+. (Join-Path $PSScriptRoot 'HudGroundMovement.ps1')
+Assert-HudGroundMovementMode ([bool]$GroundMovementFixture) ([bool]$Standalone) ([bool]$Composite)
 . (Join-Path $PSScriptRoot 'KcdToolsProbeHelpers.ps1')
 $root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $minecraft=Join-Path $root 'minecraft'
@@ -47,7 +49,7 @@ if(Test-Path -LiteralPath $directory) {throw 'Fresh evidence directory required.
 [IO.Directory]::CreateDirectory($directory) | Out-Null
 $expires=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()+180000
 $targetStart=$context.GameStartedUtc.ToFileTimeUtc().ToString([Globalization.CultureInfo]::InvariantCulture)
-$client=$null;$receiver=$null;$failure=$null;$passed=$false;$armEvidence=$null
+$client=$null;$receiver=$null;$failure=$null;$passed=$false;$armEvidence=$null;$groundProof=$null;$patchHash=$null
 function Read-BoundedJson([string]$Path) {
     $item=Get-Item -LiteralPath $Path
     if($item.Length -lt 2 -or $item.Length -gt 64KB -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {throw 'Invalid bounded receipt file.'}
@@ -62,6 +64,14 @@ function Start-Child([string]$Executable,[string[]]$Arguments) {
 }
 try {
     $arguments=@('-NoProfile','-File',(Join-Path $PSScriptRoot 'Run-HudStreamClient.ps1'),'-EvidenceDirectory',$directory,'-Run',$run,'-TargetPid',[string]$context.GamePid,'-TargetStart',$targetStart,'-ExpiresUtcMs',[string]$expires,'-JavaHome',$JavaHome,'-Width',[string]$Width,'-Height',[string]$Height,'-GuiScale',[string]$GuiScale)
+    if($Standalone){$arguments+='-Standalone'}
+    if($GroundMovementFixture){
+        $patchPath=Join-Path $directory 'standalone-ground-fixture.json'
+        New-HudGroundMovementPatch $run | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $patchPath -Encoding utf8NoBOM
+        $patchHash=(Get-FileHash -LiteralPath $patchPath).Hash.ToLowerInvariant()
+        (Get-Item -LiteralPath $patchPath).IsReadOnly=$true
+        $arguments+=@('-GroundMovementFixture','-GroundPatchFile',$patchPath)
+    }
     $client=Start-Child (Join-Path $PSHOME 'pwsh.exe') $arguments
     Write-Output "HUD_STREAM_START run=$run evidence=$directory composite=$([bool]$Composite)"
     $producerDirectory=Join-Path $directory 'capture'
@@ -73,6 +83,7 @@ try {
         Start-Sleep -Milliseconds 100
     }
     $ready=Read-BoundedJson $readyPath
+    Assert-HudGroundMovementMarkers $ready ([bool]$GroundMovementFixture)
     if($ready.schema -ne 1 -or $ready.run -cne $run -or $ready.source_kind -cne 'minecraft_vanilla_ui_stream_v1' -or $ready.mapping_bytes -ne 8294656 -or $ready.mapping_name -cne ('Local\MineComeHud_'+$run) -or $ready.mutex_name -cne ('Local\MineComeHudLock_'+$run) -or [string]$ready.target_pid -cne [string]$context.GamePid -or [string]$ready.target_start_filetime -cne $targetStart -or [long]$ready.expires_utc_ms -ne $expires) {throw 'Producer readiness does not match this fresh session.'}
     $producer=Get-Process -Id $ready.producer_pid -ErrorAction Stop
     try {
@@ -90,6 +101,8 @@ try {
     if($client.ExitCode -ne 0 -or $receiver.ExitCode -ne 0) {throw "Client/receiver exit failure: $($client.ExitCode)/$($receiver.ExitCode)"}
     $guest=Read-BoundedJson (Join-Path $producerDirectory 'stream-result.json')
     $native=Read-BoundedJson $receiverOutput
+    Assert-HudGroundMovementMarkers $guest ([bool]$GroundMovementFixture)
+    if($GroundMovementFixture){$groundProof=Assert-HudGroundMovementProof $guest $run $patchHash}
     if($guest.run -cne $run -or $guest.result -cne 'passed' -or $native.run -cne $run -or $native.result -cne 'passed' -or $native.accepted_frames -lt 30 -or $native.closed_seen -ne $true -or $native.stale_hidden_verified -ne $true -or $native.fresh_resumption_verified -ne $true) {throw 'Continuous stream or freshness/closure evidence did not pass.'}
     foreach($expectedState in @(@(0,0),@(1,0),@(1,1),@(2,0))) {
         if(@($native.states_seen | Where-Object {$_.selected -eq $expectedState[0] -and $_.screen -eq $expectedState[1]}).Count -ne 1) {throw 'Native receiver did not observe every actual vanilla UI state.'}
@@ -99,6 +112,6 @@ try {
     Write-Output "HUD_STREAM_VERIFIED run=$run accepted_frames=$($native.accepted_frames) stale_hidden=true closed=true host_visual_verified=false"
 } catch {$failure=$_.Exception.Message;throw}
 finally {
-    [ordered]@{schema=1;kind='minecome_hud_stream_controller_v1';run=$run;result=$(if($passed){'passed'}else{'failed'});failure=$failure;evidence=$directory;target_kind=$(if($Standalone){'standalone_controller'}else{'kcd_tools'});target_pid=$context.GamePid;target_start_filetime=$targetStart;target_sha256=$context.GameHash;receiver_sha256=$receiverHash;compositor_armed=[bool]$armEvidence;composite_requested=[bool]$Composite;kcd_compositing_verified=$false;interactive_inventory_verified=$false;kcd_launched=$false;kcd_stopped=$false;created_utc_ms=$expires-180000;expires_utc_ms=$expires} | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $directory 'verification.json') -Encoding utf8NoBOM
+    [ordered]@{schema=1;kind='minecome_hud_stream_controller_v1';run=$run;result=$(if($passed){'passed'}else{'failed'});failure=$failure;evidence=$directory;ground_movement_fixture=[bool]$GroundMovementFixture;ground_movement=$groundProof;ground_patch_sha256=$patchHash;target_kind=$(if($Standalone){'standalone_controller'}else{'kcd_tools'});target_pid=$context.GamePid;target_start_filetime=$targetStart;target_sha256=$context.GameHash;receiver_sha256=$receiverHash;compositor_armed=[bool]$armEvidence;composite_requested=[bool]$Composite;kcd_compositing_verified=$false;interactive_inventory_verified=$false;kcd_launched=$false;kcd_stopped=$false;created_utc_ms=$expires-180000;expires_utc_ms=$expires} | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $directory 'verification.json') -Encoding utf8NoBOM
     if($receiver) {$receiver.Dispose()};if($client) {$client.Dispose()}
 }

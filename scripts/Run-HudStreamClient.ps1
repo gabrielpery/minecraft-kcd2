@@ -23,9 +23,16 @@ param(
     [switch]$InputDelayFixture,
     [switch]$InputBackgroundTrial,
     [switch]$OffscreenPresentation,
-    [switch]$InputOffscreenTrial
+    [switch]$InputOffscreenTrial,
+    [switch]$Standalone,
+    [switch]$GroundMovementFixture,
+    [string]$GroundPatchFile
 )
 $ErrorActionPreference='Stop'
+function Assert-HudGroundChildMode([bool]$Fixture,[bool]$Standalone,[string]$Patch,[bool]$OtherMode) {
+    if($Fixture -and (-not $Standalone -or -not $Patch -or $OtherMode)){throw 'Ground movement fixture requires standalone HUD stream and its synthetic patch only.'}
+    if(-not $Fixture -and $Patch){throw 'Ground patch requires the explicit ground movement fixture.'}
+}
 $root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $minecraft=Join-Path $root 'minecraft'
 $EvidenceDirectory=[IO.Path]::GetFullPath($EvidenceDirectory)
@@ -47,7 +54,10 @@ try {
     if($InputBackgroundTrial -and (-not $InputFixture -or $InputDelayFixture)){throw 'Background timing requires a standalone fixture without synthetic delays.'}
     if($OffscreenPresentation -and (-not $InputMode -or $InputBackgroundTrial -or $InputDelayFixture)){throw 'Offscreen presentation requires UI input mode without other timing trials.'}
     if($InputOffscreenTrial -and (-not $InputFixture -or -not $OffscreenPresentation)){throw 'Offscreen timing requires an explicit offscreen standalone fixture.'}
+    Assert-HudGroundChildMode ([bool]$GroundMovementFixture) ([bool]$Standalone) $GroundPatchFile ([bool]($InputMode -or $LiveMouse -or $InputFixture -or $InputPointerFixture -or $StoneFixture -or $StoneLive -or $AimedStone -or $InputDelayFixture -or $InputBackgroundTrial -or $OffscreenPresentation -or $InputOffscreenTrial))
     $arguments=@('-p',$minecraft,'--no-daemon','runClient','-PminecomeHudStreamLab',"-PminecomeHudStreamRun=$Run","-PminecomeHudStreamTargetPid=$TargetPid","-PminecomeHudStreamTargetStart=$TargetStart","-PminecomeHudStreamExpiresUtcMs=$ExpiresUtcMs","-PminecomeHudStreamDirectory=$producerDirectory","-PminecomeHudStreamWidth=$Width","-PminecomeHudStreamHeight=$Height","-PminecomeHudStreamGuiScale=$GuiScale")
+    if($Standalone){$arguments+='-PminecomeHudStreamStandalone'}
+    if($GroundMovementFixture){$arguments+=@('-PminecomeHudGroundMovementFixture',"-PminecomeGroundPatchFile=$GroundPatchFile")}
     if($InputMode){$arguments+='-PminecomeHudStreamInput'}
     if($LiveMouse){$arguments+='-PminecomeHudStreamLiveMouse'}
     if($InputFixture){$arguments+='-PminecomeHudStreamInputFixture'}

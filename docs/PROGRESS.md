@@ -1,5 +1,47 @@
 # MineCome progress — 2026-10-20
 
+**Walking, jumping and HUD capture verified in the same actual Minecraft world.**
+The new opt-in `Start-HudGroundMovementLab.ps1` passes run
+`bee8b2aae29f4b2787ba693c03994093`. It creates one fresh Creative save, imports
+a synthetic 25-point flat ground patch into the existing collision adapter, and
+uses ordinary Minecraft movement with scripted key states. Client and integrated
+server both record 1.291498509 blocks of walking, an airborne phase and landing.
+There are zero post-settle position corrections. Completed HUD readbacks include
+six frames from the walking phase, two from jumping and 22 from landing.
+
+After movement, the same world completes the normal hotbar/inventory sequence.
+The native receiver accepts 434 nontransparent frames across all four expected
+UI states and verifies stale-frame hiding, fresh resumption and closure. Client
+and server release their own collision installation; synthetic controls are
+released and Java/native processes exit normally. The saved inventory capture
+was visually inspected. Movement-phase counts describe completed Minecraft
+readbacks, not separate native verification of every phase.
+
+This is standalone integration with synthetic ground and input. It does not
+connect to KCD, prove collision against placed blocks, or enable shared walking.
+The mode requires explicit standalone configuration, rejects competing labs and
+cannot arm the live compositor. Existing HUD modes remain the default. Independent
+review caught and resolved key cleanup after player replacement and missing
+zero-valued phase counters. Compilation and 2,810 focused Java checks pass,
+alongside 62 new PowerShell checks, 68 existing aimed-controller checks and the
+new launcher's preflight, including its Windows PowerShell 5.1 handoff to
+PowerShell 7.
+
+Evidence:
+`runtime/evidence/hud-stream-20261020-145651-bee8b2aae29f4b2787ba693c03994093/verification.json`.
+The next integration work is connecting the HUD world's movement to the existing
+KCD input and player-following paths, with ownership and cleanup kept explicit.
+
+**Autonomous activation attempt inconclusive; normal desktop close verified.**
+HUD run `1511d9ae36cd413595a072b9e73d8641` rendered in KCD, but Computer Use
+sent F8 at 14:45:09.075 UTC, after Minecraft's 60-second prearm window had ended
+at 14:45:05.384 UTC. No input session or stone action began. The original failed
+controller receipt is retained; the attempt establishes neither working nor
+broken F8 delivery. Java exited normally, and the temporary host frame cap was
+restored. Computer Use subsequently closed the owned KCD test window with
+Alt+F4, and process absence was confirmed. Its expired arm was archived.
+Automated game input is still separate from the earlier successful human checks.
+
 **Agent launch and visual access verified; desktop gameplay input remains
 unverified.** On the user's request to enable autonomous demos, the normal
 `Start-Kcd2ToolsTest.ps1` launch succeeded for the exact supported executable
