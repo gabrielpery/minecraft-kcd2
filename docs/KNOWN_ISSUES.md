@@ -16,16 +16,14 @@ coordinates. The optional KCD relay, Lua intent capture, permit selector and aim
 HUD guest are connected through an explicit bounded controller. The actual HUD
 adapter also passes an automatic Minecraft run with a synthetic host. A single
 live KCD crosshair click now has client/server confirmation and engine removal,
-with barely any delay reported after the log-latency repair. A later run records
-confirmed WEST- and UP-face placements and both added blocks breaking, but the
-user did not identify the top placement and the session ended before the final
-seed break. Reliable, visually confirmed placement across faces remains pending.
-The next retry exposed the cause: KCD's default spawned-entity rotation moves the
-visible cube one unit in negative X from the logical targeting box. Actual world
-bounds confirmed the offset; local bounds alone had missed it. Both spawn paths
-now explicitly set zero world rotation and verify world bounds. The repair passes
-64 Lua tests and is installed; automatic live bounds and visual targeting checks
-are pending.
+with barely any delay reported after the log-latency repair. Face tests exposed
+KCD's default spawned-entity rotation moving the visible cube one unit in
+negative X from the logical targeting box. Both spawn paths now explicitly set
+zero world rotation and verify actual world bounds. The repair passes 64 Lua
+tests and automatic live bounds/adjacency checks. A fresh live check confirms
+one click places on the original seed's top and the next two clicks break both
+blocks, with no refusals and complete cleanup; the user reports “worked perfectly.”
+Complete coverage of every face and sustained-session stability remain pending.
 Continuous shared movement, general block rendering,
 persistence, survival integration and multiplayer remain unfinished.
 

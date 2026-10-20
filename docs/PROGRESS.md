@@ -1,5 +1,29 @@
 # MineCome progress — 2026-10-20
 
+**Top-face targeting verified after correcting the entity rotation.** Live run
+`7ab72119af9e4401bed3cbbb6337aa42` passes the intended three-action sequence:
+one right-click hits the original seed's UP face and places directly above it;
+the next two clicks break the upper block and seed. The user reports “worked
+perfectly.” All three physical intents have matching original rays, canonical
+requests/results, Minecraft client/server confirmations and KCD acknowledgements
+(564, 629 and 674). There are no refusals, stale results or queue drops.
+Minecraft finishes with zero owned or pending stones; Java/native exit normally,
+and engine cleanup, independent input cleanup and frame-cap restoration pass.
+
+Before that check, automatic live diagnostic
+`e3eb3bbcfa9a45a68363f46355b0d1f5` verified zero rotation, actual world bounds and
+exact shared faces for seed, top and west neighbours, then removed all three
+temporary objects. This used the real KCD sink; it did not claim Minecraft input.
+The physical check then verified placement on the original top, rather than the
+earlier UP placement on an added side block. The HUD closed on foreground loss
+11.062 seconds after activation, so this does not establish 30-second stability
+or complete coverage of every face.
+
+Evidence:
+`runtime/evidence/stone-alignment-fix-20261020-152807-e3eb3bbcfa9a45a68363f46355b0d1f5/verification.json`
+and
+`runtime/evidence/hud-input-20261020-142820-7ab72119af9e4401bed3cbbb6337aa42/verification.json`.
+
 **Visible targeting offset diagnosed in the live engine.** The top-only retry
 `f074546edb4441f69c8951d727ba0b5c` reproduced the user's mismatch: aiming at the
 visible top could place against the face toward the player. A subsequent bounded
@@ -31,8 +55,8 @@ Independent review passed. With KCD closed, the repaired Lua package was
 installed and its source hash verified as
 `3422859e62afafda5f5afb83d20ac6cf14c325b5031608ee6478b1781abd23a9`.
 The previous package is backed up at `runtime/packages/previous-20261020-152428`.
-The compiled stone asset is unchanged. Automatic live world-bounds verification
-and a fresh visual top-face check remain pending.
+The compiled stone asset is unchanged. The subsequent automatic world-bounds
+measurement and visual top-face check above both pass.
 
 The retry itself records two network placements, three breaks and final
 Minecraft air with no owned/pending work. No permit-expiry rejection occurred;

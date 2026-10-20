@@ -76,6 +76,36 @@ pre-dispatch reasons such as `original_permit_expired`.
 
 ## Latest verification and remaining live check
 
+### Corrected top placement verified
+
+Automatic production-sink run `e3eb3bbcfa9a45a68363f46355b0d1f5` verifies actual
+zero world angles and matching world bounds for seed, UP and WEST neighbours.
+The upper block's minimum Z equals the seed's maximum Z; the west neighbour's
+maximum X equals the seed's minimum X. All temporary objects then clean up.
+This confirms live engine transforms, separately from Minecraft interactions.
+
+The next physical run `7ab72119af9e4401bed3cbbb6337aa42` passes:
+
+| Request/permit | Minecraft selection and action | KCD ACK sequence |
+|---|---|---|
+| 1/51 | UP of original seed `(-8,-60,0)`; place at `(-8,-59,0)` | 564 |
+| 2/70 | Break upper block `(-8,-59,0)`, hit WEST | 629 |
+| 3/83 | Break original seed `(-8,-60,0)`, hit UP | 674 |
+
+The first hit is near the centre of the original top:
+`(-7.500625767,-59,0.500734634)`. All three original captured rays match the
+immutable guest plans; only direction normalization at float32 precision occurs.
+Canonical results, client/server proof and mapped KCD acknowledgements agree.
+There are exactly three physical intents and three confirmed network actions,
+with no native or guest refusals. The guest has zero owned/pending stones;
+both processes exit normally, and engine/input cleanup and cap restoration pass.
+The user reports “worked perfectly.”
+
+The renderer closes on foreground loss at 11.062 seconds and records 187 uploaded
+frames. This verifies the intended sequence and visible targeting; it does not
+establish 30-second stability or every other face. Renderer snapshot SHA256:
+`f380af4210c3812aaee6e9cf08dd9e3626507b42331e7dab53f820f4cec9162e`.
+
 ### Rendered cube offset — 2026-10-20
 
 The top-only retry `f074546edb4441f69c8951d727ba0b5c` again produced a WEST
@@ -125,7 +155,7 @@ tolerance change is needed. Both spawn paths share the repair, and
 The world and local endpoints must match within 0.01 m; malformed/unknown
 readbacks reject placement and retain cleanup ownership. All 64 Lua cases pass.
 The reviewed source is installed with the old package backed up and the compiled
-CGF unchanged; live bounds and visual targeting verification remain pending.
+CGF unchanged. The later live bounds and top-face checks above pass.
 
 The f074 guest completed with five confirmed network actions and zero owned or
 pending stones. Three extra clicks were refused while the preceding removal
@@ -133,8 +163,7 @@ awaited engine acknowledgement. A repaired audit accepts this narrow busy case
 only with a unique same-session pending/removed/ACK interval, later validated
 against the full guest/event/cell/ownership chain. Its 165 checks and five
 read-only replays preserve original evidence; the original controller receipt
-remains failed and the user's visual failure remains unresolved until the
-orientation repair is checked.
+remains failed. The separate corrected run above verifies the orientation repair.
 
 ### Earlier face and latency checks
 
