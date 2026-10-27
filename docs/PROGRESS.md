@@ -1,5 +1,13 @@
 # MineCome progress — 2026-10-27
 
+**End-of-session handoff:** implementation `c90da08973da9db54ad2c7a1c94d2def1b34cec0`
+is pushed. The user stopped to conserve usage and will resume next week. Both
+KCD2 and Minecraft are closed. The old `2dd6...` movement arm was archived;
+replacement KCD process 48256 was closed before any new HUD/controller comparison.
+No physical test of the warmup/finish candidate occurred. See
+[NEXT_SESSION.md](NEXT_SESSION.md#start-here-next-week) for the exact restart and
+validation sequence; no reinstall or repeat component test campaign is needed.
+
 **Latest combined movement looks substantially smoother, but input delay and the
 normal-finish handshake remain unfinished.** The user reports that it worked and
 was "a lot smoother", with a delay between keypress and movement. HUD run
@@ -406,14 +414,14 @@ Process 45644 closed normally and its `725d...` arm was archived. Process 34088
 then consumed its activation in `d838...`/probe `d257...`; Minecraft exited. The
 user has now closed 34088 normally and its exact `d257...` arm is archived.
 KCD process 33860 then consumed its HUD activation in `fa370b...`/probe `2dd6...`.
-Minecraft has closed. The next human HUD trial needs normal KCD closure, archival
-of that exact arm and a fresh supported process, after the finish repair passes
-its autonomous checks. The phase correction passed the new combined source path;
-normal completion and input responsiveness remain unfinished. Source-time buffering, the phase correction and
-five updated docs are pushed as `11b1b76fc8e5ccf053d7f96642ce3bffa88cd2c6` on the
-public default branch; the remote and clean worktree were verified before this
-process update. Computer Use remains stopped by Escape in this turn; recheck
-current processes and receipts.
+It has since closed and that exact arm is archived. Replacement process 48256 was
+also closed by the user before a new comparison; both games are closed. The phase
+correction passed the combined source path. Native normal completion now passes
+the separate replay described above; its combined physical validation and the
+warmup's live responsiveness benefit remain pending. Source-time buffering and
+the phase correction were pushed in `11b1b76`; normal completion and warmup were
+pushed in `c90da08`. See the current handoff rather than treating these older
+process IDs as live. Recheck Computer Use state in the resumed turn.
 
 ## 20 October 2026 checkpoint
 

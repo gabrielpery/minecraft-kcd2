@@ -1,5 +1,84 @@
 # Resume checkpoint — 27 October 2026
 
+## Start here next week
+
+The user stopped work to conserve the remaining usage allowance. **Do not launch
+another demo until they resume.** Both `KingdomCome` and `java` were checked and
+are closed. The replacement KCD process 48256 was closed by the user before a new
+walking controller/HUD comparison started; this is not a new test failure.
+
+- Latest implementation is committed and pushed as
+  `c90da08973da9db54ad2c7a1c94d2def1b34cec0` on public default branch
+  `codex/initial-import`, remote `https://github.com/gabrielpery/minecraft-kcd2`.
+  This handoff is a subsequent documentation update; inspect `git log -3` and
+  `git status --short` rather than resetting to the implementation commit.
+- Workspace: `C:\Users\xephi\Documents\ChatGPT\New project\MineCome`.
+- The old `2dd6...` movement arm was already archived at 17:40:47 UTC on
+  27 October. Its `capture/arm-archive.json` and
+  `capture/MineComeHudMovement.expired.ini` are present. The installed
+  `MineComeHudMovement.ini` is absent. **Do not ask the user to close or archive
+  that old session again.** Recheck process/file state before the next launch.
+- No new native installation, renderer rebuild, PowerShell setup or administrator
+  session is needed. The installed walking bundle is unchanged.
+- The only immediate live check outstanding is the combined physical comparison
+  of parser warmup plus native normal completion. No physical test of `c90da08`
+  has happened yet. The last user feedback remains: "a lot smoother", with delay.
+
+### What is already proved
+
+| Area | Evidence and practical limit |
+|---|---|
+| Walking with the real HUD | User confirmed repeated movement in all directions and later much smoother motion. Latest physical path passes 52/52 source observations. Its original overall result remains failed because the watchdog, rather than the normal finish path, performed the exact return. |
+| Normal finish repair | `FinishBufferedMovementFollower` seals the timeline and restores after its final observed point on the game thread. A separate real-KCD replay passes 51/51, explicit end, exact restoration, timers and FPS cleanup. This did not use Minecraft/HUD or human input. |
+| Parser delay reduction | Before arming, disposable diagnostic state warms the parser. Five fresh-process profiles improve first recorded-packet processing from 69.13 ms to 8.52 ms median. Its effect on live responsiveness is still unverified. |
+| Regression checks | Lua 79, buffered proof 79, warmup 86 and physical receiver 119 checks passed. Do not repeat these unchanged suites or the confirmed stone/HUD tests merely to resume. |
+
+### Exact next action after the user resumes
+
+1. Read `AGENTS.md`, this section, and the latest Git status. Preserve functioning
+   code and local evidence. Keep the 200 ms playback buffer: an earlier trace
+   requires about 189 ms of right-point availability, so 150 ms would underrun.
+2. Confirm the user is ready before starting a timed comparison. Launch the fresh
+   official tools world with the existing helper; it automatically selects PS7:
+
+   ```powershell
+   & 'C:/Users/xephi/Documents/ChatGPT/New project/MineCome/scripts/Start-Kcd2ToolsTest.ps1'
+   ```
+
+   Allow loading to finish (previously about 90–150 seconds). Use the existing
+   `Test-KcdMovementProbe.ps1 -Action Capabilities` if a read-only readiness check
+   is needed. Never load retail 1.5.6 saves into this 1.5.5 development world.
+3. Run the prepared controller using the already installed PS7 executable:
+
+   ```powershell
+   & 'C:/Users/xephi/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/powershell/pwsh.exe' -NoProfile -File 'C:/Users/xephi/Documents/ChatGPT/New project/MineCome/scripts/Test-HudWalking.ps1'
+   ```
+
+   Wait for `HUD_WALKING_READY`, then promptly ask the user to switch to KCD,
+   release controls and press F8 within the **actual reported** activation window.
+   After half a second, briefly tap W, S, A and D with releases/gaps, all within
+   the first five seconds. Compare the keypress delay and watch the hotbar.
+   The return at about six seconds and Minecraft closing after the 30-second HUD
+   session are intentional. Do not burn the countdown on unrelated work.
+4. Inspect the new evidence directory: `verification.json`, `forwarded.json`,
+   `dispatch-timings.json`, `kcd-receipts.json`, `movement.ndjson` and
+   `view-timings.json`. Require every source crossing, `explicit_end` restoration,
+   fresh camera delivery and normal Minecraft/FPS/resource cleanup. Separate
+   measured validation/preparation/HTTP times from native readback and subjective
+   responsiveness; HTTP success does not prove native application.
+5. If it passes, record the user's result and pursue longer walking and integration
+   with the already working aimed-block controls. If it fails, diagnose this run
+   before another restart. Do not lower buffers, widen guards, or rewrite failed
+   evidence merely to get a passing result.
+
+Keep commands formatted in chat before any question widget. Routine development,
+launches, tests and Git pushes are already authorized. Earlier Escape presses
+stopped Computer Use; inspect the tool's actual state in the resumed turn rather
+than assuming it is permanently unavailable. Screen access itself does not cause
+the game failures. No scheduled task or reminder was created.
+
+## Detailed checkpoint and historical evidence
+
 The current objective is physical walking and Minecraft's real HUD working
 together inside KCD2. The latest buffered run is user-confirmed "a lot smoother",
 with noticeable keypress-to-movement delay. All 52 source points pass delayed
@@ -22,7 +101,9 @@ actual dispatch-stage timing is now retained for that check. Do not repeat confi
   and `2e75faf` (frame-cadence interpolation and pacing evidence) are pushed to
   the public default branch. Source-time buffering, the phase correction and
   candidate documentation are pushed as `11b1b76fc8e5ccf053d7f96642ce3bffa88cd2c6`;
-  the remote was verified and the worktree was clean at that checkpoint.
+  the remote was verified and the worktree was clean at that checkpoint. Native
+  normal completion, parser warmup, dispatch timing and their tests/docs are now
+  pushed in `c90da08973da9db54ad2c7a1c94d2def1b34cec0`.
 - `HudCameraDelivery.ps1` owns request/receipt/publication in a separate bounded
   runspace. Movement commands cannot stall it. Original request UTC is retained.
   A 110 ms monotonic cadence permits at most 1,019 requests in 112 seconds,
@@ -125,11 +206,12 @@ The live benefit still needs evidence.
 Do not start native following early. Faster physical-only source sampling
 requires a separate bounded comparison before reducing playback delay.
 
-Process 33860 has consumed its HUD activation; Minecraft is closed. Its exact arm
-is `runtime/evidence/hud-walking-20261027-165506-2dd6df695d15485cb84082793245d970/capture/stream-arming.json`.
-A future human retry requires normal closure, exact-arm archival and a fresh
-supported process after autonomous repair checks. Computer Use remains stopped
-by Escape this turn; recheck current process/receipt state before acting.
+Process 33860 closed and its consumed arm was archived. The ownership receipt is
+`runtime/evidence/hud-walking-20261027-165506-2dd6df695d15485cb84082793245d970/capture/stream-arming.json`;
+the same directory now contains `arm-archive.json` and the expired INI. Replacement
+process 48256 was launched, then closed by the user before a new comparison.
+Both games are now closed and no movement arm is installed. Resume from the
+instructions at the top; recheck actual process/receipt/tool state first.
 
 ## Previous combined buffered phase failure
 
@@ -177,7 +259,7 @@ Fresh process 33860 subsequently ran the combined `fa370b...` check above and
 consumed its activation. The phase correction is now verified through that
 combined source path; see the newer completion/latency checkpoint above.
 
-## Latest autonomous replay
+## Earlier buffered replay before the normal-finish repair
 
 Run `477989b1edd34c10b5d90c437d8006fd` passes all 51 source points and observed
 crossings, actor restoration and FPS restoration:
@@ -362,10 +444,9 @@ successful combined result remains unverified.
    first-edge work to 8.52 ms median in fresh-process profiles. Measure the actual
    first handoff with the new metadata. Do not start native following early,
    publish synthetic sources or refresh timestamps.
-3. Process 33860 has consumed its `2dd6...` arm. When another human check is needed,
-   close normally, archive the exact latest arm, and launch a fresh supported
-   world. No new native bundle is needed. Respect stopped Computer Use and never
-   load newer retail saves.
+3. Both games are closed; the `2dd6...` arm is already archived. On user resumption,
+   recheck state and launch a fresh supported world. No new native bundle is
+   needed. Respect the current Computer Use state and never load newer retail saves.
 4. Preserve all 52-source path proof and the prior autonomous replay. That earlier
    trace needs 188.903 ms of right-point availability; a blanket 150 ms buffer
    would introduce a known underrun. Source cadence changes need bounded evidence
