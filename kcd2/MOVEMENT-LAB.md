@@ -109,12 +109,17 @@ terrain capture, ordinary Minecraft movement/gravity/jumping on client and serve
 and fresh KCD camera direction for walking orientation. Only fresh server poses
 drive the KCD follower. Source compilation and automated contract/lifecycle checks
 pass. Camera delivery now uses a separate bounded worker and retained log handle.
-The latest combined run passes 49 forwarded server poses, 49 delayed KCD
+The earlier fixed-duration combined run passes 49 forwarded server poses, 49 delayed KCD
 readbacks and verified restoration. Repeated movement with the HUD works, but
 the user still reports choppiness, with at most a small improvement. Boundary
 release/repress and downhill travel work within the bounded trial; smooth or
-continuous walking is not established. The frame-cadence follower has both
-autonomous and combined technical proof, not a resolved visual smoothness result.
+continuous walking is not established. A newer source-time buffer has a passing
+autonomous KCD replay. Its first combined run stopped on a downhill phase mismatch
+before any native position writes. The Java phase correction compiles and the
+captured-terrain and revised synthetic Minecraft fixtures pass, but their source
+samples miss the brief unsupported transition. The exact failed record passes
+focused Java/receiver checks and read-only memory replay. The combined retry
+remains pending. The buffer intentionally adds 200 ms of playback latency.
 See [the current evidence](../docs/PROGRESS.md) for the separate results.
 
 This requires the separately prepared and installed `hud-compositor-walking`
@@ -160,24 +165,48 @@ and -1.45 m to +1.45 m vertical clearance, with a 1.8 m hard radius and sampled
 ground coverage. This physical-only descent change does not alter the legacy
 scripted follower's -0.2 m to +1.5 m range.
 
-The physical follower requests a 1 ms timer and interpolates each immutable
-selected server target over 100 ms of engine time. Ordinary game frames advance
-it; later pending targets coalesce without renewing the selected target's own
-400 ms acceptance lifetime. Applied acknowledgement requires a later normal-frame
-endpoint observation. Receipts retain intermediate writes and observed positions,
-including their engine timestamps. Stationary targets avoid position setters.
-Physical writes are capped at 512, including restoration; legacy following keeps
-its 200-write cap and previous cadence. The controller separately checks source
-capture age; the Lua acceptance lifetime is not cross-process input latency.
+The physical follower uses a fixed 200 ms source-time buffer. It derives each
+server observation's original time from `monotonic_ns - server_age_ns`, anchors
+the first grounded settling sample at zero, and preserves all subsequent timing
+through the final source sample. Precise normalized time is retained separately
+from the exact float32 wire value. A 1 ms timer advances playback on ordinary
+native frames. The actor is interpolated only between known adjacent source
+points; there is no extrapolation. Holding an already reached point avoids
+unnecessary setters. The first point must match the native starting position.
 
-The latest combined run records six or seven setters per moving segment, with
-median 16.07 ms and maximum 16.90 ms within-segment intervals. All 31 stationary
-segments have zero setters and observed position errors are zero. However,
-four moving-segment transitions pause 47-64 ms, while source captures remain
-median 101 ms apart and reach 168 ms. Fixed 100 ms interpolation compresses the
-longer source intervals and creates abrupt speed changes. Camera delivery stays
-fresh and sampled camera offsets are stable, but the user still sees choppiness.
-Do not infer smooth gameplay from these readbacks.
+The buffer intentionally adds 200 ms of playback latency. At most eight active
+source points, 512 physical writes including restoration, six seconds of source
+time, the original 400 ms destination acceptance lease and the eight-second
+follower deadline remain enforced. A historical left bracket is path geometry;
+a new point cannot renew the right bracket's original acceptance lease. Legacy
+following retains its existing cadence and 200-write cap.
+
+An applied receipt identifies the highest crossed source point separately from
+the actual interpolated requested position and delayed actor/camera observation.
+Crossing a source timestamp does not imply its exact endpoint was written. The
+proof validates source brackets, fractions, native numeric precision, later-frame
+observations and each crossed-point count. The final source acknowledgement is
+required before normal end, within a bounded 400 ms drain; this does not extend
+the engine lease. Receipts retain only as many observations as fit below 3,800
+bytes, with original counts and explicit truncation. Unrecorded frames are not
+claimed as measured.
+
+An autonomous replay in real KCD passes all 51 points from the previous captured
+trajectory and restores actor/FPS state. It records 163 observations, retaining
+101; every retained observation advances one native frame, about 34 ms during
+that replay. Position errors are zero and source speed is preserved. Minecraft,
+HUD composition and physical input were not active. The previous combined run
+still looked choppy to the user. The first buffered combined check stopped after
+two sources because a resting-labelled server sample lacked proxy support during
+descent. No native position was written and Minecraft exited normally after
+cancellation. The compiled phase correction passes the captured-terrain fixture
+with equal client/server W/W/S distances of 0.446445/0.640961/0.640961 m and no
+inventory movement or corrections. That run does not sample the brief unsupported
+transition. A synthetic variant is rejected before movement by the unchanged
+0.5 m adjacent-height limit. A revised synthetic fixture passes W/W/S movement
+and cleanup but also emits no unsupported source sample. The exact failed
+sequence is covered by focused Java/receiver regressions and read-only memory
+replay. A combined retry is next; no new smoothness is claimed.
 
 The KCD follower retains its independent eight-second deadline and actor/position
 guards. Normal completion requires delayed readbacks
@@ -217,13 +246,18 @@ stationary write suppression and restoration. It does not start Minecraft, arm t
 The unchanged follower lease and deadline remain active. Keep the player still
 and use only the fresh development test world.
 
-The updated Lua follower passes 47 standalone cases with simulated bindings;
-PowerShell interpolation proof passes 17 checks. The latest actual KCD probe
-passes five moving targets and one stationary target. Moving segments execute
-six or seven setters with later observations about 16-21 ms apart, while the
-stationary target uses zero setters. Position errors are zero and actor, timers
-and FPS restore. This component result is separate from physical input and
-rendered smoothness; the latest combined test still looks choppy to the user.
+`scripts/Test-KcdBufferedReplay.ps1` replays a captured movement trace using its
+original server-observation timing and the new buffered follower. It makes no
+Minecraft connection, does not arm the HUD and uses explicitly scripted source
+positions. The latest real-KCD replay passes 51 source points and restoration.
+Its retained readbacks cover one native frame each at about 34 ms in that run;
+no combined visual smoothness or physical input is claimed.
+
+Current source checks pass 68 Lua cases, 79 buffered PowerShell checks and 32
+timed-follower checks. The earlier fixed-duration component probe separately
+passed five moving targets and one stationary target with zero position errors,
+actor restoration and FPS restoration. These scoped results do not replace a
+combined physical test of the new buffered mode.
 
 The actual-Minecraft flat fixture also passes scripted W/W/S presses, moving both
 client and server approximately 0.857 m, 0.642 m and 0.857 m with zero disagreement.

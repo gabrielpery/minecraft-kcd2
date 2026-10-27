@@ -2,6 +2,7 @@
 -- Actual Lua5.2 runtime, simulated engine bindings. No live movement proof.
 assert(type(MINECOME_MODULE_PATH) == "string")
 local passed = 0
+local maximum_buffered_receipt_bytes = 0
 local function eq(a,b) assert(a==b,"got "..tostring(a)..", expected "..tostring(b)) end
 local function near(a,b) assert(math.abs(a-b)<0.00000001,"got "..tostring(a)..", expected near "..tostring(b)) end
 local function target_receipt(line,seq,x,y,z)
@@ -19,7 +20,7 @@ local function receipt_samples(line)
     local samples={}
     for object in array:gmatch('{"fraction":.-"readback_error":[^}]+}') do
         local camera=assert(object:match('"camera":(%b{})'),"sample camera missing")
-        samples[#samples+1]={fraction=receipt_number(object,"fraction"),requested=receipt_vector(object,"requested"),
+        local sample={fraction=receipt_number(object,"fraction"),requested=receipt_vector(object,"requested"),
             actual=receipt_vector(object,"actual"),written=receipt_number(object,"written_engine_seconds"),
             observed=receipt_number(object,"observed_engine_seconds"),error=receipt_number(object,"readback_error"),
             performed=object:find('"write_performed":true',1,true)~=nil,
@@ -28,6 +29,14 @@ local function receipt_samples(line)
             camera_basis_valid=object:find('"camera_basis_valid":true',1,true)~=nil,
             written_frame_id=tonumber(object:match('"written_frame_id":([^,}]+)')),
             observed_frame_id=tonumber(object:match('"observed_frame_id":([^,}]+)'))}
+        if object:find('"bracket_from_seq":',1,true) then
+            sample.source={from_seq=receipt_number(object,"bracket_from_seq"),from_ms=receipt_number(object,"bracket_from_ms"),
+                from_target=receipt_vector(object,"bracket_from_target"),to_seq=receipt_number(object,"bracket_to_seq"),
+                to_ms=receipt_number(object,"bracket_to_ms"),to_target=receipt_vector(object,"bracket_to_target"),
+                received=receipt_number(object,"bracket_to_received_engine_seconds"),playback=receipt_number(object,"playback_source_ms"),
+                hold=object:find('"source_hold":true',1,true)~=nil}
+        end
+        samples[#samples+1]=sample
     end
     return samples
 end
@@ -59,7 +68,12 @@ local function fixture()
     System={GetCurrTime=function() return f.time end,
         GetFrameID=function() f.frame_reads=f.frame_reads+1;return f.frame_id or math.floor(f.time*60+.5) end,
         LogAlways=function(line)
-        if f.log_error then error("log failure") end;f.logs[#f.logs+1]=line end,
+        if f.log_error then error("log failure") end
+        if line:find("[MineComeMovementFollower]",1,true) then assert(#line+2<3800,"native follower log budget exceeded") end
+        if line:find('"position_mode":"source_time_buffered"',1,true) then
+            maximum_buffered_receipt_bytes=math.max(maximum_buffered_receipt_bytes,#line)
+        end
+        f.logs[#f.logs+1]=line end,
         GetViewCameraPos=function()
             if f.camera_bad then return nil end
             local p=f.fixed_camera or player.position;local offset=f.camera_offset or {x=0,y=0,z=0}
@@ -424,9 +438,11 @@ test("physical interpolation follows elapsed engine time with delayed observed s
     f:tick();target_receipt(f:last(),1,120.6,2040.3,56.3)
     assert(f:last():find('"position_mode":"timed_interpolation","interpolation_ms":100',1,true))
     near(receipt_number(f:last(),"target_receipt_age_ms"),f.time*1000)
-    local samples=receipt_samples(f:last());assert(#samples>=5 and #samples<=8)
+    local samples=receipt_samples(f:last());assert(#samples>=1 and #samples<=8)
     eq(receipt_number(f:last(),"segment_update_count"),#f.writes)
-    eq(receipt_number(f:last(),"segment_observation_count"),#samples)
+    local observations=receipt_number(f:last(),"segment_observation_count")
+    assert(observations>=#f.writes and observations>=#samples)
+    eq(f:last():find('"segment_observed_samples_truncated":true',1,true)~=nil,observations>#samples)
     near(receipt_number(f:last(),"segment_max_readback_error"),0)
     near(receipt_number(f:last(),"segment_max_observation_gap_ms"),1000/60)
     for _,sample in ipairs(samples) do
@@ -479,7 +495,7 @@ test("optional unavailable or invalid native frame identifiers do not change phy
         local f=fixture();System.GetFrameID=method;f:verify();eq(MineCome.BeginPhysicalMovementFollower("b"),true)
         eq(MineCome.ApplyMovementFollower("b",1,120.6,2040,56),true);f:reachEndpoint();f:tick()
         assert(f:last():find('"event":"applied","result":"applied_readback"',1,true))
-        local samples=receipt_samples(f:last());assert(#samples>=5)
+        local samples=receipt_samples(f:last());assert(#samples>=1)
         for _,sample in ipairs(samples) do
             eq(sample.written_frame_id,nil);eq(sample.observed_frame_id,nil);eq(sample.camera_basis_valid,true)
             near(sample.actual.x,sample.requested.x)
@@ -618,10 +634,10 @@ end)
 test("bounded observed sample array always retains the endpoint",function()
     local f=fixture();f.physical_frame_seconds=.005;f:verify();eq(MineCome.BeginPhysicalMovementFollower("b"),true)
     eq(MineCome.ApplyMovementFollower("b",1,120.6,2040,56),true);f:reachEndpoint();f:tick()
-    local samples=receipt_samples(f:last());eq(#samples,8);eq(samples[8].fraction,1)
+    local samples=receipt_samples(f:last());assert(#samples>=1 and #samples<=8);eq(samples[#samples].fraction,1)
     assert(receipt_number(f:last(),"segment_observation_count")>8)
     assert(f:last():find('"segment_observed_samples_truncated":true',1,true))
-    near(samples[8].observed,receipt_number(f:last(),"sampled_engine_seconds"))
+    near(samples[#samples].observed,receipt_number(f:last(),"sampled_engine_seconds"))
     eq(MineCome.EndMovementFollower("b"),true);f:advance(.08);eq(f:activeTimers(),0)
 end)
 
@@ -676,4 +692,217 @@ test("legacy follower retains fixed camera offset metric and original receipt sc
     eq(f.frame_reads,0)
     eq(player.position.x,120);eq(f:activeTimers(),0)
 end)
+
+local function buffered_fixture()
+    local f=fixture();f:verify();eq(MineCome.BeginBufferedPhysicalMovementFollower("b"),true)
+    function f:point(seq,source_ms,dx)
+        return MineCome.ApplyBufferedMovementFollower("b",seq,120+(dx or 0),2040,56,source_ms)
+    end
+    return f
+end
+local function buffered_samples(line)
+    assert(line:find('"position_mode":"source_time_buffered","interpolation_ms":null',1,true))
+    eq(receipt_number(line,"playback_delay_ms"),200)
+    local epoch=receipt_number(line,"playback_epoch_engine_seconds")
+    local samples=receipt_samples(line)
+    for _,sample in ipairs(samples) do
+        local source=assert(sample.source,"missing source bracket")
+        near(source.playback,(sample.written-epoch)*1000)
+        assert(sample.observed>sample.written);assert(sample.written-source.received<=.4+1e-12)
+        local fraction=source.hold and 0 or math.max(0,math.min(1,(source.playback-source.from_ms)/(source.to_ms-source.from_ms)))
+        near(sample.fraction,fraction)
+        for _,axis in ipairs({"x","y","z"}) do
+            near(sample.requested[axis],source.from_target[axis]+(source.to_target[axis]-source.from_target[axis])*fraction)
+        end
+        if source.hold then eq(source.from_seq,source.to_seq) end
+    end
+    return samples
+end
+
+test("buffered playback holds startup and acknowledges actual interpolation rather than source endpoints",function()
+    local f=buffered_fixture();eq(f:point(1,0,0),true);f:advance(.1);eq(f:point(2,100,.2),true)
+    f:advance(.1);eq(f:point(3,200,.4),true);eq(#f.writes,0)
+    local epoch=MineCome._movement_probe.follower.buffer_epoch;near(epoch,.2)
+    f:tick(.225);near(player.position.x,120.05);assert(not f:contains('"event":"applied"'))
+    f:tick(.245);target_receipt(f:last(),1,120.05,2040,56)
+    near(receipt_vector(f:last(),"source_target").x,120);eq(receipt_number(f:last(),"source_seq"),1)
+    eq(receipt_number(f:last(),"source_points_crossed"),1);buffered_samples(f:last())
+    f:tick(.315);near(player.position.x,120.23);f:tick(.332)
+    target_receipt(f:last(),2,120.23,2040,56);near(receipt_vector(f:last(),"source_target").x,120.2)
+    eq(receipt_number(f:last(),"source_ms"),100);local samples=buffered_samples(f:last())
+    eq(samples[#samples].source.from_seq,2);eq(samples[#samples].source.to_seq,3)
+    near(samples[#samples].fraction,.15);near(MineCome._movement_probe.follower.buffer_epoch,epoch)
+    assert(f:last():find('"endpoint_write_performed":null',1,true))
+    for _,write in ipairs(f.writes) do assert(math.abs(write.position.x-120.2)>1e-8) end
+    eq(MineCome.EndMovementFollower("b"),true);f:advance(.08);eq(player.position.x,120);eq(f:activeTimers(),0)
+end)
+
+test("uneven source waypoints preserve continuous speed across normal frames without endpoint pauses",function()
+    local f=buffered_fixture();eq(f:point(1,0),true)
+    for index,source in ipairs({97,203,307,401}) do
+        f:advance(.1);eq(f:point(index+1,source,source*.002),true)
+    end
+    f:advance(.05);assert(#f.writes>=13)
+    for index,write in ipairs(f.writes) do
+        near(write.position.x,120+2*(write.at-.2))
+        if index>1 then
+            local previous=f.writes[index-1];near(write.position.x-previous.position.x,2*(write.at-previous.at))
+            assert(write.position.x>previous.position.x)
+        end
+    end
+    for _,line in ipairs(f.logs) do if line:find('"event":"applied"',1,true) then buffered_samples(line) end end
+    eq(MineCome.EndMovementFollower("b"),true);f:advance(.08);eq(player.position.x,120);eq(f:activeTimers(),0)
+end)
+
+test("skipped playback frames report multiple crossed source points with one later actual observation",function()
+    local f=buffered_fixture()
+    for index,source in ipairs({0,50,100,200}) do eq(f:point(index,source,source*.002),true) end
+    f:tick(.35);eq(#f.writes,1);near(player.position.x,120.3);assert(not f:contains('"event":"applied"'))
+    f:tick(.36);target_receipt(f:last(),3,120.3,2040,56)
+    eq(receipt_number(f:last(),"source_points_crossed"),3);near(receipt_vector(f:last(),"source_target").x,120.2)
+    local samples=buffered_samples(f:last());eq(#samples,1);eq(samples[1].source.from_seq,3);eq(samples[1].source.to_seq,4)
+    near(samples[1].fraction,.5);eq(MineCome.EndMovementFollower("b"),true);f:advance(.08);eq(f:activeTimers(),0)
+end)
+
+test("buffered input validates origin source clock ordering and bounded queue before actor writes",function()
+    for _,invalid in ipairs({function(f) return f:point(1,1,0) end,function(f) return f:point(1,0,.001) end,
+        function(f) return f:point(1,0/0,0) end,function(f) return f:point(1,math.huge,0) end,
+        function(f) return f:point(1,-1,0) end,function(f) return f:point(1,6000.01,0) end,
+        function(f) return f:point(0,0,0) end,function(f) return f:point(201,0,0) end,
+        function(f) eq(f:point(1,0,0),true);return f:point(1,100,.1) end,
+        function(f) eq(f:point(1,0,0),true);return f:point(2,0,.1) end,
+        function(f) eq(f:point(1,0,0),true);return f:point(2,100,2.01) end,
+        function(f) for seq=1,8 do eq(f:point(seq,(seq-1)*100,0),true) end;return f:point(9,800,0) end}) do
+        local f=buffered_fixture();eq(invalid(f),false);eq(#f.writes,0);f:advance(.05)
+        eq(#f.writes,0);eq(f:activeTimers(),0);eq(MineCome._movement_probe.follower,nil)
+    end
+end)
+
+test("buffered mode mixing fails closed while wrong session tokens leave ownership intact",function()
+    local f=buffered_fixture();eq(MineCome.ApplyBufferedMovementFollower("c",1,120,2040,56,0),false)
+    eq(MineCome._movement_probe.follower.end_requested,nil);eq(MineCome.ApplyMovementFollower("b",1,120,2040,56),false)
+    f:advance(.05);eq(#f.writes,0);eq(f:activeTimers(),0)
+    f=fixture();f:verify();eq(MineCome.BeginPhysicalMovementFollower("b"),true)
+    eq(MineCome.ApplyBufferedMovementFollower("b",1,120,2040,56,0),false);f:advance(.05)
+    eq(#f.writes,0);eq(f:activeTimers(),0)
+end)
+
+test("buffered eight point capacity includes the retained historical anchor",function()
+    local f=buffered_fixture();eq(f:point(1,0),true);f:tick(.2)
+    eq(#MineCome._movement_probe.follower.buffer_queue,0)
+    eq(MineCome._movement_probe.follower.buffer_anchor.seq,1)
+    for seq=2,8 do eq(f:point(seq,(seq-1)*50),true) end
+    eq(#MineCome._movement_probe.follower.buffer_queue,7)
+    eq(f:point(9,400),false);f:advance(.05);eq(#f.writes,0);eq(f:activeTimers(),0)
+    assert(f:contains('"end_result":"source_queue_overflow"'))
+end)
+
+test("buffered expiry cannot skip an old destination merely because a later point is fresh",function()
+    local f=buffered_fixture();eq(f:point(1,0),true);eq(f:point(2,300,.6),true);f:tick(.25)
+    near(player.position.x,120.1);f:tick(.27);f.time=.35;eq(f:point(3,500,1),true)
+    local writes=#f.writes;f:tick(.41);eq(#f.writes,writes+1);eq(player.position.x,120)
+    f:advance(.08);eq(f:activeTimers(),0);assert(f:contains('"end_result":"source_destination_expired"'))
+end)
+
+test("buffered historical left geometry may outlive its lease while the active destination stays fresh",function()
+    local f=buffered_fixture();eq(f:point(1,0),true);f:advance(.1);eq(f:point(2,200,.4),true)
+    f:advance(.2);eq(f:point(3,500,1),true);f:advance(.25)
+    assert(MineCome._movement_probe.follower and not MineCome._movement_probe.follower.restoring)
+    assert(f.time-MineCome._movement_probe.follower.buffer_anchor.received>.4)
+    assert(player.position.x>120.65);eq(MineCome.EndMovementFollower("b"),true);f:advance(.08)
+    eq(player.position.x,120);eq(f:activeTimers(),0)
+end)
+
+test("buffered late points and moving continuations after tail hold stop without catch-up writes",function()
+    for _,source in ipairs({140,300}) do
+        local f=buffered_fixture();eq(f:point(1,0),true);eq(f:point(2,100,.2),true)
+        f:tick(.35);f:tick(.36);near(player.position.x,120.2);local writes=#f.writes
+        eq(f:point(3,source,.6),false);eq(#f.writes,writes);f:advance(.08)
+        eq(player.position.x,120);eq(#f.writes,writes+1);eq(f:activeTimers(),0)
+        assert(f:contains(source==140 and '"end_result":"source_time_late"' or '"end_result":"source_continuation_late"'))
+    end
+end)
+
+test("buffered tail holds never extrapolate and identical stationary continuation adds no actor writes",function()
+    local f=buffered_fixture();eq(f:point(1,0),true);f:tick(.25)
+    f.camera_offset={x=.2,y=0,z=.1};f:tick(.27);eq(#f.writes,0)
+    local sample=buffered_samples(f:last())[1];eq(sample.source.hold,true);near(sample.source.playback,50)
+    near(sample.fraction,0);near(sample.camera.position.x,120.2)
+    eq(f:point(2,200),true);f:advance(.15);eq(#f.writes,0)
+    eq(MineCome.EndMovementFollower("b"),true);f:advance(.08);eq(#f.writes,0);eq(f:activeTimers(),0)
+end)
+
+test("buffered sample truncation retains the final ACK observation even between waypoints",function()
+    local f=buffered_fixture();eq(f:point(1,0),true);f:advance(.19);eq(f:point(2,300,.6),true)
+    f:advance(.21);eq(f:point(3,500,1),true);f:advance(.09);f:tick(.515);f:tick(.531)
+    local samples=buffered_samples(f:last());assert(#samples>=1 and #samples<=8);assert(receipt_number(f:last(),"segment_observation_count")>8)
+    assert(f:last():find('"segment_observed_samples_truncated":true',1,true))
+    near(samples[#samples].fraction,.075);near(samples[#samples].observed,.531);near(samples[#samples].requested.x,120.63)
+    target_receipt(f:last(),2,120.63,2040,56)
+    eq(MineCome.EndMovementFollower("b"),true);f:advance(.08);eq(player.position.x,120);eq(f:activeTimers(),0)
+end)
+
+test("buffered same-clock callbacks cannot acknowledge or consume another source waypoint",function()
+    local f=buffered_fixture();eq(f:point(1,0),true);eq(f:point(2,100,.2),true);f:tick(.225)
+    local writes=#f.writes;local count=#MineCome._movement_probe.follower.buffer_queue
+    for index=1,3 do f:tick(.225) end
+    eq(#f.writes,writes);eq(#MineCome._movement_probe.follower.buffer_queue,count)
+    assert(not f:contains('"event":"applied"'));f:tick(.24);assert(f:contains('"event":"applied"'))
+    eq(MineCome.EndMovementFollower("b"),true);f:advance(.08);eq(f:activeTimers(),0)
+end)
+
+test("buffered write budget still reserves one restoration with faster-than-frame callbacks",function()
+    local f=buffered_fixture();f.physical_frame_seconds=.0001
+    eq(f:point(1,0),true);eq(f:point(2,100,.4),true);eq(f:point(3,200,.8),true);f:advance(.4)
+    eq(#f.writes,512);eq(player.position.x,120);eq(f:activeTimers(),0);assert(f:contains('"end_result":"write_budget"'))
+end)
+
+test("buffered delayed receipts cannot revive an expired crossed source point",function()
+    local f=buffered_fixture();eq(f:point(1,0),true);eq(f:point(2,100,.2),true);f:tick(.39)
+    near(player.position.x,120.2);f.time=.395;eq(f:point(3,300,.2),true);f:tick(.405)
+    f:advance(.08);eq(player.position.x,120);eq(f:activeTimers(),0)
+    assert(f:contains('"end_result":"source_receipt_expired"'));assert(not f:contains('"event":"applied"'))
+end)
+
+test("buffered source inputs and view samples never change the epoch or original hard deadline",function()
+    local f=buffered_fixture();local p=MineCome._movement_probe.follower;local hard=p.timers.hard
+    eq(f:point(1,0),true);local epoch=p.buffer_epoch;local deadline=p.deadline
+    f:advance(.1);eq(f:point(2,100,.2),true);eq(MineCome.SamplePhysicalHudView("b"),true)
+    eq(p.buffer_epoch,epoch);eq(p.deadline,deadline);eq(p.timers.hard,hard);near(deadline-p.created,8)
+    f:advance(.15);eq(MineCome.EndMovementFollower("b"),true);f:advance(.08)
+    eq(player.position.x,120);eq(f:activeTimers(),0)
+end)
+
+test("buffered full precision camera and source metadata stay within eight retained observations",function()
+    local f=buffered_fixture();f.camera_offset={x=.12345678912345,y=.23456789123456,z=.34567891234567}
+    f.forward={x=math.cos(.3),y=math.sin(.3),z=0}
+    f.up={x=-math.sin(.3)*math.sin(.2),y=math.cos(.3)*math.sin(.2),z=math.cos(.2)}
+    eq(f:point(1,0),true);f:advance(.19)
+    eq(MineCome.ApplyBufferedMovementFollower("b",2,120.6123456789123,2040.234567891234,56.123456789123,300.123456789123),true)
+    f:advance(.21)
+    eq(MineCome.ApplyBufferedMovementFollower("b",3,121.0123456789123,2040.434567891234,56.223456789123,500.234567891234),true)
+    f:advance(.09);f:tick(.515123456789);f:tick(.531234567891)
+    local samples=buffered_samples(f:last());assert(#samples>=1 and #samples<8)
+    assert(f:last():find('"segment_observed_samples_truncated":true',1,true))
+    eq(MineCome.EndMovementFollower("b"),true);f:advance(.08);eq(f:activeTimers(),0)
+end)
+
+test("buffered serialization fits the native log budget with maximum run token and verbose numeric fields",function()
+    local f=fixture();f:verify();local run=string.rep("a",64);eq(MineCome.BeginBufferedPhysicalMovementFollower(run),true)
+    f.frame_id=9007199254740991;f.camera_offset={x=.12345678912345,y=.23456789123456,z=.34567891234567}
+    f.forward={x=math.cos(.3),y=math.sin(.3),z=0}
+    f.up={x=-math.sin(.3)*math.sin(.2),y=math.cos(.3)*math.sin(.2),z=math.cos(.2)}
+    eq(MineCome.ApplyBufferedMovementFollower(run,1,120,2040,56,0),true);f:advance(.19)
+    eq(MineCome.ApplyBufferedMovementFollower(run,2,120.6123456789123,2040.234567891234,56.123456789123,300.123456789123),true)
+    f:advance(.21)
+    eq(MineCome.ApplyBufferedMovementFollower(run,3,121.0123456789123,2040.434567891234,56.223456789123,500.234567891234),true)
+    f:advance(.09);f:tick(.515123456789);f:tick(.531234567891)
+    local line=f:last();local samples=buffered_samples(line);assert(#line+2<=3798)
+    assert(#samples>=1 and #samples<=2);assert(receipt_number(line,"segment_observation_count")>8)
+    assert(line:find('"segment_observed_samples_truncated":true',1,true))
+    near(samples[#samples].observed,receipt_number(line,"sampled_engine_seconds"))
+    near(samples[#samples].requested.x,receipt_vector(line,"target").x)
+    eq(MineCome.EndMovementFollower(run),true);f:advance(.08);eq(f:activeTimers(),0)
+end)
 print(string.format("Verified %d standalone movement-probe cases in %s; engine bindings simulated",passed,_VERSION))
+print(string.format("Maximum tested buffered receipt: %d bytes plus CRLF; serialized subset of eight retained observations",maximum_buffered_receipt_bytes))

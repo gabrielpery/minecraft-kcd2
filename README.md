@@ -31,17 +31,23 @@ The public repository contains source, build scripts and development procedures.
 A separate [physical HUD walking lab](kcd2/MOVEMENT-LAB.md#physical-walking-with-the-hud-in-kcd)
 is implemented, compiled and checked automatically. Camera delivery now runs
 independently of movement commands and avoids repeatedly reopening the active log.
-The latest combined physical run passed 49 server-position transfers, 49 delayed
+An earlier combined physical run passed 49 server-position transfers, 49 delayed
 KCD readbacks and restoration. Repeated movement works, but the user still reports
-**choppy motion**, with at most a small improvement after the latest change.
-The physical follower now interpolates across ordinary game frames: measured
-position updates are about 16 ms apart, with no stationary rewrites. Movement
-sources still arrive about every 100–168 ms, and some segment transitions pause
-47–64 ms. Smooth or continuous walking is not established. Boundary pauses require
-releasing controls before pressing again in an allowed direction. Separate
-actual-Minecraft tests verify resumed movement, inventory suppression and HUD
-capture on flat and replayed sampled terrain. The lab allows at most five seconds
-of input plus one second of settling inside the 30-second HUD check.
+**choppy motion**, with at most a small improvement after the previous interpolation change.
+A newer source-time buffer is implemented to preserve Minecraft's actual server
+motion timing instead of compressing every update into 100 ms. It deliberately
+adds 200 ms of playback latency. An autonomous KCD-only replay passed all 51
+source points and restoration; Minecraft, HUD composition and physical controls
+were not active in that replay. The first combined buffered test stopped on a
+terrain-transition phase mismatch before KCD moved; Minecraft exited normally.
+The phase correction compiles and passes captured-record checks. Two actual
+Minecraft fixtures also pass, but their source samples miss the brief transition.
+The combined retry is pending; buffered smoothness is not yet established. Boundary pauses require releasing
+controls before pressing again in an allowed
+direction. Separate actual-Minecraft tests verify resumed movement, inventory
+suppression and HUD capture on flat and replayed sampled terrain. The lab allows
+at most five seconds of input plus one second of settling inside the 30-second
+HUD check. Smooth or continuous walking is not established.
 
 Live checks above use the **official KCD2 1.5.5 development build**. The native
 **retail 1.5.6 route remains blocked** by its verified address-library/loader

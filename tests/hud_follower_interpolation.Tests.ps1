@@ -19,9 +19,43 @@ $samples=@(for($index=1;$index -le 6;$index++){
 })
 $receipt=[pscustomobject]@{seq=1;position_mode='timed_interpolation';interpolation_ms=100;readback=$true;physical_movement=$true;camera_basis_valid=$true;
     target=$target;player=$target;target_receipt_age_ms=117;sampled_engine_seconds=10+7/60;segment_start_engine_seconds=10.0;segment_update_count=6;segment_observation_count=6;
-    segment_max_readback_error=0.0;segment_observed_samples_truncated=$false;endpoint_write_performed=$true;segment_observed_samples=$samples}
+    segment_max_readback_error=0.0;segment_max_observation_gap_ms=1000.0/60;segment_observed_samples_truncated=$false;endpoint_write_performed=$true;segment_observed_samples=$samples}
 $proof=Assert-InterpolationReceipt $receipt $from $target
-Check ($proof.updates -eq 6 -and $proof.observations -eq 6 -and $proof.median_observation_gap_ms -lt 17) 'Normal frame proof rejected'
+Check ($proof.updates -eq 6 -and $proof.observations -eq 6 -and $proof.median_observation_gap_ms -lt 17 -and $proof.CompleteObservations) 'Normal frame proof rejected'
+$trimmed=Clone $receipt;$trimmed.segment_observed_samples=@($trimmed.segment_observed_samples[0],$trimmed.segment_observed_samples[-1])
+$trimmed.segment_observed_samples_truncated=$true
+$partial=Assert-InterpolationReceipt $trimmed $from $target
+Check (-not $partial.CompleteObservations -and $partial.observations -eq 6 -and $partial.retained_observations -eq 2 -and
+    $partial.updates -eq 6 -and $null -eq $partial.median_observation_gap_ms -and $partial.median_retained_observation_gap_ms -lt 17 -and
+    $partial.max_observation_gap_ms -lt 17) 'Honest log-size truncation lost the complete aggregate proof or claimed a complete median'
+$lastOnly=Clone $trimmed;$lastOnly.segment_observed_samples=@($lastOnly.segment_observed_samples[-1])
+Check ((Assert-InterpolationReceipt $lastOnly $from $target).retained_observations -eq 1) 'A bounded endpoint-only diagnostic must retain aggregate cadence proof'
+$bad=Clone $trimmed;$bad.segment_observed_samples_truncated=$false
+Reject {Assert-InterpolationReceipt $bad $from $target} 'Truncated observations were falsely labelled complete'
+$bad=Clone $trimmed;$bad.segment_observation_count=1
+Reject {Assert-InterpolationReceipt $bad $from $target} 'Retained observations exceeded the total count'
+$bad=Clone $trimmed;$bad.segment_update_count=7
+Reject {Assert-InterpolationReceipt $bad $from $target} 'More updates than observed frames passed'
+$bad=Clone $trimmed;$bad.segment_update_count=1
+Reject {Assert-InterpolationReceipt $bad $from $target} 'Aggregate updates hid a retained setter'
+$bad=Clone $trimmed;$bad.segment_observed_samples[0].write_performed=$false
+Reject {Assert-InterpolationReceipt $bad $from $target} 'Omitted observations could not account for fabricated setter count'
+$bad=Clone $trimmed;$bad.segment_observation_count=6.5
+Reject {Assert-InterpolationReceipt $bad $from $target} 'Fractional observation count passed'
+$bad=Clone $trimmed;$bad.segment_update_count=5.5
+Reject {Assert-InterpolationReceipt $bad $from $target} 'Fractional setter count passed'
+$bad=Clone $trimmed;$bad.segment_max_observation_gap_ms=34
+Reject {Assert-InterpolationReceipt $bad $from $target} 'Slow omitted frames were hidden by the retained median'
+$bad=Clone $trimmed;$bad.segment_max_observation_gap_ms=10
+Reject {Assert-InterpolationReceipt $bad $from $target} 'Aggregate maximum hid a retained delayed frame'
+$bad=Clone $trimmed;$bad.segment_max_observation_gap_ms=[double]::NaN
+Reject {Assert-InterpolationReceipt $bad $from $target} 'Nonfinite aggregate cadence passed'
+$bad=Clone $trimmed;$bad.segment_observed_samples=@($bad.segment_observed_samples[0])
+Reject {Assert-InterpolationReceipt $bad $from $target} 'A truncated diagnostic omitted the acknowledged endpoint'
+$bad=Clone $trimmed;$bad.segment_observed_samples[0].requested.y=.1
+Reject {Assert-InterpolationReceipt $bad $from $target} 'Truncation bypassed retained path validation'
+$bad=Clone $receipt;$bad.segment_max_observation_gap_ms=20
+Reject {Assert-InterpolationReceipt $bad $from $target} 'A complete observation set disagreed with its aggregate maximum'
 $bad=Clone $receipt;$bad.segment_observed_samples[2].observed_engine_seconds=$bad.segment_observed_samples[2].written_engine_seconds
 Reject {Assert-InterpolationReceipt $bad $from $target} 'Same-frame observations cannot prove motion'
 $bad=Clone $receipt;$bad.segment_observed_samples[2].requested.y=.1

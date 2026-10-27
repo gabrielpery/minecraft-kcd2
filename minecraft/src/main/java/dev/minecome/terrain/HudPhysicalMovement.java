@@ -243,6 +243,9 @@ public final class HudPhysicalMovement {
         if(!writeTrace(sample,"SETTLING",true))throw new IllegalStateException("Physical HUD initial trace sample rejected");
     }
     private boolean writeTrace(Observation sample,String phase,boolean force)throws IOException{
+        // On a slab descent the client may already have landed while the fresh
+        // server sample still has its previous onGround flag without support.
+        phase=HudMovementPhase.forAuthoritativeGround(phase,grounded(sample.motion()));
         return trace.sample(System.nanoTime(),System.currentTimeMillis(),phase,clientMotion,sample.motion(),sample.sequence(),sample.at(),force);
     }
     private void prepareServer(){

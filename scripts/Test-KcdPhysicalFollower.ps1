@@ -47,15 +47,19 @@ function Assert-InterpolationReceipt($Receipt,$From,$Target){
         throw 'The timed segment did not reach its exact fresh endpoint.'
     }
     $samples=@($Receipt.segment_observed_samples)
-    foreach($name in @('segment_update_count','segment_observation_count','segment_max_readback_error','target_receipt_age_ms','sampled_engine_seconds','segment_start_engine_seconds')){
+    foreach($name in @('segment_update_count','segment_observation_count','segment_max_readback_error','segment_max_observation_gap_ms','target_receipt_age_ms','sampled_engine_seconds','segment_start_engine_seconds')){
         if($Receipt.$name -isnot [ValueType] -or $Receipt.$name -is [bool] -or -not [double]::IsFinite([double]$Receipt.$name)){
             throw 'Invalid segment summary number.'
         }
     }
-    if($samples.Count -lt 1 -or $samples.Count -gt 8 -or $Receipt.segment_observation_count -ne $samples.Count -or
-        $Receipt.segment_observed_samples_truncated -isnot [bool] -or $Receipt.segment_observed_samples_truncated -or
+    $observations=[double]$Receipt.segment_observation_count;$updates=[double]$Receipt.segment_update_count
+    $truncated=$Receipt.segment_observed_samples_truncated
+    $maxGap=[double]$Receipt.segment_max_observation_gap_ms
+    if($samples.Count -lt 1 -or $samples.Count -gt 8 -or $observations -lt $samples.Count -or $observations -gt 8192 -or
+        $observations -ne [Math]::Floor($observations) -or $updates -ne [Math]::Floor($updates) -or
+        $truncated -isnot [bool] -or $truncated -ne ($observations -gt $samples.Count) -or
         $Receipt.endpoint_write_performed -isnot [bool] -or
-        $Receipt.segment_update_count -lt 0 -or $Receipt.segment_update_count -gt 511 -or
+        $updates -lt 0 -or $updates -gt 511 -or $updates -gt $observations -or $maxGap -le 0 -or $maxGap -gt 400 -or
         $Receipt.segment_max_readback_error -lt 0 -or $Receipt.segment_max_readback_error -gt .05){throw 'Invalid bounded segment observation summary.'}
     $stationary=(Distance $From $Target) -lt .000001
     $accepted=[double]$Receipt.sampled_engine_seconds-[double]$Receipt.target_receipt_age_ms/1000
@@ -79,22 +83,34 @@ function Assert-InterpolationReceipt($Receipt,$From,$Target){
         if((Distance $sample.requested $expected) -gt .0001 -or (Distance $sample.actual $sample.requested) -gt .05){
             throw 'Observed segment position differs from the bounded linear path.'
         }
-        $gaps.Add(1000.0*($sample.observed_engine_seconds-$sample.written_engine_seconds))
+        $delay=1000.0*($sample.observed_engine_seconds-$sample.written_engine_seconds)
+        if($maxGap+.001 -lt $delay){throw 'The aggregate observation gap hides a retained delayed frame.'}
+        $gaps.Add($delay)
         $previousFraction=$fraction;$previousObserved=[double]$sample.observed_engine_seconds
     }
     $ordered=@($gaps | Sort-Object);$median=$ordered[[int][Math]::Floor($ordered.Count/2)]
+    $retainedSetters=@($samples | Where-Object write_performed -EQ $true).Count
+    $omitted=$observations-$samples.Count
     if($previousFraction -ne 1 -or $Receipt.sampled_engine_seconds -ne $previousObserved -or
         (-not $stationary -and $samples[-1].written_engine_seconds -lt $started+.1-.00001) -or
         $Receipt.endpoint_write_performed -ne $samples[-1].write_performed -or
-        $Receipt.segment_update_count -ne @($samples | Where-Object write_performed -EQ $true).Count){throw 'Last observed sample or update count differs from the acknowledged endpoint.'}
+        $updates -lt $retainedSetters -or $updates-$retainedSetters -gt $omitted -or
+        (-not $truncated -and [Math]::Abs($maxGap-$ordered[-1]) -gt .001)){
+        throw 'Last observed sample or aggregate count/gap differs from the acknowledged endpoint.'
+    }
     if($stationary){
         if($Receipt.segment_update_count -ne 0 -or $Receipt.endpoint_write_performed -ne $false -or
             @($samples | Where-Object write_performed -EQ $true).Count){throw 'An already stationary target caused position writes.'}
-    }elseif($samples.Count -lt 4 -or $Receipt.segment_update_count -lt 4 -or $median -gt 25){
+    }elseif($updates -lt 4 -or $maxGap -gt 25){
         throw 'The segment did not demonstrate smaller updates at normal frame cadence.'
     }
+    # The native log has a strict line-size limit. Its complete counters and
+    # maximum gap cover every observation; the retained median covers only the
+    # serialized subset when intermediate samples had to be omitted.
     return [pscustomobject]@{seq=$Receipt.seq;stationary=$stationary;updates=$Receipt.segment_update_count;
-        observations=$Receipt.segment_observation_count;median_observation_gap_ms=$median;max_observation_gap_ms=($ordered | Select-Object -Last 1)}
+        observations=$Receipt.segment_observation_count;retained_observations=$samples.Count;CompleteObservations=(-not $truncated);
+        median_observation_gap_ms=$(if(-not $truncated){$median}else{$null});median_retained_observation_gap_ms=$median;
+        max_observation_gap_ms=$maxGap;max_retained_observation_gap_ms=$ordered[-1]}
 }
 function Wait-Restoration {
     $clock=[Diagnostics.Stopwatch]::StartNew()

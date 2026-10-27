@@ -117,8 +117,9 @@ function Assert-MineComeTraceClock {
 
 function New-MineComeTraceReceiver {
     [CmdletBinding()]
-    param([Parameter(Mandatory)][string]$PatchFile,[Parameter(Mandatory)]$MinimumUtcMs,[string]$ExpectedHudSave,[switch]$PhysicalMovement)
+    param([Parameter(Mandatory)][string]$PatchFile,[Parameter(Mandatory)]$MinimumUtcMs,[string]$ExpectedHudSave,[switch]$PhysicalMovement,[switch]$BufferedPhysicalMovement)
     Assert-MineComeTraceClock $MinimumUtcMs
+    if($BufferedPhysicalMovement -and -not $PhysicalMovement){throw 'Buffered playback requires the physical movement profile.'}
     if($PhysicalMovement -and -not $ExpectedHudSave){throw 'Physical movement trace requires one exact HUD save.'}
     if($PSBoundParameters.ContainsKey('ExpectedHudSave')) {
         $saveWorld=[Guid]::Empty
@@ -167,7 +168,7 @@ function New-MineComeTraceReceiver {
             if([Math]::Abs($x-($center.x+(($index-1)%5)-2)) -gt 0.0001 -or [Math]::Abs($y-($center.y+[Math]::Floor(($index-1)/5)-2)) -gt 0.0001 -or -not (Get-MineComeTraceBoolean $point 'valid') -or (Get-MineComeTraceString $point 'result') -cne 'hit') { throw 'Invalid patch coverage.' }
             foreach($axis in @('nx','ny','nz')) { [void](Get-MineComeTraceNumber $point $axis -1.01 1.01) }
         }
-        return [pscustomobject]@{ExpectedRun=$run;PatchHash=$hash;Center=$center;ExpectedHudSave=$ExpectedHudSave;PhysicalMovement=[bool]$PhysicalMovement;Anchor=[pscustomobject]@{x=0.0;y=64.0;z=0.0};AnchorVerified=$false;MinimumUtcMs=[long]$MinimumUtcMs;LastSeq=[long]0;LastServerSeq=[long]0;LastFreshPassedSeq=[long]0;LastPassedUtcMs=[long]0;LastPassedServerAgeMs=[double]0;World=$null;Save=$null;Begun=$false;Ended=$false;GroundProved=$false;Bytes=0;Records=0}
+        return [pscustomobject]@{ExpectedRun=$run;PatchHash=$hash;Center=$center;ExpectedHudSave=$ExpectedHudSave;PhysicalMovement=[bool]$PhysicalMovement;BufferedPhysicalMovement=[bool]$BufferedPhysicalMovement;Anchor=[pscustomobject]@{x=0.0;y=64.0;z=0.0};AnchorVerified=$false;MinimumUtcMs=[long]$MinimumUtcMs;LastSeq=[long]0;LastServerSeq=[long]0;LastFreshPassedSeq=[long]0;LastPassedUtcMs=[long]0;LastPassedServerAgeMs=[double]0;World=$null;Save=$null;Begun=$false;Ended=$false;GroundProved=$false;Bytes=0;Records=0}
     } finally { $document.Dispose() }
 }
 
@@ -250,6 +251,12 @@ function Receive-MineComeMovementTrace {
             $active=$false
             if($phase -cin @('WALKING','RESTING') -and $grounded) { $active=$true;$groundProved=$true }
             elseif($phase -cin @('JUMPING','LANDING') -and $groundProved) { $active=$true }
+            elseif($State.BufferedPhysicalMovement -and $grounded -and
+                (($phase -ceq 'SETTLING' -and -not $State.AnchorVerified) -or ($phase -ceq 'PASSED' -and $groundProved))) {
+                # Playback needs the actual initial anchor and terminal source
+                # point. Legacy followers continue to observe these phases only.
+                $active=$true
+            }
             $observationAgeMs=[Math]::Max([long]0,[long]$NowUtcMs-$utc)+$serverAgeMs
             if($observationAgeMs -gt 300) { $returnKind='stale';$groundProved=$State.GroundProved }
             elseif(-not $active) { $returnKind='observe' }

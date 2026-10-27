@@ -134,6 +134,48 @@ final class MovementTraceSinkTests {
                     "Physical trace preserves actual settled terrain Y instead of fixed64");
             for(String line:physicalLines)check(JsonParser.parseString(line).getAsJsonObject().get("source_kind").getAsString().equals("live_kcd_hud_physical_movement"),
                     "Physical trace cannot masquerade as earlier scripted profile");
+            // Actual27Oct failure: prediction had reached the lower slab, but
+            // the fresh server sample was still .0784m into its descent with
+            // onGround=true and proxySupport=false. Keep that observation;
+            // only its active phase changes, so the receiver can validate air.
+            var lowerClient=new MovementTraceSink.Motion(.06919256889657938,63.95803165435791,-.3960609344536225,
+                    .0038621057757496193,-.0784000015258789,-.022106842496170793,true,true);
+            var descendingServer=new MovementTraceSink.Motion(.06494849673784928,64.03399337768555,-.3717677016414737,
+                    0,-.0784000015258789,0,true,false);
+            check(lowerClient.onGround() && lowerClient.proxySupport() && descendingServer.onGround() && !descendingServer.proxySupport(),
+                    "Regression reproduces client landing before authoritative slab support");
+            Path phaseFile=run.resolve("physical-phase-regression.ndjson");
+            try(var sink=MovementTraceSink.open(phaseFile,root,fixture,0,1000)){
+                int serverSeq=1;
+                for(String requested:List.of("RESTING","WALKING")){
+                    String corrected=HudMovementPhase.forAuthoritativeGround(requested,descendingServer.onGround() && descendingServer.proxySupport());
+                    check(corrected.equals("LANDING"),"Neutral and held input both classify unsupported server descent as landing");
+                    long at=serverSeq*100_000_000L;
+                    check(sink.sample(at,1000+serverSeq*100L,corrected,lowerClient,descendingServer,serverSeq,at,false),
+                            "Corrected landing is emitted without dropping the authoritative source point");
+                    serverSeq++;
+                }
+                sink.finish(1300,"stopped","STOPPED","Standalone phase regression complete");
+            }
+            var phaseLines=Files.readAllLines(phaseFile);
+            for(int i=1;i<=2;i++){
+                var value=JsonParser.parseString(phaseLines.get(i)).getAsJsonObject();
+                var savedServer=value.getAsJsonObject("server");
+                check(value.get("phase").getAsString().equals("LANDING") && savedServer.get("on_ground").getAsBoolean() &&
+                        !savedServer.get("proxy_support").getAsBoolean(),"Landing label preserves actual conflicting ground/support flags");
+                check(savedServer.get("y").getAsDouble()==descendingServer.y() && savedServer.get("vy").getAsDouble()==descendingServer.vy() &&
+                        value.getAsJsonObject("client").get("y").getAsDouble()==lowerClient.y(),
+                        "Phase correction neither snaps the server to client feet nor rewrites descent velocity");
+            }
+            var airborne=new MovementTraceSink.Motion(.1,64.1,-.4,0,-.08,0,false,true);
+            check(HudMovementPhase.forAuthoritativeGround("RESTING",airborne.onGround() && airborne.proxySupport()).equals("LANDING"),
+                    "Proxy proximity cannot make an airborne authoritative sample rest");
+            for(String phase:List.of("RESTING","WALKING")){
+                check(HudMovementPhase.forAuthoritativeGround(phase,true).equals(phase),"Supported authoritative active phase is unchanged");
+                check(HudMovementPhase.forAuthoritativeGround(phase,false).equals("LANDING"),"Existing sampled-height ground failure also remains landing");
+            }
+            for(String phase:List.of("SETTLING","PASSED","JUMPING","LANDING","FAILED","STOPPED"))
+                check(HudMovementPhase.forAuthoritativeGround(phase,false).equals(phase),"Explicit anchor, completion and non-ground phases are preserved");
             try{new MovementTraceSink.Context("run","a".repeat(64),"live_kcd_ground_patch",hudSave,world,100,200,10,MovementTraceSink.Profile.HUD_COUPLED,0,64.375,0);throw new AssertionError("Coupled anchor changed");}
             catch(IllegalArgumentException expected){checks++;}
             try{new MovementTraceSink.Context("run","a".repeat(64),"live_kcd_ground_patch",hudSave,world,100,200,10,MovementTraceSink.Profile.HUD_PHYSICAL,.5,64,0);throw new AssertionError("Physical horizontal hop accepted");}

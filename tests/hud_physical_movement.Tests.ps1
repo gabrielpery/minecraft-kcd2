@@ -199,4 +199,33 @@ Reject {Receive $legacy $legacyBegin} 'Legacy receiver accepted fractional physi
 $legacyBegin.anchor_mc.y=64
 $null=Receive $legacy $legacyBegin
 Check ($legacy.Begun -and $legacy.Anchor.y -eq 64) 'Legacy receiver retains exact Y64 anchor'
+Reject {New-MineComeTraceReceiver $patchPath 1000 -ExpectedHudSave $save -BufferedPhysicalMovement} 'Buffered playback accepted a nonphysical profile'
+$s=State;$null=Receive $s (Begin);$r=Receive $s (Sample 2 'SETTLING')
+Check ($r.Kind -ceq 'observe') 'Existing physical follower still observes its initial anchor without dispatching it'
+function BufferedState {New-MineComeTraceReceiver $patchPath 1000 -ExpectedHudSave $save -PhysicalMovement -BufferedPhysicalMovement}
+$s=BufferedState;$null=Receive $s (Begin);$r=Receive $s (Sample 2 'SETTLING')
+Check ($r.Kind -ceq 'sample' -and $r.Target.x -eq 120 -and $r.Target.y -eq 2040 -and $r.Target.z -eq 56) 'Buffered timeline includes the genuine initial source anchor'
+Check (-not $s.GroundProved) 'Source anchor alone does not establish walking proof'
+$r=Receive $s (Sample 3 'SETTLING')
+Check ($r.Kind -ceq 'observe') 'A later settling record cannot restart the playback anchor'
+$null=Receive $s (Sample 4 'WALKING' 0.5)
+$r=Receive $s (Sample 5 'PASSED' 0.5)
+Check ($r.Kind -ceq 'sample' -and $r.Target.x -eq 120.5 -and $s.LastFreshPassedSeq -eq 5) 'Buffered playback includes the final grounded source point'
+$s=BufferedState;$null=Receive $s (Begin);$r=Receive $s (Sample 2 'SETTLING') 1301
+Check ($r.Kind -ceq 'stale' -and -not $r.PSObject.Properties['Target']) 'Stale initial anchor cannot drive playback'
+$s=BufferedState;$null=Receive $s (Begin);$null=Receive $s (Sample 2 'SETTLING');$null=Receive $s (Sample 3 'WALKING')
+$r=Receive $s (Sample 4 'PASSED' 0.5) 1301
+Check ($r.Kind -ceq 'stale' -and $s.LastFreshPassedSeq -eq 0) 'Stale terminal point is excluded from playback'
+$s=BufferedState;$null=Receive $s (Begin);$null=Receive $s (Sample 2 'SETTLING');$null=Receive $s (Sample 3 'WALKING')
+Reject {Receive $s (Sample 4 'PASSED' 1.9 64.625)} 'Buffered terminal point escaped the same physical sphere'
+Check ($s.LastSeq -eq 3) 'Rejected buffered terminal point left the receiver unchanged'
+$s=BufferedState;$null=Receive $s (Begin);$null=Receive $s (Sample 2 'SETTLING');$null=Receive $s (Sample 3 'RESTING' .042939163785843 63.625 -.245785430500455)
+$transition=Sample 4 'LANDING' .0649484967378493 63.5465999984741 -.371767701641474
+$transition.server.proxy_support=$false
+$r=Receive $s $transition
+Check ($r.Kind -ceq 'sample' -and [Math]::Abs($r.Target.z-55.9215999984741) -lt 1e-9) 'Authoritative downhill transition remains a waypoint after grounded motion proof'
+$s=BufferedState;$null=Receive $s (Begin);$null=Receive $s (Sample 2 'SETTLING')
+$transition=Sample 3 'LANDING' 0 63.5466 0 $false
+$r=Receive $s $transition
+Check ($r.Kind -ceq 'observe') 'First airborne transition still requires the existing grounded motion proof'
 Write-Output "HUD_PHYSICAL_MOVEMENT_TESTS checks=$script:checks PASS"

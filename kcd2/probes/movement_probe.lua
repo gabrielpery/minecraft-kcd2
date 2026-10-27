@@ -355,51 +355,90 @@ end
 -- input, implement general collision adoption, or roll back quest/AI effects.
 local FOLLOWER_MS, TICK_MS, LEASE_SECONDS = 8000, 40, 0.4
 local PHYSICAL_TICK_MS, INTERPOLATION_SECONDS, POSITION_EPSILON = 1, 0.1, 0.0001
+local BUFFER_DELAY_SECONDS, BUFFER_CAPACITY, SOURCE_LIMIT_MS = 0.2, 8, 6000
+local FOLLOWER_LOG_MAX_BYTES = 3798 -- Includes the tag, separating space and CRLF.
 local function follower_tick_ms(p) return p.physical_movement and PHYSICAL_TICK_MS or TICK_MS end
 local function horizontal(v) return vector(v) and math.sqrt(v.x*v.x+v.y*v.y) or math.huge end
-local function segment_samples(segment)
+local function source_sample_json(source)
+    if not source then return "" end
+    return ',"bracket_from_seq":' .. number(source.from.seq) .. ',"bracket_from_ms":' .. number(source.from.source_ms)
+        .. ',"bracket_from_target":' .. vecjson(source.from.target)
+        .. ',"bracket_to_seq":' .. number(source.to.seq) .. ',"bracket_to_ms":' .. number(source.to.source_ms)
+        .. ',"bracket_to_target":' .. vecjson(source.to.target)
+        .. ',"bracket_to_received_engine_seconds":' .. number(source.to.received)
+        .. ',"playback_source_ms":' .. number(source.playback_ms) .. ',"source_hold":' .. tostring(source.hold)
+end
+local function segment_samples(segment,count)
     if not segment then return "null" end
     local values={}
-    for _,sample in ipairs(segment.samples) do
+    for index=1,count do
+        -- Keep the final delayed observation when the serialized subset must
+        -- shrink. The in-memory observations and all aggregates stay intact.
+        local sample=segment.samples[index==count and #segment.samples or index]
         values[#values+1]='{"fraction":' .. number(sample.fraction) .. ',"requested":' .. vecjson(sample.requested)
             .. ',"actual":' .. vecjson(sample.actual) .. ',"written_engine_seconds":' .. number(sample.written_at)
             .. ',"observed_engine_seconds":' .. number(sample.observed_at) .. ',"write_performed":' .. tostring(sample.written)
             .. ',"camera":' .. camera_json(sample.camera) .. ',"camera_basis_valid":' .. tostring(sample.camera_basis_valid)
             .. ',"written_frame_id":' .. number(sample.written_frame_id) .. ',"observed_frame_id":' .. number(sample.observed_frame_id)
+            .. source_sample_json(sample.source)
             .. ',"readback_error":' .. number(sample.error) .. '}'
     end
     return '[' .. table.concat(values,',') .. ']'
 end
-local function follower_receipt(p,event,result,s,seq,target,readback,follow_error,received,segment)
+local function follower_receipt(p,event,result,s,seq,target,readback,follow_error,received,segment,source)
     if p.records >= 128 then return false end
     local clock = now()
     local lease = p.latest and clock and math.max(0,(LEASE_SECONDS-(clock-p.latest.received))*1000) or 0
-    local physical = ""
+    local physical,source_fields = "",""
     if p.physical_movement then
         target = target or (p.restoring and p.origin or p.last_owned)
         physical = ',"physical_movement":true,"camera_mode":"native_look","camera_basis_valid":'
             .. tostring(physical_camera(s) == true) .. ',"sampled_engine_seconds":' .. number(clock)
             .. ',"player_readback_error":' .. number(distance(s and s.position.value,target))
-            .. ',"position_mode":"timed_interpolation","interpolation_ms":100,"target_receipt_age_ms":'
+            .. ',"position_mode":' .. quote(p.buffered_movement and "source_time_buffered" or "timed_interpolation")
+            .. ',"interpolation_ms":' .. (p.buffered_movement and "null" or "100") .. ',"target_receipt_age_ms":'
             .. number(received and clock and (clock-received)*1000)
             .. ',"segment_start_engine_seconds":' .. number(segment and segment.started)
             .. ',"segment_update_count":' .. number(segment and segment.updates)
             .. ',"segment_observation_count":' .. number(segment and segment.observations)
             .. ',"segment_max_observation_gap_ms":' .. number(segment and segment.max_gap_ms)
             .. ',"segment_max_readback_error":' .. number(segment and segment.max_error)
-            .. ',"endpoint_write_performed":' .. (segment and tostring(segment.endpoint_written) or "null")
-            .. ',"segment_observed_samples_truncated":' .. (segment and tostring(segment.observations>#segment.samples) or "null")
-            .. ',"segment_observed_samples":' .. segment_samples(segment)
+            .. ',"endpoint_write_performed":' .. (not p.buffered_movement and segment and tostring(segment.endpoint_written) or "null")
+        if p.buffered_movement then
+            source_fields = ',"playback_delay_ms":200,"playback_epoch_engine_seconds":' .. number(p.buffer_epoch)
+                .. ',"source_seq":' .. number(source and source.crossed.seq) .. ',"source_ms":' .. number(source and source.crossed.source_ms)
+                .. ',"source_target":' .. vecjson(source and source.crossed.target)
+                .. ',"source_points_crossed":' .. number(source and source.crossed_count)
+                .. ',"playback_source_ms":' .. number(source and source.playback_ms)
+                .. ',"acknowledged_write_performed":' .. (segment and tostring(segment.endpoint_written) or "null")
+        end
     end
-    local text = '{"schema":1,"run":' .. quote(p.run) .. ',"event":' .. quote(event) .. ',"result":' .. quote(result)
+    local common = '{"schema":1,"run":' .. quote(p.run) .. ',"event":' .. quote(event) .. ',"result":' .. quote(result)
         .. ',"terminal":' .. tostring(p.terminal == true) .. ',"seq":' .. number(seq or p.last_applied_seq or 0)
         .. ',"target":' .. vecjson(target or p.last_owned) .. ',"player":' .. vecjson(s and s.position.value)
         .. ',"camera":' .. camera_json(s and s.camera) .. ',"readback":' .. tostring(readback == true)
         .. ',"follow_error":' .. number(follow_error) .. ',"lease_ms":' .. number(lease)
         .. ',"hard_deadline_ms":8000,"elapsed_ms":' .. number(clock and (clock-p.created)*1000)
         .. ',"writes":' .. number(p.writes) .. ',"end_result":' .. quote(p.end_result or "none")
-        .. ',"timers_cancelled":' .. tostring(p.timers_cancelled ~= false) .. physical .. '}'
-    local ok = emit("[MineComeMovementFollower]",text)
+        .. ',"timers_cancelled":' .. tostring(p.timers_cancelled ~= false)
+    local function serialize(count)
+        local observations=""
+        if p.physical_movement then
+            observations=',"segment_observed_samples_truncated":' .. (segment and tostring(segment.observations>count) or "null")
+                .. ',"segment_observed_samples":' .. segment_samples(segment,count)
+        end
+        return common .. physical .. observations .. source_fields .. '}'
+    end
+    local prefix="[MineComeMovementFollower]"
+    local count=segment and #segment.samples or 0
+    local text=serialize(count)
+    -- KCD's logger truncates long lines. Bound the whole record before emission
+    -- rather than letting a valid receipt become partial JSON in the game log.
+    while #prefix+1+#text+2>FOLLOWER_LOG_MAX_BYTES and count>1 do
+        count=count-1;text=serialize(count)
+    end
+    if #prefix+1+#text+2>FOLLOWER_LOG_MAX_BYTES then return false end
+    local ok = emit(prefix,text)
     if ok then p.records = p.records+1 end
     return ok
 end
@@ -444,7 +483,7 @@ local function follower_stop(p,reason)
     if not arm(p,"restored","MineCome_MovementFollowerRestored",TICK_MS) then return follower_finish(p,"restore_failed","post_restore_timer_failed",s,true) end
     return follower_receipt(p,"restoring","restored_position_pending_camera",s,nil,p.origin,true)
 end
-local function begin_follower(run,physical)
+local function begin_follower(run,physical,buffered)
     if not token(run) then return false,"invalid_run" end
     if state.active or state.follower then return false,"busy" end
     local s,clock = snapshot(),now()
@@ -455,7 +494,7 @@ local function begin_follower(run,physical)
     local p = {run=run,entity=s.entity,id=s.id,created=clock,deadline=clock and clock+8,origin=copy(s.position.value),
         camera_origin=copy(s.camera.position.value),last_owned=copy(s.position.value),last_snapshot=s,timers={},data={},
         records=0,writes=0,last_queued_seq=0,last_applied_seq=0,last_heartbeat=clock,last_clock=clock,
-        physical_movement=physical,last_physical_tick=clock}
+        physical_movement=physical,last_physical_tick=clock,buffered_movement=buffered,buffer_queue=buffered and {} or nil}
     if unsafe then p.terminal=true;follower_receipt(p,"rejected",unsafe,s,0,nil,false);return false,unsafe end
     state.follower = p
     -- This timer is armed once; Apply never reschedules or extends it.
@@ -474,10 +513,22 @@ end
 function MineCome.BeginPhysicalMovementFollower(run)
     return begin_follower(run,true)
 end
+function MineCome.BeginBufferedPhysicalMovementFollower(run)
+    return begin_follower(run,true,true)
+end
+local function reject_buffered_input(p,reason,seq,target)
+    p.end_requested=reason
+    if p.records<126 then
+        local reported=finite(seq) and seq>=1 and seq<=200 and seq==math.floor(seq) and seq or 0
+        follower_receipt(p,"rejected",reason,p.last_snapshot,reported,copy(target),false)
+    end
+    return false,reason
+end
 function MineCome.ApplyMovementFollower(run,seq,x,y,z)
     if not token(run) then return false,"invalid_run" end
     local p = state.follower
     if not p or p.run ~= run or p.terminal or p.restoring or p.end_requested then return false,"wrong_or_inactive_run" end
+    if p.buffered_movement then return reject_buffered_input(p,"buffered_mode_mismatch",seq,{x=x,y=y,z=z}) end
     local target = {x=x,y=y,z=z}
     local invalid
     if not finite(seq) or seq < 1 or seq > 200 or seq ~= math.floor(seq) then invalid = "sequence_invalid"
@@ -497,6 +548,34 @@ function MineCome.ApplyMovementFollower(run,seq,x,y,z)
     p.latest = {seq=seq,target=copy(target),received=clock}
     return true,"queued"
 end
+function MineCome.ApplyBufferedMovementFollower(run,seq,x,y,z,source_ms)
+    if not token(run) then return false,"invalid_run" end
+    local p=state.follower
+    if not p or p.run~=run or p.terminal or p.restoring or p.end_requested then return false,"wrong_or_inactive_run" end
+    local target={x=x,y=y,z=z}
+    if not p.buffered_movement then return reject_buffered_input(p,"buffered_mode_mismatch",seq,target) end
+    local clock=now()
+    local invalid
+    if not finite(seq) or seq<1 or seq>200 or seq~=math.floor(seq) then invalid="sequence_invalid"
+    elseif seq<=p.last_queued_seq then invalid="sequence_replayed"
+    elseif not vector(target) or distance(target,p.origin)>2 or z-p.origin.z < -1.5 or z-p.origin.z>1.5 then invalid="target_out_of_bounds"
+    elseif not finite(source_ms) or source_ms<0 or source_ms>SOURCE_LIMIT_MS then invalid="source_time_invalid"
+    elseif not clock or clock<p.last_clock or (p.latest and clock<p.latest.received) then invalid="clock_unavailable_or_regressed"
+    elseif clock>=p.deadline then invalid="hard_deadline"
+    elseif not p.latest and clock-p.created>0.8 then invalid="first_pose_expired"
+    elseif not p.latest and (source_ms~=0 or distance(target,p.origin)>POSITION_EPSILON) then invalid="source_anchor_invalid"
+    elseif p.latest and source_ms<=p.latest.source_ms then invalid="source_time_replayed"
+    elseif p.buffer_epoch and source_ms<(clock-p.buffer_epoch)*1000 then invalid="source_time_late"
+    elseif #p.buffer_queue+(p.buffer_anchor and 1 or 0)>=BUFFER_CAPACITY then invalid="source_queue_overflow"
+    elseif p.buffer_tail_held and #p.buffer_queue==0 and p.buffer_anchor
+        and distance(target,p.buffer_anchor.target)>POSITION_EPSILON then invalid="source_continuation_late" end
+    if invalid then return reject_buffered_input(p,invalid,seq,target) end
+    local point={seq=seq,target=copy(target),received=clock,source_ms=source_ms}
+    p.buffer_queue[#p.buffer_queue+1]=point
+    if not p.buffer_epoch then p.buffer_epoch=clock+BUFFER_DELAY_SECONDS end
+    p.last_queued_seq=seq;p.latest=point
+    return true,"queued"
+end
 local function physical_observe(p,s,clock)
     local step=p.physical_step
     if not step then return end
@@ -509,13 +588,13 @@ local function physical_observe(p,s,clock)
     segment.max_error=math.max(segment.max_error,error)
     segment.max_gap_ms=math.max(segment.max_gap_ms,(clock-(segment.last_observed or step.at))*1000)
     segment.last_observed=clock
-    if #segment.samples<8 or step.fraction==1 then
+    if #segment.samples<8 or step.fraction==1 or step.preserve_observation then
         local index=math.min(#segment.samples+1,8)
         -- snapshot() already copies getter vectors. Retain the later camera
         -- observation, not the requested actor position or immediate readback.
         segment.samples[index]={fraction=step.fraction,requested=copy(step.target),actual=copy(s.position.value),
             written_at=step.at,observed_at=clock,written=step.written,error=error,camera=s.camera,
-            camera_basis_valid=physical_camera(s)==true,written_frame_id=step.frame_id,observed_frame_id=native_frame_id()}
+            camera_basis_valid=physical_camera(s)==true,written_frame_id=step.frame_id,observed_frame_id=native_frame_id(),source=step.source}
     end
 end
 local function physical_write(p,clock,previous_tick)
@@ -538,6 +617,33 @@ local function physical_write(p,clock,previous_tick)
             y=segment.start.y+(target.y-segment.start.y)*fraction,z=segment.start.z+(target.z-segment.start.z)*fraction}
     end
     return segment,target,fraction==1,fraction
+end
+local function buffered_write(p,clock)
+    if not p.buffer_epoch or clock<p.buffer_epoch then return nil end
+    local playback=(clock-p.buffer_epoch)*1000
+    local crossed,crossed_count=nil,0
+    while p.buffer_queue[1] and p.buffer_queue[1].source_ms<=playback do
+        local point=p.buffer_queue[1]
+        -- A fresh later sample cannot revive an expired part of the path.
+        if clock-point.received>LEASE_SECONDS then return nil,nil,nil,nil,nil,"source_destination_expired" end
+        table.remove(p.buffer_queue,1);p.buffer_anchor=point;crossed=point;crossed_count=crossed_count+1
+    end
+    local left=p.buffer_anchor
+    if not left then return nil,nil,nil,nil,nil,"source_anchor_unavailable" end
+    local right=p.buffer_queue[1] or left
+    if clock-right.received>LEASE_SECONDS then return nil,nil,nil,nil,nil,"source_destination_expired" end
+    local hold=left==right
+    local fraction=hold and 0 or math.max(0,math.min(1,(playback-left.source_ms)/(right.source_ms-left.source_ms)))
+    local target={x=left.target.x+(right.target.x-left.target.x)*fraction,
+        y=left.target.y+(right.target.y-left.target.y)*fraction,z=left.target.z+(right.target.z-left.target.z)*fraction}
+    local source={from=left,to=right,playback_ms=playback,hold=hold,crossed=crossed,crossed_count=crossed_count}
+    p.buffer_tail_held=hold and playback>left.source_ms
+    local segment=p.buffer_segment
+    if not segment then
+        segment={started=clock,samples={},updates=0,observations=0,max_gap_ms=0,max_error=0,endpoint_written=false}
+        p.buffer_segment=segment
+    end
+    return segment,target,crossed~=nil,fraction,source
 end
 function MineCome_MovementFollowerTick(data)
     local p = follower_consume(data);if not p then return false end
@@ -569,9 +675,10 @@ function MineCome_MovementFollowerTick(data)
     -- carry that exact seq/target, not the next queued target's camera values.
     if p.pending_receipt then
         local pending = p.pending_receipt;p.pending_receipt = nil
+        if p.buffered_movement and clock-pending.received>LEASE_SECONDS then return follower_stop(p,"source_receipt_expired") end
         local readback = distance(s.position.value,pending.target) <= 0.05
         local error = follower_camera_error(p,s,pending.target)
-        if not follower_receipt(p,"applied",readback and "applied_readback" or "delayed_readback_changed",s,pending.seq,pending.target,readback,error,pending.received,pending.segment) then return follower_stop(p,"log_failed") end
+        if not follower_receipt(p,"applied",readback and "applied_readback" or "delayed_readback_changed",s,pending.seq,pending.target,readback,error,pending.received,pending.segment,pending.source) then return follower_stop(p,"log_failed") end
     elseif p.latest and clock-p.last_heartbeat >= 1 then
         p.last_heartbeat = clock
         if not follower_receipt(p,"heartbeat","holding_latest",s,nil,p.last_owned,distance(s.position.value,p.last_owned)<=0.05,
@@ -584,8 +691,15 @@ function MineCome_MovementFollowerTick(data)
             if guards(s,0.05,true,true) or s.entity ~= p.entity or s.id ~= p.id or distance(s.position.value,p.origin)>0.02 then return follower_stop(p,"player_changed_during_ground_check") end
             p.ground_verified = true
         end
-        local frame,target,endpoint,fraction = p.latest,p.latest.target,true,nil
-        if p.physical_movement then frame,target,endpoint,fraction=physical_write(p,clock,previous_tick) end
+        local frame,target,endpoint,fraction,source,source_error = p.latest,p.latest.target,true,nil,nil,nil
+        if p.buffered_movement then
+            frame,target,endpoint,fraction,source,source_error=buffered_write(p,clock)
+            if source_error then return follower_stop(p,source_error) end
+        elseif p.physical_movement then frame,target,endpoint,fraction=physical_write(p,clock,previous_tick) end
+        if not frame then
+            if not arm(p,"tick","MineCome_MovementFollowerTick",follower_tick_ms(p)) then return follower_stop(p,"tick_timer_failed") end
+            return true
+        end
         local written=not p.physical_movement or distance(s.position.value,target)>POSITION_EPSILON
         local ok,value,readback=true,nil,s
         if written then
@@ -600,10 +714,15 @@ function MineCome_MovementFollowerTick(data)
             p.last_owned = copy(target)
             if p.physical_movement and fraction then
                 if written then frame.updates=frame.updates+1 end
-                p.physical_step={segment=frame,target=copy(target),fraction=fraction,at=clock,written=written,frame_id=native_frame_id()}
+                p.physical_step={segment=frame,target=copy(target),fraction=fraction,at=clock,written=written,frame_id=native_frame_id(),
+                    source=source,preserve_observation=p.buffered_movement and endpoint}
             end
             if endpoint then
-                if frame.seq ~= p.last_applied_seq then
+                if p.buffered_movement then
+                    frame.endpoint_written=written
+                    p.pending_receipt={seq=source.crossed.seq,target=copy(target),received=source.crossed.received,segment=frame,source=source}
+                    p.last_applied_seq=source.crossed.seq;p.buffer_segment=nil
+                elseif frame.seq ~= p.last_applied_seq then
                     if p.physical_movement then frame.endpoint_written=written end
                     p.pending_receipt={seq=frame.seq,target=copy(frame.target),received=frame.received,
                         segment=p.physical_movement and frame or nil};p.last_applied_seq=frame.seq

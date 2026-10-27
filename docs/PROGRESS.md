@@ -1,5 +1,102 @@
 # MineCome progress — 2026-10-27
 
+**Source-time playback passes its autonomous replay, but the first combined
+buffered run stops at a terrain-transition phase mismatch.** HUD run
+`d838afda4ed44e9a855e5da65cb47c07`, probe
+`d257ab3e82644a0b9e02612185d4db00`, fails after two forwarded sources and before
+any KCD position writes:
+`runtime/evidence/hud-walking-20261027-163234-d257ab3e82644a0b9e02612185d4db00/`.
+Sequence 4 is labelled `RESTING` while its authoritative server has
+`on_ground=true`, `proxy_support=false` and a 0.0784 m descent; the client has
+already landed on the lower sampled slab. Buffered playback correctly refuses
+to omit that unsupported source point. Java now labels this authoritative
+transition as `LANDING`; receiver bounds and physical motion remain unchanged.
+The phase correction now compiles: 180 ground-patch and 282 physical-controller
+checks pass, alongside 119 PowerShell receiver checks. Captured-terrain
+actual-Minecraft fixture `21862be610794462b3ed1437b7802477` passes, with 103 published
+frames, 11 inventory frames and 31 walking frames. Scripted W/W/S pulses move
+client and server equally by 0.446445/0.640961/0.640961 m, with zero inventory
+movement or corrections, then finish in 5,524 ms. Its 100 ms source samples do
+not contain the brief unsupported transition, so this run does not establish
+regression coverage. Evidence:
+`runtime/evidence/hud-physical-fixture-20261027-164007-21862be610794462b3ed1437b7802477/`.
+
+Targeted synthetic fixture `5750b05f92b64938ba7025140d8c33ad` is rejected before
+movement because its modified terrain exceeds the existing 0.5 m adjacent-height
+bound. That guard remains unchanged. Revised synthetic fixture
+`40b64199deda490893f786a0b42e7b27` passes in 5,563 ms with W/W/S distances
+0.446445/0.640961/0.856736 m on both client/server, 10 inventory frames and 32
+walking frames, zero inventory movement/corrections and complete cleanup. It
+also emits no unsupported `LANDING` source sample, so its coverage remains
+limited to working movement over its labelled synthetic patch. Evidence:
+`runtime/evidence/hud-physical-fixture-20261027-164644-40b64199deda490893f786a0b42e7b27/`.
+
+The exact failed captured sequence 4 is covered by the Java regression and
+PowerShell receiver tests plus a read-only replay of that record in memory.
+Another fixture is not needed for this narrow phase-label correction; the next
+check is the combined live retry. These fixtures use scripted controls and
+separate terrain provenance. They neither arm KCD's renderer nor establish
+combined smoothness.
+
+The user's apparent immediate Minecraft closure is not a process crash: its
+recorded exit code is zero and the helper reports `BUILD SUCCESSFUL`. Controller
+cancellation stops the camera worker, then the guest fails its camera lease and
+exits normally. All 579 camera publications were fresh and resources closed.
+The native terminal receipt is `rejected/explicit_end`, with zero writes,
+unchanged origin, zero player error and cancelled timers. The primary
+`restoration_verified=false` flag means no restoration event was performed;
+it does not indicate unrecovered actor movement. FPS restoration passes. These
+facts and the original failed result are retained in `failure-analysis.json`.
+No buffered smoothness result was obtained; the earlier still-choppy report
+remains the last completed visual comparison.
+
+The buffer intentionally adds 200 ms of playback latency to preserve the actual
+server-observation timeline instead of compressing irregular arrivals into fixed
+100 ms segments. No new native bundle is required.
+
+Replay `477989b1edd34c10b5d90c437d8006fd` passes all 51 forwarded source points
+and 51 corresponding observed crossings, with actor and FPS restoration:
+`runtime/evidence/buffered-movement-replay-20261027-162624-477989b1edd34c10b5d90c437d8006fd/`.
+This is scripted playback of the previous captured trajectory in real KCD.
+Minecraft, HUD composition and physical input were not active. It is not a
+combined visual or input-latency result.
+
+Its `timing-analysis.json` records 163 observations, of which 101 are retained;
+46 receipts explicitly omit intermediate samples to fit the native log budget.
+There are 64 ordinary setters plus one restoration setter. All retained samples
+advance exactly one native frame, median 34.42 ms and maximum 34.91 ms. The
+aggregate reported observation gap reaches 35.16 ms. This is the measured native
+frame cadence of this replay, not a claim of 60 FPS presentation or skipped
+callbacks. Position readback errors are zero. Retained camera-to-player offset
+changes are median 0.26 mm, maximum 5.38 mm; these snapshots do not prove rendered
+smoothness.
+
+Actual server-observation intervals span 97.77-201.27 ms. Playback source time
+follows one immutable epoch without fixed-duration compression. The largest
+measured movement speed between retained consecutive native frames is 3.688 m/s,
+compared with 3.692 m/s on the source timeline. Only the final source point has
+a retained hold observation; no intermediate underrun is observed in the retained
+samples. The intended 200 ms delay is 199.951 ms in the native float32 clock.
+Relative source-timeline-to-delayed-ACK time is median 254 ms, maximum 268 ms;
+this includes crossing quantization and readback and is not input-to-photon time.
+
+All 59 matching follower lines from the rotated native log parse, with a maximum
+full-line length of 3,793 bytes, below the 3,800-byte serialization budget.
+Per-line hashes and lengths are saved in the analysis. The first buffered replay
+`5ec108...` failed when the native logger truncated a longer JSON line at about
+4,095 bytes; its separate `cleanup-verification.json` confirms exact actor
+restoration, and FPS restoration passed. Replay `6ef373...` reached 50/51 source
+points before the old 250 ms controller drain ended; restoration passed. The
+controller now waits for the actual final source ACK within 400 ms. The engine's
+original 400 ms target lease is unchanged.
+
+Validation passes 68 Lua cases, 79 buffered PowerShell checks, 117 physical-profile
+checks, 134 ground-movement checks, 80 coupled-proof checks and 32 timed-follower
+checks. `2e75faf` is pushed alongside the earlier checkpoints; this new buffered
+implementation is a later working-tree change pending its own commit.
+
+### Previous combined physical result: fixed-duration interpolation
+
 **Repeated physical walking works with the HUD; smoothness remains unfinished.**
 Latest combined HUD run `725d69490f464ca989fccb3783a7cba4` passes 49 forwarded
 Minecraft server poses, 49 delayed KCD applied readbacks, the movement trace,
@@ -44,7 +141,7 @@ run passed 51 forwarded/50 applied poses and 483 fresh camera samples; the user
 confirmed all directions worked but described very choppy motion. Its original
 receipts and separate `timing-analysis.json` remain preserved.
 
-The physical-only follower now requests a 1 ms timer and advances an immutable
+That fixed-duration follower requests a 1 ms timer and advances an immutable
 selected segment over 100 ms of engine time. It skips stationary setters and
 caps physical writes at 512; the legacy cap stays 200. The original 400 ms
 accepted-target lifetime, eight-second deadline, two-metre sphere and restoration
@@ -66,9 +163,9 @@ the foreground request was confirmed belatedly; the improvement cannot be
 attributed solely to polling or focus. These autonomous checks do not establish
 subjective smoothness; the later combined run above still looks choppy.
 
-Commits `a59403c` and `f6f8ea9` are pushed to the public default branch. The later
-interpolation and timing evidence are a subsequent working-tree change at this
-checkpoint; inspect Git before assuming publication.
+Commits `a59403c`, `f6f8ea9` and `2e75faf` are pushed to the public default
+branch. The fixed-duration implementation and its still-choppy combined result
+are preserved there; the later source-time buffer is described above.
 
 ### Earlier technical pass and completed camera repairs
 
@@ -213,14 +310,13 @@ denies delete sharing. Updated validation passes 282 Java controller checks,
 checks, alongside the 40 Lua movement cases and actual-KCD probe above.
 Ground checks (160) and reverse-input checks (353) also passed.
 
-These Java, Lua and script changes require no replacement native bundle on the
-existing test machine. The `0e14...` arm was archived after normal KCD closure.
-Fresh process 45644, started at 15:40:09, subsequently consumed its activation in
-`725d...`. Minecraft is closed after the combined check. Another physical test
-requires normal KCD closure, archiving that exact owned arm and a fresh launch.
-Computer Use was stopped by Escape in this turn; recheck process and receipt
-state before acting. The latest interpolation passes autonomous and combined
-technical checks, but the user's choppiness report remains unresolved.
+These changes require no replacement native bundle on the existing test machine.
+Process 45644 closed normally and its `725d...` arm was archived. Process 34088
+then consumed its activation in `d838...`/probe `d257...`; Minecraft has exited.
+Do not treat the process as unarmed. Another physical activation needs normal KCD
+closure, archival of the exact latest arm and a fresh launch. The Java phase
+correction and focused checks are complete; the combined retry remains pending. Computer Use remains
+stopped by Escape in this turn; recheck current processes and receipts.
 
 ## 20 October 2026 checkpoint
 

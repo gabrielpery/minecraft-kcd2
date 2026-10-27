@@ -111,21 +111,36 @@ Never load newer retail1.5.6 saves into this older1.5.5 development game. Backup
 ## Gameplay scope
 
 - The separate physical HUD walking profile passes bounded controls and cleanup,
-  but smoothness remains unfinished. Latest combined run
+  but smoothness remains unfinished. Earlier combined run
   `725d69490f464ca989fccb3783a7cba4` passes 49 forwarded server poses, 49 delayed
   KCD readbacks and restoration; its 484 camera samples have no stale discards.
   The user says it is still choppy, perhaps a little better. Earlier `0e14...`
   confirmed movement in all directions. Repeated controls work, but continuous,
-  exclusive or smooth walking is not established. The physical follower now
-  performs six or seven writes per moving segment, about 16 ms apart, and skips
-  all stationary rewrites. Four consecutive moving transitions still pause
-  47-64 ms; source captures remain about 101 ms apart and can reach 168 ms.
-  Fixed 100 ms segments compress those irregular source intervals and change
-  speed abruptly. Camera delivery stays fresh, and sampled camera-to-player
-  offsets show no large jumps. These are timing leads, not proof of rendered
-  frame smoothness. The new path passes 47 Lua and 17 PowerShell interpolation
-  checks, a six-target autonomous KCD probe, and the combined technical check;
-  the subjective problem is not fixed.
+  exclusive or smooth walking is not established. The previous fixed-duration
+  follower writes about every 16 ms within segments but pauses 47-64 ms at some
+  transitions and compresses irregular source intervals. A newer source-time
+  buffer preserves actual server timing with an intentional 200 ms playback
+  delay. It passes an autonomous real-KCD replay of all 51 source points, actor
+  restoration and FPS restoration; that replay has no active Minecraft, HUD or
+  physical input. Retained samples advance one native frame, about 34 ms in that
+  replay, with zero position errors. This is not a 60 FPS or visual-smoothness
+  claim. The first combined buffered run `d838...` stops after two forwarded
+  points: a downhill source is labelled RESTING while the authoritative server
+  lacks proxy support. The Java phase correction compiles and the captured-terrain
+  Minecraft fixture passes. A revised synthetic-terrain fixture also passes, but
+  neither emits the brief unsupported transition. The exact failed record is
+  covered by Java/receiver regressions and read-only memory replay; combined
+  validation remains pending. The first synthetic variant is correctly rejected
+  by the existing 0.5 m adjacent-height bound before movement. Receiver bounds
+  are not relaxed. KCD receives zero position writes, retains its origin
+  and cancels timers. Minecraft saves/exits with code zero after controller
+  cancellation; this is not a process crash. The primary restoration flag stays
+  false because no restoration write/event was needed. Source checks pass
+  68 Lua cases and 79 buffered PowerShell checks. Native receipt serialization
+  now fits the logger's size limit with honest bounded sample retention; the
+  controller drains the actual final ACK within 400 ms without extending the
+  original engine target lease. Camera delivery remained fresh in the previous
+  combined run; sampled camera offsets show no large jumps.
   Camera delivery runs independently with a retained log handle and original
   timestamps. Its 110 ms cadence fits the existing 1,024-sample budget. Boundary
   pauses require balanced release and fresh press without restarting the original

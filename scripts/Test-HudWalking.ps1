@@ -8,6 +8,7 @@ Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'KcdToolsProbeHelpers.ps1')
 . (Join-Path $PSScriptRoot 'HudGroundMovement.ps1')
 . (Join-Path $PSScriptRoot 'HudPhysicalMovement.ps1')
+. (Join-Path $PSScriptRoot 'HudBufferedMovement.ps1')
 . (Join-Path $PSScriptRoot 'HudWalkingReceipts.ps1')
 . (Join-Path $PSScriptRoot 'HudCameraDelivery.ps1')
 . (Join-Path $PSScriptRoot 'MovementTraceReceiver.ps1')
@@ -23,6 +24,7 @@ $context=Get-MineComeProbeContext
 if($PreflightOnly){Write-Output 'HUD_WALKING_PREFLIGHT_PASS no_changes=true';return}
 $probe=$null;$helper=$null;$arm=$null;$budget=$null;$budgetEvidence=$null;$failure=$null
 $followerStarted=$false;$restored=$false;$passed=$false;$traceEnded=$false;$tracePassed=$false
+$followerEndRequested=$false;$playbackDrain=$null;$lastDrainFlush=-1000L;$sourceClock=New-HudBufferedSourceState
 $ready=$null;$readyHash=$null;$guest=$null;$producerIdentity=$null;$receiver=$null;$physicalReady=$null
 $run=[Guid]::NewGuid().ToString('N');$camera=$null;$cameraState=$null
 $forwarded=[Collections.Generic.List[object]]::new()
@@ -42,21 +44,24 @@ function Send-Pose($Sample){
     Assert-MineComeProbeContext $context
     $frame=$Sample.Record;$target=$Sample.Target
     $age=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()-[long]$frame.utc_ms
-    if($age -lt -50 -or [Math]::Max(0,$age)+$frame.server_age_ns/1000000.0 -gt 300){return}
+    if($age -lt -50 -or [Math]::Max(0,$age)+$frame.server_age_ns/1000000.0 -gt 300){throw 'A buffered source point expired before dispatch.'}
     $culture=[Globalization.CultureInfo]::InvariantCulture
     $x=([double]$target.x).ToString('R',$culture);$y=([double]$target.y).ToString('R',$culture);$z=([double]$target.z).ToString('R',$culture)
-    $apply="MineCome.ApplyMovementFollower('$($probe.Run)',$($frame.seq),$x,$y,$z)"
+    $sourcePreciseMs=Get-HudBufferedSourceTime -State $sourceClock -Record $frame
+    $sourceMs=[double][single]$sourcePreciseMs
+    $sourceText=([double]$sourceMs).ToString('R',$culture)
+    $apply="MineCome.ApplyBufferedMovementFollower('$($probe.Run)',$($frame.seq),$x,$y,$z,$sourceText)"
     $code=$apply
     if(-not $script:followerStarted){
         $cx=([double]$receiver.Center.x).ToString('R',$culture);$cy=([double]$receiver.Center.y).ToString('R',$culture);$cz=([double]$receiver.Center.z).ToString('R',$culture)
-        $code="local p=player and player:GetWorldPos(); if p and (p.x-($cx))^2+(p.y-($cy))^2+(p.z-($cz))^2<=0.01 then if MineCome.BeginPhysicalMovementFollower('$($probe.Run)') then $apply end end"
+        $code="local p=player and player:GetWorldPos(); if p and (p.x-($cx))^2+(p.y-($cy))^2+(p.z-($cz))^2<=0.01 then if MineCome.BeginBufferedPhysicalMovementFollower('$($probe.Run)') then $apply end end"
     }
     $script:followerStarted=$true
     Invoke-MineComeToolsRequest -PathAndQuery ('/api/System/Console/ExecuteString?command='+[Uri]::EscapeDataString('#'+$code)) -TimeoutMilliseconds 150 | Out-Null
-    $forwarded.Add([pscustomobject]@{TraceSeq=[long]$frame.seq;ServerSeq=[long]$frame.server_seq;Phase=$frame.phase;UtcMs=[long]$frame.utc_ms;Target=$target})
+    $forwarded.Add([pscustomobject]@{TraceSeq=[long]$frame.seq;ServerSeq=[long]$frame.server_seq;Phase=$frame.phase;UtcMs=[long]$frame.utc_ms;SourceMs=$sourceMs;SourcePreciseMs=$sourcePreciseMs;Target=$target})
 }
 try{
-    $probe=New-MineComeProbeRun $context 'hud-walking' (Join-Path $root 'kcd2/probes/movement_probe.lua') 'BeginPhysicalMovementFollower'
+    $probe=New-MineComeProbeRun $context 'hud-walking' (Join-Path $root 'kcd2/probes/movement_probe.lua') 'BeginBufferedPhysicalMovementFollower'
     $receiptCursor=New-HudWalkingReceiptCursor $context.GameLog $probe.Offset $probe.Run -KeepOpen
     Console "MineCome.ProbeMovementCapabilities('$($probe.Run)')"
     $until=[DateTime]::UtcNow.AddSeconds(4);$cap=$null
@@ -115,7 +120,7 @@ try{
             if($ready.run -cne $run){throw 'Physical HUD producer run mismatch.'}
             $arm=& (Join-Path $PSScriptRoot 'Arm-HudStream.ps1') -PhysicalMovement -InputMode -LiveMouse -OffscreenPresentation -BundleDirectory $BundleDirectory -ReadyManifest $readyPath
             $readyHash=(Get-FileHash -LiteralPath $readyPath).Hash
-            $receiver=New-MineComeTraceReceiver $patchFile $minimumUtc -ExpectedHudSave $ready.save -PhysicalMovement
+            $receiver=New-MineComeTraceReceiver $patchFile $minimumUtc -ExpectedHudSave $ready.save -PhysicalMovement -BufferedPhysicalMovement
             if($receiver.PatchHash -cne $livePatch.Hash){throw 'Live terrain changed before trace binding.'}
             $producerIdentity=[pscustomobject]@{Pid=$ready.producer_pid;Start=[string]$ready.producer_start_filetime}
             Write-Output "HUD_WALKING_ARMED run=$run waiting_for_settled_guest=true"
@@ -137,25 +142,42 @@ try{
         if($receiver -and -not $traceEnded){
             $producer=Get-Process -Id $producerIdentity.Pid
             try{if($producer.ProcessName -cne 'java' -or $producer.StartTime.ToUniversalTime().ToFileTimeUtc().ToString() -cne $producerIdentity.Start){throw 'HUD producer identity changed.'}}finally{$producer.Dispose()}
-            $lines=@(Read-CoupledTraceLines $traceReader);$candidate=$null
+            $lines=@(Read-CoupledTraceLines $traceReader)
             for($i=$lineCount;$i -lt $lines.Count;$i++){
                 $received=Receive-MineComeMovementTrace $receiver $lines[$i] ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())
-                if($received.Kind -ceq 'sample'){$candidate=$received}
+                # Every source waypoint matters to the playback timeline,
+                # especially its initial stationary anchor. Do not coalesce it.
+                if($received.Kind -ceq 'sample'){Send-Pose $received}
+                elseif($received.Kind -ceq 'stale' -or ($received.Kind -ceq 'observe' -and $received.Record.kind -ceq 'sample')){
+                    throw 'Buffered playback cannot omit an expired or unsupported source waypoint.'
+                }
                 elseif($received.Kind -ceq 'end'){$traceEnded=$true;$tracePassed=$received.Record.result -ceq 'passed'}
             }
             $lineCount=$lines.Count
-            if($candidate -and -not $traceEnded){Send-Pose $candidate}
-            if($traceEnded -and $camera){Request-HudCameraDeliveryStop $camera}
-            if($traceEnded -and $followerStarted){Console "MineCome.EndMovementFollower('$($probe.Run)')"}
-            if($traceEnded -and $camera){
+        }
+        if($traceEnded -and $followerStarted -and -not $followerEndRequested){
+            if(-not $playbackDrain){$playbackDrain=[Diagnostics.Stopwatch]::StartNew()}
+            # Wait for the actual final observation, rather than cancelling a
+            # pending readback on a slower background frame. Native leases and
+            # the eight-second lifetime remain independent, unchanged bounds.
+            $finalObserved=@($receipts | Where-Object {$_.event -ceq 'applied' -and $_.source_seq -eq $forwarded[-1].TraceSeq}).Count -eq 1
+            if($finalObserved -or $playbackDrain.ElapsedMilliseconds -ge 400){
+                Console "MineCome.EndMovementFollower('$($probe.Run)')"
+                $followerEndRequested=$true
+            }elseif($playbackDrain.ElapsedMilliseconds-$lastDrainFlush -ge 100){
+                Console "System.LogAlways('[MineComeHudPlaybackDrain] $($probe.Run)')"
+                $lastDrainFlush=$playbackDrain.ElapsedMilliseconds
+            }
+        }
+        if($followerEndRequested -and $camera){
+                Request-HudCameraDeliveryStop $camera
                 $cameraState=Stop-HudCameraDelivery $camera
                 if($cameraState.ResourcesClosed){$camera=$null}
                 if($cameraState.Failure -or -not $cameraState.Stopped -or -not $cameraState.ResourcesClosed){throw 'Camera delivery did not stop cleanly.'}
-            }
         }
         $receipts=@(Read-Receipts 'MineComeMovementFollower')
         $terminal=@($receipts | Where-Object terminal -EQ $true)
-        if($traceEnded -and $followerStarted -and -not $terminal.Count -and
+        if($followerEndRequested -and -not $terminal.Count -and
             [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()-$lastRestoreFlush -ge 100){
             $lastRestoreFlush=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
             Console "System.LogAlways('[MineComeHudRestoreFlush] $($probe.Run)')"
@@ -176,13 +198,16 @@ try{
     if(-not $restored){throw 'Physical KCD follower restoration was not verified.'}
     $applied=@($receipts | Where-Object {$_.event -ceq 'applied' -and $_.physical_movement -eq $true -and $_.readback -eq $true -and $_.camera_basis_valid -eq $true -and $null -ne $_.player_readback_error -and $_.player_readback_error -le 0.15})
     if($applied.Count -lt 3){throw 'Too few actual delayed KCD movement readbacks.'}
+    $playbackEpoch=$null;$lastCrossed=0;$crossedPoints=0;$previousSourceIndex=-1
     foreach($receipt in $applied){
-        $sent=@($forwarded | Where-Object TraceSeq -EQ $receipt.seq)
-        if($sent.Count -ne 1){throw 'KCD movement receipt lacks a unique dispatched server pose.'}
-        foreach($axis in @('x','y','z')){
-            if([double]$receipt.target.$axis -ne [double][single]$sent[0].Target.$axis){throw 'KCD target differs from the exact float32 server target.'}
-        }
+        $proof=Assert-HudBufferedMovementReceipt -Receipt $receipt -Forwarded $forwarded
+        if(($null -ne $playbackEpoch -and $proof.EpochEngineSeconds -ne $playbackEpoch) -or $proof.CrossedSourceSeq -le $lastCrossed){throw 'Buffered playback changed epoch or replayed a source point.'}
+        if($proof.SourcePointsCrossed -ne $proof.SourceIndex-$previousSourceIndex){throw 'Buffered source crossing count differs from actual progress.'}
+        $previousSourceIndex=$proof.SourceIndex
+        $playbackEpoch=$proof.EpochEngineSeconds;$lastCrossed=$proof.CrossedSourceSeq
+        $crossedPoints+=$receipt.source_points_crossed
     }
+    if($lastCrossed -ne $forwarded[-1].TraceSeq -or $crossedPoints -ne $forwarded.Count){throw 'Buffered playback did not drain all forwarded source points.'}
     $movement=$guest.lab_evidence.physical_movement
     foreach($field in @('completed','trace_closed','controls_released','client_proxy_released','server_proxy_released')){
         if($movement.$field -isnot [bool] -or -not $movement.$field){throw "Missing physical movement completion: $field"}
@@ -215,17 +240,24 @@ finally{
         # follower's explicit end command or its restoration receipt.
         if($camera){Request-HudCameraDeliveryStop $camera}
         if($followerStarted -and -not $restored){
+            $beforeCleanup=$receipts
             try{
+                try{
+                    if($receiptCursor){Close-HudWalkingReceiptCursor $receiptCursor}
+                    $receiptCursor=New-HudWalkingReceiptCursor $context.GameLog ([IO.FileInfo]::new($context.GameLog).Length) $probe.Run -KeepOpen
+                }catch{if(-not $failure){$failure=$_.Exception.Message};$passed=$false}
+                $receipts=@()
                 Console "MineCome.EndMovementFollower('$($probe.Run)')"
                 $cleanupUntil=[DateTime]::UtcNow.AddSeconds(3)
                 do{
                     Start-Sleep -Milliseconds 100
                     Console "System.LogAlways('[MineComeHudRestoreFlush] $($probe.Run)')"
                     $receipts=@(Read-Receipts 'MineComeMovementFollower')
-                    $restored=@($receipts | Where-Object {$_.event -ceq 'restored' -and $_.result -ceq 'restored' -and $_.terminal -eq $true -and $_.timers_cancelled -eq $true}).Count -eq 1
+                    $restored=@($receipts | Where-Object {$_.event -ceq 'restored' -and $_.result -ceq 'restored' -and $_.terminal -eq $true -and $_.timers_cancelled -eq $true -and $_.readback -eq $true -and $_.physical_movement -eq $true -and $_.camera_basis_valid -eq $true -and $null -ne $_.player_readback_error -and $_.player_readback_error -le .15}).Count -eq 1
                     if($restored){break}
                 }while([DateTime]::UtcNow -lt $cleanupUntil)
             }catch{[IO.File]::WriteAllText((Join-Path $probe.Directory 'cleanup-error.txt'),$_.Exception.Message)}
+            finally{$receipts=@($beforeCleanup)+@($receipts)}
         }
         if($receiptCursor){
             try{Close-HudWalkingReceiptCursor $receiptCursor}
