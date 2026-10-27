@@ -1,4 +1,4 @@
-# Pure source-time normalization and observed buffered-path proof. No game calls.
+# Buffered source timing, observed-path proof and disposable warmup. No game calls.
 function Get-HudBufferedNumber($Value,[string]$Name,[double]$Minimum,[double]$Maximum) {
     if($Value -isnot [ValueType] -or $Value -is [bool] -or $Value -is [char] -or
         $Value -is [datetime] -or -not [double]::IsFinite([double]$Value) -or
@@ -69,6 +69,56 @@ function Get-HudBufferedSourceTime($State,$Record) {
     $State.AnchorNs=$anchor;$State.LastSourceNs=$source;$State.LastMonotonicNs=$monotonic
     $State.LastTraceSeq=$seq;$State.LastServerSeq=$serverSeq;$State.Count=[int]($count+1)
     return [double]$milliseconds
+}
+function Initialize-HudBufferedMovementPipeline {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$PatchFile,
+        [Parameter(Mandatory)][string]$ExpectedHudSave,
+        [Parameter(Mandatory)]$MinimumUtcMs)
+    $ErrorActionPreference='Stop'
+    $watch=[Diagnostics.Stopwatch]::StartNew()
+    try {
+        # This receiver is disposable diagnostic state, never the live receiver.
+        # Validate the caller's inputs normally, then bind only this fresh state
+        # to a separate synthetic world so these records cannot name the HUD save.
+        $diagnosticReceiver=New-MineComeTraceReceiver -PatchFile $PatchFile -MinimumUtcMs $MinimumUtcMs `
+            -ExpectedHudSave $ExpectedHudSave -PhysicalMovement -BufferedPhysicalMovement
+        $diagnosticWorld=[Guid]::NewGuid().ToString('D')
+        $diagnosticSave='MineCome-HudStream-'+$diagnosticWorld
+        $diagnosticReceiver.ExpectedHudSave=$diagnosticSave
+        $diagnosticClock=New-HudBufferedSourceState
+        $diagnosticIdentity=[ordered]@{schema=1;run=$diagnosticReceiver.ExpectedRun;patch_sha256=$diagnosticReceiver.PatchHash;
+            source_kind='live_kcd_hud_physical_movement';save=$diagnosticSave;world=$diagnosticWorld;utc_ms=[long]$MinimumUtcMs}
+        $diagnosticBegin=[ordered]@{}
+        foreach($entry in $diagnosticIdentity.GetEnumerator()){$diagnosticBegin[$entry.Key]=$entry.Value}
+        $diagnosticBegin.kind='begin';$diagnosticBegin.seq=1L;$diagnosticBegin.phase='SETTLING'
+        $diagnosticBegin.started_monotonic_ns=0L;$diagnosticBegin.center=$diagnosticReceiver.Center
+        $diagnosticBegin.anchor_mc=[pscustomobject]@{x=0.0;y=64.0;z=0.0}
+        $diagnosticBegin.approximate_heightfield=$true;$diagnosticBegin.full_collision_export_verified=$false
+        $diagnosticResult=Receive-MineComeMovementTrace -State $diagnosticReceiver `
+            -JsonLine (ConvertTo-Json -InputObject $diagnosticBegin -Depth 8 -Compress) -NowUtcMs $MinimumUtcMs
+        if($diagnosticResult.Kind -cne 'begin'){throw 'Diagnostic buffered warmup did not accept its synthetic begin.'}
+        # Exercise both first-anchor and subsequent normalization branches. No
+        # synthetic trace, source time, target or receiver is emitted or saved.
+        foreach($index in 1..2){
+            $diagnosticSample=[ordered]@{}
+            foreach($entry in $diagnosticIdentity.GetEnumerator()){$diagnosticSample[$entry.Key]=$entry.Value}
+            $diagnosticSample.kind='sample';$diagnosticSample.seq=[long]($index+1)
+            $diagnosticSample.phase=if($index -eq 1){'SETTLING'}else{'RESTING'}
+            $diagnosticSample.monotonic_ns=[long]($index*100000000);$diagnosticSample.server_seq=[long]$index
+            $diagnosticSample.server_age_ns=0L
+            $diagnosticSample.client=[pscustomobject]@{x=0.0;y=64.0;z=0.0;vx=0.0;vy=0.0;vz=0.0;on_ground=$true;proxy_support=$true}
+            $diagnosticSample.server=[pscustomobject]@{x=0.0;y=64.0;z=0.0;vx=0.0;vy=0.0;vz=0.0;on_ground=$true;proxy_support=$true}
+            $diagnosticJson=ConvertTo-Json -InputObject $diagnosticSample -Depth 8 -Compress
+            $diagnosticResult=Receive-MineComeMovementTrace -State $diagnosticReceiver -JsonLine $diagnosticJson -NowUtcMs $MinimumUtcMs
+            if($diagnosticResult.Kind -cne 'sample'){throw 'Diagnostic buffered warmup did not accept its synthetic stationary sample.'}
+            $diagnosticParsed=ConvertFrom-Json -InputObject $diagnosticJson
+            $diagnosticSourceMs=Get-HudBufferedSourceTime -State $diagnosticClock -Record $diagnosticParsed
+            if($diagnosticSourceMs -ne ($index-1)*100){throw 'Diagnostic buffered warmup source-time check failed.'}
+        }
+    } finally {$watch.Stop()}
+    return [pscustomobject]@{kind='diagnostic_warmup';status='completed';diagnostic_records=3;
+        elapsed_ms=[Math]::Round($watch.Elapsed.TotalMilliseconds,3)}
 }
 function Get-HudBufferedVector($Value,[string]$Name,[double]$Limit=10000000) {
     $out=[ordered]@{}

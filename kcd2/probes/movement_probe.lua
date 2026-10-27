@@ -554,6 +554,7 @@ function MineCome.ApplyBufferedMovementFollower(run,seq,x,y,z,source_ms)
     if not p or p.run~=run or p.terminal or p.restoring or p.end_requested then return false,"wrong_or_inactive_run" end
     local target={x=x,y=y,z=z}
     if not p.buffered_movement then return reject_buffered_input(p,"buffered_mode_mismatch",seq,target) end
+    if p.finish_seq then return reject_buffered_input(p,"source_after_finish",seq,target) end
     local clock=now()
     local invalid
     if not finite(seq) or seq<1 or seq>200 or seq~=math.floor(seq) then invalid="sequence_invalid"
@@ -575,6 +576,25 @@ function MineCome.ApplyBufferedMovementFollower(run,seq,x,y,z,source_ms)
     if not p.buffer_epoch then p.buffer_epoch=clock+BUFFER_DELAY_SECONDS end
     p.last_queued_seq=seq;p.latest=point
     return true,"queued"
+end
+function MineCome.FinishBufferedMovementFollower(run,final_seq)
+    if not token(run) then return false,"invalid_run" end
+    local p=state.follower
+    if not p or p.run~=run or p.terminal or p.restoring or p.end_requested then return false,"wrong_or_inactive_run" end
+    local clock=now()
+    local invalid
+    if not p.buffered_movement then invalid="buffered_mode_mismatch"
+    elseif not finite(final_seq) or final_seq<1 or final_seq>200 or final_seq~=math.floor(final_seq) then invalid="final_sequence_invalid"
+    elseif not p.latest then invalid="final_source_missing"
+    elseif final_seq~=p.latest.seq then invalid="final_source_mismatch"
+    elseif not clock or clock<p.last_clock or clock<p.latest.received then invalid="clock_unavailable_or_regressed"
+    elseif clock>=p.deadline then invalid="hard_deadline"
+    elseif clock-p.latest.received>LEASE_SECONDS then invalid="frame_lease_expired" end
+    if invalid then return reject_buffered_input(p,invalid,final_seq,p.last_owned) end
+    -- Sealing only records intent. No setters, timer changes or renewed leases
+    -- occur in this console callback, including on an identical repeated seal.
+    p.finish_seq=final_seq
+    return true,"finish_queued"
 end
 local function physical_observe(p,s,clock)
     local step=p.physical_step
@@ -679,10 +699,16 @@ function MineCome_MovementFollowerTick(data)
         local readback = distance(s.position.value,pending.target) <= 0.05
         local error = follower_camera_error(p,s,pending.target)
         if not follower_receipt(p,"applied",readback and "applied_readback" or "delayed_readback_changed",s,pending.seq,pending.target,readback,error,pending.received,pending.segment,pending.source) then return follower_stop(p,"log_failed") end
+        if p.buffered_movement then p.last_buffered_ack_seq=pending.seq;p.last_buffered_ack_readback=readback end
     elseif p.latest and clock-p.last_heartbeat >= 1 then
         p.last_heartbeat = clock
         if not follower_receipt(p,"heartbeat","holding_latest",s,nil,p.last_owned,distance(s.position.value,p.last_owned)<=0.05,
             follower_camera_error(p,s,p.last_owned)) then return follower_stop(p,"log_failed") end
+    end
+    if p.buffered_movement and p.finish_seq and p.last_buffered_ack_seq==p.finish_seq then
+        -- The final source write alone is insufficient: its actual observation
+        -- and camera receipt must be emitted before the guarded origin restore.
+        return follower_stop(p,p.last_buffered_ack_readback and "explicit_end" or "final_readback_changed")
     end
     if p.latest then
         if not p.ground_verified then

@@ -116,18 +116,7 @@ try{
         $receipts=@(Read-Receipts 'MineComeMovementFollower')
         if(@($receipts | Where-Object terminal -EQ $true).Count){throw 'Buffered follower stopped during recorded movement.'}
     }
-    $drain=[Diagnostics.Stopwatch]::StartNew();$lastDrainFlush=-1000L
-    do{
-        if($drain.ElapsedMilliseconds-$lastDrainFlush -ge 100){
-            Console "System.LogAlways('[MineComeBufferedReplayDrain] $($probe.Run)')" 150
-            $lastDrainFlush=$drain.ElapsedMilliseconds
-        }
-        $receipts=@(Read-Receipts 'MineComeMovementFollower')
-        if(@($receipts | Where-Object {$_.event -ceq 'applied' -and $_.source_seq -eq $forwarded[-1].TraceSeq}).Count -eq 1){break}
-        if(@($receipts | Where-Object terminal -EQ $true).Count){throw 'Buffered follower stopped before its final source observation.'}
-        Start-Sleep -Milliseconds 10
-    }while($drain.ElapsedMilliseconds -lt 400)
-    Console "MineCome.EndMovementFollower('$($probe.Run)')" 150
+    Console "MineCome.FinishBufferedMovementFollower('$($probe.Run)',$($forwarded[-1].TraceSeq))" 150
     Wait-Restoration
     if(-not $restored){throw 'Replay actor restoration was not verified.'}
     $observed=@($receipts | Where-Object event -CEQ 'applied')

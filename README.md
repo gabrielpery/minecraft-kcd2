@@ -29,25 +29,24 @@ The public repository contains source, build scripts and development procedures.
 | Movement groundwork | In an automatic two-game test, KCD follows walking/jumping from the Minecraft HUD world over sampled KCD ground, then returns the player to the starting position. The same save completes its HUD/inventory sequence. This bounded scripted mode uses a standalone HUD receiver; continuous shared movement remains unfinished. |
 
 A separate [physical HUD walking lab](kcd2/MOVEMENT-LAB.md#physical-walking-with-the-hud-in-kcd)
-is implemented, compiled and checked automatically. Camera delivery now runs
-independently of movement commands and avoids repeatedly reopening the active log.
-An earlier combined physical run passed 49 server-position transfers, 49 delayed
-KCD readbacks and restoration. Repeated movement works, but the user still reports
-**choppy motion**, with at most a small improvement after the previous interpolation change.
-A newer source-time buffer is implemented to preserve Minecraft's actual server
-motion timing instead of compressing every update into 100 ms. It deliberately
-adds 200 ms of playback latency. An autonomous KCD-only replay passed all 51
-source points and restoration; Minecraft, HUD composition and physical controls
-were not active in that replay. The first combined buffered test stopped on a
-terrain-transition phase mismatch before KCD moved; Minecraft exited normally.
-The phase correction compiles and passes captured-record checks. Two actual
-Minecraft fixtures also pass, but their source samples miss the brief transition.
-The combined retry is pending; buffered smoothness is not yet established. Boundary pauses require releasing
-controls before pressing again in an allowed
-direction. Separate actual-Minecraft tests verify resumed movement, inventory
-suppression and HUD capture on flat and replayed sampled terrain. The lab allows
-at most five seconds of input plus one second of settling inside the 30-second
-HUD check. Smooth or continuous walking is not established.
+now combines repeated movement with Minecraft's real HUD. The user reports the
+latest buffered run was **a lot smoother**, with a noticeable delay between
+keypress and movement. All 52 source points received matching delayed KCD
+readbacks and Minecraft completed its movement trace. The controller still marks
+this run failed: the native watchdog restored the exact starting position before
+the expected normal-finish handshake. FPS, camera resources and Minecraft cleaned
+up. The finish-handshake repair now passes a separate autonomous KCD replay;
+its next combined physical check remains pending.
+
+The source-time buffer preserves Minecraft's actual server motion timing and
+intentionally adds 200 ms of playback delay. This smoother run is the baseline
+for measuring input responsiveness; it is not yet a final playable build. Parser
+warmup now removes measured first-use processing overhead in offline checks;
+its live responsiveness benefit still needs validation. Camera delivery runs
+independently and stayed fresh. Boundary pauses require releasing
+controls before pressing again in an allowed direction. The lab allows at most
+five seconds of input plus one second of settling inside the 30-second HUD
+check. Continuous movement remains unfinished.
 
 Live checks above use the **official KCD2 1.5.5 development build**. The native
 **retail 1.5.6 route remains blocked** by its verified address-library/loader

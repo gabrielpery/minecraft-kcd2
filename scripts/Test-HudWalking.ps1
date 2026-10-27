@@ -24,10 +24,11 @@ $context=Get-MineComeProbeContext
 if($PreflightOnly){Write-Output 'HUD_WALKING_PREFLIGHT_PASS no_changes=true';return}
 $probe=$null;$helper=$null;$arm=$null;$budget=$null;$budgetEvidence=$null;$failure=$null
 $followerStarted=$false;$restored=$false;$passed=$false;$traceEnded=$false;$tracePassed=$false
-$followerEndRequested=$false;$playbackDrain=$null;$lastDrainFlush=-1000L;$sourceClock=New-HudBufferedSourceState
+$followerFinishRequested=$false;$sourceClock=New-HudBufferedSourceState
 $ready=$null;$readyHash=$null;$guest=$null;$producerIdentity=$null;$receiver=$null;$physicalReady=$null
 $run=[Guid]::NewGuid().ToString('N');$camera=$null;$cameraState=$null
 $forwarded=[Collections.Generic.List[object]]::new()
+$traceValidationTimings=[Collections.Generic.List[object]]::new();$parserWarmup=$null
 $traceReader=[pscustomobject]@{Path=$null;Stream=$null;Bytes=[byte[]]::new(0)}
 $lineCount=0;$lastRestoreFlush=0L
 $receipts=@();$applied=@();$traceHash=$null
@@ -40,11 +41,10 @@ function Console([string]$Code){
     # marker makes a completed receipt readable without accepting a partial tail.
     Invoke-MineComeProbeConsole $context ('#'+$Code+"; System.LogAlways('[MineComeHudWalkingFlush] $($probe.Run)')")
 }
-function Send-Pose($Sample){
+function Send-Pose($Sample,[long]$ReceivedUtcMs,[double]$ValidationMs){
+    $preparation=[Diagnostics.Stopwatch]::StartNew()
     Assert-MineComeProbeContext $context
     $frame=$Sample.Record;$target=$Sample.Target
-    $age=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()-[long]$frame.utc_ms
-    if($age -lt -50 -or [Math]::Max(0,$age)+$frame.server_age_ns/1000000.0 -gt 300){throw 'A buffered source point expired before dispatch.'}
     $culture=[Globalization.CultureInfo]::InvariantCulture
     $x=([double]$target.x).ToString('R',$culture);$y=([double]$target.y).ToString('R',$culture);$z=([double]$target.z).ToString('R',$culture)
     $sourcePreciseMs=Get-HudBufferedSourceTime -State $sourceClock -Record $frame
@@ -56,9 +56,20 @@ function Send-Pose($Sample){
         $cx=([double]$receiver.Center.x).ToString('R',$culture);$cy=([double]$receiver.Center.y).ToString('R',$culture);$cz=([double]$receiver.Center.z).ToString('R',$culture)
         $code="local p=player and player:GetWorldPos(); if p and (p.x-($cx))^2+(p.y-($cy))^2+(p.z-($cz))^2<=0.01 then if MineCome.BeginBufferedPhysicalMovementFollower('$($probe.Run)') then $apply end end"
     }
+    $requestPath='/api/System/Console/ExecuteString?command='+[Uri]::EscapeDataString('#'+$code)
+    $dispatchUtc=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+    $age=$dispatchUtc-[long]$frame.utc_ms
+    if($age -lt -50 -or [Math]::Max(0,$age)+$frame.server_age_ns/1000000.0 -gt 300){throw 'A buffered source point expired before dispatch.'}
+    $preparationMs=$preparation.Elapsed.TotalMilliseconds
     $script:followerStarted=$true
-    Invoke-MineComeToolsRequest -PathAndQuery ('/api/System/Console/ExecuteString?command='+[Uri]::EscapeDataString('#'+$code)) -TimeoutMilliseconds 150 | Out-Null
-    $forwarded.Add([pscustomobject]@{TraceSeq=[long]$frame.seq;ServerSeq=[long]$frame.server_seq;Phase=$frame.phase;UtcMs=[long]$frame.utc_ms;SourceMs=$sourceMs;SourcePreciseMs=$sourcePreciseMs;Target=$target})
+    $request=[Diagnostics.Stopwatch]::StartNew()
+    Invoke-MineComeToolsRequest -PathAndQuery $requestPath -TimeoutMilliseconds 150 | Out-Null
+    $requestMs=$request.Elapsed.TotalMilliseconds
+    # Keep timing diagnostics in memory until cleanup; no extra per-pose file IO
+    # or claims that a successful HTTP response proves native application.
+    $forwarded.Add([pscustomobject]@{TraceSeq=[long]$frame.seq;ServerSeq=[long]$frame.server_seq;Phase=$frame.phase;UtcMs=[long]$frame.utc_ms;SourceMs=$sourceMs;SourcePreciseMs=$sourcePreciseMs;Target=$target;
+        ReceivedUtcMs=$ReceivedUtcMs;ValidationMs=$ValidationMs;PreparationMs=$preparationMs;
+        DispatchUtcMs=$dispatchUtc;RequestMs=$requestMs;SourceAgeAtDispatchMs=[Math]::Max(0,$age)+$frame.server_age_ns/1000000.0})
 }
 try{
     $probe=New-MineComeProbeRun $context 'hud-walking' (Join-Path $root 'kcd2/probes/movement_probe.lua') 'BeginBufferedPhysicalMovementFollower'
@@ -118,10 +129,13 @@ try{
             $ready=Read-HudMovementJson $readyPath
             Assert-HudPhysicalMovementReady $ready $true
             if($ready.run -cne $run){throw 'Physical HUD producer run mismatch.'}
-            $arm=& (Join-Path $PSScriptRoot 'Arm-HudStream.ps1') -PhysicalMovement -InputMode -LiveMouse -OffscreenPresentation -BundleDirectory $BundleDirectory -ReadyManifest $readyPath
-            $readyHash=(Get-FileHash -LiteralPath $readyPath).Hash
+            # Exercise the cold parser with disposable diagnostic state before
+            # arming input. Its synthetic records never enter the live receiver.
+            $parserWarmup=Initialize-HudBufferedMovementPipeline -PatchFile $patchFile -ExpectedHudSave $ready.save -MinimumUtcMs $minimumUtc
             $receiver=New-MineComeTraceReceiver $patchFile $minimumUtc -ExpectedHudSave $ready.save -PhysicalMovement -BufferedPhysicalMovement
             if($receiver.PatchHash -cne $livePatch.Hash){throw 'Live terrain changed before trace binding.'}
+            $arm=& (Join-Path $PSScriptRoot 'Arm-HudStream.ps1') -PhysicalMovement -InputMode -LiveMouse -OffscreenPresentation -BundleDirectory $BundleDirectory -ReadyManifest $readyPath
+            $readyHash=(Get-FileHash -LiteralPath $readyPath).Hash
             $producerIdentity=[pscustomobject]@{Pid=$ready.producer_pid;Start=[string]$ready.producer_start_filetime}
             Write-Output "HUD_WALKING_ARMED run=$run waiting_for_settled_guest=true"
         }
@@ -144,10 +158,14 @@ try{
             try{if($producer.ProcessName -cne 'java' -or $producer.StartTime.ToUniversalTime().ToFileTimeUtc().ToString() -cne $producerIdentity.Start){throw 'HUD producer identity changed.'}}finally{$producer.Dispose()}
             $lines=@(Read-CoupledTraceLines $traceReader)
             for($i=$lineCount;$i -lt $lines.Count;$i++){
-                $received=Receive-MineComeMovementTrace $receiver $lines[$i] ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())
+                $receivedUtc=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+                $validation=[Diagnostics.Stopwatch]::StartNew()
+                $received=Receive-MineComeMovementTrace $receiver $lines[$i] $receivedUtc
+                $validationMs=$validation.Elapsed.TotalMilliseconds
+                $traceValidationTimings.Add([pscustomobject]@{TraceSeq=[long]$received.Record.seq;Kind=$received.Kind;ValidationStartedUtcMs=$receivedUtc;ValidationMs=$validationMs})
                 # Every source waypoint matters to the playback timeline,
                 # especially its initial stationary anchor. Do not coalesce it.
-                if($received.Kind -ceq 'sample'){Send-Pose $received}
+                if($received.Kind -ceq 'sample'){Send-Pose $received $receivedUtc $validationMs}
                 elseif($received.Kind -ceq 'stale' -or ($received.Kind -ceq 'observe' -and $received.Record.kind -ceq 'sample')){
                     throw 'Buffered playback cannot omit an expired or unsupported source waypoint.'
                 }
@@ -155,21 +173,14 @@ try{
             }
             $lineCount=$lines.Count
         }
-        if($traceEnded -and $followerStarted -and -not $followerEndRequested){
-            if(-not $playbackDrain){$playbackDrain=[Diagnostics.Stopwatch]::StartNew()}
-            # Wait for the actual final observation, rather than cancelling a
-            # pending readback on a slower background frame. Native leases and
-            # the eight-second lifetime remain independent, unchanged bounds.
-            $finalObserved=@($receipts | Where-Object {$_.event -ceq 'applied' -and $_.source_seq -eq $forwarded[-1].TraceSeq}).Count -eq 1
-            if($finalObserved -or $playbackDrain.ElapsedMilliseconds -ge 400){
-                Console "MineCome.EndMovementFollower('$($probe.Run)')"
-                $followerEndRequested=$true
-            }elseif($playbackDrain.ElapsedMilliseconds-$lastDrainFlush -ge 100){
-                Console "System.LogAlways('[MineComeHudPlaybackDrain] $($probe.Run)')"
-                $lastDrainFlush=$playbackDrain.ElapsedMilliseconds
-            }
+        if($traceEnded -and -not $tracePassed){throw 'Minecraft physical movement trace failed.'}
+        if($traceEnded -and $followerStarted -and -not $followerFinishRequested){
+            # Seal the immutable source timeline. The game thread observes its
+            # final point and restores immediately, independent of log polling.
+            Console "MineCome.FinishBufferedMovementFollower('$($probe.Run)',$($forwarded[-1].TraceSeq))"
+            $followerFinishRequested=$true
         }
-        if($followerEndRequested -and $camera){
+        if($followerFinishRequested -and $camera){
                 Request-HudCameraDeliveryStop $camera
                 $cameraState=Stop-HudCameraDelivery $camera
                 if($cameraState.ResourcesClosed){$camera=$null}
@@ -177,13 +188,12 @@ try{
         }
         $receipts=@(Read-Receipts 'MineComeMovementFollower')
         $terminal=@($receipts | Where-Object terminal -EQ $true)
-        if($followerEndRequested -and -not $terminal.Count -and
+        if($followerFinishRequested -and -not $terminal.Count -and
             [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()-$lastRestoreFlush -ge 100){
             $lastRestoreFlush=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
             Console "System.LogAlways('[MineComeHudRestoreFlush] $($probe.Run)')"
         }
         if($terminal.Count -and -not $traceEnded){throw 'KCD follower stopped before the guest trace ended.'}
-        if($traceEnded -and -not $tracePassed){throw 'Minecraft physical movement trace failed.'}
         if(Test-Path -LiteralPath $resultPath){break}
         if($helper.HasExited){throw 'HUD helper exited without its completion receipt.'}
         Start-Sleep -Milliseconds 15
@@ -282,6 +292,10 @@ finally{
         # Preserve actual delayed readbacks even when a later check failed.
         $applied=@($receipts | Where-Object {$_.event -ceq 'applied' -and $_.physical_movement -eq $true -and $_.readback -eq $true -and $_.camera_basis_valid -eq $true -and $null -ne $_.player_readback_error -and $_.player_readback_error -le 0.15})
         ConvertTo-Json -InputObject $forwarded.ToArray() -Depth 8 | Set-Content -LiteralPath (Join-Path $probe.Directory 'forwarded.json') -Encoding utf8NoBOM
+        [ordered]@{schema=1;kind='minecome_hud_dispatch_diagnostics_v1';parser_warmup=$parserWarmup;
+            validation_timings=$traceValidationTimings.ToArray();validation_start_is_file_arrival=$false;
+            physical_key_latency_measured=$false;native_application_proved_by_http=$false} |
+            ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path $probe.Directory 'dispatch-timings.json') -Encoding utf8NoBOM
         ConvertTo-Json -InputObject $receipts -Depth 10 | Set-Content -LiteralPath (Join-Path $probe.Directory 'kcd-receipts.json') -Encoding utf8NoBOM
         $viewTimings=@();$viewCount=0;$cameraEvidence=$null
         if($cameraState){$viewCount=$cameraState.ViewCount;$cameraEvidence=$cameraState | Select-Object -ExcludeProperty Timings;if($cameraState.PSObject.Properties['Timings']){$viewTimings=@($cameraState.Timings)}}

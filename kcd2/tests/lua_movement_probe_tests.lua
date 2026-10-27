@@ -904,5 +904,131 @@ test("buffered serialization fits the native log budget with maximum run token a
     near(samples[#samples].requested.x,receipt_vector(line,"target").x)
     eq(MineCome.EndMovementFollower(run),true);f:advance(.08);eq(f:activeTimers(),0)
 end)
+
+local function buffered_ack(f,seq)
+    for index,line in ipairs(f.logs) do
+        if line:find('[MineComeMovementFollower]',1,true) and line:find('"event":"applied"',1,true)
+            and receipt_number(line,"seq")==seq then return line,index end
+    end
+end
+test("buffered finish drains final observation and camera before restoring without another host request",function()
+    local f=buffered_fixture();eq(f:point(1,0),true);f:advance(.1);eq(f:point(2,100,.25),true)
+    local p=MineCome._movement_probe.follower;local hard=p.timers.hard;local received=p.latest.received;local epoch=p.buffer_epoch
+    eq(MineCome.FinishBufferedMovementFollower("b",2),true);eq(#f.writes,0)
+    f:advance(.05);local records=p.records;eq(MineCome.FinishBufferedMovementFollower("b",2),true)
+    eq(p.records,records);eq(p.latest.received,received);eq(p.buffer_epoch,epoch);eq(p.timers.hard,hard);eq(p.deadline,8)
+    local restored_after_ack=false
+    f.on_write=function()
+        if player.position.x==120 and #f.writes>1 then
+            local ack=assert(buffered_ack(f,2),"origin restored before final source ACK")
+            local samples=buffered_samples(ack);local last=samples[#samples]
+            near(last.actual.x,120.25);near(last.camera.position.x,120.25);near(last.observed,receipt_number(ack,"sampled_engine_seconds"))
+            assert(ack:find('"readback":true',1,true));restored_after_ack=true
+        end
+    end
+    f:advance(.3);eq(restored_after_ack,true);eq(player.position.x,120);eq(f:activeTimers(),0)
+    assert(f:last():find('"event":"restored","result":"restored","terminal":true',1,true))
+    assert(f:last():find('"end_result":"explicit_end"',1,true));eq(MineCome._movement_probe.follower,nil)
+end)
+
+test("buffered finish cannot confuse a final write with its later successful ACK",function()
+    local f=buffered_fixture();eq(f:point(1,0),true);f:advance(.1);eq(f:point(2,100,.25),true);f:tick(.31)
+    local p=MineCome._movement_probe.follower;eq(p.last_applied_seq,2);eq(p.last_buffered_ack_seq,nil)
+    local writes=#f.writes;eq(MineCome.FinishBufferedMovementFollower("b",2),true);eq(#f.writes,writes)
+    f:tick(.31);eq(#f.writes,writes);eq(buffered_ack(f,2),nil);near(player.position.x,120.25)
+    f:tick(.33);assert(buffered_ack(f,2));eq(#f.writes,writes+1);eq(player.position.x,120)
+    f:advance(.08);eq(f:activeTimers(),0);assert(f:last():find('"end_result":"explicit_end"',1,true))
+end)
+
+test("buffered finish after an existing final ACK restores only on the next normal tick",function()
+    local f=buffered_fixture();eq(f:point(1,0),true);f:advance(.1);eq(f:point(2,100,.25),true)
+    f:tick(.31);f:tick(.33);assert(buffered_ack(f,2));local writes=#f.writes;local records=#f.logs
+    eq(MineCome.FinishBufferedMovementFollower("b",2),true);eq(#f.writes,writes);eq(#f.logs,records)
+    near(player.position.x,120.25);f:tick(.35);eq(player.position.x,120);eq(#f.writes,writes+1)
+    f:advance(.08);eq(f:activeTimers(),0);assert(f:last():find('"end_result":"explicit_end"',1,true))
+end)
+
+test("buffered finish rejects invalid mode sequence or absent source without granting a new lease",function()
+    for _,invalid in ipairs({false,0,-1,201,.5,0/0,math.huge,"2",3}) do
+        local f=buffered_fixture();eq(f:point(1,0),true);eq(f:point(2,100,.25),true)
+        eq(MineCome.FinishBufferedMovementFollower("b",invalid),false);f:advance(.05)
+        eq(#f.writes,0);eq(f:activeTimers(),0);assert(not f:contains('"end_result":"explicit_end"'))
+    end
+    local f=buffered_fixture();eq(MineCome.FinishBufferedMovementFollower("b",1),false);f:advance(.05);eq(f:activeTimers(),0)
+    f=fixture();f:verify();eq(MineCome.BeginPhysicalMovementFollower("b"),true)
+    eq(MineCome.FinishBufferedMovementFollower("b",1),false);f:advance(.05);eq(#f.writes,0);eq(f:activeTimers(),0)
+    f=buffered_fixture();eq(f:point(1,0),true)
+    eq(MineCome.FinishBufferedMovementFollower("c",1),false);eq(MineCome.FinishBufferedMovementFollower("!",1),false)
+    eq(MineCome._movement_probe.follower.end_requested,nil);eq(MineCome._movement_probe.follower.finish_seq,nil)
+    eq(MineCome.EndMovementFollower("b"),true);f:advance(.05);eq(f:activeTimers(),0)
+end)
+
+test("a buffered finish seal rejects later source appends and conflicting seals",function()
+    for _,append in ipairs({true,false}) do
+        local f=buffered_fixture();eq(f:point(1,0),true);f:advance(.1);eq(f:point(2,100,.25),true);f:advance(.15)
+        local p=MineCome._movement_probe.follower;local received=p.latest.received;local writes=#f.writes
+        eq(MineCome.FinishBufferedMovementFollower("b",2),true)
+        if append then eq(f:point(3,200,.5),false) else eq(MineCome.FinishBufferedMovementFollower("b",3),false) end
+        eq(p.latest.seq,2);eq(p.latest.received,received);eq(#f.writes,writes)
+        f:advance(.08);eq(player.position.x,120);eq(#f.writes,writes+1);eq(f:activeTimers(),0)
+        assert(f:contains(append and '"end_result":"source_after_finish"' or '"end_result":"final_source_mismatch"'))
+        assert(not f:contains('"end_result":"explicit_end"'))
+    end
+end)
+
+test("a failed final buffered readback restores safely without successful finish",function()
+    local f=buffered_fixture();eq(f:point(1,0),true);f:advance(.1);eq(f:point(2,100,.25),true)
+    eq(MineCome.FinishBufferedMovementFollower("b",2),true);f:tick(.31);player.position.x=120.31;f:tick(.33)
+    local ack=assert(buffered_ack(f,2));assert(ack:find('"readback":false',1,true))
+    assert(ack:find('"result":"delayed_readback_changed"',1,true));eq(player.position.x,120)
+    f:advance(.08);eq(f:activeTimers(),0);assert(f:contains('"end_result":"final_readback_changed"'))
+    assert(not f:contains('"end_result":"explicit_end"'))
+end)
+
+test("final buffered ACK logging failure cannot become a successful native finish",function()
+    local f=buffered_fixture();eq(f:point(1,0),true);f:advance(.1);eq(f:point(2,100,.25),true)
+    eq(MineCome.FinishBufferedMovementFollower("b",2),true);f:tick(.31)
+    local p=MineCome._movement_probe.follower;f.log_error=true;f:tick(.33)
+    eq(player.position.x,120);eq(p.last_buffered_ack_seq,nil);eq(p.end_result,"log_failed")
+    f.log_error=false;f:advance(.08);eq(f:activeTimers(),0);assert(f:contains('"end_result":"log_failed"'))
+    eq(buffered_ack(f,2),nil)
+end)
+
+test("buffered native finish does not extend expiration or retroactively finish a stopped run",function()
+    local f=buffered_fixture();eq(f:point(1,0),true);eq(f:point(2,100,.25),true)
+    eq(MineCome.FinishBufferedMovementFollower("b",2),true);f:tick(.39);f:tick(.41);f:advance(.08)
+    eq(player.position.x,120);eq(f:activeTimers(),0);eq(buffered_ack(f,2),nil)
+    assert(f:contains('"end_result":"frame_lease_expired"'));eq(MineCome.FinishBufferedMovementFollower("b",2),false)
+    f=buffered_fixture();eq(f:point(1,0),true);eq(f:point(2,100,.25),true);f:tick(.25);f.time=.41
+    eq(MineCome.FinishBufferedMovementFollower("b",2),false);f:tick(.41);f:advance(.08)
+    eq(player.position.x,120);eq(f:activeTimers(),0);assert(f:contains('"end_result":"frame_lease_expired"'))
+    f=buffered_fixture();eq(f:point(1,0),true);eq(f:point(2,100,.25),true)
+    eq(MineCome.FinishBufferedMovementFollower("b",2),true);f:tick(8);eq(f:activeTimers(),0)
+    assert(f:contains('"end_result":"hard_deadline"'))
+end)
+
+test("immediate end still cancels a sealed buffered path without claiming the final ACK",function()
+    local f=buffered_fixture();eq(f:point(1,0),true);f:advance(.1);eq(f:point(2,100,.25),true)
+    eq(MineCome.FinishBufferedMovementFollower("b",2),true);f:tick(.25)
+    eq(MineCome.EndMovementFollower("b"),true);f:advance(.08);eq(player.position.x,120);eq(f:activeTimers(),0)
+    eq(buffered_ack(f,2),nil);assert(f:contains('"end_result":"explicit_end"'))
+end)
+
+test("an already acknowledged late finish still cannot extend the next tick beyond its source lease",function()
+    local f=buffered_fixture();eq(f:point(1,0),true);eq(f:point(2,100,.25),true)
+    f:tick(.31);f:tick(.33);assert(buffered_ack(f,2));f.time=.399
+    eq(MineCome.FinishBufferedMovementFollower("b",2),true);local writes=#f.writes
+    f:tick(.41);eq(#f.writes,writes+1);eq(player.position.x,120);f:advance(.08)
+    eq(f:activeTimers(),0);assert(f:contains('"end_result":"frame_lease_expired"'))
+    assert(not f:contains('"end_result":"explicit_end"'))
+end)
+
+test("buffered finish keeps the ordinary setter budget and restoration reserve",function()
+    local f=buffered_fixture();f.physical_frame_seconds=.0001
+    eq(f:point(1,0),true);eq(f:point(2,100,.4),true);eq(f:point(3,200,.8),true)
+    eq(MineCome.FinishBufferedMovementFollower("b",3),true);f:advance(.4)
+    eq(#f.writes,512);eq(player.position.x,120);eq(f:activeTimers(),0);assert(f:contains('"end_result":"write_budget"'))
+    assert(not f:contains('"end_result":"explicit_end"'))
+end)
 print(string.format("Verified %d standalone movement-probe cases in %s; engine bindings simulated",passed,_VERSION))
 print(string.format("Maximum tested buffered receipt: %d bytes plus CRLF; serialized subset of eight retained observations",maximum_buffered_receipt_bytes))

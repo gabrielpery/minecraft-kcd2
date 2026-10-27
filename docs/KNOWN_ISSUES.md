@@ -110,51 +110,41 @@ Never load newer retail1.5.6 saves into this older1.5.5 development game. Backup
 
 ## Gameplay scope
 
-- The separate physical HUD walking profile passes bounded controls and cleanup,
-  but smoothness remains unfinished. Earlier combined run
-  `725d69490f464ca989fccb3783a7cba4` passes 49 forwarded server poses, 49 delayed
-  KCD readbacks and restoration; its 484 camera samples have no stale discards.
-  The user says it is still choppy, perhaps a little better. Earlier `0e14...`
-  confirmed movement in all directions. Repeated controls work, but continuous,
-  exclusive or smooth walking is not established. The previous fixed-duration
-  follower writes about every 16 ms within segments but pauses 47-64 ms at some
-  transitions and compresses irregular source intervals. A newer source-time
-  buffer preserves actual server timing with an intentional 200 ms playback
-  delay. It passes an autonomous real-KCD replay of all 51 source points, actor
-  restoration and FPS restoration; that replay has no active Minecraft, HUD or
-  physical input. Retained samples advance one native frame, about 34 ms in that
-  replay, with zero position errors. This is not a 60 FPS or visual-smoothness
-  claim. The first combined buffered run `d838...` stops after two forwarded
-  points: a downhill source is labelled RESTING while the authoritative server
-  lacks proxy support. The Java phase correction compiles and the captured-terrain
-  Minecraft fixture passes. A revised synthetic-terrain fixture also passes, but
-  neither emits the brief unsupported transition. The exact failed record is
-  covered by Java/receiver regressions and read-only memory replay; combined
-  validation remains pending. The first synthetic variant is correctly rejected
-  by the existing 0.5 m adjacent-height bound before movement. Receiver bounds
-  are not relaxed. KCD receives zero position writes, retains its origin
-  and cancels timers. Minecraft saves/exits with code zero after controller
-  cancellation; this is not a process crash. The primary restoration flag stays
-  false because no restoration write/event was needed. Source checks pass
-  68 Lua cases and 79 buffered PowerShell checks. Native receipt serialization
-  now fits the logger's size limit with honest bounded sample retention; the
-  controller drains the actual final ACK within 400 ms without extending the
-  original engine target lease. Camera delivery remained fresh in the previous
-  combined run; sampled camera offsets show no large jumps.
-  Camera delivery runs independently with a retained log handle and original
-  timestamps. Its 110 ms cadence fits the existing 1,024-sample budget. Boundary
-  pauses require balanced release and fresh press without restarting the original
-  five-second activation window. Physical travel permits vertical offsets within
-  -1.5 m to +1.5 m inside the unchanged 2 m host sphere, with tighter Java
-  predictive limits and sampled coverage. Legacy scripted bounds are unchanged.
-  Actual-Minecraft fixtures separately pass scripted resumed movement, zero
-  movement in inventory and HUD capture on flat and replayed terrain; their
-  provenance is separate from live physical input. The profile connects
-  WASD/Space, fresh KCD direction, sampled ground, vanilla client/server movement
-  and HUD composition for at most five seconds of input plus one second of
-  settling inside a 30-second HUD check. Inventory transitions release movement
-  and require a fresh neutral/repress. This remains separate from aimed stone
-  input and full-world movement.
+- The latest physical HUD walking run is user-confirmed much smoother, with
+  noticeable movement delay. HUD `fa370b398a9243e69ee15924cf777c4d` forwards all
+  52 source points with valid delayed readbacks and completes the Minecraft
+  trace. Primary verification still fails normal completion: the native
+  watchdog restores the exact origin with zero error and cancelled timers,
+  reason `frame_lease_expired`, before the required normal-end handshake.
+  The finish repair now passes a separate 51-point autonomous KCD replay with
+  `explicit_end` and exact restoration; its combined physical validation remains
+  pending. FPS, camera resources and Minecraft cleanup pass in the previous
+  physical run; actual actor restoration must not be described as missing.
+  This run did not open inventory. The original failure remains recorded,
+  with separate passing path proof and latency analysis.
+  The 200 ms source buffer is intentional and remains the smoother baseline.
+  Retained native readbacks occur one frame after writes, median 16.037 ms,
+  with zero position errors. Source capture is about 100 ms and reaches
+  166.572 ms; actual server-source gaps reach 201.099 ms. Per-key timestamps
+  are not retained, so exact physical input or display latency is unknown.
+  Conditional clock alignment estimates about 124 ms for the first source
+  acceptance, versus 35 ms for later captures, followed by the 200 ms buffer.
+  Diagnostic parser warmup is now implemented before arming, with independent
+  disposable state and no native calls/source publication. Five fresh-process
+  profiles reduce first-edge pure work from a 69.13 ms cold median to 8.52 ms.
+  Warmup costs about 245 ms before arming; its actual live responsiveness benefit
+  remains unverified. Dispatch-stage timing is retained to measure that effect. Reducing playback
+  to 150 ms would introduce a known right-point underrun in the earlier
+  autonomous replay. Native target leases and source timestamps remain fixed.
+  The previous buffered phase failure `d838...` is repaired: the new combined
+  trace passes two authoritative LANDING samples. Earlier independent fixtures
+  passed but missed that brief transition; their claims remain narrower.
+  Continuous, exclusive or unrestricted movement is not established. Boundary
+  pauses require release and a fresh press without restarting the five-second
+  window. Physical travel remains within the 2 m host sphere and -1.5 m/+1.5 m
+  vertical envelope, with tighter Java prediction and sampled ground coverage.
+  The lab allows one further second for settling. Camera delivery remains
+  independent, uses original timestamps and stays within its 1,024-sample budget.
 
 - The same Minecraft world now passes scripted walking/jumping/landing on a
   synthetic ground patch while capturing the HUD, followed by its inventory

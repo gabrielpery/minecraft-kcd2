@@ -1,5 +1,93 @@
 # MineCome progress — 2026-10-27
 
+**Latest combined movement looks substantially smoother, but input delay and the
+normal-finish handshake remain unfinished.** The user reports that it worked and
+was "a lot smoother", with a delay between keypress and movement. HUD run
+`fa370b398a9243e69ee15924cf777c4d`, probe
+`2dd6df695d15485cb84082793245d970`:
+`runtime/evidence/hud-walking-20261027-165506-2dd6df695d15485cb84082793245d970/`.
+All 52 forwarded sources receive 52 valid delayed readbacks. An independent
+read-only proof accepts every source crossing and the immutable playback epoch;
+`path-verification.json` preserves that narrower result. Minecraft completes its
+trace in 5,511 ms with equal client/server maximum travel of 0.594374 m, four
+boundary pauses, three resumptions and zero corrections. Two authoritative
+`LANDING` samples pass through the combined path, covering the previous phase
+failure. This run does not reopen inventory; earlier inventory evidence remains
+separate.
+
+The primary verification remains **failed**, with restoration not accepted by the
+expected normal-finish contract. Its actual native terminal is `restored`, reason
+`frame_lease_expired`: the watchdog returns the actor to the exact starting
+position with zero readback error and cancels timers after 138 total writes and
+5,859 ms. FPS restoration, all 768 fresh camera publications/resource closure and
+Minecraft cleanup pass. This is a finish-handshake race, not missing actor
+restoration. The original failed verification is unchanged. The native
+end-of-stream repair now passes separate autonomous replay
+`02e045ab5635428f99f7fd8614a3ab2b`:
+`runtime/evidence/buffered-movement-replay-20261027-170751-02e045ab5635428f99f7fd8614a3ab2b/`.
+It acknowledges all 51 scripted source points, then restores through
+`explicit_end` with zero error, cancelled timers and FPS restoration. It takes
+5,871.826 ms and 64 writes including restoration. The final source now triggers
+normal restoration in the game without waiting for controller polling; the
+original 400 ms target lease and 200 ms playback delay stay unchanged. Source
+checks pass 79 Lua cases. This replay has no Minecraft, HUD or physical controls;
+it does not turn the previous 52-source physical run into a clean normal-finish
+pass. A combined check of the finish repair remains pending.
+
+`latency-analysis.json` retains the original timing data and its limitations.
+The follower reports 344 observations, retaining 71; all retained readbacks occur
+one native frame after their write, median 16.037 ms and maximum 16.296 ms, with
+zero actor errors. There are 137 movement setters and one restoration setter,
+with no retained intermediate source holds. Source capture intervals are median
+100.916 ms, maximum 166.572 ms; actual server-source intervals reach 201.099 ms.
+The sampled server observation is median 37.738 ms old.
+
+Per-key capture/application timestamps are not persisted, so exact physical
+keypress-to-motion or input-to-photon latency is unavailable. Nearby camera
+request/receipt clock alignment estimates the first source capture reaches
+native acceptance after about 124 ms, compared with 35 ms median for later
+captures. The first native write is about 334 ms after that initial trace capture;
+these are clock-alignment estimates with cached-frame uncertainty. The directly
+measured native acceptance-to-first-write interval is 210.068 ms, including the
+intentional 200 ms buffer. The 100 ms source sampler also limits onset timing
+resolution; its delay cannot be assigned to individual keys from this evidence.
+
+A pure offline profile now reproduces substantial first-use overhead in five
+fresh PowerShell processes, each replaying the exact hashed 52-point trace twice.
+The first edge's begin parse, first sample parse and source normalization cost
+68.28–90.09 ms combined (median 69.13 ms); the second pass costs 6.36–8.13 ms
+(median 6.73 ms). Median stage costs are 38.76/11.73/19.41 ms cold versus
+2.58/3.88/0.318 ms warm. Receiver construction costs about 142 ms, but already runs
+before activation and is not counted in that edge overhead. Original record UTC
+is supplied only as a synthetic pure-parser clock. No game calls or physical
+latency measurements are made. The reproducible script and five measurements
+are in `runtime/evidence/hud-source-cold-profile-fa370b-20261027/`.
+
+Diagnostic warmup is now implemented in
+`Initialize-HudBufferedMovementPipeline`, before arming/readiness. It validates
+the patch and uses independent disposable receiver/source state for three
+explicitly diagnostic in-memory records; no source points are published and the
+native follower is not started. Five new fresh-process profiles now measure the
+first exact recorded begin/sample/normalization at 7.67–9.93 ms, median 8.52 ms,
+compared with the earlier 69.13 ms cold median: 60.61 ms less pure processing.
+Stage medians are 3.19/4.40/0.901 ms. Warmup itself costs median 245.14 ms before
+arming. Each process then replays all 52 original points twice with unchanged
+trace/patch hashes. Evidence is in
+`runtime/evidence/hud-source-warmed-profile-fa370b-20261027/`; no game calls or
+physical latency claims are made. Warmup's 86 checks and the existing 79 buffered
+checks pass.
+
+Keep the 200 ms smoother baseline. Actual dispatch metadata now records
+receive/validation/preparation/request stages and original source age; source
+freshness is checked after preparation at dispatch. The warmup's live benefit
+still needs measurement. Do not start the eight-second native follower early. Reducing the buffer to 150 ms would
+outrun a known next-point arrival in the earlier autonomous replay by 38.903 ms;
+the latest run alone would hide that regression. Faster physical-only source
+sampling is a later bounded comparison, with existing byte/record and freshness
+limits explicitly accounted for.
+
+### Previous combined buffered phase failure
+
 **Source-time playback passes its autonomous replay, but the first combined
 buffered run stops at a terrain-transition phase mismatch.** HUD run
 `d838afda4ed44e9a855e5da65cb47c07`, probe
@@ -87,13 +175,16 @@ Per-line hashes and lengths are saved in the analysis. The first buffered replay
 4,095 bytes; its separate `cleanup-verification.json` confirms exact actor
 restoration, and FPS restoration passed. Replay `6ef373...` reached 50/51 source
 points before the old 250 ms controller drain ended; restoration passed. The
-controller now waits for the actual final source ACK within 400 ms. The engine's
-original 400 ms target lease is unchanged.
+initial fix waited for the final source ACK within 400 ms. That controller order
+is now superseded by immediate end-of-stream sealing: native Lua waits for the
+final observation and restores without controller ACK polling. The original
+400 ms target lease is unchanged.
 
-Validation passes 68 Lua cases, 79 buffered PowerShell checks, 117 physical-profile
-checks, 134 ground-movement checks, 80 coupled-proof checks and 32 timed-follower
-checks. `2e75faf` is pushed alongside the earlier checkpoints; this new buffered
-implementation is a later working-tree change pending its own commit.
+Current validation passes 79 Lua cases, 79 buffered PowerShell checks,
+86 diagnostic-warmup checks, 119 physical-profile checks, 134 ground-movement
+checks, 80 coupled-proof checks and 32 timed-follower checks. `2e75faf` is pushed alongside the earlier checkpoints. The new buffered
+implementation and phase correction are now pushed as `11b1b76`; its full hash
+and verified publication state are recorded below.
 
 ### Previous combined physical result: fixed-duration interpolation
 
@@ -312,11 +403,17 @@ Ground checks (160) and reverse-input checks (353) also passed.
 
 These changes require no replacement native bundle on the existing test machine.
 Process 45644 closed normally and its `725d...` arm was archived. Process 34088
-then consumed its activation in `d838...`/probe `d257...`; Minecraft has exited.
-Do not treat the process as unarmed. Another physical activation needs normal KCD
-closure, archival of the exact latest arm and a fresh launch. The Java phase
-correction and focused checks are complete; the combined retry remains pending. Computer Use remains
-stopped by Escape in this turn; recheck current processes and receipts.
+then consumed its activation in `d838...`/probe `d257...`; Minecraft exited. The
+user has now closed 34088 normally and its exact `d257...` arm is archived.
+KCD process 33860 then consumed its HUD activation in `fa370b...`/probe `2dd6...`.
+Minecraft has closed. The next human HUD trial needs normal KCD closure, archival
+of that exact arm and a fresh supported process, after the finish repair passes
+its autonomous checks. The phase correction passed the new combined source path;
+normal completion and input responsiveness remain unfinished. Source-time buffering, the phase correction and
+five updated docs are pushed as `11b1b76fc8e5ccf053d7f96642ce3bffa88cd2c6` on the
+public default branch; the remote and clean worktree were verified before this
+process update. Computer Use remains stopped by Escape in this turn; recheck
+current processes and receipts.
 
 ## 20 October 2026 checkpoint
 

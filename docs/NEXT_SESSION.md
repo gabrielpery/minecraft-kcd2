@@ -1,19 +1,17 @@
 # Resume checkpoint — 27 October 2026
 
 The current objective is physical walking and Minecraft's real HUD working
-together inside KCD2. Repeated physical movement now works in all directions
-with the HUD, according to the user and a passing combined run. The user still
-reports choppy motion with at most a small improvement. Camera delivery remains
-fresh. A new source-time buffer preserves server timing instead of compressing
-irregular updates into fixed 100 ms segments. It intentionally adds 200 ms of
-playback latency and passes an autonomous KCD replay. The first combined buffered
-attempt stops at an incorrectly labelled downhill server transition before any
-native position writes. The Java phase correction compiles and two actual-Minecraft
-fixtures pass, but neither samples the brief unsupported transition. The exact
-failed record passes Java/receiver regressions and read-only memory replay. The
-next check is a combined retry in a fresh world; no further component fixture is
-required for this narrow phase-label change.
-Do not call this the final playable build or repeat the confirmed stone/HUD work.
+together inside KCD2. The latest buffered run is user-confirmed "a lot smoother",
+with noticeable keypress-to-movement delay. All 52 source points pass delayed
+native readback proof and Minecraft completes its trace. Primary verification
+still fails the normal-finish contract: the native watchdog restored the exact
+origin before the expected explicit-end handshake. Actual restoration, FPS and
+resource cleanup succeeded. The finish repair now passes a separate 51-point
+autonomous KCD replay; no physical run of that repair is claimed. Preserve the
+200 ms smoother baseline. Diagnostic warmup is implemented before arming and
+reduces first-edge pure processing from a 69.13 ms cold median to 8.52 ms across
+five fresh-process profiles. Its live responsiveness effect remains unverified;
+actual dispatch-stage timing is now retained for that check. Do not repeat confirmed stone/HUD work or call this the final build.
 
 ## Implemented and verified
 
@@ -22,8 +20,9 @@ Do not call this the final playable build or repeat the confirmed stone/HUD work
   current changes are Java, Lua, scripts, tests and documentation. Commits
   `a59403c` (camera/one-step baseline), `f6f8ea9` (resumable walking/components)
   and `2e75faf` (frame-cadence interpolation and pacing evidence) are pushed to
-  the public default branch. The source-time buffered implementation is a later
-  working-tree change pending commit; inspect Git before assuming publication.
+  the public default branch. Source-time buffering, the phase correction and
+  candidate documentation are pushed as `11b1b76fc8e5ccf053d7f96642ce3bffa88cd2c6`;
+  the remote was verified and the worktree was clean at that checkpoint.
 - `HudCameraDelivery.ps1` owns request/receipt/publication in a separate bounded
   runspace. Movement commands cannot stall it. Original request UTC is retained.
   A 110 ms monotonic cadence permits at most 1,019 requests in 112 seconds,
@@ -33,6 +32,10 @@ Do not call this the final playable build or repeat the confirmed stone/HUD work
   still reopen per poll; closed cursors cannot reopen. Partial UTF-8 tails,
   atomic batch parsing, truncation and the 8 MiB extent bound remain enforced.
   Rotation cannot feed replacement-file acknowledgements into the retained cursor.
+- `Initialize-HudBufferedMovementPipeline` now runs before arming/readiness. It
+  validates the current patch and exercises only independent disposable parser
+  state with three diagnostic in-memory records. No live receiver/source state,
+  native follow session, source publication or clock rebase is involved.
 - Evidence-path checks use .NET attribute/parent APIs without weakening ancestor
   reparse-point rejection. Camera snapshots use atomic replacement and
   `Flush(false)`; durable evidence is not relabelled or retimestamped.
@@ -53,7 +56,9 @@ Do not call this the final playable build or repeat the confirmed stone/HUD work
   Initial grounded source zero and the final point are both forwarded. The
   controller retains precise normalized times and explicit float32 wire times.
   It requires every source point to be acknowledged, validates the common epoch
-  and per-ACK crossing index, and drains the final ACK within 400 ms before end.
+  and per-ACK crossing index. The controller seals the submitted timeline as
+  soon as the final source and passing trace end arrive. Native Lua waits for the
+  final delayed observation and restores normally without controller ACK polling.
 - The follower interpolates only between adjacent known source points, with at
   most eight active points and no extrapolation. The right point's original
   400 ms acceptance lease is immutable; old left points are historical geometry.
@@ -65,7 +70,69 @@ The 300 ms camera, 250 ms input, 400 ms follower and eight-second follower limit
 are unchanged. Movement remains separate from the revision4 aimed/stone profile.
 Native KCD physics remains enabled; full-world or exclusive movement is not proved.
 
-## Latest combined buffered failure
+## Latest combined result and latency
+
+HUD `fa370b398a9243e69ee15924cf777c4d`, probe
+`2dd6df695d15485cb84082793245d970`:
+`runtime/evidence/hud-walking-20261027-165506-2dd6df695d15485cb84082793245d970/`.
+The user says it worked and was a lot smoother, but movement felt delayed. There
+are 52 forwarded sources/52 valid readbacks, a passing 5,511 ms Minecraft trace,
+equal client/server 0.594374 m maximum travel, four pauses/three resumptions,
+zero corrections and two correctly labelled authoritative LANDING samples.
+All 768 camera publications are fresh; camera resources, FPS and Minecraft
+cleanup pass. Inventory was not opened in this run.
+
+Primary `verification.json` remains failed. The terminal native receipt proves
+exact restoration with zero error and cancelled timers, but its reason is
+`frame_lease_expired`, not the required normal end. It occurs after 138 writes and
+5,859 ms. `path-verification.json` independently passes all 52 buffered receipts;
+it does not change the original failed normal-finish result. The native
+end-of-stream repair passes autonomous replay `02e045ab5635428f99f7fd8614a3ab2b`
+in `runtime/evidence/buffered-movement-replay-20261027-170751-02e045ab5635428f99f7fd8614a3ab2b/`:
+51/51 scripted source points, `explicit_end`, 64 writes including restoration,
+5,871.826 ms, zero restoration error, timers cancelled and FPS restored. It has
+no Minecraft/HUD/physical input. No target lease extension or buffer change is
+part of that repair; its combined physical check remains pending.
+
+`latency-analysis.json` records 344 native observations, retaining 71. Every
+retained readback advances one native frame, median 16.037 ms/max 16.296 ms, with
+zero position error and no retained intermediate holds. Source capture intervals
+are median 100.916 ms/max 166.572 ms; actual server-source gaps reach 201.099 ms,
+and sampled server age is median 37.738 ms. No per-key timestamps are retained,
+so physical keypress/display latency is not measured. Conditional clock alignment
+estimates first capture-to-native acceptance at 124 ms, later captures at 35 ms
+median, and first capture-to-native write at 334 ms; allow cached-frame clock
+uncertainty. Native acceptance-to-first-write is directly measured at 210.068 ms,
+including the intentional 200 ms buffer.
+
+Preserve that buffer. Earlier autonomous replay `477...` needs 188.903 ms to have
+every right point available at its bracket start; 150 ms would underrun despite
+the latest run having more headroom. After normal finish works, measure first
+trace read/validation/dispatch and warm only confirmed read-only setup before
+activation. A pure profile in
+`runtime/evidence/hud-source-cold-profile-fa370b-20261027/` replays the exact trace
+twice in each of five fresh PowerShell processes. First-edge parse/normalization
+costs median 69.13 ms cold versus 6.73 ms on a same-process second replay; no game
+calls or physical timing claims. The implemented diagnostic warmup has now been
+profiled in five additional fresh processes in
+`runtime/evidence/hud-source-warmed-profile-fa370b-20261027/`. First archived
+begin/sample/normalization after warmup costs median 8.52 ms (range 7.67–9.93 ms),
+60.61 ms below the cold baseline. Warmup costs median 245.14 ms before arming.
+All 52 exact source points/hashes reproduce in each pass. Its 86 tests and the
+existing 79 buffered checks pass. The controller retains receive/validation/
+preparation/request timing and checks source age after preparation at dispatch.
+The live benefit still needs evidence.
+Do not start native following early. Faster physical-only source sampling
+requires a separate bounded comparison before reducing playback delay.
+
+Process 33860 has consumed its HUD activation; Minecraft is closed. Its exact arm
+is `runtime/evidence/hud-walking-20261027-165506-2dd6df695d15485cb84082793245d970/capture/stream-arming.json`.
+A future human retry requires normal closure, exact-arm archival and a fresh
+supported process after autonomous repair checks. Computer Use remains stopped
+by Escape this turn; recheck current process/receipt state before acting.
+
+## Previous combined buffered phase failure
+
 
 HUD run `d838afda4ed44e9a855e5da65cb47c07`, probe
 `d257ab3e82644a0b9e02612185d4db00`:
@@ -91,7 +158,8 @@ is covered by the Java regression and receiver checks plus read-only replay in
 memory. All fixture folders are under
 `runtime/evidence/hud-physical-fixture-20261027-*`, retaining explicit scripted
 input and `standalone_ground_fixture` provenance. No more component fixtures are
-needed for this narrow phase-label change; the combined retry is next.
+needed for this narrow phase-label change. The subsequent `fa370b...` combined
+path passes two authoritative LANDING samples.
 
 The user reports that Minecraft closed immediately. Its actual exit code is zero
 and the helper reports BUILD SUCCESSFUL: cancellation stopped the camera worker,
@@ -103,13 +171,11 @@ no restoration event was needed; no actor movement was left unrecovered. FPS
 restored. The original failure and separate `failure-analysis.json` retain this
 distinction. This run provides no new smoothness result.
 
-Process 34088 has consumed its native HUD activation. Minecraft is closed. Its
-exact owned arm is
+Process 34088 closed normally and its exact `d257...` arm was archived from
 `runtime/evidence/hud-walking-20261027-163234-d257ab3e82644a0b9e02612185d4db00/capture/stream-arming.json`.
-The corrected source phase passes focused checks. Another physical test requires
-normal KCD closure, archiving this exact arm and a fresh supported
-launch. Do not treat 34088 as an unarmed process. Computer Use remains stopped by
-Escape this turn; recheck current process and receipt state before acting.
+Fresh process 33860 subsequently ran the combined `fa370b...` check above and
+consumed its activation. The phase correction is now verified through that
+combined source path; see the newer completion/latency checkpoint above.
 
 ## Latest autonomous replay
 
@@ -231,8 +297,10 @@ successful combined result remains unverified.
   FPS restoration also passed. Receipts now serialize below 3,800 bytes while
   retaining the final ACK observation and honest omitted-sample counts.
 - Buffered replay `6ef373...` reached 50/51 points before the old 250 ms drain
-  ended. It restored normally. The controller now waits for the actual final
-  ACK within 400 ms; the engine's original 400 ms lease was not extended.
+  ended. It restored normally. The initial fix waited for the final ACK within
+  400 ms. The current end-of-stream seal supersedes that controller ordering:
+  seal immediately, then let native Lua observe the final point and restore.
+  The original 400 ms target lease is unchanged.
 - `e81cfb5cf4444a97a7d73ba964e120cd`: two actual KCD applied readbacks, zero
   position error and explicit restoration; failed on 0.371 m downhill descent.
   The initial braking gate kept the 0.2 m descent limit, but ended after a tiny
@@ -272,8 +340,9 @@ successful combined result remains unverified.
   receipt lookup was 1.748 ms. This does not establish physical input latency.
 - Independent reviews covered worker cleanup, bounds, braking and completion.
   No new native installation or native build is needed on this machine.
-- Updated Lua following passes 68 cases with simulated engine bindings;
-  buffered PowerShell proof passes 79 checks and timed-follower proof 32 checks.
+- Updated Lua following passes 79 cases with simulated engine bindings;
+  buffered PowerShell proof passes 79 checks, diagnostic warmup 86 checks, and
+  timed-follower proof 32 checks.
   These cover native precision, source clocks/brackets, no extrapolation,
   original leases, observed drift, bounded logs, interruption and restoration.
 - The separate actual-KCD follower probe and both actual-Minecraft scripted
@@ -282,27 +351,28 @@ successful combined result remains unverified.
 
 ## Next action
 
-1. Preserve the completed authoritative landing-phase correction and its focused
-   regressions. Both actual-Minecraft fixtures pass within their stated coverage;
-   neither sampled the unsupported transition. Preserve the original `d838...`
-   failure and zero-write/native-cleanup evidence. Receiver guards remain intact.
-2. Preserve the autonomous buffered replay and explicit scripted provenance.
-   The previous passing combined `725d...` still-choppy report is still the last
-   completed visual comparison; neither the replay nor early-stop failure proves
-   smoothness or physical input-to-photon latency.
-3. When the user closes KCD normally, archive the exact
-   `d257...` arm, and start a fresh supported world. Process 34088 has consumed
-   activation. No new native bundle is needed. Respect stopped Computer Use and
-   never load newer retail saves.
-4. With the user present and the fresh world ready, run the preflight and normal
-   `Start-HudWalkingLab.ps1` wrapper. Request a brief repeatable sequence only
-   after HUD_WALKING_READY. Keep the five-second movement window and intentional
-   200 ms playback delay explicit.
-5. Verify every dispatched source point was acknowledged, immutable epoch and
-   bracket proof, final-source drain, actor/FPS restoration, camera closure and
-   Minecraft cleanup. Record the user's smoothness and responsiveness separately.
-   If choppiness remains, measure native frames and source playback before
-   changing timing again. Do not repeat unaffected component checks.
+1. Preserve the passing `02e045...` autonomous end-of-stream replay and the
+   failed `fa370b...` physical normal-finish result with separate restoration/path
+   evidence. Keep the 400 ms original target lease and 200 ms buffer unchanged.
+   The end-of-stream repair still needs combined physical validation.
+2. Preserve the user-confirmed smoother baseline. No per-key timestamp series
+   exists in this run; instrument original capture/application and first
+   trace-read/validation/dispatch stages before claiming physical latency.
+   Preserve the implemented disposable diagnostic warmup, which reduces pure
+   first-edge work to 8.52 ms median in fresh-process profiles. Measure the actual
+   first handoff with the new metadata. Do not start native following early,
+   publish synthetic sources or refresh timestamps.
+3. Process 33860 has consumed its `2dd6...` arm. When another human check is needed,
+   close normally, archive the exact latest arm, and launch a fresh supported
+   world. No new native bundle is needed. Respect stopped Computer Use and never
+   load newer retail saves.
+4. Preserve all 52-source path proof and the prior autonomous replay. That earlier
+   trace needs 188.903 ms of right-point availability; a blanket 150 ms buffer
+   would introduce a known underrun. Source cadence changes need bounded evidence
+   and explicit byte/record budgets before reducing the buffer.
+5. For the next combined check, verify all source crossings, normal restoration,
+   FPS/camera/Minecraft cleanup and user-reported smoothness/responsiveness. Keep
+   the five-second movement window and intentional playback latency explicit.
 
 The user authorizes routine implementation and launches without repeated
 permission questions. Earlier physical Escape presses stopped Computer Use.

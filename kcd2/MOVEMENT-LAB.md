@@ -109,18 +109,16 @@ terrain capture, ordinary Minecraft movement/gravity/jumping on client and serve
 and fresh KCD camera direction for walking orientation. Only fresh server poses
 drive the KCD follower. Source compilation and automated contract/lifecycle checks
 pass. Camera delivery now uses a separate bounded worker and retained log handle.
-The earlier fixed-duration combined run passes 49 forwarded server poses, 49 delayed KCD
-readbacks and verified restoration. Repeated movement with the HUD works, but
-the user still reports choppiness, with at most a small improvement. Boundary
-release/repress and downhill travel work within the bounded trial; smooth or
-continuous walking is not established. A newer source-time buffer has a passing
-autonomous KCD replay. Its first combined run stopped on a downhill phase mismatch
-before any native position writes. The Java phase correction compiles and the
-captured-terrain and revised synthetic Minecraft fixtures pass, but their source
-samples miss the brief unsupported transition. The exact failed record passes
-focused Java/receiver checks and read-only memory replay. The combined retry
-remains pending. The buffer intentionally adds 200 ms of playback latency.
-See [the current evidence](../docs/PROGRESS.md) for the separate results.
+The latest source-time buffered combined run passes all 52 source transfers and
+delayed native readback proofs. The user reports it was a lot smoother, with
+noticeable keypress-to-movement delay. Minecraft completes its trace, but primary
+verification still fails normal completion: the native watchdog restores the
+exact origin before the expected normal-finish handshake. FPS and resources
+restore correctly. The handshake repair now passes a separate 51-point autonomous
+KCD replay with normal restoration; a combined physical check remains pending.
+This remains a bounded development test. The source-time buffer intentionally adds 200 ms of
+playback latency. See [the current evidence](../docs/PROGRESS.md) for the separate
+path, restoration, visual and timing results.
 
 This requires the separately prepared and installed `hud-compositor-walking`
 bundle. The normal revision4 aimed-stone add-on cannot accept walking input.
@@ -185,28 +183,44 @@ An applied receipt identifies the highest crossed source point separately from
 the actual interpolated requested position and delayed actor/camera observation.
 Crossing a source timestamp does not imply its exact endpoint was written. The
 proof validates source brackets, fractions, native numeric precision, later-frame
-observations and each crossed-point count. The final source acknowledgement is
-required before normal end, within a bounded 400 ms drain; this does not extend
-the engine lease. Receipts retain only as many observations as fit below 3,800
+observations and each crossed-point count. After submitting the final source and
+receiving the passing trace end, the controller immediately seals the timeline.
+Native Lua observes and acknowledges the final point, then restores normally;
+controller ACK polling no longer delays the finish request. The original 400 ms
+target lease is unchanged. Receipts retain only as many observations as fit below 3,800
 bytes, with original counts and explicit truncation. Unrecorded frames are not
 claimed as measured.
 
-An autonomous replay in real KCD passes all 51 points from the previous captured
-trajectory and restores actor/FPS state. It records 163 observations, retaining
-101; every retained observation advances one native frame, about 34 ms during
-that replay. Position errors are zero and source speed is preserved. Minecraft,
-HUD composition and physical input were not active. The previous combined run
-still looked choppy to the user. The first buffered combined check stopped after
-two sources because a resting-labelled server sample lacked proxy support during
-descent. No native position was written and Minecraft exited normally after
-cancellation. The compiled phase correction passes the captured-terrain fixture
-with equal client/server W/W/S distances of 0.446445/0.640961/0.640961 m and no
-inventory movement or corrections. That run does not sample the brief unsupported
-transition. A synthetic variant is rejected before movement by the unchanged
-0.5 m adjacent-height limit. A revised synthetic fixture passes W/W/S movement
-and cleanup but also emits no unsupported source sample. The exact failed
-sequence is covered by focused Java/receiver regressions and read-only memory
-replay. A combined retry is next; no new smoothness is claimed.
+An autonomous replay in real KCD passes all 51 captured source points and restores
+actor/FPS state. Minecraft, HUD composition and physical input were not active in
+that replay. The later combined `fa370b...` run forwards all 52 sources, including
+two authoritative LANDING samples, and the user confirms substantially smoother
+motion. It retains 71 of 344 native observations: all advance one native frame,
+median 16.037 ms, with zero position error. No intermediate source hold is
+retained. The original primary result remains failed because restoration comes
+from `frame_lease_expired`; the native receipt confirms the exact origin, zero
+error and cancelled timers. A native end-of-stream drain now passes autonomous
+replay `02e045...`, restoring through `explicit_end` after all 51 scripted points,
+with zero restoration error and verified FPS restoration. It restores after the
+final observation without waiting for controller polling. This does not extend
+the 400 ms target lease; the repair has not yet passed a combined physical run.
+
+Keep the 200 ms buffer as the current smoother baseline. Source capture intervals
+are median 100.916 ms/max 166.572 ms; server-source gaps reach 201.099 ms. No
+per-key timestamps are retained. Clock alignment estimates first capture-to-native
+acceptance at about 124 ms, versus 35 ms median later, with cached-frame
+uncertainty. The directly measured first acceptance-to-write interval is
+210.068 ms, including buffering. These are not input-to-photon measurements.
+The controller now runs diagnostic parser warmup before arming/readiness in
+independent disposable state, without publishing source points or starting the
+native follower. Five fresh-process profiles reduce first-edge pure processing
+from a 69.13 ms cold median to 8.52 ms after warmup (range 7.67–9.93 ms). Warmup
+itself costs median 245.14 ms before arming. All 52 original recorded source
+points and hashes remain intact. These are offline component timings; actual
+dispatch-stage metadata is retained to measure the still-unverified live benefit. The earlier replay needs 188.903 ms for its next points to arrive at bracket
+start; a blanket 150 ms buffer would underrun. Faster source sampling needs its
+own bounded comparison and explicit byte/record budgets before reducing playback
+delay. Continuous movement is still unfinished.
 
 The KCD follower retains its independent eight-second deadline and actor/position
 guards. Normal completion requires delayed readbacks
