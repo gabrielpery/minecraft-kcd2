@@ -110,37 +110,28 @@ Never load newer retail1.5.6 saves into this older1.5.5 development game. Backup
 
 ## Gameplay scope
 
-- The latest physical HUD walking run is user-confirmed much smoother, with
-  noticeable movement delay. HUD `fa370b398a9243e69ee15924cf777c4d` forwards all
-  52 source points with valid delayed readbacks and completes the Minecraft
-  trace. Primary verification still fails normal completion: the native
-  watchdog restores the exact origin with zero error and cancelled timers,
-  reason `frame_lease_expired`, before the required normal-end handshake.
-  The finish repair now passes a separate 51-point autonomous KCD replay with
-  `explicit_end` and exact restoration; its combined physical validation remains
-  pending. FPS, camera resources and Minecraft cleanup pass in the previous
-  physical run; actual actor restoration must not be described as missing.
-  This run did not open inventory. The original failure remains recorded,
-  with separate passing path proof and latency analysis.
-  The 200 ms source buffer is intentional and remains the smoother baseline.
-  Retained native readbacks occur one frame after writes, median 16.037 ms,
-  with zero position errors. Source capture is about 100 ms and reaches
-  166.572 ms; actual server-source gaps reach 201.099 ms. Per-key timestamps
-  are not retained, so exact physical input or display latency is unknown.
-  Conditional clock alignment estimates about 124 ms for the first source
-  acceptance, versus 35 ms for later captures, followed by the 200 ms buffer.
-  Diagnostic parser warmup is now implemented before arming, with independent
-  disposable state and no native calls/source publication. Five fresh-process
-  profiles reduce first-edge pure work from a 69.13 ms cold median to 8.52 ms.
-  Warmup costs about 245 ms before arming; its actual live responsiveness benefit
-  remains unverified. Dispatch-stage timing is retained to measure that effect. Reducing playback
-  to 150 ms would introduce a known right-point underrun in the earlier
-  autonomous replay. Native target leases and source timestamps remain fixed.
-  Physical source publication now uses fixed 100 ms slots, preventing delayed
-  callbacks from shifting every subsequent deadline. Offline timing, forced-end,
-  clock and six-second byte-budget tests pass; its live effect remains unverified.
-  It does not add backfill records, change nominal frequency or reduce the buffer.
-  The previous buffered phase failure `d838...` is repaired: the new combined
+- Physical HUD walking now passes normal completion and cleanup in live run
+  `650a8e00939c4831981f75828b79ff62`: 56/56 source readbacks, native `explicit_end`,
+  exact origin restoration, cancelled timers, FPS restoration and normal Minecraft
+  cleanup. All 588 camera publications are fresh. The user says "still delay,
+  but smooth"; remaining responsiveness is the current issue. Earlier failed
+  `fa370...` finish verification stays historical and unchanged in PROGRESS.
+  Inventory was not opened in this latest run; its earlier proof is separate.
+  The intentional 200 ms source buffer remains unchanged. First capture-to-dispatch
+  is measured at 50 ms, later median 20 ms. Conditional clock estimates put first
+  capture-to-native acceptance/write at 68.4/279.3 ms, versus 123.8/333.9 ms
+  previously. No per-key/display timestamps are retained, so these are not
+  key-to-photon measurements or proof that any one change caused the difference.
+  Parser warmup, native finish and fixed 100 ms sampling are now exercised together
+  in the passed physical run. Source capture intervals are median 100.38 ms/max
+  133.98 ms; actual server-source gaps reach 151.43 ms. The sampler skips missed
+  slots without backfill or timestamp changes. Its individual live contribution
+  is not isolated by this comparison.
+  This run needs 97.812 ms of right-point availability, but an earlier replay
+  needs 188.903 ms. Reducing globally to 150 ms would underrun that earlier trace.
+  Keep the smoother 200 ms baseline while measuring remaining latency or planning
+  longer walking and aimed-block integration. Native leases and bounds stay fixed.
+  The previous buffered phase failure `d838...` is repaired: the latest combined
   trace passes two authoritative LANDING samples. Earlier independent fixtures
   passed but missed that brief transition; their claims remain narrower.
   Continuous, exclusive or unrestricted movement is not established. Boundary

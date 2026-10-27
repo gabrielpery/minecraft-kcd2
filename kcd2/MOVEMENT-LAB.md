@@ -109,16 +109,15 @@ terrain capture, ordinary Minecraft movement/gravity/jumping on client and serve
 and fresh KCD camera direction for walking orientation. Only fresh server poses
 drive the KCD follower. Source compilation and automated contract/lifecycle checks
 pass. Camera delivery now uses a separate bounded worker and retained log handle.
-The latest source-time buffered combined run passes all 52 source transfers and
-delayed native readback proofs. The user reports it was a lot smoother, with
-noticeable keypress-to-movement delay. Minecraft completes its trace, but primary
-verification still fails normal completion: the native watchdog restores the
-exact origin before the expected normal-finish handshake. FPS and resources
-restore correctly. The handshake repair now passes a separate 51-point autonomous
-KCD replay with normal restoration; a combined physical check remains pending.
-This remains a bounded development test. The source-time buffer intentionally adds 200 ms of
-playback latency. See [the current evidence](../docs/PROGRESS.md) for the separate
-path, restoration, visual and timing results.
+The latest source-time buffered combined run passes all 56 source transfers,
+delayed native readbacks, normal `explicit_end` restoration and cleanup. The user
+reports "still delay, but smooth". The actor returns to its exact starting
+position, timers cancel, FPS restores and Minecraft exits normally. All 588
+camera publications stay fresh. Parser warmup, native finish and fixed sampling
+are now exercised together in this live pass; repeating that comparison is not
+the next milestone. Remaining latency and longer movement/integration are next.
+This remains a bounded development test with an intentional 200 ms playback
+buffer. See [the current evidence](../docs/PROGRESS.md) for practical limits.
 
 This requires the separately prepared and installed `hud-compositor-walking`
 bundle. The normal revision4 aimed-stone add-on cannot accept walking input.
@@ -210,24 +209,25 @@ error and cancelled timers. A native end-of-stream drain now passes autonomous
 replay `02e045...`, restoring through `explicit_end` after all 51 scripted points,
 with zero restoration error and verified FPS restoration. It restores after the
 final observation without waiting for controller polling. This does not extend
-the 400 ms target lease; the repair has not yet passed a combined physical run.
+the 400 ms target lease. The subsequent `650a8e...` physical run passes all 56
+source points and normal `explicit_end` restoration. Its 80 retained readbacks
+each advance one native frame, median 16.113 ms/max 16.960 ms, with zero errors
+and no intermediate holds. The earlier `fa370b...` failure remains historical.
 
-Keep the 200 ms buffer as the current smoother baseline. Source capture intervals
-are median 100.916 ms/max 166.572 ms; server-source gaps reach 201.099 ms. No
-per-key timestamps are retained. Clock alignment estimates first capture-to-native
-acceptance at about 124 ms, versus 35 ms median later, with cached-frame
-uncertainty. The directly measured first acceptance-to-write interval is
-210.068 ms, including buffering. These are not input-to-photon measurements.
-The controller now runs diagnostic parser warmup before arming/readiness in
-independent disposable state, without publishing source points or starting the
-native follower. Five fresh-process profiles reduce first-edge pure processing
-from a 69.13 ms cold median to 8.52 ms after warmup (range 7.67–9.93 ms). Warmup
-itself costs median 245.14 ms before arming. All 52 original recorded source
-points and hashes remain intact. These are offline component timings; actual
-dispatch-stage metadata is retained to measure the still-unverified live benefit. The earlier replay needs 188.903 ms for its next points to arrive at bracket
-start; a blanket 150 ms buffer would underrun. Faster source sampling needs its
-own bounded comparison and explicit byte/record budgets before reducing playback
-delay. Continuous movement is still unfinished.
+Keep the 200 ms buffer as the current smoother baseline. Latest source capture
+intervals are median 100.381 ms/max 133.976 ms; server-source gaps reach 151.432 ms.
+First capture-to-dispatch is measured at 50 ms, later median 20 ms. Conditional
+clock alignment estimates first capture-to-native acceptance/write at
+68.4/279.3 ms, versus 123.8/333.9 ms previously. These separate runs have
+cached-frame uncertainty and no per-key or display timestamps, so they are not
+input-to-photon measurements or an isolated warmup/cadence effectiveness test.
+Warmup runs only in disposable diagnostic state before arming; it takes 744.634 ms
+in this live session. It never publishes synthetic points or starts native following.
+This run needs 97.812 ms for right-point availability, but an earlier replay
+needs 188.903 ms. A blanket 150 ms buffer would underrun that earlier trace.
+Measure remaining latency before reducing playback delay, and preserve trace
+budgets and sampled-ground safeguards when extending walking or adding aimed-block
+integration. Continuous movement is still unfinished.
 
 The KCD follower retains its independent eight-second deadline and actor/position
 guards. Normal completion requires delayed readbacks

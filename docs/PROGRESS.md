@@ -1,13 +1,53 @@
 # MineCome progress — 2026-10-27
 
-**End-of-session handoff:** the user requested additional offline progress after
-the first handoff. Implementation `d150024667683ce6366f4800528528d8b9ab9f0b` adds
-fixed-schedule physical sampling to the finish/warmup fixes in `c90da08`. Both
-KCD2 and Minecraft are closed. The old `2dd6...` movement arm was archived;
-replacement KCD process 48256 was closed before any new HUD/controller comparison.
-No physical test of the warmup/finish/cadence candidate occurred. See
-[NEXT_SESSION.md](NEXT_SESSION.md#start-here-next-week) for the exact restart and
-validation sequence; no reinstall or repeat component test campaign is needed.
+## Latest live result: walking and HUD pass with normal completion
+
+The user reports **"still delay, but smooth"**. HUD run
+`650a8e00939c4831981f75828b79ff62`, probe
+`38d11f6a4fb943348636cef27b855de9`, passes fully:
+`runtime/evidence/hud-walking-20261027-181108-38d11f6a4fb943348636cef27b855de9/`.
+The controller exits 0 with 56 forwarded sources and 56 valid delayed readbacks.
+Native `explicit_end` returns the actor to the exact origin, with zero error and
+cancelled timers, after 137 writes including restoration and 5,830.59 ms.
+All 588 camera publications remain fresh, camera resources close, FPS restores,
+and Minecraft completes its trace and exits normally. Client/server maximum
+walking distance is 0.594376 m, with four boundary pauses, three resumptions and
+zero corrections. This run does not open inventory; that earlier evidence remains
+separate.
+
+The native path retains 80 readbacks, each one frame after its write: median
+16.113 ms and maximum 16.960 ms, with zero position errors and no intermediate
+source holds. First source capture-to-dispatch is directly measured at 50 ms;
+later captures take median 20 ms (8–34 ms). First sample validation, preparation
+and HTTP request cost 4.936/10.227/18.649 ms; the parser warmup costs 744.634 ms
+before arming. Source capture intervals are median 100.381 ms/max 133.976 ms,
+versus 100.916/166.572 ms in `fa370...`; actual server-source maximum gap falls
+from 201.099 to 151.432 ms.
+
+Conditional camera-clock alignment estimates first capture-to-native acceptance
+at 68.4 ms versus 123.8 ms previously, and first actual position write at 279.3 ms
+versus 333.9 ms. Those separate-run estimates include cached-frame uncertainty.
+No physical key capture/application or display timestamp series is available;
+this is not a measured key-to-photon improvement, nor proof that warmup or cadence
+alone caused it. `latency-analysis.json` preserves the methods, original calibration
+rows, source hashes and comparison limits without changing the primary PASS.
+
+Implementation `d150024667683ce6366f4800528528d8b9ab9f0b` (fixed sampling) on
+`c90da08973da9db54ad2c7a1c94d2def1b34cec0` (warmup/native finish) is now exercised
+in a passed combined physical test. Keep the intentional 200 ms buffer: this
+run's reconstructed right-point requirement is 97.812 ms, but earlier replay
+`477...` requires 188.903 ms. A blanket 150 ms setting would underrun that earlier
+trace. The next work is remaining latency measurement/tuning or longer walking
+and integration with the already working aimed-block controls, not repeating
+this passed comparison.
+
+Current state: KCD PID 50636 remains open with its `38d11...` arm consumed;
+Minecraft is closed. The previous `2dd6...` arm is already archived. For a later
+test, close normally, archive the exact latest `capture/stream-arming.json`, and
+start a fresh supported process. Recheck current process/tool state before acting.
+The concise [NEXT_SESSION.md](NEXT_SESSION.md) contains exact commands and limits.
+
+## Earlier implementation and evidence
 
 **Additional offline implementation:** `MovementTraceSink` now anchors ordinary
 HUD_PHYSICAL/HUD_PHYSICAL_FIXTURE publication to 100 ms slots from the first
@@ -28,10 +68,11 @@ initial/ordinary/forced-final/termination tests with 128-character run identifie
 and long double fields fit 57,069 bytes for physical and 57,699 for fixture traces:
 61 samples, 63 records, intact 2 KiB end reserve and unchanged 64 KiB/200-record
 limits. Independent review found no blocker. The 200 ms playback buffer and all
-native limits are unchanged; the next live check must measure real cadence.
+native limits are unchanged. The subsequent passed live comparison above records
+actual cadence; it does not attribute the improvement to scheduling alone.
 
-**Latest combined movement looks substantially smoother, but input delay and the
-normal-finish handshake remain unfinished.** The user reports that it worked and
+**Previous physical run: smoother movement, but the original normal-finish
+verification failed.** The user reports that it worked and
 was "a lot smoother", with a delay between keypress and movement. HUD run
 `fa370b398a9243e69ee15924cf777c4d`, probe
 `2dd6df695d15485cb84082793245d970`:
@@ -62,7 +103,8 @@ normal restoration in the game without waiting for controller polling; the
 original 400 ms target lease and 200 ms playback delay stay unchanged. Source
 checks pass 79 Lua cases. This replay has no Minecraft, HUD or physical controls;
 it does not turn the previous 52-source physical run into a clean normal-finish
-pass. A combined check of the finish repair remains pending.
+pass. The later `650a...` physical run above verifies normal finish; the original
+`fa370...` failed result remains unchanged.
 
 `latency-analysis.json` retains the original timing data and its limitations.
 The follower reports 344 observations, retaining 71; all retained readbacks occur
@@ -109,8 +151,9 @@ checks pass.
 
 Keep the 200 ms smoother baseline. Actual dispatch metadata now records
 receive/validation/preparation/request stages and original source age; source
-freshness is checked after preparation at dispatch. The warmup's live benefit
-still needs measurement. Do not start the eight-second native follower early. Reducing the buffer to 150 ms would
+freshness is checked after preparation at dispatch. The later `650a...` combined
+run records actual timing without isolating the warmup's individual contribution.
+Do not start the eight-second native follower early. Reducing the buffer to 150 ms would
 outrun a known next-point arrival in the earlier autonomous replay by 38.903 ms;
 the latest run alone would hide that regression. Faster physical-only source
 sampling is a later bounded comparison, with existing byte/record and freshness
@@ -432,18 +475,18 @@ checks, alongside the 40 Lua movement cases and actual-KCD probe above.
 Ground checks (160) and reverse-input checks (353) also passed.
 
 These changes require no replacement native bundle on the existing test machine.
-Process 45644 closed normally and its `725d...` arm was archived. Process 34088
+Historical process sequence: 45644 closed normally and its `725d...` arm was archived. Process 34088
 then consumed its activation in `d838...`/probe `d257...`; Minecraft exited. The
 user has now closed 34088 normally and its exact `d257...` arm is archived.
 KCD process 33860 then consumed its HUD activation in `fa370b...`/probe `2dd6...`.
 It has since closed and that exact arm is archived. Replacement process 48256 was
-also closed by the user before a new comparison; both games are closed. The phase
-correction passed the combined source path. Native normal completion now passes
-the separate replay described above; its combined physical validation and the
-warmup's live responsiveness benefit remain pending. Source-time buffering and
-the phase correction were pushed in `11b1b76`; normal completion and warmup were
-pushed in `c90da08`. See the current handoff rather than treating these older
-process IDs as live. Recheck Computer Use state in the resumed turn.
+also closed by the user before a new comparison. The subsequent `650a...` physical
+run on process 50636 passes normal finish and the full combined path with warmup
+and fixed sampling. KCD 50636 remains open, Minecraft is closed, and the exact
+`38d11...` arm is consumed. Source-time buffering and the phase correction were
+pushed in `11b1b76`, normal completion/warmup in `c90da08`, and fixed sampling in
+`d150024`. The current handoff supersedes the older process state; recheck tools
+and processes before any later test.
 
 ## 20 October 2026 checkpoint
 

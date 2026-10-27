@@ -28,26 +28,21 @@ The public repository contains source, build scripts and development procedures.
 | Minecraft aiming | After fixing KCD's default stone rotation, a live right-click places on the original block's top face and the next two clicks break both blocks, with matching Minecraft/KCD records and user confirmation. The standalone actual-Minecraft lab passes 28 targeting/control scenarios with synthetic host rays, including hotbar changes while an action finishes. |
 | Movement groundwork | In an automatic two-game test, KCD follows walking/jumping from the Minecraft HUD world over sampled KCD ground, then returns the player to the starting position. The same save completes its HUD/inventory sequence. This bounded scripted mode uses a standalone HUD receiver; continuous shared movement remains unfinished. |
 
-A separate [physical HUD walking lab](kcd2/MOVEMENT-LAB.md#physical-walking-with-the-hud-in-kcd)
-now combines repeated movement with Minecraft's real HUD. The user reports the
-latest buffered run was **a lot smoother**, with a noticeable delay between
-keypress and movement. All 52 source points received matching delayed KCD
-readbacks and Minecraft completed its movement trace. The controller still marks
-this run failed: the native watchdog restored the exact starting position before
-the expected normal-finish handshake. FPS, camera resources and Minecraft cleaned
-up. The finish-handshake repair now passes a separate autonomous KCD replay;
-its next combined physical check remains pending.
+The [physical HUD walking lab](kcd2/MOVEMENT-LAB.md#physical-walking-with-the-hud-in-kcd)
+now passes repeated movement with Minecraft's real HUD, normal return to the
+starting position and cleanup. The latest live run passes all **56 source points
+and delayed KCD readbacks**. The user reports **"still delay, but smooth"**.
+Camera delivery stays fresh and the native finish restores the exact origin.
 
 The source-time buffer preserves Minecraft's actual server motion timing and
-intentionally adds 200 ms of playback delay. This smoother run is the baseline
-for measuring input responsiveness; it is not yet a final playable build. Parser
-warmup now removes measured first-use processing overhead in offline checks;
-physical sampling also keeps a fixed 100 ms schedule instead of accumulating
-delay after late callbacks. Both changes still need live responsiveness validation. Camera delivery runs
-independently and stayed fresh. Boundary pauses require releasing
-controls before pressing again in an allowed direction. The lab allows at most
-five seconds of input plus one second of settling inside the 30-second HUD
-check. Continuous movement remains unfinished.
+intentionally adds 200 ms of playback delay. Parser warmup and fixed-schedule
+sampling are now exercised together in the passed live run. The first source
+capture reaches dispatch in 50 ms; further responsiveness work remains, and the
+combined changes do not establish a single cause for the timing improvement.
+Boundary pauses require releasing controls before pressing again in an allowed
+direction. The lab permits five seconds of input plus one second of settling
+inside a 30-second HUD session. Longer walking and integration with aimed-block
+controls remain next development work; this is not yet a final playable build.
 
 Live checks above use the **official KCD2 1.5.5 development build**. The native
 **retail 1.5.6 route remains blocked** by its verified address-library/loader
