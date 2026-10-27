@@ -108,12 +108,14 @@ to the actual Minecraft world supplying KCD's HUD. It uses a fresh 25-point KCD
 terrain capture, ordinary Minecraft movement/gravity/jumping on client and server,
 and fresh KCD camera direction for walking orientation. Only fresh server poses
 drive the KCD follower. Source compilation and automated contract/lifecycle checks
-pass. Latest live run `c427a5fc08bf4874a00f5f3cc64b04f4` records client/server
-walking and one applied KCD movement, followed by verified restoration, but
-fails when the camera sample expires. There is no completed physical walking pass.
-Incremental complete-record parsing and 5 ms camera-file polling are checked;
-the remaining work is profiling console HTTP, guard and path-validation costs
-before another human retry, keeping the existing freshness limits.
+pass. Camera delivery now uses a separate bounded worker and retained log handle.
+A bounded live run passes five forwarded server poses, five delayed KCD readbacks
+and verified restoration. The user nevertheless reports a tiny jittery step and
+no response to a later W press. This technical pass does not establish usable
+walking. The new boundary-pause, downhill-envelope and two-step follower changes
+are implemented. The two-step follower passes a separate actual-KCD scripted
+probe; responsiveness of the combined physical walking/HUD path remains unverified.
+See [the current evidence](../docs/PROGRESS.md) for the separate results.
 
 This requires the separately prepared and installed `hud-compositor-walking`
 bundle. The normal revision4 aimed-stone add-on cannot accept walking input.
@@ -136,9 +138,14 @@ The wrapper finds an installed PowerShell 7 when invoked from Windows PowerShell
 5.1; no administrator mode is required. Wait for `HUD_WALKING_READY` before using
 F8. Keep KCD focused, release all controls and press F8 once. Briefly press and
 release W to walk; WASD and Space are the supported movement keys. Keep movements
-small: the collision patch covers only 4×4 metres and the lab stops input before
-its footprint/displacement limit. The current completion check requires walking
-on both Minecraft sides; an optional jump is recorded separately.
+small: the collision patch covers only 4×4 metres. The lab checks braking
+clearance across its sampled slabs and pauses input before its footprint, descent
+or displacement limits. Release the held controls before pressing again in an
+allowed direction. A boundary pause does not restart the five-second input
+window, and repeating a press into the same boundary cannot make it pass.
+Completion requires
+walking on both Minecraft sides followed by 500 ms of grounded stability. Optional
+jumping has separate observations and is not a completed live milestone.
 
 Movement accepts new held input for at most five seconds from the first accepted
 movement edge, then allows at most one second for neutral settling. The HUD can
@@ -147,13 +154,33 @@ inventory transitions release movement, and a held key cannot silently resume
 when inventory closes. Native camera look remains available outside inventory.
 This profile does not publish block placement/breaking clicks.
 
-The KCD follower retains its independent eight-second deadline, 400 ms pose
-lease and actor/position guards. Normal completion requires delayed readbacks
+The physical follower permits vertical offsets of -1.5 m to +1.5 m within a
+2 m sphere around the start. Minecraft's predictive gate uses a 1.75 m radius
+and -1.45 m to +1.45 m vertical clearance, with a 1.8 m hard radius and sampled
+ground coverage. This physical-only descent change does not alter the legacy
+scripted follower's -0.2 m to +1.5 m range.
+
+Physical position updates use two 40 ms timer ticks: midpoint, then exact server
+target. An applied acknowledgement requires an additional normal-frame readback
+of that endpoint. The same receipt records the actual intermediate observation;
+it never treats a midpoint as an applied server pose. Incoming waiting targets
+coalesce while a segment finishes. Every segment keeps its own 400 ms lifetime
+from acceptance in Lua, even if newer targets arrive. That lifetime does not
+measure cross-process capture age; the controller separately checks source age.
+
+The KCD follower retains its independent eight-second deadline and actor/position
+guards. Normal completion requires delayed readbacks
 and verified return to the starting position; restoration only applies while
 the probe still owns that actor/position. The helper also verifies release of
 Minecraft controls/collision installations and restoration of the temporary
 60 FPS cap, whose engine deadline remains 120 seconds. The probe does not change
 KCD physics or call `FreezeInput`.
+
+Camera requests run no faster than one per 110 ms on a monotonic clock, permitting
+at most 1,019 requests within the worker's 112-second lifetime. Lua's 1,024-sample
+budget, the 300 ms camera lease and the original capture timestamps are unchanged.
+The current repairs change Java, Lua and scripts; an already installed matching
+walking bundle does not need another native build or installation.
 
 Evidence is retained under `runtime/evidence/hud-walking-*/`. A controller
 `HUD_WALKING_PASS` must be reported separately from visual observations and
@@ -162,6 +189,42 @@ reads for at most 100 ms without refreshing the original camera sample deadline.
 This remains a short development test; sustained movement, expanding terrain
 coverage, collision with placed blocks and a combined walking/aimed-stone mode
 remain unfinished.
+
+## Independent walking component checks
+
+`scripts/Test-HudPhysicalMovementFixture.ps1` exercises the actual Minecraft
+movement controller, vanilla client/server physics, inventory suppression and HUD
+capture with explicitly scripted input. It makes no KCD calls and does not arm
+the compositor or claim physical input. A supplied `-GroundPatchFile` is copied
+as numeric fixture data with separate fixture provenance; it is not a live terrain
+capture. Fixture output is excluded from the live follower route.
+
+`scripts/Test-KcdPhysicalFollower.ps1` is a separate PowerShell 7.3+ probe for an
+already loaded supported KCD tools world. It sends small scripted position offsets
+and checks the following-frame midpoint observation, exact endpoint readback and
+restoration. It does not start Minecraft, arm the HUD, or press physical controls.
+The unchanged follower lease and deadline remain active. Keep the player still
+and use only the fresh development test world.
+
+The updated Lua follower passes 40 standalone cases with simulated engine
+bindings. The actual KCD probe passes five scripted offsets from -0.1 m to +0.4 m,
+with zero observed midpoint/endpoint errors, actor restoration, timer cleanup
+and FPS restoration. Its target receipt ages of 96.49–146.59 ms measure elapsed
+time after acceptance in Lua, not physical-input latency.
+
+The actual-Minecraft flat fixture also passes scripted W/W/S presses, moving both
+client and server approximately 0.857 m, 0.642 m and 0.857 m with zero disagreement.
+The second W pauses at the boundary; S resumes after release. Inventory W causes
+zero movement, and actual inventory/hotbar frames are captured and inspected.
+Controls, proxies, camera worker and HUD mapping are cleaned up afterward. A
+second fixture replays the captured `c398...` terrain values and heading, with
+approximately 0.447 m, 0.641 m and 0.641 m movement on both sides, two boundary
+pauses and two resumptions, zero corrections and zero movement in inventory.
+Its terrain remains labelled fixture data. These standalone fixtures never arm
+KCD's HUD;
+an already loaded fresh, unarmed KCD world can stay open for the later physical
+check. Neither independent component establishes the full physical walking/HUD
+experience or visual smoothness.
 
 ## What this can establish
 

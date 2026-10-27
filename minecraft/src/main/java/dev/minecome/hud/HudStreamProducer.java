@@ -67,7 +67,8 @@ public final class HudStreamProducer implements AutoCloseable {
         this.root=root.normalize();this.directory=directory.normalize();this.identity=identity;this.save=save;this.genuine=genuine;this.inputMode=inputMode;
         groundMovementMode=HudGroundMovementMode.mode(System.getProperties());
         physicalMovement=HudPhysicalMovementMode.require(System.getProperties());
-        if(physicalMovement && (!genuine || inputMode!=1))throw new IllegalArgumentException("Physical movement requires genuine live HUD input");
+        if(physicalMovement && (!genuine || inputMode!=(HudPhysicalMovementMode.fixture(System.getProperties())?0:1)))
+            throw new IllegalArgumentException("Physical movement requires genuine pixels and its exact live or standalone fixture input profile");
         standalone=Boolean.getBoolean("minecome.hudStreamStandalone");
         if(groundMovementMode!=HudGroundMovementMode.Mode.NONE && (!genuine || inputMode!=0))throw new IllegalArgumentException("Ground movement requires genuine standalone HUD pixels");
         liveMouse=Boolean.getBoolean("minecome.hudStreamLiveMouse");HudMousePolicy.enabled(inputMode!=0,inputMode==2,liveMouse);
@@ -147,7 +148,11 @@ public final class HudStreamProducer implements AutoCloseable {
             r.addProperty(groundMovementMode==HudGroundMovementMode.Mode.FIXTURE?"ui_ground_movement_fixture":"ui_ground_movement_coupled",true);
             r.addProperty("standalone",standalone);
         }
-        if(physicalMovement)r.addProperty("ui_input_physical_movement",true);
+        if(physicalMovement){
+            boolean scripted=HudPhysicalMovementMode.fixture(System.getProperties());
+            r.addProperty("ui_input_physical_movement",!scripted);
+            if(scripted){r.addProperty("ui_physical_controller_fixture",true);r.addProperty("standalone",true);r.addProperty("scripted_input",true);r.addProperty("physical_input_verified",false);}
+        }
         if(inputMode!=0){r.addProperty("ui_input_protocol",physicalMovement?2:1);r.addProperty("ui_input_live_mouse",liveMouse);r.addProperty("ui_input_fixture",inputMode==2);r.addProperty("ui_input_delay_fixture",inputDelayFixture);r.addProperty("ui_input_pointer_fixture",inputPointerFixture);r.addProperty("ui_input_stone_bridge",stoneBridge);r.addProperty("ui_input_stone_fixture",stoneFixture);r.addProperty("ui_input_stone_live",stoneLive);r.addProperty("ui_input_aimed_stone_bridge",aimedStone);r.addProperty("ui_input_background_trial",backgroundTrial);r.addProperty("ui_input_offscreen_presentation",offscreenPresentation);r.addProperty("ui_input_offscreen_trial",offscreenTrial);}return r;
     }
     private void run() {
@@ -221,7 +226,8 @@ public final class HudStreamProducer implements AutoCloseable {
                     meta.addProperty("width",width);meta.addProperty("height",height);meta.addProperty("sequence",sequence);pendingSamples.add(new Sample(rgba,width,height,meta,name));
                 }
             }
-            if(result.equals("passed") && (!genuine || published.get()<30 || !states.containsAll(Set.of("hotbar_slot0","hotbar_slot1","inventory_screen","hotbar_slot2"))))
+            if(result.equals("passed") && (!genuine || published.get()<30 || !states.containsAll(HudPhysicalMovementMode.fixture(System.getProperties())?
+                    Set.of("fixture_inventory_blocked","fixture_scripted_walking"):Set.of("hotbar_slot0","hotbar_slot1","inventory_screen","hotbar_slot2"))))
                 throw new IOException("Continuous vanilla state proof incomplete");
             if(result.equals("input_passed") || result.equals("input_completed")){
                 if(!genuine || inputMode==0 || published.get()<5 || !states.contains("hotbar"))throw new IOException("Input stream vanilla proof incomplete");

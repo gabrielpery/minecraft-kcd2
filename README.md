@@ -29,12 +29,21 @@ The public repository contains source, build scripts and development procedures.
 | Movement groundwork | In an automatic two-game test, KCD follows walking/jumping from the Minecraft HUD world over sampled KCD ground, then returns the player to the starting position. The same save completes its HUD/inventory sequence. This bounded scripted mode uses a standalone HUD receiver; continuous shared movement remains unfinished. |
 
 A separate [physical HUD walking lab](kcd2/MOVEMENT-LAB.md#physical-walking-with-the-hud-in-kcd)
-is implemented, compiled and checked automatically. The latest live attempt
-records actual Minecraft walking, one applied KCD movement and restoration,
-but camera freshness still ends the test before a complete pass. It adds
-WASD/Space to the HUD session using sampled ground and fresh KCD camera direction.
-Movement lasts at most six seconds, including neutral settling, inside the
-30-second HUD check. The next work is reducing camera delivery delay.
+is implemented, compiled and checked automatically. Camera delivery now runs
+independently of movement commands and avoids repeatedly reopening the active log.
+A bounded live run passed five server-position transfers, five delayed KCD
+readbacks and restoration. The user still experienced a tiny, jittery step and
+could not move again, so this is technical integration evidence rather than
+usable walking. The updated code pauses input at a boundary until controls are
+released and pressed again, allow more downhill travel within the same small
+radius, and split KCD position updates into two steps. A scripted KCD check now
+verifies both position steps and restoration. Separate actual-Minecraft tests on
+flat and replayed sampled terrain pass three scripted movement presses with the
+HUD active, including resuming away from a boundary; inventory input causes no
+movement. Those component tests do not yet verify the combined physical walking
+experience. The lab allows at
+most five seconds of input plus one second of settling inside the
+30-second HUD check. It is not continuous movement.
 
 Live checks above use the **official KCD2 1.5.5 development build**. The native
 **retail 1.5.6 route remains blocked** by its verified address-library/loader

@@ -348,7 +348,7 @@ end
 -- input, implement general collision adoption, or roll back quest/AI effects.
 local FOLLOWER_MS, TICK_MS, LEASE_SECONDS = 8000, 40, 0.4
 local function horizontal(v) return vector(v) and math.sqrt(v.x*v.x+v.y*v.y) or math.huge end
-local function follower_receipt(p,event,result,s,seq,target,readback,follow_error)
+local function follower_receipt(p,event,result,s,seq,target,readback,follow_error,received,midpoint)
     if p.records >= 128 then return false end
     local clock = now()
     local lease = p.latest and clock and math.max(0,(LEASE_SECONDS-(clock-p.latest.received))*1000) or 0
@@ -358,6 +358,12 @@ local function follower_receipt(p,event,result,s,seq,target,readback,follow_erro
         physical = ',"physical_movement":true,"camera_mode":"native_look","camera_basis_valid":'
             .. tostring(physical_camera(s) == true) .. ',"sampled_engine_seconds":' .. number(clock)
             .. ',"player_readback_error":' .. number(distance(s and s.position.value,target))
+            .. ',"position_mode":"two_frame_interpolation","target_receipt_age_ms":'
+            .. number(received and clock and (clock-received)*1000)
+            .. ',"midpoint_target":' .. vecjson(midpoint and midpoint.target)
+            .. ',"midpoint_player":' .. vecjson(midpoint and midpoint.player)
+            .. ',"midpoint_readback_error":' .. number(midpoint and midpoint.error)
+            .. ',"midpoint_sampled_engine_seconds":' .. number(midpoint and midpoint.sampled)
     end
     local text = '{"schema":1,"run":' .. quote(p.run) .. ',"event":' .. quote(event) .. ',"result":' .. quote(result)
         .. ',"terminal":' .. tostring(p.terminal == true) .. ',"seq":' .. number(seq or p.last_applied_seq or 0)
@@ -450,7 +456,8 @@ function MineCome.ApplyMovementFollower(run,seq,x,y,z)
     local invalid
     if not finite(seq) or seq < 1 or seq > 200 or seq ~= math.floor(seq) then invalid = "sequence_invalid"
     elseif seq <= p.last_queued_seq then invalid = "sequence_replayed"
-    elseif not vector(target) or distance(target,p.origin) > 2 or z-p.origin.z < -0.2 or z-p.origin.z > 1.5 then invalid = "target_out_of_bounds" end
+    elseif not vector(target) or distance(target,p.origin) > 2 or z-p.origin.z < (p.physical_movement and -1.5 or -0.2)
+        or z-p.origin.z > 1.5 then invalid = "target_out_of_bounds" end
     local clock = now()
     if not clock or clock < p.last_clock then invalid = "clock_unavailable_or_regressed"
     elseif clock >= p.deadline then invalid = "hard_deadline"
@@ -463,6 +470,22 @@ function MineCome.ApplyMovementFollower(run,seq,x,y,z)
     p.last_queued_seq = seq
     p.latest = {seq=seq,target=copy(target),received=clock}
     return true,"queued"
+end
+local function physical_write(p,clock)
+    -- The transport supplies a target, not velocity. Two game-thread writes
+    -- remove the full-distance step without extrapolating beyond that target.
+    -- An in-flight segment keeps its own accepted-at time. Later arrivals may
+    -- coalesce the waiting target, but cannot extend this segment's 400ms lease.
+    local segment = p.physical_segment
+    if segment and clock-segment.received > LEASE_SECONDS then segment=nil;p.physical_segment=nil end
+    if not segment and p.latest.seq ~= p.last_applied_seq then
+        local target,start = p.latest.target,p.last_owned
+        segment={seq=p.latest.seq,target=copy(target),received=p.latest.received,
+            midpoint={x=(start.x+target.x)*0.5,y=(start.y+target.y)*0.5,z=(start.z+target.z)*0.5}}
+        p.physical_segment=segment
+    end
+    if not segment then return p.latest,p.latest.target,true end
+    return segment,segment.midpoint_written and segment.target or segment.midpoint,segment.midpoint_written == true
 end
 function MineCome_MovementFollowerTick(data)
     local p = follower_consume(data);if not p then return false end
@@ -486,7 +509,7 @@ function MineCome_MovementFollowerTick(data)
         local pending = p.pending_receipt;p.pending_receipt = nil
         local readback = distance(s.position.value,pending.target) <= 0.05
         local error = follower_camera_error(p,s,pending.target)
-        if not follower_receipt(p,"applied",readback and "applied_readback" or "delayed_readback_changed",s,pending.seq,pending.target,readback,error) then return follower_stop(p,"log_failed") end
+        if not follower_receipt(p,"applied",readback and "applied_readback" or "delayed_readback_changed",s,pending.seq,pending.target,readback,error,pending.received,pending.midpoint) then return follower_stop(p,"log_failed") end
     elseif p.latest and clock-p.last_heartbeat >= 1 then
         p.last_heartbeat = clock
         if not follower_receipt(p,"heartbeat","holding_latest",s,nil,p.last_owned,distance(s.position.value,p.last_owned)<=0.05,
@@ -500,17 +523,31 @@ function MineCome_MovementFollowerTick(data)
             p.ground_verified = true
         end
         if p.writes >= 199 then return follower_stop(p,"write_budget") end
-        local frame = p.latest
+        local frame,target,endpoint = p.latest,p.latest.target,true
+        if p.physical_movement then frame,target,endpoint=physical_write(p,clock) end
+        local midpoint
+        if p.physical_movement and endpoint and frame.midpoint then
+            -- This snapshot was read on the tick after the midpoint write,
+            -- before changing the player to the endpoint. Keep it with the
+            -- endpoint ACK so both observations describe the same segment.
+            midpoint={target=copy(frame.midpoint),player=copy(s.position.value),
+                error=distance(s.position.value,frame.midpoint),sampled=clock}
+        end
         p.write_attempted=true;p.writes=p.writes+1
-        local ok,value = pcall(p.entity.SetWorldPos,p.entity,copy(frame.target))
+        local ok,value = pcall(p.entity.SetWorldPos,p.entity,copy(target))
         local readback = snapshot();p.last_snapshot = readback
-        if ok and value ~= false and readback.stable and readback.entity == p.entity and readback.id == p.id and distance(readback.position.value,frame.target)<=0.05 then
-            p.last_owned = copy(frame.target)
-            if frame.seq ~= p.last_applied_seq then p.pending_receipt={seq=frame.seq,target=copy(frame.target)};p.last_applied_seq=frame.seq end
+        if ok and value ~= false and readback.stable and readback.entity == p.entity and readback.id == p.id and distance(readback.position.value,target)<=0.05 then
+            p.last_owned = copy(target)
+            if endpoint then
+                if frame.seq ~= p.last_applied_seq then
+                    p.pending_receipt={seq=frame.seq,target=copy(frame.target),received=frame.received,midpoint=midpoint};p.last_applied_seq=frame.seq
+                end
+                if p.physical_movement then p.physical_segment=nil end
+            else frame.midpoint_written=true end
         else
             -- A native call can fail after changing the transform. A same-entity
             -- readback at the exact requested point makes guarded cleanup safe.
-            if readback.stable and readback.entity == p.entity and readback.id == p.id and distance(readback.position.value,frame.target)<=0.05 then p.last_owned=copy(frame.target) end
+            if readback.stable and readback.entity == p.entity and readback.id == p.id and distance(readback.position.value,target)<=0.05 then p.last_owned=copy(target) end
             return follower_stop(p,"position_write_or_readback_failed")
         end
     end

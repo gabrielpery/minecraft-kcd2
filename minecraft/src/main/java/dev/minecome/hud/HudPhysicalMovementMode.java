@@ -6,11 +6,16 @@ import java.util.Properties;
 /** Separate live movement profile; existing UI and scripted ground profiles stay unchanged. */
 public final class HudPhysicalMovementMode {
     private HudPhysicalMovementMode(){}
+    public static boolean fixture(Properties p){return Boolean.parseBoolean(p.getProperty("minecome.hudPhysicalMovementFixture"));}
     public static boolean require(Properties p){
-        if(!Boolean.parseBoolean(p.getProperty("minecome.hudPhysicalMovement")))return false;
-        for(String required:List.of("hudStreamLab","hudStreamInput","hudStreamLiveMouse","hudStreamOffscreenPresentation"))
+        boolean live=Boolean.parseBoolean(p.getProperty("minecome.hudPhysicalMovement")),fixture=fixture(p);
+        if(!live && !fixture)return false;
+        if(live && fixture)throw new IllegalArgumentException("Physical movement live and scripted fixture profiles are exclusive");
+        for(String required:fixture?List.of("hudStreamLab","hudStreamStandalone"):List.of("hudStreamLab","hudStreamInput","hudStreamLiveMouse","hudStreamOffscreenPresentation"))
             if(!Boolean.parseBoolean(p.getProperty("minecome."+required)))throw new IllegalArgumentException("Physical HUD movement requires "+required);
-        for(String conflict:List.of("hudStreamStandalone","hudGroundMovementFixture","hudGroundMovementCoupled",
+        for(String conflict:fixture?List.of("hudStreamInput","hudStreamLiveMouse","hudStreamOffscreenPresentation"):List.of("hudStreamStandalone"))
+            if(Boolean.parseBoolean(p.getProperty("minecome."+conflict)))throw new IllegalArgumentException("Physical HUD movement conflicts with "+conflict);
+        for(String conflict:List.of("hudGroundMovementFixture","hudGroundMovementCoupled",
                 "hudStreamInputFixture","hudStreamInputPointerFixture","hudStreamInputDelayFixture","hudStreamBackgroundTrial",
                 "hudStreamOffscreenTrial","hudStoneBridge","hudStoneFixture","hudStoneLive","hudAimedStoneBridge",
                 "groundMovementLab","externalInputLab","externalInputFixture","aimedStoneLab","aimedBridgeLab",

@@ -21,6 +21,7 @@ public final class HudPhysicalMovement {
     private final GroundPatch patch;
     private final String save;
     private final HudInputProtocol.Identity identity;
+    private final boolean fixture;
     private final Path traceFile,viewFile;
     private final HudMovementKeys keys=new HudMovementKeys();
     private final HudMovementCompletion completion=new HudMovementCompletion();
@@ -41,16 +42,22 @@ public final class HudPhysicalMovement {
     private HudMovementBoundary.Decision boundaryStop;
     private long setupAt,stableAt,sequence,baselineCorrections,authorityUntil,endedAt,durationMs,events,heldTicks;
     private long firstView,lastView,viewUpdates;
+    private long boundaryPauses,boundaryResumptions;
+    private boolean boundaryAwaitingResume;
     private double clientWalk,serverWalk;
     private boolean setup,clientInstalled,teleported,ready,completed,controlsOwned,clientReleased,clientAir,serverAir,clientLand,serverLand,readyPublished;
     private volatile boolean closing;
 
     public HudPhysicalMovement(Path patchFile,Path traceFile,Path viewFile,String save,HudInputProtocol.Identity identity)throws IOException{
-        patch=GroundPatch.read(patchFile);this.traceFile=traceFile;this.viewFile=viewFile;this.save=save;this.identity=identity;
-        if(!patch.sourceKind().equals("live_kcd_ground_patch") || patch.run().equals(identity.run()) ||
+        this(patchFile,traceFile,viewFile,save,identity,false);
+    }
+    /** Fixture mode is explicit and emits a trace the live follower must reject. */
+    public HudPhysicalMovement(Path patchFile,Path traceFile,Path viewFile,String save,HudInputProtocol.Identity identity,boolean fixture)throws IOException{
+        patch=GroundPatch.read(patchFile);this.traceFile=traceFile;this.viewFile=viewFile;this.save=save;this.identity=identity;this.fixture=fixture;
+        if(!patch.sourceKind().equals(fixture?"standalone_ground_fixture":"live_kcd_ground_patch") || patch.run().equals(identity.run()) ||
                 !patch.run().matches("[0-9a-f]{32}") || !save.equals("MineCome-HudStream-"+UUID.fromString(save.substring("MineCome-HudStream-".length()))) ||
                 !traceFile.isAbsolute() || !viewFile.isAbsolute())
-            throw new IllegalArgumentException("Physical HUD requires fresh live patch, owned save and absolute evidence files");
+            throw new IllegalArgumentException("Physical HUD requires matching patch provenance, owned save and absolute evidence files");
     }
     public void positionCorrection(){corrections.incrementAndGet();}
     public boolean completed(){return completed;}
@@ -69,7 +76,8 @@ public final class HudPhysicalMovement {
                 distance(clientMotion,sample.motion())>.01)return;
         Path parent=directory.toRealPath();
         if(!parent.startsWith(evidenceRoot.toRealPath()))throw new IOException("Physical readiness outside evidence");
-        var e=new JsonObject();e.addProperty("schema",1);e.addProperty("kind","minecome_hud_physical_ready_v1");e.addProperty("ready",true);
+        var e=new JsonObject();e.addProperty("schema",1);e.addProperty("kind",fixture?"minecome_hud_physical_fixture_ready_v1":"minecome_hud_physical_ready_v1");e.addProperty("ready",true);
+        e.addProperty("scripted_input",fixture);
         e.addProperty("run",identity.run());e.addProperty("save",save);e.addProperty("patch_run",patch.run());e.addProperty("patch_sha256",patch.sha256());
         e.addProperty("target_pid",identity.targetPid());e.addProperty("target_start_filetime",Long.toUnsignedString(identity.targetStart()));
         e.addProperty("utc_ms",System.currentTimeMillis());e.addProperty("view_seq",view.view().sequence());
@@ -102,12 +110,16 @@ public final class HudPhysicalMovement {
         keys.expire(now);
         if(keys.ended()){release(client);return;}
         var motion=motion(client.player,hasGround(client.world,client.player));
-        if(boundary!=null){
+        if(boundary!=null && !keys.neutral(now)){
             int forward=(keys.down(0x57,now)?1:0)-(keys.down(0x53,now)?1:0);
             int sideways=(keys.down(0x41,now)?1:0)-(keys.down(0x44,now)?1:0);
             var decision=boundary.check(motion,forward,sideways,keys.down(0x20,now),view.view().yaw(),
                     accelerationBound(client),jumpVelocity(client),client.player.isSprinting() || forward>0);
-            if(!decision.allow()){boundaryStop=decision;keys.end();release(client);return;}
+            if(!decision.allow()){
+                boundaryStop=decision;boundaryPauses++;boundaryAwaitingResume=true;
+                keys.suppressAtBoundary();release(client);return;
+            }
+            if(boundaryAwaitingResume){boundaryResumptions++;boundaryAwaitingResume=false;}
         }
         apply(client,now);
     }
@@ -122,7 +134,7 @@ public final class HudPhysicalMovement {
             if(!Files.isRegularFile(project.resolve("AGENTS.md")) || !Files.isRegularFile(project.resolve("minecraft/build.gradle")))
                 throw new IOException("Physical HUD requires owned workspace run directory");
             evidenceRoot=project.resolve("runtime/evidence");
-            views=new HudMovementViewReader(viewFile,evidenceRoot,identity,patch.run(),patch.sha256());views.start();
+            views=new HudMovementViewReader(viewFile,evidenceRoot,identity,patch.run(),patch.sha256(),fixture);views.start();
         }
         requireClient(client);
         if(!setup){setup=true;setupAt=now;release(client);prepareServer();return;}
@@ -191,7 +203,7 @@ public final class HudPhysicalMovement {
         var sm=sample.motion();
         if(!patch.containsFeet(clientMotion.x(),clientMotion.z(),.31) || !patch.containsFeet(sm.x(),sm.z(),.31) ||
                 distance(clientMotion,anchor)>1.8 || distance(sm,anchor)>1.8 ||
-                clientMotion.y()-anchor.y()<-.2 || sm.y()-anchor.y()<-.2 ||
+                clientMotion.y()-anchor.y()< -1.5 || sm.y()-anchor.y()< -1.5 ||
                 clientMotion.y()-anchor.y()>1.5 || sm.y()-anchor.y()>1.5)
             throw new IllegalStateException("Physical HUD displacement/coverage bound");
         clientWalk=Math.max(clientWalk,Math.hypot(clientMotion.x()-anchor.x(),clientMotion.z()-anchor.z()));
@@ -226,7 +238,7 @@ public final class HudPhysicalMovement {
         boundary=new HudMovementBoundary(patch,anchor);
         String world=save.substring("MineCome-HudStream-".length());
         var context=new MovementTraceSink.Context(patch.run(),patch.sha256(),patch.sourceKind(),save,world,
-                patch.centerX(),patch.centerY(),patch.centerZ(),MovementTraceSink.Profile.HUD_PHYSICAL,anchor.x(),anchor.y(),anchor.z());
+                patch.centerX(),patch.centerY(),patch.centerZ(),fixture?MovementTraceSink.Profile.HUD_PHYSICAL_FIXTURE:MovementTraceSink.Profile.HUD_PHYSICAL,anchor.x(),anchor.y(),anchor.z());
         trace=MovementTraceSink.open(traceFile,evidenceRoot,context,now,System.currentTimeMillis());traceResult="pending";
         if(!writeTrace(sample,"SETTLING",true))throw new IllegalStateException("Physical HUD initial trace sample rejected");
     }
@@ -292,7 +304,7 @@ public final class HudPhysicalMovement {
     public JsonObject evidence(MinecraftClient client){
         var e=new JsonObject();e.addProperty("schema",1);e.addProperty("kind","minecome_hud_physical_movement_v1");
         e.addProperty("run",identity.run());e.addProperty("save",save);e.addProperty("patch_run",patch.run());e.addProperty("patch_sha256",patch.sha256());
-        e.addProperty("ground_source_kind",patch.sourceKind());e.addProperty("input_source","hud_input_v2");e.addProperty("scripted_input",false);e.addProperty("physical_input_verified",false);
+        e.addProperty("ground_source_kind",patch.sourceKind());e.addProperty("input_source",fixture?"scripted_hud_physical_controller_fixture":"hud_input_v2");e.addProperty("scripted_input",fixture);e.addProperty("physical_input_verified",false);
         e.addProperty("started",keys.started());e.addProperty("completed",completed);e.addProperty("movement_events_applied",events);e.addProperty("held_ticks",heldTicks);
         e.addProperty("client_walk",clientWalk);e.addProperty("server_walk",serverWalk);e.addProperty("client_air",clientAir);e.addProperty("server_air",serverAir);
         e.addProperty("client_land",clientLand);e.addProperty("server_land",serverLand);e.addProperty("duration_ms",durationMs);
@@ -307,6 +319,8 @@ public final class HudPhysicalMovement {
             if(Double.isFinite(boundaryStop.maxGround()))stop.addProperty("maximum_ground",boundaryStop.maxGround());
             stop.addProperty("predicted_reach",boundaryStop.reach());e.add("boundary_stop",stop);
         }
+        e.addProperty("boundary_pauses",boundaryPauses);e.addProperty("boundary_resumptions",boundaryResumptions);
+        e.addProperty("boundary_awaiting_fresh_press",boundaryAwaitingResume);
         e.addProperty("post_settle_corrections",corrections.get()-baselineCorrections);e.addProperty("client_proxy_released",clientReleased);e.addProperty("server_proxy_released",serverReleased.get());
         e.addProperty("controls_released",!client.options.forwardKey.isPressed()&&!client.options.backKey.isPressed()&&!client.options.leftKey.isPressed()&&!client.options.rightKey.isPressed()&&!client.options.jumpKey.isPressed());
         return e;

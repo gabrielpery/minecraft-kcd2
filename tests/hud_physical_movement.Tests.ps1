@@ -29,6 +29,17 @@ foreach($file in @('scripts/Test-HudWalking.ps1','scripts/Prepare-HudWalking.ps1
 $ready=[pscustomobject]@{ui_input_protocol=2;ui_input_physical_movement=$true}
 Assert-HudPhysicalMovementReady $ready $true
 Check $true 'Explicit physical v2 readiness accepted'
+foreach($value in @($true,$false,'true',0,$null)){
+    $bad=Clone $ready;$bad | Add-Member -NotePropertyName ui_physical_controller_fixture -NotePropertyValue $value
+    Reject {Assert-HudPhysicalMovementReady $bad $true} 'Fixture-labelled readiness accepted as live physical input'
+}
+foreach($value in @($true,'true',0,$null)){
+    $bad=Clone $ready;$bad | Add-Member -NotePropertyName scripted_input -NotePropertyValue $value
+    Reject {Assert-HudPhysicalMovementReady $bad $true} 'Scripted or malformed input provenance accepted as physical input'
+}
+$live=Clone $ready;$live | Add-Member -NotePropertyName scripted_input -NotePropertyValue $false
+Assert-HudPhysicalMovementReady $live $true
+Check $true 'Explicit non-scripted readiness accepted'
 foreach($value in @($false,0,1,'true','false',$null)){
     $bad=Clone $ready;$bad.ui_input_physical_movement=$value
     Reject {Assert-HudPhysicalMovementReady $bad $true} 'Missing/malformed physical marker accepted'
@@ -137,6 +148,7 @@ foreach($change in @(
     {param($b)$b.run='other'},
     {param($b)$b.patch_sha256='f'*64},
     {param($b)$b.source_kind='live_kcd_ground_patch'},
+    {param($b)$b.source_kind='standalone_hud_physical_movement_fixture'},
     {param($b)$b.save='MineCome-Ground-'+$b.world},
     {param($b)$b.anchor_mc.x=0.011},
     {param($b)$b.anchor_mc.y=76.001},
@@ -158,11 +170,18 @@ $r=Receive $s (Sample 3 'WALKING' 0.5) 1301
 Check ($r.Kind -ceq 'stale' -and -not $s.GroundProved) 'Stale physical pose cannot establish movement/ground proof'
 $r=Receive $s (Sample 4 'WALKING' 0.5)
 Check ($r.Kind -ceq 'sample' -and $s.GroundProved) 'Fresh physical pose recovers within unchanged trace clock contract'
-foreach($bad in @((Sample 3 'WALKING' 1.9 64.625),(Sample 3 'WALKING' 0 65.126),(Sample 3 'WALKING' 0 63.424))){
+foreach($bad in @((Sample 3 'WALKING' 1.9 64.625),(Sample 3 'WALKING' 0 65.126),(Sample 3 'WALKING' 0 62.124),(Sample 3 'WALKING' 1.5 62.125))){
     $s=Primed
     Reject {Receive $s $bad} 'Target beyond exact three-dimensional/vertical follower bound accepted'
     Check ($s.LastSeq -eq 2) 'Rejected target mutated receiver state'
 }
+$s=Primed
+$r=Receive $s (Sample 3 'WALKING' 0.3 63.125)
+Check ($r.Kind -ceq 'sample' -and $r.Target.z -eq 55.5) 'Sampled downhill walking is accepted inside the physical sphere'
+$r=Receive $s (Sample 4 'WALKING' 0 62.125)
+Check ($r.Kind -ceq 'sample' -and $r.Target.z -eq 54.5) 'Exact physical lower envelope accepted'
+$r=Receive $s (Sample 5 'WALKING' 0 65.125)
+Check ($r.Kind -ceq 'sample' -and $r.Target.z -eq 57.5) 'Exact physical upper envelope accepted'
 $s=Primed;$null=Receive $s (Sample 3 'WALKING' 2)
 Check ($s.LastSeq -eq 3) 'Exact two-meter target accepted'
 $null=Receive $s (Sample 4 'PASSED' 0.5)

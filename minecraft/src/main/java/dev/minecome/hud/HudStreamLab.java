@@ -50,7 +50,9 @@ public final class HudStreamLab {
     private final HudGroundMovementMode.Mode groundMovementMode=HudGroundMovementMode.mode(System.getProperties());
     private HudGroundMovementFixture groundMovement;
     private final boolean physicalMovementMode=HudPhysicalMovementMode.require(System.getProperties());
+    private final boolean physicalFixtureMode=HudPhysicalMovementMode.fixture(System.getProperties());
     private HudPhysicalMovement physicalMovement;
+    private HudPhysicalMovementFixture physicalFixture;
     private final boolean backgroundTrial=Boolean.getBoolean("minecome.hudStreamBackgroundTrial");
     private final boolean offscreenPresentation=Boolean.getBoolean("minecome.hudStreamOffscreenPresentation"),offscreenTrial=Boolean.getBoolean("minecome.hudStreamOffscreenTrial");
     private final long initializedAt=System.nanoTime();
@@ -230,7 +232,7 @@ public final class HudStreamLab {
         finally {lab.restoreBlend();}
     }
     private void restoreBlend(){frameTransparent=false;if(priorBlend!=null){RenderSystem.blendFuncSeparate(priorBlend[0],priorBlend[1],priorBlend[2],priorBlend[3]);priorBlend=null;}}
-    private boolean publicationPaused(long now){return !inputMode && streamAt!=0 && now-streamAt>=10_500_000_000L && now-streamAt<11_800_000_000L;}
+    private boolean publicationPaused(long now){return !inputMode && !physicalFixtureMode && streamAt!=0 && now-streamAt>=10_500_000_000L && now-streamAt<11_800_000_000L;}
     private void capture(MinecraftClient client){
         RenderSystem.assertOnRenderThread();long now=System.nanoTime();boolean paused=publicationPaused(now);
         timingStage("pbo_poll");
@@ -242,6 +244,7 @@ public final class HudStreamLab {
             if(output==null || terminal || paused)return;
             var meta=JsonParser.parseString(frame.metadata()).getAsJsonObject();
             if(groundMovement!=null && meta.has("ground_movement_phase"))groundMovement.captured(meta.get("ground_movement_phase").getAsString());
+            if(physicalFixture!=null && meta.has("physical_fixture_phase"))physicalFixture.captured(meta.get("physical_fixture_phase").getAsString());
             if(timing!=null)timing.readbackAge(System.currentTimeMillis()-meta.get("captured_utc_ms").getAsLong());
             output.offer(new HudStreamProducer.Frame(frame.width(),frame.height(),frame.bottomUp(),meta.get("captured_utc_ms").getAsLong(),meta.get("selected_slot").getAsInt(),meta.get("screen").getAsInt(),frame.metadata()));
         });
@@ -249,7 +252,7 @@ public final class HudStreamLab {
         if(output==null || !output.isReady() || terminal || (!inputMode && stage<0)){lastCaptureDecision="output_or_stage_not_ready";return;}
         if(paused || (!inputMode && now-stateAt<250_000_000L)){lastCaptureDecision="capture_interval";return;}
         if(client.getOverlay()!=null){lastCaptureDecision="overlay";return;}
-        boolean inventory=inputMode?HudVanillaUiAdapter.inventory(client.currentScreen):stage==2;
+        boolean inventory=(inputMode||physicalFixtureMode)?HudVanillaUiAdapter.inventory(client.currentScreen):stage==2;
         if(inventory && !(client.currentScreen instanceof InventoryScreen) && !(client.currentScreen instanceof CreativeInventoryScreen))return;
         if(!inventory && client.currentScreen!=null)return;
         // A 50 ms timer skips alternate frames at the owned 30 FPS cap. Capture
@@ -265,14 +268,16 @@ public final class HudStreamLab {
         // server agreement here starves pixels while successive slot keys are in flight.
         // Authoritative input proof remains in inputTick's fresh matching observation.
         if(!serverFresh){captureServerStaleSkips++;lastCaptureDecision="server_observation_stale";return;}
-        if(!inputMode && (!serverConfirmed || selected!=expected)){captureUnconfirmedSkips++;lastCaptureDecision="auto_state_unconfirmed";return;}
+        if(!inputMode && (!serverConfirmed || (!physicalFixtureMode && selected!=expected))){captureUnconfirmedSkips++;lastCaptureDecision="auto_state_unconfirmed";return;}
         if(!inputMode && !matches(local))throw new IllegalStateException("Actual stream inventory differs from fixture");
-        var meta=new JsonObject();meta.addProperty("state",inputMode?(inventory?"inventory":"hotbar"):(stage==0?"hotbar_slot0":stage==1?"hotbar_slot1":stage==2?"inventory_screen":"hotbar_slot2"));
+        var meta=new JsonObject();meta.addProperty("state",(inputMode||physicalFixtureMode)?(inventory?"inventory":"hotbar"):(stage==0?"hotbar_slot0":stage==1?"hotbar_slot1":stage==2?"inventory_screen":"hotbar_slot2"));
+        if(physicalFixture!=null)meta.addProperty("state","fixture_"+physicalFixture.phase());
         meta.addProperty("selected_slot",selected);meta.addProperty("screen",inventory?1:0);meta.addProperty("screen_kind",client.currentScreen==null?"none":client.currentScreen.getClass().getSimpleName());
         meta.addProperty("captured_utc_ms",System.currentTimeMillis());meta.addProperty("client_server_inventory_confirmed",serverConfirmed);
         meta.addProperty("server_selected_slot",observation.selected());meta.addProperty("server_observation_age_ms",(now-observation.at())/1_000_000);
         meta.addProperty("no_world_pixels",true);meta.addProperty("hand_pixels",false);meta.addProperty("gui_scale",client.getWindow().getScaleFactor());
         if(groundMovement!=null)meta.addProperty("ground_movement_phase",groundMovement.phase());
+        if(physicalFixture!=null)meta.addProperty("physical_fixture_phase",physicalFixture.phase());
         meta.add("client_slots",jsonSlots(local));meta.add("server_slots",jsonSlots(observation.slots()));
         timingStage("pbo_enqueue");
         try{if(readback.capture(client.getFramebuffer(),++captureId,meta.toString())){lastCaptureAt=now;captureCadence.captured(inventory,now);lastCaptureEnqueuedUtc=System.currentTimeMillis();lastCaptureDecision="enqueued";if(serverConfirmed)capturedServerConfirmed++;else capturedServerPending++;}else lastCaptureDecision="pbo_busy";}
@@ -296,7 +301,7 @@ public final class HudStreamLab {
             if(client.interactionManager==null || client.interactionManager.getCurrentGameMode()!=GameMode.CREATIVE){fail(client,"Fresh Creative inventory API unavailable");return;}
             for(int i=0;i<9;i++){var stack=inputPointerFixture && i>=7?ItemStack.EMPTY:new ItemStack(Fixture.ITEMS[i],Fixture.COUNTS[i]);client.player.getInventory().setStack(i,stack);client.interactionManager.clickCreativeStack(stack,36+i);}
             client.player.getInventory().selectedSlot=0;given=true;
-            if(groundMovement!=null){stage=0;stateAt=now;}
+            if(groundMovement!=null || physicalFixtureMode){stage=0;stateAt=now;}
             if(offscreenPresentation){
                 client.options.getMaxFps().setValue(OFFSCREEN_FPS);offscreenFrameCapApplied=client.getWindow().getFramerateLimit()==OFFSCREEN_FPS && client.options.getMaxFps().getValue()==OFFSCREEN_FPS;
                 if(!offscreenFrameCapApplied){fail(client,"Offscreen frame cap was not applied");return;}
@@ -315,7 +320,8 @@ public final class HudStreamLab {
                 if(physicalMovement==null){
                     var wire=new HudInputProtocol.Identity(identity.run(),output.producerPid(),output.producerStart(),identity.targetPid(),identity.targetStart(),identity.expiresUtcMs());
                     physicalMovement=new HudPhysicalMovement(Path.of(required("minecome.groundPatchFile")),Path.of(required("minecome.movementTraceFile")),
-                            Path.of(required("minecome.hudHostViewFile")),save,wire);
+                            Path.of(required("minecome.hudHostViewFile")),save,wire,physicalFixtureMode);
+                    if(physicalFixtureMode)physicalFixture=new HudPhysicalMovementFixture(client,physicalMovement,Path.of(required("minecome.groundPatchFile")),Path.of(required("minecome.hudHostViewFile")),wire);
                 }
                 physicalMovement.afterTick(client,System.nanoTime());
             }catch(Exception e){fail(client,"HUD physical movement: "+e.getMessage());return;}
@@ -340,7 +346,17 @@ public final class HudStreamLab {
         if(!terminal && output.isReady()){
             if(streamAt==0){streamAt=now;LOG.info("HUD_STREAM_READY run={} save={} realCreativePackets=true inputMode={}",identity.run(),save,inputMode);}
             long elapsed=now-streamAt;
-            if(inputMode){
+            if(physicalFixtureMode){
+                try{
+                    physicalFixture.tick(client,now);
+                    if(physicalFixture.finished()){
+                        var proof=new JsonObject();proof.addProperty("new_world",true);proof.addProperty("real_creative_packets",true);
+                        proof.addProperty("normal_vanilla_render_path",true);proof.addProperty("scripted_input",true);proof.addProperty("physical_input_verified",false);
+                        proof.add("physical_controller_fixture",physicalFixture.evidence(client));
+                        output.finish("passed",proof);terminal=true;terminalAt=now;
+                    }
+                }catch(Exception e){fail(client,"HUD scripted physical fixture: "+e.getMessage());return;}
+            }else if(inputMode){
                 try{
                     if(backgroundTrial && !backgroundComplete)backgroundTrialTick(client,now);if(offscreenTrial)offscreenTrialTick(client,now);
                     inputTick(client,now);
@@ -377,7 +393,7 @@ public final class HudStreamLab {
         if(terminal){
             if(!output.isFinished()){if(now-terminalAt>4_000_000_000L)fail(client,"Stream finalization 4s deadline");return;}
             if(output.failure()!=null){fail(client,"Stream terminal: "+output.failure());return;}
-            LOG.info("HUD_STREAM_TERMINAL run={} save={} result={} published={} actualVanillaHud=true actualVanillaInventory={} hostCompositingVerified=false",identity.run(),save,terminalResult,output.publishedFrames(),inputMode?inventoryOpened:stage==3);
+            LOG.info("HUD_STREAM_TERMINAL run={} save={} result={} published={} actualVanillaHud=true actualVanillaInventory={} hostCompositingVerified=false",identity.run(),save,terminalResult,output.publishedFrames(),inputMode?inventoryOpened:physicalFixtureMode?physicalFixture.inventoryCaptured():stage==3);
             stopping=true;client.scheduleStop();
         }
     }
@@ -520,6 +536,7 @@ public final class HudStreamLab {
         return true;
     }
     private void stopInput(MinecraftClient client){
+        if(physicalFixture!=null)physicalFixture.close();
         if(physicalMovement!=null)physicalMovement.close(client);
         stoneActionsEnabled=false;if(stoneBridge!=null)stoneBridge.close();
         if(ui!=null)ui.releaseAndClose(client);inputGate.releaseAll();
@@ -530,7 +547,8 @@ public final class HudStreamLab {
         started=true;if(client.world!=null || client.isIntegratedServerRunning()){fail(client,"Refusing existing/open world");return;}
         oldPause=client.options.pauseOnLostFocus;client.options.pauseOnLostFocus=false;oldHidden=client.options.hudHidden;client.options.hudHidden=false;
         oldGraphics=client.options.getGraphicsMode().getValue();client.options.getGraphicsMode().setValue(GraphicsMode.FAST);
-        if(backgroundTrial || offscreenPresentation){oldVsync=client.options.getEnableVsync().getValue();oldMaxFps=client.options.getMaxFps().getValue();oldWindowVsync=((HudWindowVsyncAccessor)(Object)client.getWindow()).minecome$vsync();oldWindowMaxFps=client.getWindow().getFramerateLimit();}
+        if(backgroundTrial || offscreenPresentation || physicalFixtureMode){oldVsync=client.options.getEnableVsync().getValue();oldMaxFps=client.options.getMaxFps().getValue();oldWindowVsync=((HudWindowVsyncAccessor)(Object)client.getWindow()).minecome$vsync();oldWindowMaxFps=client.getWindow().getFramerateLimit();}
+        if(physicalFixtureMode){client.options.getEnableVsync().setValue(false);client.options.getMaxFps().setValue(30);}
         // Exact Yarn1.21.1 Window.setWindowedSize updates the GLFW window region;
         // MinecraftClient.onResolutionChanged recalculates vanilla GUI/framebuffer sizes.
         oldGuiScale=client.options.getGuiScale().getValue();oldFullscreenOption=client.options.getFullscreen().getValue();
@@ -557,6 +575,7 @@ public final class HudStreamLab {
             server.set(new Observation(entity.getWorld(),System.nanoTime(),entity.getInventory().selectedSlot,slots(entity.getInventory())));
             if(groundMovement!=null)groundMovement.observe(source);
             if(physicalMovement!=null)physicalMovement.observe(source);
+            if(physicalFixture!=null)physicalFixture.observe(source);
         }catch(Exception e){serverFailure.set(e.getMessage());}
     }
     private void restoreLayout(MinecraftClient client){
@@ -729,6 +748,7 @@ public final class HudStreamLab {
             var evidence=inputEndingProof==null?new JsonObject():inputEndingProof.deepCopy();evidence.addProperty("failure",reason);evidence.add("capture_pipeline",captureDiagnostics());evidence.add("publication_at_failure",output.diagnostics());
             if(stoneBridge!=null)evidence.add("stone_bridge",stoneBridge.evidence());
             if(groundMovement!=null)evidence.add("ground_movement",groundMovement.evidence(client));
+            if(physicalFixture!=null)evidence.add("physical_controller_fixture",physicalFixture.evidence(client));
             if(input!=null){evidence.add("input_timing",input.diagnostics());evidence.addProperty("input_handles_closed",input.cleanupComplete());evidence.addProperty("closed_acknowledgement_published",input.closedAcknowledgementPublished());evidence.addProperty("input_cleanup_finished",input.isFinished());}
             if(timing!=null){timing.close();evidence.add("render_timing",timing.overall());}
             if(backgroundTrial)evidence.add("background_trial",backgroundEvidence());

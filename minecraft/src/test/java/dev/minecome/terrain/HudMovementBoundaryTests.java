@@ -59,22 +59,28 @@ public final class HudMovementBoundaryTests {
         check(!forward(downhill,motion(.2189813114400206,63.957109451293945,-.7213866925800805,.03356532296671531,-.0784,-.11057371590804964,true),yaw).allow(),"recorded lower safe step cannot coast into unsafe next step");
         check(!forward(downhill,motion(.48190169507837277,63.738661766052246,-1.587521180119247,.019784267489013765,-.0784,-.06517500144266153,true),yaw).allow(),"recorded outside-limit landing fails closed");
 
-        // Independently integrate only ordinary flat-supported vanilla ticks
-        // until the decision releases input, then coast. This checks useful
-        // travel and stopping room without claiming integrated-game evidence.
+        check(downhill.check(motion(.2189813114400206,63.957109451293945,-.7213866925800805,0,-.0784,0,true),-1,0,false,yaw,.13001,.42001,false).allow(),"a released player can safely walk back from the sampled lower step");
+        double[] inclined=new double[25];for(int row=0;row<5;row++)for(int col=0;col<5;col++)inclined[row*5+col]=-.4*(row-2);
+        var steeper=patch(inclined);double top=steeper.groundForFeet(0,0,.3);
+        var slopeGate=new HudMovementBoundary(steeper,motion(0,top,0,0,-.0784,0,true));
+        double lower=steeper.groundForFeet(0,-.6,.3);
+        check(top-lower>.2 && slopeGate.check(motion(0,lower,-.6,0,-.0784,0,true),0,0,false,0,.13001,.42001,false).allow(),"physical profile allows supported descent beyond the old0.2m limit inside the sphere");
+        // Independently integrate ordinary flat-supported vanilla ticks until
+        // the decision releases input, then coast. Sloped vanilla movement is
+        // checked by the separate actual-Minecraft fixture, not this model.
         double x=0,z=0,vx=0,vz=0;boolean ended=false;int held=0;
         for(int tick=0;tick<30;tick++){
-            var m=motion(x,y,z,vx,-.0784,vz,true);
-            if(!ended && !forward(downhill,m,yaw).allow())ended=true;
+            var m=motion(x,64,z,vx,-.0784,vz,true);
+            if(!ended && !forward(gate,m,yaw).allow())ended=true;
             double ax=ended?0:-Math.sin(Math.toRadians(yaw))*.098;
             double az=ended?0:Math.cos(Math.toRadians(yaw))*.098;
             if(!ended)held++;
             x+=vx+ax;z+=vz+az;vx=(vx+ax)*(.6f*.91f);vz=(vz+az)*(.6f*.91f);
-            check(Math.abs(slope.groundForFeet(x,z,.3)-y)<1e-8,"regression stops on original slab before any descent");
+            check(Math.abs(flat.groundForFeet(x,z,.3)-64)<1e-8,"flat regression keeps supported feet throughout neutral coast");
             check(Math.sqrt(x*x+z*z)<1.8,"regression coast remains inside existing Java guard");
         }
         check(ended && held>0,"boundary release is reachable after actual input");
-        check(Math.hypot(x,z)>=.15,"captured heading retains enough real displacement for walking proof");
+        check(Math.hypot(x,z)>.8,"flat stopping envelope permits useful travel before releasing input");
         check(Math.hypot(vx,vz)<.003,"neutral coast reaches rest without modifying velocity");
         for(int angle=0;angle<360;angle+=45){
             check(forward(gate,origin,angle).allow(),"all eight headings supported on flat centre");

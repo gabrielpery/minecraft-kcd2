@@ -3,6 +3,12 @@
 assert(type(MINECOME_MODULE_PATH) == "string")
 local passed = 0
 local function eq(a,b) assert(a==b,"got "..tostring(a)..", expected "..tostring(b)) end
+local function near(a,b) assert(math.abs(a-b)<0.00000001,"got "..tostring(a)..", expected near "..tostring(b)) end
+local function target_receipt(line,seq,x,y,z)
+    local actual_seq=tonumber(line:match('"seq":([^,]+)'))
+    local a,b,c=line:match('"target":{"x":([^,]+),"y":([^,]+),"z":([^}]+)}')
+    eq(actual_seq,seq);assert(a and b and c,"target vector missing");near(tonumber(a),x);near(tonumber(b),y);near(tonumber(c),z)
+end
 local function test(name,fn) local ok,err=pcall(fn);if not ok then error(name..": "..tostring(err),0) end;passed=passed+1;print("PASS "..name) end
 local function cp(v) return {x=v.x,y=v.y,z=v.z} end
 local function fixture()
@@ -334,7 +340,7 @@ test("physical follower accepts native look while preserving player readback and
     local hard=MineCome._movement_probe.follower.timers.hard
     eq(MineCome.ApplyMovementFollower("b",1,120.1,2040,56),true);f:advance(.04)
     f.camera_offset={x=.6,y=0,z=0};f.forward={x=1,y=0,z=0}
-    f:advance(.04);assert(f:contains('"event":"applied","result":"applied_readback"'))
+    f:advance(.08);assert(f:contains('"event":"applied","result":"applied_readback"'))
     assert(f:last():find('"follow_error":null',1,true));assert(f:last():find('"camera_basis_valid":true',1,true))
     assert(f:last():find('"player_readback_error":0',1,true));assert(f:last():find('"forward":{"x":1,"y":0,"z":0}',1,true))
     eq(MineCome.SamplePhysicalHudView("b"),true);eq(MineCome._movement_probe.follower.timers.hard,hard)
@@ -360,7 +366,7 @@ test("physical follower keeps exact target and velocity guards and stale pose le
         eq(#f.writes,count);eq(f:activeTimers(),0);assert(f:contains('"event":"restore_failed"'))
     end
     local f=fixture();f:verify();eq(MineCome.BeginPhysicalMovementFollower("b"),true)
-    for _,point in ipairs({{122.01,2040,56},{120,2040,57.51},{120,2040,55.79}}) do
+    for _,point in ipairs({{122.01,2040,56},{120,2040,57.51},{120,2040,54.49},{121.5,2040,54.5}}) do
         eq(MineCome.ApplyMovementFollower("b",1,point[1],point[2],point[3]),false)
     end
     eq(MineCome.ApplyMovementFollower("b",1,120.1,2040,56),true);f:advance(.2)
@@ -368,6 +374,114 @@ test("physical follower keeps exact target and velocity guards and stale pose le
     eq(player.position.x,120);eq(f:activeTimers(),0)
     assert(f:contains('"end_result":"frame_lease_expired"'))
 end)
+test("physical follower smooths a target in two writes and acknowledges only its delayed endpoint",function()
+    local f=fixture();f:verify();eq(MineCome.BeginPhysicalMovementFollower("b"),true)
+    eq(MineCome.ApplyMovementFollower("b",1,120.4,2040.2,56.2),true);eq(#f.writes,0)
+    f:advance(.04);near(player.position.x,120.2);near(player.position.y,2040.1);near(player.position.z,56.1)
+    eq(#f.writes,1);assert(not f:contains('"event":"applied"'))
+    f:advance(.04);near(player.position.x,120.4);near(player.position.y,2040.2);near(player.position.z,56.2)
+    eq(#f.writes,2);assert(not f:contains('"event":"applied"'))
+    f:advance(.04);assert(f:contains('"event":"applied","result":"applied_readback"'))
+    target_receipt(f:last(),1,120.4,2040.2,56.2)
+    assert(f:last():find('"position_mode":"two_frame_interpolation"',1,true))
+    near(tonumber(f:last():match('"target_receipt_age_ms":([^,}]+)')),120)
+    local x,y,z=f:last():match('"midpoint_player":{"x":([^,]+),"y":([^,]+),"z":([^}]+)}')
+    near(tonumber(x),120.2);near(tonumber(y),2040.1);near(tonumber(z),56.1)
+    near(tonumber(f:last():match('"midpoint_readback_error":([^,}]+)')),0)
+    near(tonumber(f:last():match('"midpoint_sampled_engine_seconds":([^,}]+)')),.08)
+    eq(MineCome.EndMovementFollower("b"),true);f:advance(.08);eq(player.position.x,120);eq(f:activeTimers(),0)
+end)
+
+test("physical intermediate and final receipts preserve observed drift instead of copying targets",function()
+    local f=fixture();f:verify();eq(MineCome.BeginPhysicalMovementFollower("b"),true)
+    eq(MineCome.ApplyMovementFollower("b",1,120.4,2040,56),true);f:advance(.04)
+    player.position.x=120.22;f:advance(.04)
+    player.position.x=120.46;f:advance(.04)
+    assert(f:last():find('"event":"applied","result":"delayed_readback_changed"',1,true))
+    assert(f:last():find('"readback":false',1,true));target_receipt(f:last(),1,120.4,2040,56)
+    near(tonumber(f:last():match('"midpoint_target":{"x":([^,]+)')),120.2)
+    near(tonumber(f:last():match('"midpoint_player":{"x":([^,]+)')),120.22)
+    near(tonumber(f:last():match('"midpoint_readback_error":([^,}]+)')),.02)
+    near(tonumber(f:last():match('"player_readback_error":([^,}]+)')),.06)
+    near(tonumber(f:last():match('"midpoint_sampled_engine_seconds":([^,}]+)')),.08)
+    near(tonumber(f:last():match('"sampled_engine_seconds":([^,}]+)')),.12)
+    eq(MineCome.EndMovementFollower("b"),true);f:advance(.08);eq(player.position.x,120);eq(f:activeTimers(),0)
+end)
+
+test("physical follower finishes its immutable segment while later targets coalesce",function()
+    local f=fixture();f:verify();eq(MineCome.BeginPhysicalMovementFollower("b"),true)
+    eq(MineCome.ApplyMovementFollower("b",1,120.4,2040,56),true);f:advance(.04);near(player.position.x,120.2)
+    eq(MineCome.ApplyMovementFollower("b",2,120.8,2040,56),true)
+    eq(MineCome.ApplyMovementFollower("b",3,121.2,2040,56),true)
+    f:advance(.04);near(player.position.x,120.4);assert(not f:contains('"event":"applied"'))
+    f:advance(.04);near(player.position.x,120.8)
+    target_receipt(f:last(),1,120.4,2040,56)
+    f:advance(.04);near(player.position.x,121.2)
+    f:advance(.04);target_receipt(f:last(),3,121.2,2040,56)
+    local applied=0
+    for _,line in ipairs(f.logs) do
+        if line:find('"event":"applied"',1,true) then
+            applied=applied+1;assert(not line:find('"seq":2,',1,true))
+            assert(line:find('"readback":true',1,true));assert(line:find('"player_readback_error":0',1,true))
+        end
+    end
+    eq(applied,2);eq(MineCome.EndMovementFollower("b"),true);f:advance(.08);eq(f:activeTimers(),0)
+end)
+
+test("fresh arrivals cannot extend an older physical segment lease",function()
+    local f=fixture();f:verify();eq(MineCome.BeginPhysicalMovementFollower("b"),true)
+    eq(MineCome.ApplyMovementFollower("b",1,120.4,2040,56),true);f:advance(.04);near(player.position.x,120.2)
+    local delayed
+    for _,event in ipairs(f.queue) do if event.alive and event.name=="MineCome_MovementFollowerTick" then delayed=event end end
+    assert(delayed);delayed.alive=false;f.time=.45
+    eq(MineCome.ApplyMovementFollower("b",2,120.8,2040,56),true)
+    _G[delayed.name](delayed.data,delayed.id)
+    near(player.position.x,120.5);assert(not f:contains('"event":"applied"'))
+    f:advance(.081);near(player.position.x,120.8)
+    target_receipt(f:last(),2,120.8,2040,56)
+    for _,line in ipairs(f.logs) do
+        if line:find('"event":"applied"',1,true) then assert(not line:find('"seq":1,',1,true)) end
+    end
+    eq(MineCome.EndMovementFollower("b"),true);f:advance(.08);eq(player.position.x,120);eq(f:activeTimers(),0)
+end)
+
+test("physical midpoint cancellation and expiry restore without claiming an endpoint",function()
+    for _,expiry in ipairs({false,true}) do
+        local f=fixture();f:verify();eq(MineCome.BeginPhysicalMovementFollower("b"),true)
+        eq(MineCome.ApplyMovementFollower("b",1,120.4,2040,56),true);f:advance(.04);near(player.position.x,120.2)
+        if expiry then
+            local delayed
+            for _,event in ipairs(f.queue) do if event.alive and event.name=="MineCome_MovementFollowerTick" then delayed=event end end
+            assert(delayed);delayed.alive=false;f.time=.45;_G[delayed.name](delayed.data,delayed.id)
+        else eq(MineCome.EndMovementFollower("b"),true) end
+        f:advance(.08);eq(player.position.x,120);eq(f:activeTimers(),0)
+        assert(not f:contains('"event":"applied"'))
+        assert(f:last():find('"event":"restored","result":"restored","terminal":true',1,true))
+        if expiry then assert(f:last():find('"end_result":"frame_lease_expired"',1,true)) end
+    end
+end)
+
+test("failed physical midpoint or endpoint writes retain guarded restoration",function()
+    for failed=1,2 do
+        local f=fixture();f:verify();eq(MineCome.BeginPhysicalMovementFollower("b"),true)
+        f.on_write=function(count) if count==failed then error("setter failed after mutation") end end
+        eq(MineCome.ApplyMovementFollower("b",1,120.4,2040,56),true);f:advance(.2)
+        eq(player.position.x,120);eq(f:activeTimers(),0);assert(not f:contains('"event":"applied"'))
+        assert(f:last():find('"end_result":"position_write_or_readback_failed"',1,true))
+    end
+end)
+
+test("only physical follower permits bounded downhill targets",function()
+    local f=fixture();f:verify();eq(MineCome.BeginPhysicalMovementFollower("b"),true)
+    eq(MineCome.ApplyMovementFollower("b",1,120,2040,54.5),true)
+    f:advance(.04);near(player.position.z,55.25);f:advance(.08);near(player.position.z,54.5)
+    assert(f:last():find('"seq":1,"target":{"x":120,"y":2040,"z":54.5}',1,true))
+    eq(MineCome.EndMovementFollower("b"),true);f:advance(.08);eq(player.position.z,56);eq(f:activeTimers(),0)
+    f=fixture();f:verify();eq(MineCome.BeginMovementFollower("b"),true)
+    eq(MineCome.ApplyMovementFollower("b",1,120,2040,55.79),false);eq(#f.writes,0)
+    eq(MineCome.EndMovementFollower("b"),true);f:advance(.08);eq(f:activeTimers(),0)
+end)
+
 test("physical follower hard deadline is unchanged and view sampling never extends it",function()
     local f=fixture();f:verify();eq(MineCome.BeginPhysicalMovementFollower("b"),true)
     local hard=MineCome._movement_probe.follower.timers.hard

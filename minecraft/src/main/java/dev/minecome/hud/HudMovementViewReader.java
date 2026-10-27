@@ -15,18 +15,25 @@ public final class HudMovementViewReader implements AutoCloseable {
     @FunctionalInterface interface FileReader {byte[] read(Path path)throws IOException;}
     private final Path file;private final HudInputProtocol.Identity identity;private final String patchRun,patchHash;
     private final FileReader fileReader;
+    private final boolean fixture;
     private volatile Sample sample;private volatile String failure;private volatile boolean closing;private Thread worker;
     // Diagnostic snapshots never participate in freshness/authority decisions.
     private volatile Sample lastAccepted;
     private volatile String stage="not_started",lastIoError="";
     private volatile long stageAtNs=System.nanoTime(),lastPollNs,maxPollGapNs,readAttempts,ioFaults,lastReadUtcMs,lastReadNs,lastReadDurationNs,maxReadDurationNs;
     public HudMovementViewReader(Path file,Path evidenceRoot,HudInputProtocol.Identity identity,String patchRun,String patchHash)throws IOException{
-        this(file,evidenceRoot,identity,patchRun,patchHash,HudMovementViewReader::readFile);
+        this(file,evidenceRoot,identity,patchRun,patchHash,false,HudMovementViewReader::readFile);
+    }
+    public HudMovementViewReader(Path file,Path evidenceRoot,HudInputProtocol.Identity identity,String patchRun,String patchHash,boolean fixture)throws IOException{
+        this(file,evidenceRoot,identity,patchRun,patchHash,fixture,HudMovementViewReader::readFile);
     }
     HudMovementViewReader(Path file,Path evidenceRoot,HudInputProtocol.Identity identity,String patchRun,String patchHash,FileReader fileReader)throws IOException{
+        this(file,evidenceRoot,identity,patchRun,patchHash,false,fileReader);
+    }
+    private HudMovementViewReader(Path file,Path evidenceRoot,HudInputProtocol.Identity identity,String patchRun,String patchHash,boolean fixture,FileReader fileReader)throws IOException{
         if(!file.isAbsolute() || !file.normalize().getParent().toRealPath().startsWith(evidenceRoot.toRealPath()))
             throw new IOException("Camera file escapes owned evidence");
-        this.file=file.normalize();this.identity=identity;this.patchRun=patchRun;this.patchHash=patchHash;this.fileReader=fileReader;
+        this.file=file.normalize();this.identity=identity;this.patchRun=patchRun;this.patchHash=patchHash;this.fileReader=fileReader;this.fixture=fixture;
     }
     public void start(){if(worker!=null)throw new IllegalStateException("Camera reader already started");worker=new Thread(this::run,"MineComeHudMovementView");worker.setDaemon(true);worker.start();}
     public Sample current(long utc,long now){Sample value=sample;return value!=null && now<value.deadlineNs() && value.view().fresh(utc)?value:null;}
@@ -89,7 +96,7 @@ public final class HudMovementViewReader implements AutoCloseable {
                     if(!Arrays.equals(previous,bytes)){
                         stage("parsing");
                         long utc=System.currentTimeMillis(),now=System.nanoTime();
-                        var view=HudMovementView.parse(bytes,identity,patchRun,patchHash,utc);
+                        var view=HudMovementView.parse(bytes,identity,patchRun,patchHash,utc,fixture);
                         if(view.sequence()<=sequence || view.utcMs()<lastUtc)throw new IOException("Camera snapshot sequence/time regressed or replaced");
                         sequence=view.sequence();lastUtc=view.utcMs();previous=bytes;
                         long remaining=Math.max(0,HudMovementView.MAX_AGE_MS-Math.max(0,utc-view.utcMs()));

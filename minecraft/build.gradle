@@ -43,6 +43,10 @@ loom {
                 vmArgs '-Dminecome.hudGroundMovementCoupled=true'
             if (project.hasProperty('minecomeHudPhysicalMovement'))
                 vmArgs '-Dminecome.hudPhysicalMovement=true'
+            if (project.hasProperty('minecomeHudPhysicalMovementFixture'))
+                vmArgs '-Dminecome.hudPhysicalMovementFixture=true'
+            if (project.hasProperty('minecomeHudPhysicalFixtureYaw'))
+                vmArgs "-Dminecome.hudPhysicalFixtureYaw=${project.property('minecomeHudPhysicalFixtureYaw')}"
             if (project.hasProperty('minecomeHudHostViewFile'))
                 vmArgs "-Dminecome.hudHostViewFile=${project.property('minecomeHudHostViewFile')}"
             if (project.hasProperty('minecomeHudStreamStandalone'))

@@ -255,7 +255,9 @@ function Receive-MineComeMovementTrace {
             elseif(-not $active) { $returnKind='observe' }
             else {
                 $target=[pscustomobject]@{x=$State.Center.x+(Get-MineComeTraceNumber $server 'x' -2 2)-$State.Anchor.x;y=$State.Center.y-(Get-MineComeTraceNumber $server 'z' -2 2)+$State.Anchor.z;z=$State.Center.z+(Get-MineComeTraceNumber $server 'y' 52 76)-$State.Anchor.y}
-                if($State.PhysicalMovement -and (($target.x-$State.Center.x)*($target.x-$State.Center.x)+($target.y-$State.Center.y)*($target.y-$State.Center.y)+($target.z-$State.Center.z)*($target.z-$State.Center.z) -gt 4 -or $target.z-$State.Center.z -lt -0.2 -or $target.z-$State.Center.z -gt 1.5)){throw 'Physical movement target exceeds the unchanged follower bounds.'}
+                # Physical walking follows sampled slopes in either direction;
+                # the two-metre sphere still bounds every submitted target.
+                if($State.PhysicalMovement -and (($target.x-$State.Center.x)*($target.x-$State.Center.x)+($target.y-$State.Center.y)*($target.y-$State.Center.y)+($target.z-$State.Center.z)*($target.z-$State.Center.z) -gt 4 -or $target.z-$State.Center.z -lt -1.5 -or $target.z-$State.Center.z -gt 1.5)){throw 'Physical movement target exceeds the physical follower bounds.'}
             }
             if($phase -ceq 'PASSED' -and $returnKind -cne 'stale' -and $groundProved -and $grounded) {
                 $freshPassedSeq=$seq;$passedUtc=$utc;$passedServerAgeMs=$serverAgeMs

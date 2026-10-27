@@ -1,4 +1,155 @@
-# MineCome progress — 2026-10-20
+# MineCome progress — 2026-10-27
+
+**Bounded physical walking passes its technical check; responsiveness remains unfinished.**
+Live run `c398308550e6446db5d79bd176a1709b` passes five forwarded Minecraft
+server poses, five matching delayed KCD readbacks and player restoration. The
+movement trace passes, the camera worker closes its resources, and the temporary
+FPS cap restores. This is the first completed technical check for this physical
+HUD profile. The user's observation is narrower: they moved only a tiny distance,
+the movement was jittery, and pressing W again did not work. The receipt keeps
+`visual_verified=false` and does not establish usable or continuous walking.
+
+Evidence, excluded from Git:
+`runtime/evidence/hud-walking-20261027-142059-6cf16f5625e34739a9f1b77b5bc74200/`.
+Local checkpoint `a59403c` preserves the camera and one-step baseline before the
+following usability changes. KCD was subsequently closed normally with `WM_CLOSE`
+and exit code 0; Minecraft was also closed before the independent checks.
+
+### Camera and completion repairs verified by that run
+
+`HudCameraDelivery.ps1` now requests and publishes camera samples in a bounded
+worker, so arming or movement commands cannot suspend it. Profiling isolated the
+remaining log cost: reopening a recently written file took several milliseconds
+per poll. Retaining an unbuffered read handle reduced a saved 567-record append
+benchmark from 9.09 ms median to 0.41 ms, with explicit cleanup and rotation tests.
+This is a local component measurement, not player input latency. A live camera-only
+check continued during ten 500 ms caller stalls without starting Minecraft or
+moving KCD's player. Later live controller runs also stopped their workers cleanly.
+
+The worker uses a 110 ms monotonic minimum interval: at most 1,019 requests within
+112 seconds, below Lua's unchanged 1,024-sample limit. Original request timestamps,
+the 300 ms camera lifetime, 250 ms input limit and 400 ms follower lease remain
+unchanged. Temporary camera snapshots use atomic replacement without
+a durable disk barrier; the source timestamp is never refreshed on publication.
+
+Live run `e81cfb5cf4444a97a7d73ba964e120cd` recorded two matching delayed KCD
+movement readbacks, no camera expiry, and verified player/FPS restoration. It
+failed when walking downhill exceeded the existing 0.2 m descent bound. The new
+input gate checks braking clearance across the sampled slabs before accepting
+another tick of movement, using vanilla acceleration, drag and jump limits.
+It releases input without writing Minecraft position or velocity.
+
+The next active attempt, `f14d88a1da744fe8a6209dfcc9c0d004`, exposed a premature
+completion check: the client had walked 0.15149 m while the fresh server sample
+still reported 0.098 m. Completion now waits for 500 ms of continuous settled
+observations before accepting or rejecting both displacement proofs, inside the
+original one-second settling and six-second total limits. A focused regression
+replays that lag, catch-up, insufficient movement and interrupted settlement.
+
+Earlier run `3e315dd5cbab4ac3a2c626764346a11a` expired waiting for F8 while the user
+was away. It received no activation or input, forwarded no movement, and does not
+verify the completion repair. Its 781 camera publications had no stale discards;
+maximum old-source age before the next publication was 282 ms, and mean receipt
+lookup was 1.748 ms. The worker closed and the temporary FPS cap restored. The
+controller reports failure because no actual input session completed. An intervening no-W run and a
+pre-arm HTTP timeout likewise establish no walking success. These failures remain
+part of the history; the later technical pass does not turn them into successes.
+
+No-input evidence: `runtime/evidence/hud-walking-20261027-141302-a427385635e14bbf83c4c3a94350d5d9/`.
+Baseline validation completed before the usability changes: Java suites passed
+242 physical movement, 156 ground and 353 input checks. PowerShell suites pass
+57 camera-worker, 74 receipt-cursor, 23 path, 90 physical-profile, 134 ground and
+80 coupled checks. The installed native walking bundle remains unchanged.
+
+### Walking usability components verified, combined physical check pending
+
+- A sampled-terrain boundary now pauses movement instead of ending the trial.
+  Controls must be released before a fresh press can resume in an allowed
+  direction. Repressing never renews the original five-second input window;
+  there is still at most one further second for settling.
+- The physical profile now permits vertical offsets from -1.5 m to +1.5 m inside
+  the same 2 m follower sphere. Minecraft uses a 1.75 m predictive radius, a 1.8 m
+  hard radius and a predictive vertical envelope of -1.45 m to +1.45 m, together
+  with sampled-ground coverage. The legacy scripted follower keeps its original
+  -0.2 m to +1.5 m limits.
+- Physical KCD targets now use a midpoint write followed by the exact endpoint,
+  on separate 40 ms timer ticks. The endpoint is acknowledged only after another
+  normal game frame. Receipts retain both actual midpoint and endpoint
+  observations; midpoint motion is not reported as an applied server target.
+  New pending targets coalesce while a segment finishes. Each segment retains
+  its own 400 ms lifetime from Lua acceptance; later arrivals cannot renew it.
+  This is an arrival lifetime, not a claim about an absent cross-process source
+  timestamp. The fixed eight-second follower deadline and restoration remain.
+
+The updated Lua movement suite passes 40 cases in the real Lua 5.2 VM with
+simulated engine bindings, including drift, expired segments, interruption,
+restoration and unchanged legacy behavior. Visual smoothness is still unverified.
+
+Two independent checks now pass so further diagnosis does not depend on
+repeated short user-input windows. `Test-HudPhysicalMovementFixture.ps1` uses
+explicitly scripted input with the actual Minecraft controller, physics,
+inventory and HUD, without KCD composition or physical-input authority.
+`Test-KcdPhysicalFollower.ps1` checks small scripted KCD targets and observed
+midpoint/endpoint positions, without Minecraft, HUD arming or physical keys.
+The independent KCD probe now passes at five scripted horizontal offsets:
++0.2 m, +0.4 m, +0.1 m, -0.1 m and back to the origin. All observed midpoint and
+delayed endpoint errors were zero. Target receipt ages were 96.49–146.59 ms from
+Lua acceptance; these are not physical-input latency measurements. The actor
+returned to the original position, owned timers were cancelled and the temporary
+FPS budget restored to -1. Evidence:
+`runtime/evidence/physical-follower-scripted-20261027-144521-6d622dba7e2b42fd8b45a9e8ca5bd1fc/`.
+No Minecraft, HUD or physical-input path was involved, and visual smoothness
+remains unverified.
+
+The actual-Minecraft flat fixture also passes, run
+`70db9fa42a8a4e4c8dd48ad2b5974ef4`. Three scripted presses, W/W/S, moved both client
+and integrated server approximately 0.857 m, 0.642 m and 0.857 m respectively,
+with zero disagreement. The second W reached a boundary pause; after release,
+S resumed movement away from it. The proof records one pause and one resumption.
+W while inventory was open produced zero displacement on both sides. It captured
+nine inventory and 32 walking HUD frames, published 102 frames, and wrote 52 trace
+records. The movement completed in 5.536 seconds with zero corrections and clean
+controls, collision proxies, camera worker and mapping teardown. Saved inventory
+and hotbar PNGs were visually inspected and contain the expected actual UI.
+Evidence:
+`runtime/evidence/hud-physical-fixture-20261027-145207-70db9fa42a8a4e4c8dd48ad2b5974ef4/`.
+This is actual Minecraft controller/physics/HUD evidence with scripted input and
+flat fixture terrain, not physical input or composition inside KCD.
+
+The captured-terrain replay also passes, run
+`664e98c29ee14d94b2a6acf6e26192db`, using numeric samples from `c398...` and heading
+-171.788791435144 degrees, relabelled with explicit fixture provenance. W/W/S
+moved both client and server approximately 0.447 m, 0.641 m and 0.641 m with zero
+disagreement. Maximum walking displacement was 1.088 m and the minimum vertical
+offset was -0.154 m. Two boundary pauses and two resumptions are recorded, with
+zero corrections and zero inventory-W movement on either side. The run captured
+ten inventory and 31 walking HUD frames, published 103 frames and produced 52
+trace records in 5.508 seconds. Controls, proxies, camera worker and mapping all
+cleaned up; the temporary host FPS budget restored. Both fixture clients exited.
+Evidence:
+`runtime/evidence/hud-physical-fixture-20261027-145410-664e98c29ee14d94b2a6acf6e26192db/`.
+This confirms the updated controller against the captured terrain values. It
+still does not replay live physical input or compose the HUD in KCD.
+
+Two earlier fixture failures are retained: run
+`3f8a5c49d00a4133b87a87d255075423` hit the producer constructor's fixture-route
+guard, and `50341a5ce8d040efb0386d748eabd26b` hit a Windows `AccessDenied` during
+atomic camera-file replacement. The route guard is repaired. The fixture camera
+publisher now retries the exact prepared bytes for at most 100 ms without
+refreshing capture time, with a regression using a real Windows handle that
+denies delete sharing. Updated validation passes 282 Java controller checks,
+43 PowerShell fixture checks, 107 physical-profile checks and 16 legacy trace
+checks, alongside the 40 Lua movement cases and actual-KCD probe above.
+Ground checks (160) and reverse-input checks (353) also passed.
+
+These Java, Lua and script changes require no replacement native bundle on the
+existing test machine. Fresh KCD process 49616 has no HUD arm or native activation;
+the standalone fixtures do not consume that arm, so it can remain open for the
+next physical check when the user returns. The remaining verification for these
+changes is the combined physical walking/HUD response and visual smoothness;
+the completed component tests need not be repeated without a new change.
+
+## 20 October 2026 checkpoint
 
 **Wrap-up: partial physical walking reaches KCD; complete live check still fails.**
 Latest run `c427a5fc08bf4874a00f5f3cc64b04f4` records actual Minecraft walking

@@ -30,6 +30,8 @@ param(
     [string]$GroundPatchFile,
     [string]$MovementTraceFile,
     [switch]$PhysicalMovement,
+    [switch]$PhysicalMovementFixture,
+    [ValidateRange(-180,180)][double]$PhysicalFixtureYaw=0,
     [string]$HostViewFile
 )
 $ErrorActionPreference='Stop'
@@ -59,7 +61,12 @@ try {
     if($InputBackgroundTrial -and (-not $InputFixture -or $InputDelayFixture)){throw 'Background timing requires a standalone fixture without synthetic delays.'}
     if($OffscreenPresentation -and (-not $InputMode -or $InputBackgroundTrial -or $InputDelayFixture)){throw 'Offscreen presentation requires UI input mode without other timing trials.'}
     if($InputOffscreenTrial -and (-not $InputFixture -or -not $OffscreenPresentation)){throw 'Offscreen timing requires an explicit offscreen standalone fixture.'}
-    if($PhysicalMovement){
+    if($PhysicalMovementFixture){
+        if(-not $Standalone -or -not $GroundPatchFile -or -not $MovementTraceFile -or -not $HostViewFile -or
+            $PhysicalMovement -or $InputMode -or $LiveMouse -or $OffscreenPresentation -or $GroundMovementFixture -or $GroundMovementCoupled -or $InputFixture -or $InputPointerFixture -or $StoneFixture -or $StoneLive -or $AimedStone -or $InputDelayFixture -or $InputBackgroundTrial -or $InputOffscreenTrial){
+            throw 'Scripted physical controller fixture requires its separate standalone ground/view profile without live input or composition.'
+        }
+    }elseif($PhysicalMovement){
         if(-not $InputMode -or -not $LiveMouse -or -not $OffscreenPresentation -or -not $GroundPatchFile -or -not $MovementTraceFile -or -not $HostViewFile -or
             $Standalone -or $GroundMovementFixture -or $GroundMovementCoupled -or $InputFixture -or $InputPointerFixture -or $StoneFixture -or $StoneLive -or $AimedStone -or $InputDelayFixture -or $InputBackgroundTrial -or $InputOffscreenTrial){
             throw 'Physical movement requires its separate live HUD input/ground/view profile.'
@@ -73,6 +80,7 @@ try {
     if($GroundMovementFixture){$arguments+=@('-PminecomeHudGroundMovementFixture',"-PminecomeGroundPatchFile=$GroundPatchFile")}
     if($GroundMovementCoupled){$arguments+=@('-PminecomeHudGroundMovementCoupled',"-PminecomeGroundPatchFile=$GroundPatchFile","-PminecomeMovementTraceFile=$MovementTraceFile")}
     if($PhysicalMovement){$arguments+=@('-PminecomeHudPhysicalMovement',"-PminecomeGroundPatchFile=$GroundPatchFile","-PminecomeMovementTraceFile=$MovementTraceFile","-PminecomeHudHostViewFile=$HostViewFile")}
+    if($PhysicalMovementFixture){$arguments+=@('-PminecomeHudPhysicalMovementFixture',"-PminecomeGroundPatchFile=$GroundPatchFile","-PminecomeMovementTraceFile=$MovementTraceFile","-PminecomeHudHostViewFile=$HostViewFile",('-PminecomeHudPhysicalFixtureYaw='+$PhysicalFixtureYaw.ToString([Globalization.CultureInfo]::InvariantCulture)))}
     if($InputMode){$arguments+='-PminecomeHudStreamInput'}
     if($LiveMouse){$arguments+='-PminecomeHudStreamLiveMouse'}
     if($InputFixture){$arguments+='-PminecomeHudStreamInputFixture'}

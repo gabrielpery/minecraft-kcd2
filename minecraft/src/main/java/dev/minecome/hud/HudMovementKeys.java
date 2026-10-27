@@ -20,13 +20,22 @@ public final class HudMovementKeys {
     public boolean event(int kind,int key,long now,boolean ready){
         if(!movement(key) || (kind!=1 && kind!=2))throw new IllegalArgumentException("Not a movement edge");
         expire(now);
-        if(kind==2){raw.remove(key);held.remove(key);return false;}
+        if(kind==2){
+            raw.remove(key);held.remove(key);
+            // The final balanced release can establish neutral in the same
+            // input batch as a fresh press. It still needs current authority;
+            // a heartbeat alone can never restore a key held at suspension.
+            if(raw.isEmpty() && ready && !ended && now<leaseUntil)neutralRequired=false;
+            return false;
+        }
         raw.add(key);
         if(!ready || ended || neutralRequired || now>=leaseUntil)return false;
         if(started<0)started=now;
         held.add(key);return true;
     }
     public void suspend(){held.clear();neutralRequired=true;leaseUntil=0;}
+    /** A spatial boundary releases input without ending or renewing the trial. */
+    public void suppressAtBoundary(){suspend();}
     public void end(){ended=true;suspend();}
     public void close(){end();raw.clear();}
     public void expire(long now){

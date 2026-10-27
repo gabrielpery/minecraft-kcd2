@@ -9,7 +9,7 @@ final class HudMovementBoundary {
     // velocity has already had 0.6f*0.91f ground or 0.91f air drag applied.
     // Round upwards so the envelope also covers float/trigonometric rounding.
     static final double GROUND_DRAG=.546001,AIR_DRAG=.910001;
-    static final double FOOT=.29,PAD=.02,RADIUS=1.75,MIN_Y=-.18,MAX_Y=1.45;
+    static final double FOOT=.29,PAD=.02,RADIUS=1.75,MIN_Y=-1.45,MAX_Y=1.45;
     record Decision(boolean allow,String reason,boolean flat,double minGround,double maxGround,double reach) {}
     private record Rect(double minX,double maxX,double minZ,double maxZ) {}
     private record Heights(double min,double max) {}

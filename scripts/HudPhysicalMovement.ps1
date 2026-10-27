@@ -39,6 +39,15 @@ function Assert-MineComePhysicalMovementBundle($Manifest,$Profile){
     }
 }
 function Assert-HudPhysicalMovementReady($Ready,[bool]$Expected){
+    # A standalone controller fixture must never become a live renderer/input
+    # producer, even if a malformed receipt also advertises live protocol fields.
+    if($null -ne $Ready.PSObject.Properties['ui_physical_controller_fixture']){
+        throw 'Standalone physical controller fixtures cannot arm live HUD input.'
+    }
+    $scripted=$Ready.PSObject.Properties['scripted_input']
+    if($Expected -and $null -ne $scripted -and ($scripted.Value -isnot [bool] -or $scripted.Value)){
+        throw 'Live physical walking requires non-scripted input.'
+    }
     $field=$Ready.PSObject.Properties['ui_input_physical_movement']
     if($Expected){
         if($null -eq $field -or $field.Value -isnot [bool] -or -not $field.Value -or $Ready.ui_input_protocol -ne 2){

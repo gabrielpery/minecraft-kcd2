@@ -47,6 +47,38 @@ public final class HudPhysicalMovementTests {
                 "aimedStoneLab","aimedBridgeLab","hudAimedBridgeLab","hudExportLab","interactiveStoneLab","smokeWorld","dynamicBridgeSmoke")){
             var p=mode();p.setProperty("minecome."+key,"true");reject(()->HudPhysicalMovementMode.require(p),"conflict "+key);
         }
+        var fixture=new Properties();
+        for(String key:List.of("hudPhysicalMovementFixture","hudStreamLab","hudStreamStandalone"))fixture.setProperty("minecome."+key,"true");
+        for(String key:List.of("groundPatchFile","movementTraceFile","hudHostViewFile"))fixture.setProperty("minecome."+key,"fixture-file");
+        check(HudPhysicalMovementMode.require(fixture) && HudPhysicalMovementMode.fixture(fixture),"Separate labelled scripted physical controller mode");
+        for(String key:List.of("hudPhysicalMovement","hudStreamInput","hudStreamLiveMouse","hudStreamOffscreenPresentation","hudGroundMovementFixture","hudGroundMovementCoupled","hudStreamInputFixture")){
+            var p=new Properties();p.putAll(fixture);p.setProperty("minecome."+key,"true");reject(()->HudPhysicalMovementMode.require(p),"fixture cannot acquire "+key);
+        }
+        for(String key:List.of("hudStreamLab","hudStreamStandalone","groundPatchFile","movementTraceFile","hudHostViewFile")){
+            var p=new Properties();p.putAll(fixture);p.remove("minecome."+key);reject(()->HudPhysicalMovementMode.require(p),"fixture missing "+key);
+        }
+        var fixtureView=view(1,NOW);fixtureView.addProperty("source_kind","standalone_hud_physical_view_fixture");
+        reject(()->parse(fixtureView),"live reader rejects scripted camera provenance");
+        check(HudMovementView.parse(bytes(fixtureView),ID,PATCH,HASH,NOW,true).sequence()==1,"Explicit fixture parser accepts only labelled fixture view");
+        reject(()->HudMovementView.parse(bytes(view(1,NOW)),ID,PATCH,HASH,NOW,true),"fixture reader rejects live view provenance");
+        check(!HudMovementView.parse(bytes(fixtureView),ID,PATCH,HASH,NOW+301,true).fresh(NOW+301),"Fixture retains original300ms freshness");
+        // Construct the actual producer without starting its worker/native mapping.
+        // The first autonomous run caught a separate constructor guard which
+        // pure mode tests alone had not exercised.
+        var original=System.getProperties();
+        try{
+            var selected=new Properties();selected.putAll(original);selected.putAll(fixture);System.setProperties(selected);
+            Path root=Path.of(".").toAbsolutePath();String save="MineCome-HudStream-"+UUID.randomUUID();
+            var identity=new HudStreamProducer.Identity(RUN,2,22,NOW+100000);
+            new HudStreamProducer(root,root.resolve("fixture-output"),identity,save,true,0);checks++;
+            reject(()->new HudStreamProducer(root,root.resolve("fixture-output"),identity,save,false,0),"fixture producer cannot claim synthetic transport pixels");
+            reject(()->new HudStreamProducer(root,root.resolve("fixture-output"),identity,save,true,1),"fixture producer cannot acquire live input mode");
+            reject(()->new HudStreamProducer(root,root.resolve("fixture-output"),identity,save,true,2),"fixture producer cannot acquire native input fixture mode");
+            selected=new Properties();selected.putAll(original);selected.putAll(mode());System.setProperties(selected);
+            new HudStreamProducer(root,root.resolve("live-output"),identity,save,true,1);checks++;
+            reject(()->new HudStreamProducer(root,root.resolve("live-output"),identity,save,true,0),"live producer retains its required input mode");
+            reject(()->new HudStreamProducer(root,root.resolve("live-output"),identity,save,false,1),"live producer retains genuine pixels guard");
+        }finally{System.setProperties(original);}
     }
     private static void wire()throws Exception{
         for(int key:List.of(0x57,0x41,0x53,0x44,0x20)){
@@ -89,6 +121,25 @@ public final class HudPhysicalMovementTests {
         gate.close();check(gate.rawCount()==0,"disconnect close releases raw bookkeeping");
         gate=new HudMovementKeys();gate.authority(now,true);gate.event(1,0x57,now,true);
         check(!gate.down(0x57,now-1) && gate.ended(),"monotonic regression ends movement");
+        gate=new HudMovementKeys();gate.authority(now,true);gate.event(1,0x57,now,true);
+        long originalStart=gate.startedAt();gate.suppressAtBoundary();
+        check(!gate.ended() && gate.neutral(now),"spatial boundary suppresses input without finishing movement window");
+        gate.authority(now+50_000_000L,true);
+        check(!gate.down(0x57,now+50_000_000L),"renewed authority cannot restart held input at a boundary");
+        gate.event(2,0x57,now+100_000_000L,true);gate.authority(now+100_000_000L,true);
+        check(gate.event(1,0x53,now+110_000_000L,true) && gate.down(0x53,now+110_000_000L),"fresh reverse press can resume in same trial");
+        gate.suppressAtBoundary();gate.event(2,0x53,now+200_000_000L,true);gate.authority(now+200_000_000L,true);
+        check(gate.event(1,0x41,now+210_000_000L,true),"second fresh direction can resume after another boundary");
+        check(gate.startedAt()==originalStart,"boundary release and re-press never renew activation timestamp");
+        gate.event(2,0x41,now+300_000_000L,true);gate.authority(now+HudMovementKeys.ACTIVE_NS-1,true);
+        check(gate.event(1,0x44,now+HudMovementKeys.ACTIVE_NS-1,true),"fresh input remains available until original deadline");
+        gate.expire(now+HudMovementKeys.ACTIVE_NS);
+        check(gate.ended() && gate.neutral(now+HudMovementKeys.ACTIVE_NS),"original five-second deadline ends all resumed movement");
+        gate=new HudMovementKeys();gate.authority(now,true);gate.event(1,0x57,now,true);gate.suppressAtBoundary();
+        gate.authority(now+50_000_000L,true);gate.event(2,0x57,now+50_000_001L,true);
+        check(gate.event(1,0x53,now+50_000_002L,true),"balanced release and fresh press in the same input batch can resume");
+        gate.suppressAtBoundary();gate.event(2,0x53,now+50_000_003L,true);
+        check(!gate.event(1,0x41,now+50_000_004L,true),"release without a renewed authority lease cannot rearm");
     }
     private static void views()throws Exception{
         var parsed=parse(view(1,NOW));
@@ -219,5 +270,23 @@ public final class HudPhysicalMovementTests {
             }finally{release.countDown();}
         }finally{Files.delete(root);}
     }
-    public static void main(String[] args)throws Exception{modes();wire();holds();views();reader();readerRaces();checks+=dev.minecome.terrain.HudMovementBoundaryTests.run();System.out.println("HudPhysicalMovementTests: "+checks+" checks passed");}
+    private static void fixturePublication()throws Exception{
+        Path root=Files.createTempDirectory("minecome-fixture-camera-"),target=root.resolve("view.json"),temp=root.resolve("view.tmp");
+        try{
+            String first=view(1,NOW).toString(),second=view(2,NOW+50).toString();
+            Files.writeString(temp,first);HudFixtureCameraFiles.replace(temp,target);
+            check(Files.readString(target).equals(first) && !Files.exists(temp),"Fixture initial atomic publication preserves bytes");
+            Files.writeString(temp,second);
+            if(System.getProperty("os.name","").startsWith("Windows")){
+                try(var held=Files.newByteChannel(target,Set.of(StandardOpenOption.READ,com.sun.nio.file.ExtendedOpenOption.NOSHARE_DELETE))){
+                    long began=System.nanoTime();reject(()->HudFixtureCameraFiles.replace(temp,target),"permanently shared camera target has bounded retry");
+                    check(System.nanoTime()-began<1_000_000_000L,"Camera sharing retry cannot block indefinitely");
+                    check(Files.readString(target).equals(first) && Files.readString(temp).equals(second),"Denied replacement does not renew old source or mutate queued timestamp");
+                }
+            }
+            HudFixtureCameraFiles.replace(temp,target);
+            check(Files.readString(target).equals(second),"Replacement after sharing release preserves original queued sequence/time");
+        }finally{Files.deleteIfExists(temp);Files.deleteIfExists(target);Files.deleteIfExists(root);}
+    }
+    public static void main(String[] args)throws Exception{modes();wire();holds();views();reader();readerRaces();fixturePublication();checks+=dev.minecome.terrain.HudMovementBoundaryTests.run();System.out.println("HudPhysicalMovementTests: "+checks+" checks passed");}
 }

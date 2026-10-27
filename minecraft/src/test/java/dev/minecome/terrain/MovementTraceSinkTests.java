@@ -107,6 +107,18 @@ final class MovementTraceSinkTests {
                 check(value.get("run").getAsString().equals("actual-patch-run") && value.get("patch_sha256").getAsString().equals("b".repeat(64)) &&
                         value.get("save").getAsString().equals(hudSave) && value.get("world").getAsString().equals(world),"HUD trace preserves immutable captured patch and owned world identities");
             }
+            var fixture=new MovementTraceSink.Context("fixture-physical-patch","c".repeat(64),"standalone_ground_fixture",hudSave,world,0,0,10,
+                    MovementTraceSink.Profile.HUD_PHYSICAL_FIXTURE,0,64.375,0);
+            Path fixtureFile=root.resolve("physical-fixture.ndjson");
+            try(var sink=MovementTraceSink.open(fixtureFile,root,fixture,0,1000)){sink.finish(1001,"stopped","STOPPED","Fixture provenance test");}
+            var fixtureRecords=Files.readAllLines(fixtureFile);
+            check(fixtureRecords.size()==2 && fixtureRecords.stream().allMatch(line->line.contains("\"source_kind\":\"standalone_hud_physical_movement_fixture\"")),"Scripted physical traces retain distinct source on every record");
+            for(var profile:List.of(MovementTraceSink.Profile.HUD_PHYSICAL,MovementTraceSink.Profile.HUD_COUPLED)){
+                try{new MovementTraceSink.Context("run","a".repeat(64),"standalone_ground_fixture",hudSave,world,0,0,10,profile);throw new AssertionError("Fixture entered live profile");}
+                catch(IllegalArgumentException expected){checks++;}
+            }
+            try{new MovementTraceSink.Context("run","a".repeat(64),"live_kcd_ground_patch",hudSave,world,0,0,10,MovementTraceSink.Profile.HUD_PHYSICAL_FIXTURE);throw new AssertionError("Live patch silently became fixture");}
+            catch(IllegalArgumentException expected){checks++;}
             var physical=new MovementTraceSink.Context("physical-patch","c".repeat(64),"live_kcd_ground_patch",hudSave,world,100,200,10,
                     MovementTraceSink.Profile.HUD_PHYSICAL,0,64.375,0);
             Path physicalFile=run.resolve("physical.ndjson");
