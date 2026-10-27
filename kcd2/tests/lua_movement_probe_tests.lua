@@ -9,10 +9,32 @@ local function target_receipt(line,seq,x,y,z)
     local a,b,c=line:match('"target":{"x":([^,]+),"y":([^,]+),"z":([^}]+)}')
     eq(actual_seq,seq);assert(a and b and c,"target vector missing");near(tonumber(a),x);near(tonumber(b),y);near(tonumber(c),z)
 end
+local function receipt_number(line,name) return assert(tonumber(line:match('"'..name..'":([^,}]+)')),name.." missing") end
+local function receipt_vector(line,name)
+    local x,y,z=line:match('"'..name..'":{"x":([^,]+),"y":([^,]+),"z":([^}]+)}')
+    return {x=assert(tonumber(x)),y=assert(tonumber(y)),z=assert(tonumber(z))}
+end
+local function receipt_samples(line)
+    local array=assert(line:match('"segment_observed_samples":%[(.*)%]'),"samples missing")
+    local samples={}
+    for object in array:gmatch('{"fraction":.-"readback_error":[^}]+}') do
+        local camera=assert(object:match('"camera":(%b{})'),"sample camera missing")
+        samples[#samples+1]={fraction=receipt_number(object,"fraction"),requested=receipt_vector(object,"requested"),
+            actual=receipt_vector(object,"actual"),written=receipt_number(object,"written_engine_seconds"),
+            observed=receipt_number(object,"observed_engine_seconds"),error=receipt_number(object,"readback_error"),
+            performed=object:find('"write_performed":true',1,true)~=nil,
+            camera={position=receipt_vector(camera,"position"),forward=receipt_vector(camera,"forward"),
+                up=receipt_vector(camera,"up"),fov=receipt_number(camera,"fov")},
+            camera_basis_valid=object:find('"camera_basis_valid":true',1,true)~=nil,
+            written_frame_id=tonumber(object:match('"written_frame_id":([^,}]+)')),
+            observed_frame_id=tonumber(object:match('"observed_frame_id":([^,}]+)'))}
+    end
+    return samples
+end
 local function test(name,fn) local ok,err=pcall(fn);if not ok then error(name..": "..tostring(err),0) end;passed=passed+1;print("PASS "..name) end
 local function cp(v) return {x=v.x,y=v.y,z=v.z} end
 local function fixture()
-    local f={time=0,logs={},queue={},writes={},kills={},rays=0,schedules=0,nextId=1}
+    local f={time=0,logs={},queue={},writes={},kills={},rays=0,schedules=0,nextId=1,physical_frame_seconds=1/60,frame_reads=0}
     local retained={marker="untouched"}
     MineCome={_block_sink=retained,_interactive_input=retained}
     player={id=io.stdout,position={x=120,y=2040,z=56},velocity={x=0,y=0,z=0},actor={},player={},human={}}
@@ -34,7 +56,9 @@ local function fixture()
     player.human.IsMounted=function() return f.mounted or false end
     local function forbidden() error("unowned write invoked") end
     player.actor.PlayerSetViewAngles=forbidden;player.actor.SimulateOnAction=forbidden
-    System={GetCurrTime=function() return f.time end,LogAlways=function(line)
+    System={GetCurrTime=function() return f.time end,
+        GetFrameID=function() f.frame_reads=f.frame_reads+1;return f.frame_id or math.floor(f.time*60+.5) end,
+        LogAlways=function(line)
         if f.log_error then error("log failure") end;f.logs[#f.logs+1]=line end,
         GetViewCameraPos=function()
             if f.camera_bad then return nil end
@@ -48,7 +72,8 @@ local function fixture()
         if f.fail_schedule==f.schedules then return nil end
         local id=f.nextId;f.nextId=id+1
         if f.userdata_timer and f.schedules==1 then id=io.stderr end
-        f.queue[#f.queue+1]={id=id,at=f.time+ms/1000,name=name,data=data,alive=true};return id
+        local delay=name=="MineCome_MovementFollowerTick" and ms==1 and f.physical_frame_seconds or ms/1000
+        f.queue[#f.queue+1]={id=id,at=f.time+delay,name=name,data=data,alive=true};return id
     end,KillTimer=function(id)
         f.kills[#f.kills+1]=id
         if f.kill_error then error("kill failed") end
@@ -83,6 +108,20 @@ local function fixture()
     end
     function f:last(stage)
         for i=#self.logs,1,-1 do if not stage or self.logs[i]:find('"stage":"'..stage..'"',1,true) then return self.logs[i] end end
+    end
+    function f:tick(at)
+        local next_tick
+        for _,event in ipairs(self.queue) do if event.alive and event.name=="MineCome_MovementFollowerTick" then next_tick=event end end
+        assert(next_tick,"no owned physical tick");next_tick.alive=false;self.time=at or next_tick.at
+        _G[next_tick.name](next_tick.data,next_tick.id)
+    end
+    function f:reachEndpoint()
+        for i=1,128 do
+            local p=assert(MineCome._movement_probe.follower)
+            if p.pending_receipt then return end
+            self:tick()
+        end
+        error("endpoint did not arrive")
     end
     function f:contains(text) for _,line in ipairs(self.logs) do if line:find(text,1,true) then return true end end;return false end
     function f:activeTimers() local count=0;for _,e in ipairs(self.queue) do if e.alive then count=count+1 end end;return count end
@@ -340,7 +379,7 @@ test("physical follower accepts native look while preserving player readback and
     local hard=MineCome._movement_probe.follower.timers.hard
     eq(MineCome.ApplyMovementFollower("b",1,120.1,2040,56),true);f:advance(.04)
     f.camera_offset={x=.6,y=0,z=0};f.forward={x=1,y=0,z=0}
-    f:advance(.08);assert(f:contains('"event":"applied","result":"applied_readback"'))
+    f:advance(.12);assert(f:contains('"event":"applied","result":"applied_readback"'))
     assert(f:last():find('"follow_error":null',1,true));assert(f:last():find('"camera_basis_valid":true',1,true))
     assert(f:last():find('"player_readback_error":0',1,true));assert(f:last():find('"forward":{"x":1,"y":0,"z":0}',1,true))
     eq(MineCome.SamplePhysicalHudView("b"),true);eq(MineCome._movement_probe.follower.timers.hard,hard)
@@ -374,86 +413,169 @@ test("physical follower keeps exact target and velocity guards and stale pose le
     eq(player.position.x,120);eq(f:activeTimers(),0)
     assert(f:contains('"end_result":"frame_lease_expired"'))
 end)
-test("physical follower smooths a target in two writes and acknowledges only its delayed endpoint",function()
+test("physical interpolation follows elapsed engine time with delayed observed samples",function()
     local f=fixture();f:verify();eq(MineCome.BeginPhysicalMovementFollower("b"),true)
-    eq(MineCome.ApplyMovementFollower("b",1,120.4,2040.2,56.2),true);eq(#f.writes,0)
-    f:advance(.04);near(player.position.x,120.2);near(player.position.y,2040.1);near(player.position.z,56.1)
-    eq(#f.writes,1);assert(not f:contains('"event":"applied"'))
-    f:advance(.04);near(player.position.x,120.4);near(player.position.y,2040.2);near(player.position.z,56.2)
-    eq(#f.writes,2);assert(not f:contains('"event":"applied"'))
-    f:advance(.04);assert(f:contains('"event":"applied","result":"applied_readback"'))
-    target_receipt(f:last(),1,120.4,2040.2,56.2)
-    assert(f:last():find('"position_mode":"two_frame_interpolation"',1,true))
-    near(tonumber(f:last():match('"target_receipt_age_ms":([^,}]+)')),120)
-    local x,y,z=f:last():match('"midpoint_player":{"x":([^,]+),"y":([^,]+),"z":([^}]+)}')
-    near(tonumber(x),120.2);near(tonumber(y),2040.1);near(tonumber(z),56.1)
-    near(tonumber(f:last():match('"midpoint_readback_error":([^,}]+)')),0)
-    near(tonumber(f:last():match('"midpoint_sampled_engine_seconds":([^,}]+)')),.08)
+    eq(MineCome.ApplyMovementFollower("b",1,120.6,2040.3,56.3),true);eq(#f.writes,0)
+    for i=1,4 do
+        f:tick();near(player.position.x,120+6*f.time);near(player.position.y,2040+3*f.time);near(player.position.z,56+3*f.time)
+        assert(not f:contains('"event":"applied"'))
+    end
+    f:reachEndpoint();assert(not f:contains('"event":"applied"'));local endpoint_time=f.time
+    f:tick();target_receipt(f:last(),1,120.6,2040.3,56.3)
+    assert(f:last():find('"position_mode":"timed_interpolation","interpolation_ms":100',1,true))
+    near(receipt_number(f:last(),"target_receipt_age_ms"),f.time*1000)
+    local samples=receipt_samples(f:last());assert(#samples>=5 and #samples<=8)
+    eq(receipt_number(f:last(),"segment_update_count"),#f.writes)
+    eq(receipt_number(f:last(),"segment_observation_count"),#samples)
+    near(receipt_number(f:last(),"segment_max_readback_error"),0)
+    near(receipt_number(f:last(),"segment_max_observation_gap_ms"),1000/60)
+    for _,sample in ipairs(samples) do
+        assert(sample.fraction>=0 and sample.fraction<=1);assert(sample.observed>sample.written)
+        near(sample.requested.x,120+.6*sample.fraction);near(sample.actual.x,sample.requested.x)
+        near(sample.fraction,math.min(1,sample.written/.1))
+    end
+    eq(samples[#samples].fraction,1);near(samples[#samples].written,endpoint_time)
+    near(samples[#samples].observed,receipt_number(f:last(),"sampled_engine_seconds"))
     eq(MineCome.EndMovementFollower("b"),true);f:advance(.08);eq(player.position.x,120);eq(f:activeTimers(),0)
 end)
 
-test("physical intermediate and final receipts preserve observed drift instead of copying targets",function()
+test("same engine time callbacks cannot add interpolation steps or acknowledge endpoints",function()
     local f=fixture();f:verify();eq(MineCome.BeginPhysicalMovementFollower("b"),true)
-    eq(MineCome.ApplyMovementFollower("b",1,120.4,2040,56),true);f:advance(.04)
-    player.position.x=120.22;f:advance(.04)
-    player.position.x=120.46;f:advance(.04)
+    eq(MineCome.ApplyMovementFollower("b",1,120.6,2040,56),true);f:tick()
+    local writes=#f.writes;local t=f.time
+    for i=1,4 do f:tick(t) end
+    eq(#f.writes,writes);assert(not f:contains('"event":"applied"'))
+    f:reachEndpoint();writes=#f.writes;t=f.time
+    for i=1,4 do f:tick(t) end
+    eq(#f.writes,writes);assert(not f:contains('"event":"applied"'))
+    f:tick();assert(f:contains('"event":"applied","result":"applied_readback"'))
+    eq(MineCome.EndMovementFollower("b"),true);f:advance(.08);eq(f:activeTimers(),0)
+end)
+
+test("physical camera telemetry retains later actual getter values and native frame identifiers",function()
+    local f=fixture();f:verify();eq(MineCome.BeginPhysicalMovementFollower("b"),true)
+    f.frame_id=1000;eq(MineCome.ApplyMovementFollower("b",1,120.6,2040,56),true);f:tick()
+    local camera={x=120.03,y=2040.02,z=57.74}
+    System.GetViewCameraPos=function() return camera end
+    f.forward={x=1,y=0,z=0};f.frame_id=1002;f:tick()
+    camera.x=120.2;f.forward.x=0;f.forward.y=1
+    while not MineCome._movement_probe.follower.pending_receipt do f.frame_id=f.frame_id+2;f:tick() end
+    f.frame_id=f.frame_id+2;f:tick()
+    local samples=receipt_samples(f:last());local first=samples[1]
+    near(first.requested.x,120.1);near(first.actual.x,120.1)
+    near(first.camera.position.x,120.03);near(first.camera.position.y,2040.02);near(first.camera.position.z,57.74)
+    near(first.camera.forward.x,1);near(first.camera.forward.y,0);near(first.camera.up.z,1);near(first.camera.fov,1.1)
+    eq(first.camera_basis_valid,true);eq(first.written_frame_id,1000);eq(first.observed_frame_id,1002)
+    assert(first.observed>first.written);assert(math.abs(first.camera.position.x-first.requested.x)>.05)
+    near(samples[#samples].camera.position.x,120.2);near(samples[#samples].camera.forward.y,1)
+    eq(samples[#samples].observed_frame_id,f.frame_id)
+    eq(MineCome.EndMovementFollower("b"),true);f:advance(.08);eq(player.position.x,120);eq(f:activeTimers(),0)
+end)
+
+test("optional unavailable or invalid native frame identifiers do not change physical movement",function()
+    for _,method in ipairs({false,function() error("frame unavailable") end,function() return nil end,
+        function() return -1 end,function() return .5 end,function() return 0/0 end,function() return math.huge end,
+        function() return 9007199254740992 end,function() return "9" end,function() return {} end}) do
+        local f=fixture();System.GetFrameID=method;f:verify();eq(MineCome.BeginPhysicalMovementFollower("b"),true)
+        eq(MineCome.ApplyMovementFollower("b",1,120.6,2040,56),true);f:reachEndpoint();f:tick()
+        assert(f:last():find('"event":"applied","result":"applied_readback"',1,true))
+        local samples=receipt_samples(f:last());assert(#samples>=5)
+        for _,sample in ipairs(samples) do
+            eq(sample.written_frame_id,nil);eq(sample.observed_frame_id,nil);eq(sample.camera_basis_valid,true)
+            near(sample.actual.x,sample.requested.x)
+        end
+        assert(f:last():find('"written_frame_id":null,"observed_frame_id":null',1,true))
+        eq(MineCome.EndMovementFollower("b"),true);f:advance(.08);eq(player.position.x,120);eq(f:activeTimers(),0)
+    end
+end)
+
+test("stationary observations retain real camera motion without adding actor writes",function()
+    local f=fixture();f:verify();eq(MineCome.BeginPhysicalMovementFollower("b"),true)
+    f.frame_id=0;eq(MineCome.ApplyMovementFollower("b",1,120,2040,56),true);f:tick();eq(#f.writes,0)
+    f.camera_offset={x=.2,y=0,z=.1};f.forward={x=1,y=0,z=0};f.frame_id=1;f:tick()
+    local samples=receipt_samples(f:last());eq(#samples,1);eq(#f.writes,0)
+    near(samples[1].actual.x,120);near(samples[1].camera.position.x,120.2);near(samples[1].camera.position.z,57.8)
+    eq(samples[1].performed,false);eq(samples[1].written_frame_id,0);eq(samples[1].observed_frame_id,1)
+    near(samples[1].camera.forward.x,1);eq(samples[1].camera_basis_valid,true)
+    eq(MineCome.EndMovementFollower("b"),true);f:advance(.08);eq(player.position.x,120);eq(f:activeTimers(),0)
+end)
+
+test("write and observed frame identifier availability are recorded independently",function()
+    for _,write_available in ipairs({true,false}) do
+        local f=fixture();f:verify();eq(MineCome.BeginPhysicalMovementFollower("b"),true)
+        System.GetFrameID=write_available and function() return 42 end or nil
+        eq(MineCome.ApplyMovementFollower("b",1,120,2040,56),true);f:tick()
+        System.GetFrameID=not write_available and function() return 44 end or nil;f:tick()
+        local sample=receipt_samples(f:last())[1]
+        eq(sample.written_frame_id,write_available and 42 or nil)
+        eq(sample.observed_frame_id,not write_available and 44 or nil)
+        eq(#f.writes,0);assert(sample.observed>sample.written)
+        eq(MineCome.EndMovementFollower("b"),true);f:advance(.08);eq(f:activeTimers(),0)
+    end
+end)
+
+test("interpolation starts no earlier than target acceptance or the previous tick",function()
+    local f=fixture();f:verify();eq(MineCome.BeginPhysicalMovementFollower("b"),true)
+    f:tick();f.time=.025;eq(MineCome.ApplyMovementFollower("b",1,120.6,2040,56),true)
+    f:tick();near(player.position.x,120+6*(f.time-.025))
+    f:reachEndpoint();f:tick();near(receipt_number(f:last(),"segment_start_engine_seconds"),.025)
+    eq(MineCome.EndMovementFollower("b"),true);f:advance(.08)
+end)
+
+test("physical observations retain intermediate and endpoint drift",function()
+    local f=fixture();f:verify();eq(MineCome.BeginPhysicalMovementFollower("b"),true)
+    eq(MineCome.ApplyMovementFollower("b",1,120.6,2040,56),true);f:tick()
+    local requested=player.position.x;player.position.x=player.position.x+.02;f:tick()
+    f:reachEndpoint();player.position.x=120.66;f:tick()
     assert(f:last():find('"event":"applied","result":"delayed_readback_changed"',1,true))
-    assert(f:last():find('"readback":false',1,true));target_receipt(f:last(),1,120.4,2040,56)
-    near(tonumber(f:last():match('"midpoint_target":{"x":([^,]+)')),120.2)
-    near(tonumber(f:last():match('"midpoint_player":{"x":([^,]+)')),120.22)
-    near(tonumber(f:last():match('"midpoint_readback_error":([^,}]+)')),.02)
-    near(tonumber(f:last():match('"player_readback_error":([^,}]+)')),.06)
-    near(tonumber(f:last():match('"midpoint_sampled_engine_seconds":([^,}]+)')),.08)
-    near(tonumber(f:last():match('"sampled_engine_seconds":([^,}]+)')),.12)
+    assert(f:last():find('"readback":false',1,true));target_receipt(f:last(),1,120.6,2040,56)
+    local samples=receipt_samples(f:last());near(samples[1].requested.x,requested);near(samples[1].actual.x,requested+.02)
+    near(samples[1].error,.02);near(receipt_number(f:last(),"segment_max_readback_error"),.06)
+    near(receipt_number(f:last(),"player_readback_error"),.06)
     eq(MineCome.EndMovementFollower("b"),true);f:advance(.08);eq(player.position.x,120);eq(f:activeTimers(),0)
 end)
 
 test("physical follower finishes its immutable segment while later targets coalesce",function()
     local f=fixture();f:verify();eq(MineCome.BeginPhysicalMovementFollower("b"),true)
-    eq(MineCome.ApplyMovementFollower("b",1,120.4,2040,56),true);f:advance(.04);near(player.position.x,120.2)
-    eq(MineCome.ApplyMovementFollower("b",2,120.8,2040,56),true)
+    eq(MineCome.ApplyMovementFollower("b",1,120.6,2040,56),true);f:tick();near(player.position.x,120.1)
+    eq(MineCome.ApplyMovementFollower("b",2,120.9,2040,56),true)
     eq(MineCome.ApplyMovementFollower("b",3,121.2,2040,56),true)
-    f:advance(.04);near(player.position.x,120.4);assert(not f:contains('"event":"applied"'))
-    f:advance(.04);near(player.position.x,120.8)
-    target_receipt(f:last(),1,120.4,2040,56)
-    f:advance(.04);near(player.position.x,121.2)
-    f:advance(.04);target_receipt(f:last(),3,121.2,2040,56)
+    f:reachEndpoint();near(player.position.x,120.6);assert(not f:contains('"event":"applied"'))
+    f:tick();target_receipt(f:last(),1,120.6,2040,56);assert(player.position.x>120.6 and player.position.x<121.2)
+    f:reachEndpoint();f:tick();target_receipt(f:last(),3,121.2,2040,56)
     local applied=0
     for _,line in ipairs(f.logs) do
-        if line:find('"event":"applied"',1,true) then
-            applied=applied+1;assert(not line:find('"seq":2,',1,true))
-            assert(line:find('"readback":true',1,true));assert(line:find('"player_readback_error":0',1,true))
-        end
+        if line:find('"event":"applied"',1,true) then applied=applied+1;assert(not line:find('"seq":2,',1,true)) end
     end
     eq(applied,2);eq(MineCome.EndMovementFollower("b"),true);f:advance(.08);eq(f:activeTimers(),0)
 end)
 
 test("fresh arrivals cannot extend an older physical segment lease",function()
     local f=fixture();f:verify();eq(MineCome.BeginPhysicalMovementFollower("b"),true)
-    eq(MineCome.ApplyMovementFollower("b",1,120.4,2040,56),true);f:advance(.04);near(player.position.x,120.2)
-    local delayed
-    for _,event in ipairs(f.queue) do if event.alive and event.name=="MineCome_MovementFollowerTick" then delayed=event end end
-    assert(delayed);delayed.alive=false;f.time=.45
-    eq(MineCome.ApplyMovementFollower("b",2,120.8,2040,56),true)
-    _G[delayed.name](delayed.data,delayed.id)
-    near(player.position.x,120.5);assert(not f:contains('"event":"applied"'))
-    f:advance(.081);near(player.position.x,120.8)
-    target_receipt(f:last(),2,120.8,2040,56)
+    eq(MineCome.ApplyMovementFollower("b",1,120.6,2040,56),true);f:tick();near(player.position.x,120.1)
+    f.time=.45;eq(MineCome.ApplyMovementFollower("b",2,120.8,2040,56),true)
+    f:tick(.45);near(player.position.x,120.1);assert(not f:contains('"event":"applied"'))
+    f:reachEndpoint();f:tick();target_receipt(f:last(),2,120.8,2040,56)
+    near(receipt_number(f:last(),"segment_start_engine_seconds"),.45)
     for _,line in ipairs(f.logs) do
         if line:find('"event":"applied"',1,true) then assert(not line:find('"seq":1,',1,true)) end
     end
     eq(MineCome.EndMovementFollower("b"),true);f:advance(.08);eq(player.position.x,120);eq(f:activeTimers(),0)
 end)
 
-test("physical midpoint cancellation and expiry restore without claiming an endpoint",function()
+test("physical acceptance clock regression rejects before interpolation",function()
+    local f=fixture();f:verify();eq(MineCome.BeginPhysicalMovementFollower("b"),true)
+    f.time=.025;eq(MineCome.ApplyMovementFollower("b",1,120.6,2040,56),true)
+    f.time=.01;eq(MineCome.ApplyMovementFollower("b",2,120.8,2040,56),false)
+    f:tick(.015);eq(#f.writes,0);eq(f:activeTimers(),0)
+    assert(f:contains('"end_result":"clock_unavailable_or_regressed"'))
+end)
+
+test("physical partial segment cancellation and expiry restore without claiming an endpoint",function()
     for _,expiry in ipairs({false,true}) do
         local f=fixture();f:verify();eq(MineCome.BeginPhysicalMovementFollower("b"),true)
-        eq(MineCome.ApplyMovementFollower("b",1,120.4,2040,56),true);f:advance(.04);near(player.position.x,120.2)
-        if expiry then
-            local delayed
-            for _,event in ipairs(f.queue) do if event.alive and event.name=="MineCome_MovementFollowerTick" then delayed=event end end
-            assert(delayed);delayed.alive=false;f.time=.45;_G[delayed.name](delayed.data,delayed.id)
-        else eq(MineCome.EndMovementFollower("b"),true) end
+        eq(MineCome.ApplyMovementFollower("b",1,120.6,2040,56),true);f:tick();near(player.position.x,120.1)
+        if expiry then f:tick(.45) else eq(MineCome.EndMovementFollower("b"),true) end
         f:advance(.08);eq(player.position.x,120);eq(f:activeTimers(),0)
         assert(not f:contains('"event":"applied"'))
         assert(f:last():find('"event":"restored","result":"restored","terminal":true',1,true))
@@ -461,39 +583,81 @@ test("physical midpoint cancellation and expiry restore without claiming an endp
     end
 end)
 
-test("failed physical midpoint or endpoint writes retain guarded restoration",function()
-    for failed=1,2 do
+test("failed physical intermediate or endpoint writes retain guarded restoration",function()
+    for failed=1,6 do
         local f=fixture();f:verify();eq(MineCome.BeginPhysicalMovementFollower("b"),true)
         f.on_write=function(count) if count==failed then error("setter failed after mutation") end end
-        eq(MineCome.ApplyMovementFollower("b",1,120.4,2040,56),true);f:advance(.2)
+        eq(MineCome.ApplyMovementFollower("b",1,120.6,2040,56),true);f:advance(.25)
         eq(player.position.x,120);eq(f:activeTimers(),0);assert(not f:contains('"event":"applied"'))
         assert(f:last():find('"end_result":"position_write_or_readback_failed"',1,true))
     end
 end)
 
+test("stationary targets skip setters but still require a later observed endpoint",function()
+    local f=fixture();f:verify();eq(MineCome.BeginPhysicalMovementFollower("b"),true)
+    eq(MineCome.ApplyMovementFollower("b",1,120,2040,56),true);f:tick()
+    eq(#f.writes,0);assert(not f:contains('"event":"applied"'))
+    f:tick();target_receipt(f:last(),1,120,2040,56);eq(receipt_number(f:last(),"segment_update_count"),0)
+    eq(receipt_number(f:last(),"segment_observation_count"),1)
+    assert(f:last():find('"endpoint_write_performed":false',1,true))
+    local samples=receipt_samples(f:last());eq(#samples,1);eq(samples[1].fraction,1);eq(samples[1].performed,false)
+    assert(samples[1].observed>samples[1].written);f:advance(.1);eq(#f.writes,0)
+    player.position.x=120.01;f:tick();eq(#f.writes,1);eq(player.position.x,120)
+    eq(MineCome.EndMovementFollower("b"),true);f:advance(.08);eq(f:activeTimers(),0)
+end)
+
+test("stationary endpoint observation does not stall a newer moving target",function()
+    local f=fixture();f:verify();eq(MineCome.BeginPhysicalMovementFollower("b"),true)
+    eq(MineCome.ApplyMovementFollower("b",1,120,2040,56),true);f:tick()
+    eq(MineCome.ApplyMovementFollower("b",2,120.6,2040,56),true);f:tick()
+    target_receipt(f:last(),1,120,2040,56);assert(player.position.x>120 and player.position.x<120.6)
+    f:reachEndpoint();f:tick();target_receipt(f:last(),2,120.6,2040,56)
+    eq(MineCome.EndMovementFollower("b"),true);f:advance(.08);eq(f:activeTimers(),0)
+end)
+
+test("bounded observed sample array always retains the endpoint",function()
+    local f=fixture();f.physical_frame_seconds=.005;f:verify();eq(MineCome.BeginPhysicalMovementFollower("b"),true)
+    eq(MineCome.ApplyMovementFollower("b",1,120.6,2040,56),true);f:reachEndpoint();f:tick()
+    local samples=receipt_samples(f:last());eq(#samples,8);eq(samples[8].fraction,1)
+    assert(receipt_number(f:last(),"segment_observation_count")>8)
+    assert(f:last():find('"segment_observed_samples_truncated":true',1,true))
+    near(samples[8].observed,receipt_number(f:last(),"sampled_engine_seconds"))
+    eq(MineCome.EndMovementFollower("b"),true);f:advance(.08);eq(f:activeTimers(),0)
+end)
+
 test("only physical follower permits bounded downhill targets",function()
     local f=fixture();f:verify();eq(MineCome.BeginPhysicalMovementFollower("b"),true)
-    eq(MineCome.ApplyMovementFollower("b",1,120,2040,54.5),true)
-    f:advance(.04);near(player.position.z,55.25);f:advance(.08);near(player.position.z,54.5)
-    assert(f:last():find('"seq":1,"target":{"x":120,"y":2040,"z":54.5}',1,true))
+    eq(MineCome.ApplyMovementFollower("b",1,120,2040,54.5),true);f:tick();near(player.position.z,55.75)
+    f:reachEndpoint();f:tick();near(player.position.z,54.5);target_receipt(f:last(),1,120,2040,54.5)
     eq(MineCome.EndMovementFollower("b"),true);f:advance(.08);eq(player.position.z,56);eq(f:activeTimers(),0)
     f=fixture();f:verify();eq(MineCome.BeginMovementFollower("b"),true)
     eq(MineCome.ApplyMovementFollower("b",1,120,2040,55.79),false);eq(#f.writes,0)
     eq(MineCome.EndMovementFollower("b"),true);f:advance(.08);eq(f:activeTimers(),0)
 end)
 
-test("physical follower hard deadline is unchanged and view sampling never extends it",function()
+test("physical write budget reserves restoration even with excessively frequent ticks",function()
+    local f=fixture();f.physical_frame_seconds=.001;f:verify();eq(MineCome.BeginPhysicalMovementFollower("b"),true)
+    for seq=1,20 do
+        if not MineCome._movement_probe.follower or MineCome._movement_probe.follower.restoring then break end
+        eq(MineCome.ApplyMovementFollower("b",seq,120+(seq%2)*.6,2040,56),true);f:advance(.1)
+    end
+    f:advance(.1);eq(#f.writes,512);eq(player.position.x,120);eq(f:activeTimers(),0)
+    assert(f:contains('"end_result":"write_budget"'))
+end)
+
+test("physical 60Hz writes fit the unchanged hard deadline and view samples never extend it",function()
     local f=fixture();f:verify();eq(MineCome.BeginPhysicalMovementFollower("b"),true)
     local hard=MineCome._movement_probe.follower.timers.hard
     for seq=1,80 do
         if not MineCome._movement_probe.follower or MineCome._movement_probe.follower.restoring then break end
-        eq(MineCome.ApplyMovementFollower("b",seq,120.1,2040,56),true)
+        eq(MineCome.ApplyMovementFollower("b",seq,120.4+(seq%2)*.4,2040,56),true)
         eq(MineCome.SamplePhysicalHudView("b"),true)
         eq(MineCome._movement_probe.follower.timers.hard,hard);f:advance(.1)
     end
-    f:advance(.1);eq(player.position.x,120);eq(f:activeTimers(),0);assert(#f.writes<=200)
-    assert(f:contains('"end_result":"hard_deadline"') or f:contains('"end_result":"write_budget"'))
+    f:advance(.1);eq(player.position.x,120);eq(f:activeTimers(),0);assert(#f.writes>200 and #f.writes<=512)
+    assert(f:contains('"end_result":"hard_deadline"'));assert(not f:contains('"end_result":"write_budget"'))
 end)
+
 test("physical camera loss still restores safe player but does not claim camera success",function()
     local f=fixture();f:verify();eq(MineCome.BeginPhysicalMovementFollower("b"),true)
     eq(MineCome.ApplyMovementFollower("b",1,120.1,2040,56),true);f:advance(.04)
@@ -509,6 +673,7 @@ test("legacy follower retains fixed camera offset metric and original receipt sc
     assert(not f:last():find('"follow_error":null',1,true))
     eq(MineCome.EndMovementFollower("b"),true);f:advance(.08)
     assert(not f:contains('"physical_movement"'));assert(not f:contains('"camera_basis_valid"'))
+    eq(f.frame_reads,0)
     eq(player.position.x,120);eq(f:activeTimers(),0)
 end)
 print(string.format("Verified %d standalone movement-probe cases in %s; engine bindings simulated",passed,_VERSION))

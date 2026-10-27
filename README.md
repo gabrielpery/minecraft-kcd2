@@ -31,19 +31,17 @@ The public repository contains source, build scripts and development procedures.
 A separate [physical HUD walking lab](kcd2/MOVEMENT-LAB.md#physical-walking-with-the-hud-in-kcd)
 is implemented, compiled and checked automatically. Camera delivery now runs
 independently of movement commands and avoids repeatedly reopening the active log.
-A bounded live run passed five server-position transfers, five delayed KCD
-readbacks and restoration. The user still experienced a tiny, jittery step and
-could not move again, so this is technical integration evidence rather than
-usable walking. The updated code pauses input at a boundary until controls are
-released and pressed again, allow more downhill travel within the same small
-radius, and split KCD position updates into two steps. A scripted KCD check now
-verifies both position steps and restoration. Separate actual-Minecraft tests on
-flat and replayed sampled terrain pass three scripted movement presses with the
-HUD active, including resuming away from a boundary; inventory input causes no
-movement. Those component tests do not yet verify the combined physical walking
-experience. The lab allows at
-most five seconds of input plus one second of settling inside the
-30-second HUD check. It is not continuous movement.
+The latest combined physical run passed 49 server-position transfers, 49 delayed
+KCD readbacks and restoration. Repeated movement works, but the user still reports
+**choppy motion**, with at most a small improvement after the latest change.
+The physical follower now interpolates across ordinary game frames: measured
+position updates are about 16 ms apart, with no stationary rewrites. Movement
+sources still arrive about every 100–168 ms, and some segment transitions pause
+47–64 ms. Smooth or continuous walking is not established. Boundary pauses require
+releasing controls before pressing again in an allowed direction. Separate
+actual-Minecraft tests verify resumed movement, inventory suppression and HUD
+capture on flat and replayed sampled terrain. The lab allows at most five seconds
+of input plus one second of settling inside the 30-second HUD check.
 
 Live checks above use the **official KCD2 1.5.5 development build**. The native
 **retail 1.5.6 route remains blocked** by its verified address-library/loader

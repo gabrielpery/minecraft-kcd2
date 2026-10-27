@@ -1,18 +1,22 @@
 # Resume checkpoint — 27 October 2026
 
 The current objective is physical walking and Minecraft's real HUD working
-together inside KCD2. The camera delivery repair is implemented and measured;
-one bounded physical run now passes the technical controller check. The user
-still reports a tiny jittery step and no response to a later W press. The current
-work addresses repeated input, downhill clearance and smoother KCD updates.
+together inside KCD2. Repeated physical movement now works in all directions
+with the HUD, according to the user and a passing combined run. The user still
+reports choppy motion with at most a small improvement. Camera delivery remains
+fresh. Frame-cadence interpolation is implemented and passes technical checks;
+remaining gaps and abrupt speed changes between segments need investigation.
 Do not call this the final playable build or repeat the confirmed stone/HUD work.
 
 ## Implemented and verified
 
 - Branch: `codex/initial-import`, public remote
   `gabrielpery/minecraft-kcd2`. The separate native walking bundle is unchanged;
-  current changes are Java, Lua, scripts, tests and documentation. Local checkpoint
-  `a59403c` preserves the camera and one-step baseline before the usability work.
+  current changes are Java, Lua, scripts, tests and documentation. Both
+  `a59403c` (camera/one-step baseline) and `f6f8ea9` (resumable walking/components)
+  are pushed to the public default branch. The later frame-cadence interpolation
+  is a working-tree change at this checkpoint, with autonomous and combined
+  technical proof; inspect Git before assuming publication.
 - `HudCameraDelivery.ps1` owns request/receipt/publication in a separate bounded
   runspace. Movement commands cannot stall it. Original request UTC is retained.
   A 110 ms monotonic cadence permits at most 1,019 requests in 112 seconds,
@@ -37,11 +41,12 @@ Do not call this the final playable build or repeat the confirmed stone/HUD work
   2 m KCD follower sphere. Java uses a 1.75 m predictive radius, 1.8 m hard radius,
   -1.45 m to +1.45 m predictive vertical clearance and sampled-ground coverage.
   The legacy scripted follower retains -0.2 m to +1.5 m.
-- Physical Lua following now writes a midpoint and then the exact endpoint on
-  separate 40 ms ticks. Only the following-frame endpoint observation is an
-  applied acknowledgement. That receipt also contains the actual midpoint
-  observation and error. Waiting targets coalesce, but later arrivals cannot
-  extend an in-flight segment's own 400 ms lifetime from Lua acceptance.
+- Physical Lua following requests 1 ms timers and advances an immutable segment
+  over 100 ms of engine time, with a later endpoint readback. Six or seven writes
+  per moving segment are now observed at approximately 16 ms intervals. It skips
+  stationary setters and retains intermediate write/observation timestamps.
+  Pending targets coalesce without extending a selected target's 400 ms lifetime.
+  Physical writes are capped at 512; legacy following retains its 200-write cap.
 
 The 300 ms camera, 250 ms input, 400 ms follower and eight-second follower limits
 are unchanged. Movement remains separate from the revision4 aimed/stone profile.
@@ -49,42 +54,46 @@ Native KCD physics remains enabled; full-world or exclusive movement is not prov
 
 ## Latest completed attempt
 
-HUD run: `c398308550e6446db5d79bd176a1709b`.
+HUD run: `725d69490f464ca989fccb3783a7cba4`.
 
 Local evidence, excluded from Git:
-`runtime/evidence/hud-walking-20261027-142059-6cf16f5625e34739a9f1b77b5bc74200/`.
+`runtime/evidence/hud-walking-20261027-154252-c869ec4362fc44d69f6f10516665149a/`.
 
-The controller reports `passed`: five server frames forwarded, five delayed KCD
-applied readbacks, passing trace and verified restoration. It recorded 477 camera
-publications with no stale discards. Camera resources closed and the temporary FPS
-cap restored. The user described an inch-like jittery step and later W presses
-doing nothing. Keep this technical pass separate from usability: the controller
-still records `visual_verified=false`, and sustained walking is not established.
+The controller reports `passed`: 49 server poses forwarded and 49 delayed KCD
+applied readbacks, passing trace and verified restoration. It recorded 484 camera
+publications with no stale discards. Camera resources closed and FPS restored.
+Minecraft records four accepted movement edges, two boundary pauses and two
+resumptions, equal client/server maximum displacement of 0.758 m, zero corrections
+and 5.565 seconds of movement/settling. The user says it is "still choppy, maybe
+a LITTLE better". Smooth or sustained walking is not established; machine
+`visual_verified=false` remains separate from that user feedback.
 
-Afterward KCD was closed normally through `WM_CLOSE` with exit code 0; Minecraft
-was also closed. The old `c398...` arm was archived before the next KCD launch.
-The fresh tools process is PID 49616, started at 14:43:45 on 27 October, and was
-left open for the independent checks. Recheck current processes and newer
-evidence before resuming; these process details are a checkpoint, not authority.
-This fresh KCD process has no HUD arm or native activation. The standalone
-fixtures do not consume a physical arm, so the current world can be used for the
-next physical check without another restart if its state is unchanged.
-The latest `Test-HudWalking.ps1 -PreflightOnly` passes for PID 49616, no add-on
-`.ini` arm files are present, and only KCD remains open.
-The user is away cooking and explicitly authorized continued implementation and
-autonomous testing. Do not start another short physical-input window without them.
+The previous `0e14...` arm was archived after normal KCD closure. The fresh KCD
+process 45644, started at 15:40:09 on 27 October, consumed its activation in this
+latest run. Minecraft is closed after the check. Its owned arm is
+`runtime/evidence/hud-walking-20261027-154252-c869ec4362fc44d69f6f10516665149a/capture/stream-arming.json`.
+Another physical activation needs normal KCD closure, archival of that exact arm
+and a fresh launch. Computer Use remains stopped by Escape in this turn; do not
+retry stopped screen access. Recheck processes and receipts before acting.
+The user authorized extensive implementation and autonomous checks, with any
+human control test at the end. Do not start a timed physical-input window while
+they are unavailable.
 
-The new boundary-resume changes have no combined physical live result yet.
+The new boundary-resume changes have the combined physical result above.
 `Test-HudPhysicalMovementFixture.ps1` is an independent actual-Minecraft test with
 scripted input, controller physics, inventory and HUD. It makes no KCD calls and
 does not claim physical input or KCD composition. `Test-KcdPhysicalFollower.ps1`
 uses small scripted KCD targets without Minecraft, HUD arming or physical keys.
-The independent KCD follower passes five scripted targets, with zero observed
-midpoint and delayed endpoint errors, verified actor restoration, cancelled
-timers and FPS restoration. Target ages were 96.49–146.59 ms after Lua acceptance,
-not physical-input latency. Evidence:
-`runtime/evidence/physical-follower-scripted-20261027-144521-6d622dba7e2b42fd8b45a9e8ca5bd1fc/`.
-Do not repeat that completed component check without a new change or failure.
+The latest independent KCD follower probe passes five moving targets and one
+stationary target, with six or seven setters per moving segment, normal-frame
+observations about 16-21 ms apart, zero errors and actor/FPS restoration:
+`runtime/evidence/physical-follower-scripted-20261027-153609-198d8a567af448718f191a4984127621/`.
+The stationary target causes zero setters. Two earlier probes failed strict
+cadence at about 34 ms while preserving exact positions/restoration. The separate
+read-only timer probe `d9589118d00247bbb0690508e2968042` shows rearmed 1 ms timers
+on consecutive native frame IDs. Polling changed while foreground confirmation
+was delayed; improvement cannot be attributed solely to polling or focus.
+Do not repeat completed component checks without a relevant change or failure.
 
 The actual-Minecraft flat fixture passes, run
 `70db9fa42a8a4e4c8dd48ad2b5974ef4`. Scripted W/W/S presses move client and server
@@ -107,7 +116,35 @@ complete in 5.508 seconds. All cleanup and host FPS restoration pass. Evidence:
 `runtime/evidence/hud-physical-fixture-20261027-145410-664e98c29ee14d94b2a6acf6e26192db/`.
 Both fixture clients exited. These checks prove the actual Minecraft controller
 with scripted input; neither proves physical KCD controls or composition there.
-Only the combined physical response/visual check remains for the current changes.
+The later combined physical run confirms resumed controls but exposes choppiness.
+
+## Current timing diagnosis
+
+`timing-analysis.json` in the latest evidence directory compares the new timed
+interpolation with `0e14...`, using existing records and no game/API calls.
+The new path has 18 moving segments and 125 setters, with median 16.07 ms and
+maximum 16.90 ms within-segment intervals. All 31 stationary segments perform
+zero setters; observed readback errors are zero. The old midpoint/endpoint
+observations were median 48.10 ms apart.
+
+Remaining stutter leads are specific: four of 14 transitions between consecutive
+moving segments pause 47.19-64.32 ms between writes. Source captures remain median
+101 ms apart, maximum 168 ms. A 0.575 m change over 167 ms is compressed into a
+fixed 100 ms segment, then the next segment covers only 0.052 m. New maximum
+recorded frame step is 0.093 m, versus 0.316 m between old observations, but input
+patterns differ and this is not a controlled subjective comparison. Test source
+cadence and temporal continuity without extending source leases or extrapolating
+unverified future movement.
+
+Camera delivery during movement is median 63 ms, maximum 98 ms, with no stale
+discards. Endpoint camera-to-player offset changes are at most 2.7 mm; independent
+samples also show no large offset jumps. This does not resemble the old camera
+expiry failure. Moving target acceptance-to-ACK is median 132 ms, maximum 161 ms;
+stationary ACKs take about one game frame. No video or physical key-edge timestamps
+are available, so this is not input-to-photon latency or presentation proof.
+Two boundary pauses and real input releases also interrupt motion deliberately.
+The original 400 ms accepted-target lifetime, eight-second hard deadline,
+two-metre sphere and guarded restoration remain unchanged.
 
 ## Failures already diagnosed
 
@@ -150,42 +187,38 @@ Only the combined physical response/visual check remains for the current changes
   receipt lookup was 1.748 ms. This does not establish physical input latency.
 - Independent reviews covered worker cleanup, bounds, braking and completion.
   No new native installation or native build is needed on this machine.
-- Updated Lua following passes 40 cases in Lua 5.2 with simulated engine
-  bindings. These include actual observed drift in receipts, immutable segments,
-  expiry despite fresh later targets, interruption, restoration and legacy paths.
+- Updated Lua following passes 47 cases with simulated engine bindings;
+  PowerShell interpolation proof passes 17 checks. These cover observed drift,
+  immutable segments, expiry despite fresh later targets, interruption,
+  stationary write suppression, restoration and legacy paths.
 - The separate actual-KCD follower probe and both actual-Minecraft scripted
   fixtures pass as recorded above. Their scopes remain distinct; do not claim
   combined visual smoothness or physical input from those component results.
 
 ## Next action
 
-1. Inspect newer verification and current processes. Preserve the completed
-   `c398...` technical pass and its negative usability feedback.
-2. Do not repeat the completed flat fixture, captured-terrain fixture or scripted
-   KCD follower probe unless a new change or failure warrants it. The next check
-   is physical walking with the HUD inside KCD. Ask the user to reply “ready”
-   when back, then use the current fresh game. Do not start the F8 activation
-   timer while they are away.
-3. Reuse fresh KCD PID 49616 if unchanged: it is open and has no HUD arm/native
-   activation. The standalone fixtures did not use that arm. The prior physical
-   run's owned receipt is
-   `runtime/evidence/hud-walking-20261027-142059-6cf16f5625e34739a9f1b77b5bc74200/capture/stream-arming.json`.
-   It was archived before PID 49616 was launched. Inspect any newer arm first;
-   do not close/restart this fresh world unnecessarily. If the process or arm
-   state has changed, follow the normal owned-arm lifecycle instead.
-   `Archive-HudArm.ps1` takes `-ReceiptPath`. `Start-Kcd2ToolsTest.ps1` starts a
-   fresh official 1.5.5 development world when needed. Never open newer retail saves.
-4. With the user present and the world warmed up, run
-   `Start-HudWalkingLab.ps1 -PreflightOnly`, then the normal wrapper. It handles
-   PowerShell 7; no replacement add-on is needed. Request input only after
-   `HUD_WALKING_READY`. Verify a brief W press, release and second press while
-   the hotbar remains visible. A fresh press away from a boundary is allowed only
-   within the original five-second input window. Check inventory suppression
-   separately if combining every action would consume that window.
-5. Verify server trace completion, actual midpoint/endpoint observations,
-   explicit-end restoration, camera cleanup, control/collision release and FPS
-   restoration. Record the user's response on responsiveness and HUD visibility
-   separately. A passing receipt alone does not settle the reported jitter.
+1. Preserve the latest `725d...` technical pass and the user's still-choppy
+   report. The previous `0e14...` all-direction result and `c398...` inch-like
+   step remain historical evidence; do not repeat repaired input/camera work.
+2. Investigate measured segment-transition gaps and irregular source timing.
+   The follower already writes at game-frame cadence inside each segment.
+   Keep source age, immutable accepted-target leases, sampled ground and
+   restoration guards intact. Use focused autonomous tests for changed timing;
+   existing Minecraft fixtures need not repeat unless their path changes.
+3. Before another physical HUD test, close KCD normally, archive the exact
+   `725d...` arm with `Archive-HudArm.ps1 -ReceiptPath`, and start a fresh world
+   with `Start-Kcd2ToolsTest.ps1`. Process 45644 has already consumed activation.
+   Recheck current process state and respect the stopped Computer Use session.
+   Never load newer retail saves into this development build.
+4. With the user present and the world warmed up, use
+   `Start-HudWalkingLab.ps1 -PreflightOnly`, then the normal wrapper. Request
+   physical input only after `HUD_WALKING_READY`. Use a short repeatable sequence
+   and record both timing and the user's smoothness observation. The original
+   five-second movement window remains; verify inventory suppression separately
+   if a combined sequence would exhaust it.
+5. Verify server trace completion, normal-frame interpolation observations,
+   explicit restoration, camera cleanup, controls/collision release and FPS
+   restoration. Technical success alone does not resolve the reported jitter.
 
 The user authorizes routine implementation and launches without repeated
 permission questions. Earlier physical Escape presses stopped Computer Use.

@@ -1,6 +1,77 @@
 # MineCome progress — 2026-10-27
 
-**Bounded physical walking passes its technical check; responsiveness remains unfinished.**
+**Repeated physical walking works with the HUD; smoothness remains unfinished.**
+Latest combined HUD run `725d69490f464ca989fccb3783a7cba4` passes 49 forwarded
+Minecraft server poses, 49 delayed KCD applied readbacks, the movement trace,
+player restoration, camera cleanup and temporary FPS restoration. The camera
+worker published 484 samples with no stale discards. Minecraft records four
+accepted movement edges, two boundary pauses and two resumptions, equal
+client/server maximum displacement of 0.758 m, zero corrections and completion
+in 5.565 seconds. The user's report remains decisive: "still choppy, maybe a
+LITTLE better". This is a technical pass for bounded controls, not smooth,
+continuous or exclusive movement.
+
+Evidence, excluded from Git:
+`runtime/evidence/hud-walking-20261027-154252-c869ec4362fc44d69f6f10516665149a/`.
+Its `timing-analysis.json` compares the latest timed interpolation against the
+previous two-step run `0e14e63e600849b1af0a70449369f3f1`:
+
+- The latest follower executes 125 setters across 18 moving segments, with six
+  or seven writes per segment. Within-segment write intervals are median
+  16.07 ms, maximum 16.90 ms; retained normal-frame readback errors are zero.
+  The older midpoint/endpoint observations were about 48.10 ms apart.
+- All 31 stationary target segments perform zero setters. The new maximum
+  recorded increment is 0.093 m, compared with a 0.316 m interval between old
+  observations. Inputs differ, so this is not a controlled comparison of
+  perceived smoothness.
+- Four of 14 transitions between consecutive moving segments still pause
+  47.19–64.32 ms between endpoint write and next first write. Source captures
+  remain median 101 ms apart, maximum 168 ms. A 0.575 m source change over
+  167 ms is replayed over a fixed 100 ms, followed by a segment only 0.052 m
+  long. Sparse arrivals and abrupt segment-speed changes remain concrete leads.
+- Camera request-to-publication during movement is median 63 ms, maximum 98 ms,
+  with no stale discards. Receipt lookup is median 1.80 ms, maximum 5.18 ms.
+  Endpoint camera-to-player offset changes are at most 2.7 mm, versus 17.0 mm
+  in the older run. Independent sampled offsets also stay stable. These records
+  show no large relative-camera jumps; they cannot exclude presentation stutter.
+- Moving-target acceptance to delayed endpoint ACK is median 132 ms, maximum
+  161 ms. Stationary ACKs take about one game frame. Neither measure is physical
+  input-to-photon latency. Source records retain capture time, not dispatch time.
+
+The two boundary pauses and real control releases intentionally interrupt
+movement; they must remain distinct from rendering jitter. The earlier `0e14...`
+run passed 51 forwarded/50 applied poses and 483 fresh camera samples; the user
+confirmed all directions worked but described very choppy motion. Its original
+receipts and separate `timing-analysis.json` remain preserved.
+
+The physical-only follower now requests a 1 ms timer and advances an immutable
+selected segment over 100 ms of engine time. It skips stationary setters and
+caps physical writes at 512; the legacy cap stays 200. The original 400 ms
+accepted-target lifetime, eight-second deadline, two-metre sphere and restoration
+guards remain unchanged. Source checks pass 47 Lua cases and 17 PowerShell
+interpolation-proof checks.
+
+An earlier autonomous probe also passes five nonzero segments and one stationary
+target:
+`runtime/evidence/physical-follower-scripted-20261027-153609-198d8a567af448718f191a4984127621/`.
+Each moving segment has six or seven setters and six to eight later observations;
+median observed gaps are 20.75 ms in the first segment and 16.11–16.36 ms
+subsequently, maximum 21 ms. The stationary target has zero setters and a later
+16.36 ms observation. All position errors are zero; actor and FPS restore.
+Two earlier cadence probes (`bd3ce0a7...`, `152ce02b...`) retained exact positions
+and restoration but failed strict cadence at about 34 ms. A read-only timer probe
+`d9589118d00247bbb0690508e2968042` observes consecutive native frame IDs at about
+16 ms for a rearmed 1 ms timer. Console flushing was reduced to every 100 ms and
+the foreground request was confirmed belatedly; the improvement cannot be
+attributed solely to polling or focus. These autonomous checks do not establish
+subjective smoothness; the later combined run above still looks choppy.
+
+Commits `a59403c` and `f6f8ea9` are pushed to the public default branch. The later
+interpolation and timing evidence are a subsequent working-tree change at this
+checkpoint; inspect Git before assuming publication.
+
+### Earlier technical pass and completed camera repairs
+
 Live run `c398308550e6446db5d79bd176a1709b` passes five forwarded Minecraft
 server poses, five matching delayed KCD readbacks and player restoration. The
 movement trace passes, the camera worker closes its resources, and the temporary
@@ -61,7 +132,7 @@ Baseline validation completed before the usability changes: Java suites passed
 57 camera-worker, 74 receipt-cursor, 23 path, 90 physical-profile, 134 ground and
 80 coupled checks. The installed native walking bundle remains unchanged.
 
-### Walking usability components verified, combined physical check pending
+### Walking usability components and the previous two-step follower
 
 - A sampled-terrain boundary now pauses movement instead of ending the trial.
   Controls must be released before a fresh press can resume in an allowed
@@ -143,11 +214,13 @@ checks, alongside the 40 Lua movement cases and actual-KCD probe above.
 Ground checks (160) and reverse-input checks (353) also passed.
 
 These Java, Lua and script changes require no replacement native bundle on the
-existing test machine. Fresh KCD process 49616 has no HUD arm or native activation;
-the standalone fixtures do not consume that arm, so it can remain open for the
-next physical check when the user returns. The remaining verification for these
-changes is the combined physical walking/HUD response and visual smoothness;
-the completed component tests need not be repeated without a new change.
+existing test machine. The `0e14...` arm was archived after normal KCD closure.
+Fresh process 45644, started at 15:40:09, subsequently consumed its activation in
+`725d...`. Minecraft is closed after the combined check. Another physical test
+requires normal KCD closure, archiving that exact owned arm and a fresh launch.
+Computer Use was stopped by Escape in this turn; recheck process and receipt
+state before acting. The latest interpolation passes autonomous and combined
+technical checks, but the user's choppiness report remains unresolved.
 
 ## 20 October 2026 checkpoint
 

@@ -109,12 +109,12 @@ terrain capture, ordinary Minecraft movement/gravity/jumping on client and serve
 and fresh KCD camera direction for walking orientation. Only fresh server poses
 drive the KCD follower. Source compilation and automated contract/lifecycle checks
 pass. Camera delivery now uses a separate bounded worker and retained log handle.
-A bounded live run passes five forwarded server poses, five delayed KCD readbacks
-and verified restoration. The user nevertheless reports a tiny jittery step and
-no response to a later W press. This technical pass does not establish usable
-walking. The new boundary-pause, downhill-envelope and two-step follower changes
-are implemented. The two-step follower passes a separate actual-KCD scripted
-probe; responsiveness of the combined physical walking/HUD path remains unverified.
+The latest combined run passes 49 forwarded server poses, 49 delayed KCD
+readbacks and verified restoration. Repeated movement with the HUD works, but
+the user still reports choppiness, with at most a small improvement. Boundary
+release/repress and downhill travel work within the bounded trial; smooth or
+continuous walking is not established. The frame-cadence follower has both
+autonomous and combined technical proof, not a resolved visual smoothness result.
 See [the current evidence](../docs/PROGRESS.md) for the separate results.
 
 This requires the separately prepared and installed `hud-compositor-walking`
@@ -160,13 +160,24 @@ and -1.45 m to +1.45 m vertical clearance, with a 1.8 m hard radius and sampled
 ground coverage. This physical-only descent change does not alter the legacy
 scripted follower's -0.2 m to +1.5 m range.
 
-Physical position updates use two 40 ms timer ticks: midpoint, then exact server
-target. An applied acknowledgement requires an additional normal-frame readback
-of that endpoint. The same receipt records the actual intermediate observation;
-it never treats a midpoint as an applied server pose. Incoming waiting targets
-coalesce while a segment finishes. Every segment keeps its own 400 ms lifetime
-from acceptance in Lua, even if newer targets arrive. That lifetime does not
-measure cross-process capture age; the controller separately checks source age.
+The physical follower requests a 1 ms timer and interpolates each immutable
+selected server target over 100 ms of engine time. Ordinary game frames advance
+it; later pending targets coalesce without renewing the selected target's own
+400 ms acceptance lifetime. Applied acknowledgement requires a later normal-frame
+endpoint observation. Receipts retain intermediate writes and observed positions,
+including their engine timestamps. Stationary targets avoid position setters.
+Physical writes are capped at 512, including restoration; legacy following keeps
+its 200-write cap and previous cadence. The controller separately checks source
+capture age; the Lua acceptance lifetime is not cross-process input latency.
+
+The latest combined run records six or seven setters per moving segment, with
+median 16.07 ms and maximum 16.90 ms within-segment intervals. All 31 stationary
+segments have zero setters and observed position errors are zero. However,
+four moving-segment transitions pause 47-64 ms, while source captures remain
+median 101 ms apart and reach 168 ms. Fixed 100 ms interpolation compresses the
+longer source intervals and creates abrupt speed changes. Camera delivery stays
+fresh and sampled camera offsets are stable, but the user still sees choppiness.
+Do not infer smooth gameplay from these readbacks.
 
 The KCD follower retains its independent eight-second deadline and actor/position
 guards. Normal completion requires delayed readbacks
@@ -201,16 +212,18 @@ capture. Fixture output is excluded from the live follower route.
 
 `scripts/Test-KcdPhysicalFollower.ps1` is a separate PowerShell 7.3+ probe for an
 already loaded supported KCD tools world. It sends small scripted position offsets
-and checks the following-frame midpoint observation, exact endpoint readback and
-restoration. It does not start Minecraft, arm the HUD, or press physical controls.
+and checks timed intermediate observations, exact endpoint readback,
+stationary write suppression and restoration. It does not start Minecraft, arm the HUD, or press physical controls.
 The unchanged follower lease and deadline remain active. Keep the player still
 and use only the fresh development test world.
 
-The updated Lua follower passes 40 standalone cases with simulated engine
-bindings. The actual KCD probe passes five scripted offsets from -0.1 m to +0.4 m,
-with zero observed midpoint/endpoint errors, actor restoration, timer cleanup
-and FPS restoration. Its target receipt ages of 96.49–146.59 ms measure elapsed
-time after acceptance in Lua, not physical-input latency.
+The updated Lua follower passes 47 standalone cases with simulated bindings;
+PowerShell interpolation proof passes 17 checks. The latest actual KCD probe
+passes five moving targets and one stationary target. Moving segments execute
+six or seven setters with later observations about 16-21 ms apart, while the
+stationary target uses zero setters. Position errors are zero and actor, timers
+and FPS restore. This component result is separate from physical input and
+rendered smoothness; the latest combined test still looks choppy to the user.
 
 The actual-Minecraft flat fixture also passes scripted W/W/S presses, moving both
 client and server approximately 0.857 m, 0.642 m and 0.857 m with zero disagreement.

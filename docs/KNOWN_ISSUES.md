@@ -110,36 +110,37 @@ Never load newer retail1.5.6 saves into this older1.5.5 development game. Backup
 
 ## Gameplay scope
 
-- The separate physical HUD walking profile is implemented, compiled and checked
-  automatically. One bounded live run now passes five forwarded server poses,
-  five delayed KCD readbacks and restoration, but the user reports a tiny jittery
-  step and no response to a later W press. That technical pass does not establish
-  usable walking. Camera delivery now runs
-  independently with a retained log handle; original timestamps and the 300 ms
-  camera lifetime/100 ms I/O retry limit are unchanged. Its 110 ms monotonic cadence
-  fits the existing 1,024-sample engine budget over the 112-second controller.
-  A boundary previously ended movement after one short step. The new code pauses
-  input and requires a balanced release followed by a fresh press; the original
-  five-second deadline does not restart. Physical-only downhill travel now permits
-  up to 1.5 m below the anchor, within the unchanged 2 m follower sphere and fresh
-  sampled terrain. The Java gate uses tighter predictive and hard limits. Legacy
-  scripted movement retains its previous descent limit. Two-step KCD position
-  interpolation and honest delayed midpoint/endpoint observations pass 40 Lua
-  cases with simulated engine bindings. An actual KCD probe also verifies both
-  steps at five scripted targets and restoration, with no Minecraft or HUD
-  connection. The standalone actual-Minecraft fixture passes scripted W/W/S
-  movement, a boundary pause followed by resumption, zero movement in inventory
-  and HUD capture on both flat synthetic ground and replayed captured terrain.
-  The terrain replay keeps separate fixture provenance. These component checks
-  do not prove physical input or the complete
-  two-game experience; its visual smoothness and repeated walking remain unverified.
-  It connects WASD/Space, fresh KCD camera direction, sampled ground, vanilla
-  client/server movement and KCD HUD composition in one bounded lab. It permits up to five seconds of input
-  plus one second to settle, with earlier footprint/displacement pauses, inside a
-  30-second HUD session. Inventory transitions release movement and require a
-  fresh neutral/repress. This is separate from aimed stone input and does not
-  establish continuous walking, physical-input exclusivity or full-world movement
-  authority. Native KCD physics remains enabled.
+- The separate physical HUD walking profile passes bounded controls and cleanup,
+  but smoothness remains unfinished. Latest combined run
+  `725d69490f464ca989fccb3783a7cba4` passes 49 forwarded server poses, 49 delayed
+  KCD readbacks and restoration; its 484 camera samples have no stale discards.
+  The user says it is still choppy, perhaps a little better. Earlier `0e14...`
+  confirmed movement in all directions. Repeated controls work, but continuous,
+  exclusive or smooth walking is not established. The physical follower now
+  performs six or seven writes per moving segment, about 16 ms apart, and skips
+  all stationary rewrites. Four consecutive moving transitions still pause
+  47-64 ms; source captures remain about 101 ms apart and can reach 168 ms.
+  Fixed 100 ms segments compress those irregular source intervals and change
+  speed abruptly. Camera delivery stays fresh, and sampled camera-to-player
+  offsets show no large jumps. These are timing leads, not proof of rendered
+  frame smoothness. The new path passes 47 Lua and 17 PowerShell interpolation
+  checks, a six-target autonomous KCD probe, and the combined technical check;
+  the subjective problem is not fixed.
+  Camera delivery runs independently with a retained log handle and original
+  timestamps. Its 110 ms cadence fits the existing 1,024-sample budget. Boundary
+  pauses require balanced release and fresh press without restarting the original
+  five-second activation window. Physical travel permits vertical offsets within
+  -1.5 m to +1.5 m inside the unchanged 2 m host sphere, with tighter Java
+  predictive limits and sampled coverage. Legacy scripted bounds are unchanged.
+  Actual-Minecraft fixtures separately pass scripted resumed movement, zero
+  movement in inventory and HUD capture on flat and replayed terrain; their
+  provenance is separate from live physical input. The profile connects
+  WASD/Space, fresh KCD direction, sampled ground, vanilla client/server movement
+  and HUD composition for at most five seconds of input plus one second of
+  settling inside a 30-second HUD check. Inventory transitions release movement
+  and require a fresh neutral/repress. This remains separate from aimed stone
+  input and full-world movement.
+
 - The same Minecraft world now passes scripted walking/jumping/landing on a
   synthetic ground patch while capturing the HUD, followed by its inventory
   sequence. This standalone fixture makes no KCD calls and does not establish

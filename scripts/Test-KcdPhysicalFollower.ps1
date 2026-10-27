@@ -12,6 +12,7 @@ if($PreflightOnly){Write-Output 'PHYSICAL_FOLLOWER_PREFLIGHT_PASS no_changes=tru
 $probe=$null;$cursor=$null;$budget=$null;$budgetEvidence=$null;$failure=$null
 $requested=$false;$restored=$false;$passed=$false;$receipts=@();$origin=$null
 $targets=[Collections.Generic.List[object]]::new();$applied=[Collections.Generic.List[object]]::new()
+$segments=[Collections.Generic.List[object]]::new()
 function Console([string]$Code,[int]$Timeout=1000){
     Assert-MineComeProbeContext $context
     $command='#'+$Code+"; System.LogAlways('[MineComePhysicalFollowerFlush] $($probe.Run)')"
@@ -37,6 +38,63 @@ function Distance($A,$B){
         $sum+=($axisA-$axisB)*($axisA-$axisB)
     }
     return [Math]::Sqrt($sum)
+}
+function Assert-InterpolationReceipt($Receipt,$From,$Target){
+    if($Receipt.position_mode -cne 'timed_interpolation' -or $Receipt.interpolation_ms -ne 100 -or
+        $Receipt.readback -ne $true -or $Receipt.physical_movement -ne $true -or $Receipt.camera_basis_valid -ne $true -or
+        (Distance $Receipt.target $Target) -gt .0001 -or (Distance $Receipt.player $Target) -gt .05 -or
+        $null -eq $Receipt.target_receipt_age_ms -or $Receipt.target_receipt_age_ms -le 0 -or $Receipt.target_receipt_age_ms -gt 400){
+        throw 'The timed segment did not reach its exact fresh endpoint.'
+    }
+    $samples=@($Receipt.segment_observed_samples)
+    foreach($name in @('segment_update_count','segment_observation_count','segment_max_readback_error','target_receipt_age_ms','sampled_engine_seconds','segment_start_engine_seconds')){
+        if($Receipt.$name -isnot [ValueType] -or $Receipt.$name -is [bool] -or -not [double]::IsFinite([double]$Receipt.$name)){
+            throw 'Invalid segment summary number.'
+        }
+    }
+    if($samples.Count -lt 1 -or $samples.Count -gt 8 -or $Receipt.segment_observation_count -ne $samples.Count -or
+        $Receipt.segment_observed_samples_truncated -isnot [bool] -or $Receipt.segment_observed_samples_truncated -or
+        $Receipt.endpoint_write_performed -isnot [bool] -or
+        $Receipt.segment_update_count -lt 0 -or $Receipt.segment_update_count -gt 511 -or
+        $Receipt.segment_max_readback_error -lt 0 -or $Receipt.segment_max_readback_error -gt .05){throw 'Invalid bounded segment observation summary.'}
+    $stationary=(Distance $From $Target) -lt .000001
+    $accepted=[double]$Receipt.sampled_engine_seconds-[double]$Receipt.target_receipt_age_ms/1000
+    $started=[double]$Receipt.segment_start_engine_seconds
+    if($started -lt $accepted-.00001 -or $started -gt $samples[0].written_engine_seconds){throw 'Interpolation starts before target acceptance or after its first update.'}
+    $previousFraction=-1.0;$previousObserved=-1.0;$gaps=[Collections.Generic.List[double]]::new()
+    foreach($sample in $samples){
+        foreach($name in @('fraction','written_engine_seconds','observed_engine_seconds','readback_error')){
+            if($sample.$name -isnot [ValueType] -or $sample.$name -is [bool] -or -not [double]::IsFinite([double]$sample.$name)){
+                throw 'Invalid segment sample number.'
+            }
+        }
+        $fraction=[double]$sample.fraction
+        $timedFraction=[Math]::Min(1.0,([double]$sample.written_engine_seconds-$started)/.1)
+        if(-not $stationary -and [Math]::Abs($fraction-$timedFraction) -gt .00001){throw 'Interpolation fraction does not match its engine-time duration.'}
+        if($fraction -le $previousFraction -or $fraction -lt 0 -or $fraction -gt 1 -or
+            $sample.observed_engine_seconds -le $sample.written_engine_seconds -or
+            $sample.written_engine_seconds -lt $previousObserved -or $sample.readback_error -lt 0 -or $sample.readback_error -gt .05 -or
+            $sample.write_performed -isnot [bool] -or $Receipt.segment_max_readback_error+.000001 -lt $sample.readback_error){throw 'Segment observations must follow distinct normal frames in order.'}
+        $expected=[pscustomobject]@{x=$From.x+($Target.x-$From.x)*$fraction;y=$From.y+($Target.y-$From.y)*$fraction;z=$From.z+($Target.z-$From.z)*$fraction}
+        if((Distance $sample.requested $expected) -gt .0001 -or (Distance $sample.actual $sample.requested) -gt .05){
+            throw 'Observed segment position differs from the bounded linear path.'
+        }
+        $gaps.Add(1000.0*($sample.observed_engine_seconds-$sample.written_engine_seconds))
+        $previousFraction=$fraction;$previousObserved=[double]$sample.observed_engine_seconds
+    }
+    $ordered=@($gaps | Sort-Object);$median=$ordered[[int][Math]::Floor($ordered.Count/2)]
+    if($previousFraction -ne 1 -or $Receipt.sampled_engine_seconds -ne $previousObserved -or
+        (-not $stationary -and $samples[-1].written_engine_seconds -lt $started+.1-.00001) -or
+        $Receipt.endpoint_write_performed -ne $samples[-1].write_performed -or
+        $Receipt.segment_update_count -ne @($samples | Where-Object write_performed -EQ $true).Count){throw 'Last observed sample or update count differs from the acknowledged endpoint.'}
+    if($stationary){
+        if($Receipt.segment_update_count -ne 0 -or $Receipt.endpoint_write_performed -ne $false -or
+            @($samples | Where-Object write_performed -EQ $true).Count){throw 'An already stationary target caused position writes.'}
+    }elseif($samples.Count -lt 4 -or $Receipt.segment_update_count -lt 4 -or $median -gt 25){
+        throw 'The segment did not demonstrate smaller updates at normal frame cadence.'
+    }
+    return [pscustomobject]@{seq=$Receipt.seq;stationary=$stationary;updates=$Receipt.segment_update_count;
+        observations=$Receipt.segment_observation_count;median_observation_gap_ms=$median;max_observation_gap_ms=($ordered | Select-Object -Last 1)}
 }
 function Wait-Restoration {
     $clock=[Diagnostics.Stopwatch]::StartNew()
@@ -66,7 +124,7 @@ try{
     if((Setup-Receipt 'MineComeMovementContract').result -cne 'verified'){throw 'No-link contract was not acknowledged.'}
     $budget=New-MineComeHudGpuBudget $context;Start-MineComeHudGpuBudget $budget
     $seq=0;$previous=$origin
-    foreach($offset in @(.2,.4,.1,-.1,0.0)){
+    foreach($offset in @(.2,.4,.1,-.1,0.0,0.0)){
         $seq++
         $target=[pscustomobject]@{x=[double]$origin.x+$offset;y=[double]$origin.y;z=[double]$origin.z}
         $targets.Add([pscustomobject]@{seq=$seq;target=$target})
@@ -78,9 +136,14 @@ try{
             $code="local p=player and player:GetWorldPos(); if p and (p.x-($ox))^2+(p.y-($oy))^2+(p.z-($oz))^2<=0.01 then if MineCome.BeginPhysicalMovementFollower('$($probe.Run)') then $code end end"
         }
         $requested=$true;Console $code 150
-        $wait=[Diagnostics.Stopwatch]::StartNew();$receipt=$null
+        $wait=[Diagnostics.Stopwatch]::StartNew();$receipt=$null;$lastFlush=-1000L
         do{
-            Console "System.LogAlways('[MineComePhysicalFollowerReadback] $($probe.Run)')" 150
+            # The log cursor can poll locally. Repeated console requests must
+            # not become the dominant work in this frame-cadence measurement.
+            if($wait.ElapsedMilliseconds-$lastFlush -ge 100){
+                Console "System.LogAlways('[MineComePhysicalFollowerReadback] $($probe.Run)')" 150
+                $lastFlush=$wait.ElapsedMilliseconds
+            }
             $receipts=@(Read-Receipts 'MineComeMovementFollower')
             if(@($receipts | Where-Object terminal -EQ $true).Count){throw 'Follower stopped during the scripted target sequence.'}
             $matching=@($receipts | Where-Object {$_.event -ceq 'applied' -and $_.seq -eq $seq})
@@ -96,13 +159,7 @@ try{
             # can precede a small idle adjustment; it must not redefine restore.
             $origin=$begins[0].player;$previous=$origin
         }
-        $mid=[pscustomobject]@{x=($previous.x+$target.x)/2;y=($previous.y+$target.y)/2;z=($previous.z+$target.z)/2}
-        if($receipt.position_mode -cne 'two_frame_interpolation' -or $receipt.readback -ne $true -or $receipt.camera_basis_valid -ne $true -or
-            $null -eq $receipt.midpoint_readback_error -or $receipt.midpoint_readback_error -gt .05 -or
-            (Distance $receipt.midpoint_target $mid) -gt .0001 -or (Distance $receipt.midpoint_player $mid) -gt .05 -or
-            (Distance $receipt.target $target) -gt .0001 -or (Distance $receipt.player $target) -gt .05 -or
-            $receipt.midpoint_sampled_engine_seconds -ge $receipt.sampled_engine_seconds -or
-            $receipt.target_receipt_age_ms -le 0 -or $receipt.target_receipt_age_ms -gt 400){throw 'Actual midpoint and endpoint observations did not prove the selected segment.'}
+        $segments.Add((Assert-InterpolationReceipt $receipt $previous $target))
         $applied.Add($receipt);$previous=$target
     }
     Console "MineCome.EndMovementFollower('$($probe.Run)')" 150
@@ -127,9 +184,9 @@ finally{
         [ordered]@{schema=1;kind='minecome_scripted_physical_follower_probe_v1';run=$probe.Run;result=$(if($passed){'passed'}else{'failed'});failure=$failure;
             scripted_targets=$true;physical_input_verified=$false;minecraft_connected=$false;hud_armed=$false;visual_smoothness_verified=$false;
             target_pid=$context.GamePid;source_sha256=$probe.SourceHash;selected_targets=$targets.Count;delayed_readbacks=$applied.Count;
-            midpoint_readbacks_verified=($passed -and $applied.Count -eq 5);restoration_verified=$restored;host_gpu_budget=$budgetEvidence} |
+            frame_interpolation_verified=($passed -and $applied.Count -eq 6);segments=$segments.ToArray();restoration_verified=$restored;host_gpu_budget=$budgetEvidence} |
             ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $probe.Directory 'verification.json') -Encoding utf8NoBOM
-        Write-Output "PHYSICAL_FOLLOWER_SCRIPTED_RESULT passed=$passed midpoint_and_endpoint_pairs=$($applied.Count) restored=$restored evidence=$($probe.Directory)"
+        Write-Output "PHYSICAL_FOLLOWER_SCRIPTED_RESULT passed=$passed observed_segments=$($applied.Count) restored=$restored evidence=$($probe.Directory)"
     }
 }
 if(-not $passed){throw 'Scripted physical follower check did not complete.'}
