@@ -112,4 +112,61 @@ $bound=New-HudWalkingReceiptCursor $pBound 16 $run
 Check (@(Read-HudWalkingReceipts $bound $tags[2]).Count -eq 0 -and $bound.Position -eq 16+8388608) 'Exact8MiB new extent rejected'
 Append $pBound ([byte[]]@(10))
 Reject {Read-HudWalkingReceipts $bound $tags[2]} 'Extent beyond8MiB accepted'
+
+# The camera worker can retain a read handle, preserving all parser/extent rules.
+$pHeld=File 'held.log' $encoding.GetBytes((Record $tags[2] 1)+"`n"+(Record $tags[2] 2))
+$held=New-HudWalkingReceiptCursor $pHeld 0 $run -KeepOpen
+Check ($held.KeepOpen -and $null -eq $held.Stream -and -not $held.Closed) 'Persistent cursor did not start unopened'
+try{
+    Check (@(Read-HudWalkingReceipts $held $tags[2]).Count -eq 1) 'Persistent cursor consumed an incomplete tail'
+    $handle=$held.Stream;$heldPosition=$held.Position
+    Append $pHeld $encoding.GetBytes("`n")
+    $values=@(Read-HudWalkingReceipts $held $tags[2])
+    Check ($values.Count -eq 2 -and $values[1].seq -eq 2 -and $held.Position -gt $heldPosition) 'Persistent handle did not observe append after its previous EOF'
+    Check ([object]::ReferenceEquals($handle,$held.Stream)) 'Persistent read reopened the log'
+    Append $pHeld $encoding.GetBytes((Record $tags[2] 3))
+    $null=Read-HudWalkingReceipts $held $tags[2]
+    # Rewrite an uncommitted tail in place, without changing the observed length.
+    # A buffered old tail must not turn this malformed complete line into JSON.
+    $f=[IO.FileStream]::new($pHeld,[IO.FileMode]::Open,[IO.FileAccess]::Write,[IO.FileShare]::ReadWrite)
+    try{$f.Position=$held.Position;$f.WriteByte([byte][char]'!');$f.Position=$f.Length;$f.WriteByte(10)}finally{$f.Dispose()}
+    $values=@(Read-HudWalkingReceipts $held $tags[2])
+    Check ($values.Count -eq 2 -and $held.Parsed -eq 2) 'Persistent read used stale buffered tail bytes'
+    Append $pHeld $encoding.GetBytes('truncated partial tail')
+    $null=Read-HudWalkingReceipts $held $tags[2]
+    $f=[IO.FileStream]::new($pHeld,[IO.FileMode]::Open,[IO.FileAccess]::Write,[IO.FileShare]::ReadWrite)
+    try{$f.SetLength($held.Position)}finally{$f.Dispose()}
+    Reject {Read-HudWalkingReceipts $held $tags[2]} 'Persistent handle accepted tail truncation'
+}finally{Close-HudWalkingReceiptCursor $held}
+Check ($held.Closed -and $null -eq $held.Stream -and -not $handle.CanRead) 'Closing retained cursor did not dispose its handle'
+Close-HudWalkingReceiptCursor $held
+Reject {Read-HudWalkingReceipts $held $tags[2]} 'Closed persistent cursor reopened'
+
+$heldBatch=New-HudWalkingReceiptCursor $pBatch 0 $run -KeepOpen
+try{
+    Reject {Read-HudWalkingReceipts $heldBatch $tags[2]} 'Persistent cursor accepted malformed batch'
+    Check ($heldBatch.Position -eq 0 -and $heldBatch.Parsed -eq 0 -and $heldBatch.Receipts[$tags[2]].Count -eq 0) 'Persistent malformed batch partially committed'
+}finally{Close-HudWalkingReceiptCursor $heldBatch}
+$heldBound=New-HudWalkingReceiptCursor $pBound 16 $run -KeepOpen
+try{Reject {Read-HudWalkingReceipts $heldBound $tags[2]} 'Persistent cursor accepted extent beyond8MiB'}finally{Close-HudWalkingReceiptCursor $heldBound}
+$heldOffset=New-HudWalkingReceiptCursor $pOffset 6 $run -KeepOpen
+try{Reject {Read-HudWalkingReceipts $heldOffset $tags[2]} 'Persistent cursor accepted offset beyond current length'}finally{Close-HudWalkingReceiptCursor $heldOffset}
+
+# File rotation remains permitted, but its replacement must never enter the
+# pinned cursor. The camera's existing no-ack deadline will fail closed.
+$pRotate=File 'rotating.log' $encoding.GetBytes((Record $tags[2] 1)+"`n")
+$rotated=Join-Path $dir 'rotated-original.log'
+$rotating=New-HudWalkingReceiptCursor $pRotate 0 $run -KeepOpen
+try{
+    $null=Read-HudWalkingReceipts $rotating $tags[2]
+    [IO.File]::Move($pRotate,$rotated)
+    [IO.File]::WriteAllText($pRotate,((Record $tags[2] 999)+"`n"),$encoding)
+    $values=@(Read-HudWalkingReceipts $rotating $tags[2])
+    Check ($values.Count -eq 1 -and $values[0].seq -eq 1) 'Rotated replacement entered retained receipt history'
+    Append $rotated $encoding.GetBytes((Record $tags[2] 2)+"`n")
+    $values=@(Read-HudWalkingReceipts $rotating $tags[2])
+    Check ($values.Count -eq 2 -and $values[1].seq -eq 2) 'Retained cursor did not remain attached to its original file'
+}finally{Close-HudWalkingReceiptCursor $rotating}
+Close-HudWalkingReceiptCursor $c
+Reject {Read-HudWalkingReceipts $c $tags[2]} 'Explicitly closed default cursor reopened'
 Write-Output "HUD_WALKING_RECEIPTS_TESTS checks=$script:checks PASS"

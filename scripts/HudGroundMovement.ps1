@@ -18,10 +18,16 @@ function Resolve-HudMovementEvidencePath([string]$Path,[string]$ProjectRoot) {
     if(-not $resolved.StartsWith($evidenceRoot+'\',[StringComparison]::OrdinalIgnoreCase)){throw 'HUD movement evidence must stay inside runtime/evidence.'}
     $ancestor=$resolved
     while($ancestor){
-        if(Test-Path -LiteralPath $ancestor){
-            if((Get-Item -LiteralPath $ancestor -Force).Attributes -band [IO.FileAttributes]::ReparsePoint){throw 'HUD movement evidence cannot use reparse points.'}
+        # GetAttributes reads the link itself, including dangling junctions.
+        # Only absent components are allowed for a new output. Access failures
+        # and other I/O errors must not be mistaken for an absent component.
+        try{$attributes=[IO.File]::GetAttributes($ancestor)}
+        catch [IO.FileNotFoundException]{$attributes=$null}
+        catch [IO.DirectoryNotFoundException]{$attributes=$null}
+        if($null -ne $attributes -and ($attributes -band [IO.FileAttributes]::ReparsePoint)){
+            throw 'HUD movement evidence cannot use reparse points.'
         }
-        $ancestor=Split-Path -Parent $ancestor
+        $ancestor=[IO.Path]::GetDirectoryName($ancestor)
     }
     return $resolved
 }

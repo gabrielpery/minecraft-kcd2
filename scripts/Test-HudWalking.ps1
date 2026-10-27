@@ -9,6 +9,7 @@ Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'HudGroundMovement.ps1')
 . (Join-Path $PSScriptRoot 'HudPhysicalMovement.ps1')
 . (Join-Path $PSScriptRoot 'HudWalkingReceipts.ps1')
+. (Join-Path $PSScriptRoot 'HudCameraDelivery.ps1')
 . (Join-Path $PSScriptRoot 'MovementTraceReceiver.ps1')
 . (Join-Path $PSScriptRoot 'CoupledMovementProof.ps1')
 . (Join-Path $PSScriptRoot 'HudGpuBudget.ps1')
@@ -23,13 +24,12 @@ if($PreflightOnly){Write-Output 'HUD_WALKING_PREFLIGHT_PASS no_changes=true';ret
 $probe=$null;$helper=$null;$arm=$null;$budget=$null;$budgetEvidence=$null;$failure=$null
 $followerStarted=$false;$restored=$false;$passed=$false;$traceEnded=$false;$tracePassed=$false
 $ready=$null;$readyHash=$null;$guest=$null;$producerIdentity=$null;$receiver=$null;$physicalReady=$null
-$run=[Guid]::NewGuid().ToString('N');$viewSequence=0L;$viewEngine=-1.0;$viewCount=0
+$run=[Guid]::NewGuid().ToString('N');$camera=$null;$cameraState=$null
 $forwarded=[Collections.Generic.List[object]]::new()
 $traceReader=[pscustomobject]@{Path=$null;Stream=$null;Bytes=[byte[]]::new(0)}
-$lineCount=0;$lastViewRequest=0L;$viewTemporary=$null;$viewPending=$null;$staleViews=0;$lastRestoreFlush=0L
+$lineCount=0;$lastRestoreFlush=0L
 $receipts=@();$applied=@();$traceHash=$null
 $receiptCursor=$null
-$viewTimings=[Collections.Generic.List[object]]::new()
 function Read-Receipts([string]$Tag){
     return @(Read-HudWalkingReceipts $script:receiptCursor $Tag)
 }
@@ -37,52 +37,6 @@ function Console([string]$Code){
     # CryLog finalizes the previous line when another record arrives. The
     # marker makes a completed receipt readable without accepting a partial tail.
     Invoke-MineComeProbeConsole $context ('#'+$Code+"; System.LogAlways('[MineComeHudWalkingFlush] $($probe.Run)')")
-}
-function Refresh-View {
-    $now=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
-    if($null -eq $script:viewPending){
-        if($now-$script:lastViewRequest -lt 90){return}
-        $script:lastViewRequest=$now
-        $script:viewPending=[pscustomobject]@{Utc=$now;Sequence=$script:viewSequence+1}
-        Console "MineCome.SamplePhysicalHudView('$($probe.Run)')"
-    }
-    $requestUtc=$script:viewPending.Utc
-    $values=@(Read-Receipts 'MineComeHudPhysicalView' | Where-Object {$_.seq -gt $script:viewSequence})
-    if(-not $values.Count){
-        if([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()-$requestUtc -gt 1000){throw 'Physical camera request did not acknowledge.'}
-        return
-    }
-    if($values.Count -ne 1){throw 'Physical camera request lacked exactly one acknowledgement.'}
-    $sample=$values[-1]
-    if($sample.result -cne 'sampled' -or $sample.physical_movement -ne $true -or $sample.camera_basis_valid -ne $true -or
-        $sample.seq -le $script:viewSequence -or $sample.sampled_engine_seconds -le $script:viewEngine){
-        throw 'Physical camera sampler lost its verified actor/basis/clock.'
-    }
-    # Timestamp the request, never publication: delayed log reads cannot freshen
-    # an old camera observation. Only this request's immediately following sample
-    # is accepted; another pending request cannot be stamped with a newer clock.
-    if($sample.seq -ne $script:viewPending.Sequence){throw 'Physical view sampler skipped a sequence.'}
-    $now=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
-    $script:viewSequence=[long]$sample.seq;$script:viewEngine=[double]$sample.sampled_engine_seconds
-    $script:viewPending=$null
-    # Startup scheduling gaps own no movement. Consume, but never publish an
-    # expired observation; later genuinely fresh observations may restore readiness.
-    # During movement Java's300ms view lease still releases keys and fails closed.
-    if($now-$requestUtc -gt 250){
-        $script:staleViews++
-        $script:viewTimings.Add([pscustomobject]@{seq=$sample.seq;requested_utc_ms=$requestUtc;receipt_utc_ms=$now;published_utc_ms=$null;stale=$true})
-        return
-    }
-    $view=[ordered]@{schema=1;source_kind='live_kcd_hud_view_v1';run=$run;patch_run=$livePatch.Run;patch_sha256=$livePatch.Hash;target_pid=$context.GamePid;target_start_filetime=$context.GameStartedUtc.ToFileTimeUtc().ToString();seq=$script:viewSequence;utc_ms=$requestUtc;forward=$sample.camera.forward;up=$sample.camera.up}
-    $bytes=[Text.UTF8Encoding]::new($false).GetBytes(($view | ConvertTo-Json -Depth 5 -Compress))
-    if($bytes.Length -gt 4096){throw 'Physical camera file exceeds its bound.'}
-    [void](Resolve-HudMovementEvidencePath $viewFile $root)
-    $file=[IO.FileStream]::new($viewTemporary,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
-    try{$file.Write($bytes);$file.Flush($true)}finally{$file.Dispose()}
-    if(Test-Path -LiteralPath $viewFile){[IO.File]::Replace($viewTemporary,$viewFile,[NullString]::Value)}
-    else{[IO.File]::Move($viewTemporary,$viewFile,$false)}
-    $script:viewTimings.Add([pscustomobject]@{seq=$sample.seq;requested_utc_ms=$requestUtc;receipt_utc_ms=$now;published_utc_ms=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds();stale=$false})
-    $script:viewCount++
 }
 function Send-Pose($Sample){
     Assert-MineComeProbeContext $context
@@ -103,7 +57,7 @@ function Send-Pose($Sample){
 }
 try{
     $probe=New-MineComeProbeRun $context 'hud-walking' (Join-Path $root 'kcd2/probes/movement_probe.lua') 'BeginPhysicalMovementFollower'
-    $receiptCursor=New-HudWalkingReceiptCursor $context.GameLog $probe.Offset $probe.Run
+    $receiptCursor=New-HudWalkingReceiptCursor $context.GameLog $probe.Offset $probe.Run -KeepOpen
     Console "MineCome.ProbeMovementCapabilities('$($probe.Run)')"
     $until=[DateTime]::UtcNow.AddSeconds(4);$cap=$null
     do{
@@ -125,14 +79,22 @@ try{
     $livePatch=Read-HudLiveGroundPatch $patchFile $root $context
     $directory=$probe.Directory
     $traceReader.Path=Join-Path $directory 'movement.ndjson'
-    $viewFile=Join-Path $directory 'host-view.json';$viewTemporary=$viewFile+'.'+$run+'.tmp'
+    $viewFile=Join-Path $directory 'host-view.json'
     $readyPath=Join-Path $directory 'capture/stream-ready.json';$resultPath=Join-Path $directory 'capture/stream-result.json'
     $minimumUtc=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds();$expires=$minimumUtc+180000
-    $initialViewDeadline=[DateTime]::UtcNow.AddSeconds(2)
-    do{Refresh-View;if($viewCount){break};Start-Sleep -Milliseconds 10}while([DateTime]::UtcNow -lt $initialViewDeadline)
-    if($viewCount -ne 1){throw 'Initial fresh camera view did not acknowledge.'}
     $budget=New-MineComeHudGpuBudget $context
     Start-MineComeHudGpuBudget $budget
+    $deadline=[DateTime]::UtcNow.AddSeconds(112)
+    $camera=Start-HudCameraDelivery -Context $context -Probe $probe -Run $run -LivePatch $livePatch -ViewFile $viewFile -ProjectRoot $root
+    $initialViewDeadline=[DateTime]::UtcNow.AddSeconds(2)
+    do{
+        $cameraState=Get-HudCameraDeliveryState $camera
+        if($cameraState.Failure){throw $cameraState.Failure}
+        if($cameraState.Stopped){throw 'Camera delivery stopped before initial readiness.'}
+        if($cameraState.ViewCount -gt 0){break}
+        Start-Sleep -Milliseconds 10
+    }while([DateTime]::UtcNow -lt $initialViewDeadline)
+    if($cameraState.ViewCount -lt 1){throw 'Initial fresh camera view did not acknowledge.'}
     $args=@('-NoProfile','-File',(Join-Path $PSScriptRoot 'Run-HudStreamClient.ps1'),'-EvidenceDirectory',$directory,'-Run',$run,
         '-TargetPid',[string]$context.GamePid,'-TargetStart',$context.GameStartedUtc.ToFileTimeUtc().ToString(),
         '-ExpiresUtcMs',[string]$expires,'-JavaHome',$JavaHome,'-InputMode','-LiveMouse','-OffscreenPresentation','-PhysicalMovement',
@@ -140,10 +102,13 @@ try{
     $quoted=@($args | ForEach-Object {ConvertTo-MineComeWindowsArgument $_})
     $helper=Start-Process -FilePath (Join-Path $PSHOME 'pwsh.exe') -ArgumentList ([string]::Join(' ',$quoted)) -WorkingDirectory $root -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $directory 'helper.log') -RedirectStandardError (Join-Path $directory 'helper-errors.log')
     Write-Output "HUD_WALKING_START run=$run evidence=$directory"
-    $deadline=[DateTime]::UtcNow.AddSeconds(112)
     do{
         Assert-MineComeProbeContext $context
-        if(-not $traceEnded){Refresh-View}
+        if(-not $traceEnded){
+            $cameraState=Get-HudCameraDeliveryState $camera
+            if($cameraState.Failure){throw $cameraState.Failure}
+            if($cameraState.Stopped){throw 'Camera delivery stopped before movement completed.'}
+        }
         if(-not $ready -and (Test-Path -LiteralPath $readyPath)){
             $ready=Read-HudMovementJson $readyPath
             Assert-HudPhysicalMovementReady $ready $true
@@ -164,8 +129,10 @@ try{
                 $physicalReady.patch_sha256 -cne $receiver.PatchHash -or $physicalReady.target_pid -ne $context.GamePid -or
                 $physicalReady.target_start_filetime -cne $context.GameStartedUtc.ToFileTimeUtc().ToString() -or
                 $physicalReady.utc_ms -lt $minimumUtc -or $physicalReady.utc_ms -gt [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()+50 -or
-                $physicalReady.view_seq -lt 1 -or $physicalReady.view_seq -gt $viewSequence){throw 'Actual physical guest readiness did not match the current session.'}
-            Write-Output "HUD_WALKING_READY run=$run press_F8=true movement_seconds=6 hud_seconds=30"
+                $physicalReady.view_seq -lt 1 -or $physicalReady.view_seq -gt (Get-HudCameraDeliveryState $camera).Sequence){throw 'Actual physical guest readiness did not match the current session.'}
+            $activationWindow=[int][Math]::Floor(($deadline-[DateTime]::UtcNow).TotalSeconds-35)
+            if($activationWindow -lt 1){throw 'Not enough bounded time remains for the full physical HUD check.'}
+            Write-Output "HUD_WALKING_READY run=$run press_F8=true press_F8_within_seconds=$activationWindow movement_seconds=6 hud_seconds=30"
         }
         if($receiver -and -not $traceEnded){
             $producer=Get-Process -Id $producerIdentity.Pid
@@ -178,7 +145,13 @@ try{
             }
             $lineCount=$lines.Count
             if($candidate -and -not $traceEnded){Send-Pose $candidate}
+            if($traceEnded -and $camera){Request-HudCameraDeliveryStop $camera}
             if($traceEnded -and $followerStarted){Console "MineCome.EndMovementFollower('$($probe.Run)')"}
+            if($traceEnded -and $camera){
+                $cameraState=Stop-HudCameraDelivery $camera
+                if($cameraState.ResourcesClosed){$camera=$null}
+                if($cameraState.Failure -or -not $cameraState.Stopped -or -not $cameraState.ResourcesClosed){throw 'Camera delivery did not stop cleanly.'}
+            }
         }
         $receipts=@(Read-Receipts 'MineComeMovementFollower')
         $terminal=@($receipts | Where-Object terminal -EQ $true)
@@ -238,6 +211,9 @@ try{
 }catch{$failure=$_.Exception.Message;throw}
 finally{
     if($probe){
+        # Stop publication immediately; joining the worker must not delay the
+        # follower's explicit end command or its restoration receipt.
+        if($camera){Request-HudCameraDeliveryStop $camera}
         if($followerStarted -and -not $restored){
             try{
                 Console "MineCome.EndMovementFollower('$($probe.Run)')"
@@ -251,17 +227,34 @@ finally{
                 }while([DateTime]::UtcNow -lt $cleanupUntil)
             }catch{[IO.File]::WriteAllText((Join-Path $probe.Directory 'cleanup-error.txt'),$_.Exception.Message)}
         }
+        if($receiptCursor){
+            try{Close-HudWalkingReceiptCursor $receiptCursor}
+            catch{if(-not $failure){$failure=$_.Exception.Message};$passed=$false}
+        }
+        # Join the cancelled worker. The guest's 300ms view lease and native
+        # 250ms input lease release movement; the engine owns its 400ms lease.
+        if($camera){
+            try{
+                $cameraState=Stop-HudCameraDelivery $camera
+                if($cameraState.ResourcesClosed){$camera=$null}
+                if($cameraState.Failure -or -not $cameraState.Stopped -or -not $cameraState.ResourcesClosed){
+                    if(-not $failure){$failure='Camera delivery did not stop cleanly.'};$passed=$false
+                }
+            }
+            catch{if(-not $failure){$failure=$_.Exception.Message};$passed=$false}
+        }
         if($budget -and -not $budget.StopAttempted){
             try{Stop-MineComeHudGpuBudget $budget}catch{if(-not $failure){$failure=$_.Exception.Message};$passed=$false}
             $budgetEvidence=Get-MineComeHudGpuBudgetEvidence $budget
         }
-        # On failure, stop refreshing view. The guest's300ms lease and native
-        # input250ms lease release held movement; the engine owns its400ms lease.
-        if($viewTemporary -and (Test-Path -LiteralPath $viewTemporary)){Remove-Item -LiteralPath $viewTemporary}
+        # Preserve actual delayed readbacks even when a later check failed.
+        $applied=@($receipts | Where-Object {$_.event -ceq 'applied' -and $_.physical_movement -eq $true -and $_.readback -eq $true -and $_.camera_basis_valid -eq $true -and $null -ne $_.player_readback_error -and $_.player_readback_error -le 0.15})
         ConvertTo-Json -InputObject $forwarded.ToArray() -Depth 8 | Set-Content -LiteralPath (Join-Path $probe.Directory 'forwarded.json') -Encoding utf8NoBOM
         ConvertTo-Json -InputObject $receipts -Depth 10 | Set-Content -LiteralPath (Join-Path $probe.Directory 'kcd-receipts.json') -Encoding utf8NoBOM
-        ConvertTo-Json -InputObject $viewTimings.ToArray() -Depth 4 | Set-Content -LiteralPath (Join-Path $probe.Directory 'view-timings.json') -Encoding utf8NoBOM
-        [ordered]@{schema=1;kind='minecome_hud_walking_controller_v1';run=$run;probe_run=$probe.Run;result=$(if($passed){'passed'}else{'failed'});failure=$failure;target_pid=$context.GamePid;target_start_filetime=$context.GameStartedUtc.ToFileTimeUtc().ToString();source_sha256=$probe.SourceHash;compositor_armed=[bool]$arm;view_samples=$viewCount;forwarded_frames=$forwarded.Count;delayed_readbacks=$applied.Count;trace_passed=$tracePassed;trace_sha256=$traceHash;restoration_verified=$restored;host_gpu_budget=$budgetEvidence;guest=$guest;visual_verified=$false;physical_input_exclusivity_verified=$false;full_world_movement_authority_verified=$false} |
+        $viewTimings=@();$viewCount=0;$cameraEvidence=$null
+        if($cameraState){$viewCount=$cameraState.ViewCount;$cameraEvidence=$cameraState | Select-Object -ExcludeProperty Timings;if($cameraState.PSObject.Properties['Timings']){$viewTimings=@($cameraState.Timings)}}
+        ConvertTo-Json -InputObject $viewTimings -Depth 4 | Set-Content -LiteralPath (Join-Path $probe.Directory 'view-timings.json') -Encoding utf8NoBOM
+        [ordered]@{schema=1;kind='minecome_hud_walking_controller_v1';run=$run;probe_run=$probe.Run;result=$(if($passed){'passed'}else{'failed'});failure=$failure;target_pid=$context.GamePid;target_start_filetime=$context.GameStartedUtc.ToFileTimeUtc().ToString();source_sha256=$probe.SourceHash;compositor_armed=[bool]$arm;view_samples=$viewCount;camera_worker=$cameraEvidence;forwarded_frames=$forwarded.Count;delayed_readbacks=$applied.Count;trace_passed=$tracePassed;trace_sha256=$traceHash;restoration_verified=$restored;host_gpu_budget=$budgetEvidence;guest=$guest;visual_verified=$false;physical_input_exclusivity_verified=$false;full_world_movement_authority_verified=$false} |
             ConvertTo-Json -Depth 16 | Set-Content -LiteralPath (Join-Path $probe.Directory 'verification.json') -Encoding utf8NoBOM
     }
     if($traceReader.Stream){$traceReader.Stream.Dispose()}

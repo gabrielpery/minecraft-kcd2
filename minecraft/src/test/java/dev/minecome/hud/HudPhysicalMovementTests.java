@@ -219,5 +219,5 @@ public final class HudPhysicalMovementTests {
             }finally{release.countDown();}
         }finally{Files.delete(root);}
     }
-    public static void main(String[] args)throws Exception{modes();wire();holds();views();reader();readerRaces();System.out.println("HudPhysicalMovementTests: "+checks+" checks passed");}
+    public static void main(String[] args)throws Exception{modes();wire();holds();views();reader();readerRaces();checks+=dev.minecome.terrain.HudMovementBoundaryTests.run();System.out.println("HudPhysicalMovementTests: "+checks+" checks passed");}
 }

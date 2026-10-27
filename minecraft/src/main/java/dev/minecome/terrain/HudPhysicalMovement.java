@@ -4,6 +4,7 @@ import com.google.gson.JsonObject;
 import dev.minecome.hud.*;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.entity.Entity;
+import net.minecraft.entity.attribute.EntityAttributes;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.util.math.*;
@@ -22,6 +23,7 @@ public final class HudPhysicalMovement {
     private final HudInputProtocol.Identity identity;
     private final Path traceFile,viewFile;
     private final HudMovementKeys keys=new HudMovementKeys();
+    private final HudMovementCompletion completion=new HudMovementCompletion();
     private final AtomicReference<Observation> observed=new AtomicReference<>();
     private final AtomicReference<String> failure=new AtomicReference<>();
     private final AtomicLong corrections=new AtomicLong();
@@ -35,6 +37,8 @@ public final class HudPhysicalMovement {
     private Path evidenceRoot;
     private String traceResult="not_started";
     private JsonObject viewFailure;
+    private HudMovementBoundary boundary;
+    private HudMovementBoundary.Decision boundaryStop;
     private long setupAt,stableAt,sequence,baselineCorrections,authorityUntil,endedAt,durationMs,events,heldTicks;
     private long firstView,lastView,viewUpdates;
     private double clientWalk,serverWalk;
@@ -98,9 +102,13 @@ public final class HudPhysicalMovement {
         keys.expire(now);
         if(keys.ended()){release(client);return;}
         var motion=motion(client.player,hasGround(client.world,client.player));
-        // Release before the sampled footprint or host's 2m sphere can be crossed.
-        if(anchor!=null && (distance(motion,anchor)>=1.45 || predictedDistance(motion,anchor)>=1.65 ||
-                !patch.containsFeet(motion.x()+motion.vx()*2,motion.z()+motion.vz()*2,.4))){keys.end();release(client);return;}
+        if(boundary!=null){
+            int forward=(keys.down(0x57,now)?1:0)-(keys.down(0x53,now)?1:0);
+            int sideways=(keys.down(0x41,now)?1:0)-(keys.down(0x44,now)?1:0);
+            var decision=boundary.check(motion,forward,sideways,keys.down(0x20,now),view.view().yaw(),
+                    accelerationBound(client),jumpVelocity(client),client.player.isSprinting() || forward>0);
+            if(!decision.allow()){boundaryStop=decision;keys.end();release(client);return;}
+        }
         apply(client,now);
     }
     public void afterTick(MinecraftClient client,long now)throws IOException{
@@ -157,7 +165,15 @@ public final class HudPhysicalMovement {
                     Math.abs(clientMotion.vy())<.1 && client.currentScreen==null && client.getOverlay()==null;
             if(!stable)stableAt=0;
             else if(stableAt==0)stableAt=now;
-            else if(now-stableAt>=250_000_000L){ready=true;baselineCorrections=corrections.get();}
+            else if(now-stableAt>=250_000_000L){
+                var view=views.current(System.currentTimeMillis(),System.nanoTime());
+                if(view!=null){
+                    var initial=new HudMovementBoundary(patch,sample.motion()).check(clientMotion,1,0,false,view.view().yaw(),
+                            accelerationBound(client),jumpVelocity(client),false);
+                    if(!initial.allow())throw new IllegalStateException("Physical HUD sampled ground has insufficient forward braking clearance: "+initial.reason()+"; use a more level starting patch or turn before starting the bounded lab");
+                    ready=true;baselineCorrections=corrections.get();
+                }
+            }
             if(now-setupAt>8_000_000_000L && !ready)throw new IllegalStateException("Physical HUD settling deadline");
             return;
         }
@@ -174,7 +190,9 @@ public final class HudPhysicalMovement {
         }
         var sm=sample.motion();
         if(!patch.containsFeet(clientMotion.x(),clientMotion.z(),.31) || !patch.containsFeet(sm.x(),sm.z(),.31) ||
-                distance(clientMotion,anchor)>1.8 || distance(sm,anchor)>1.8)
+                distance(clientMotion,anchor)>1.8 || distance(sm,anchor)>1.8 ||
+                clientMotion.y()-anchor.y()<-.2 || sm.y()-anchor.y()<-.2 ||
+                clientMotion.y()-anchor.y()>1.5 || sm.y()-anchor.y()>1.5)
             throw new IllegalStateException("Physical HUD displacement/coverage bound");
         clientWalk=Math.max(clientWalk,Math.hypot(clientMotion.x()-anchor.x(),clientMotion.z()-anchor.z()));
         serverWalk=Math.max(serverWalk,Math.hypot(sm.x()-anchor.x(),sm.z()-anchor.z()));
@@ -185,14 +203,18 @@ public final class HudPhysicalMovement {
             release(client);if(endedAt==0)endedAt=now;
             if(now-keys.startedAt()>HudMovementKeys.ACTIVE_NS+HudMovementKeys.SETTLE_NS || now-endedAt>HudMovementKeys.SETTLE_NS)
                 throw new IllegalStateException("Physical HUD final settling deadline");
-            if(grounded(clientMotion) && grounded(sm) && distance(clientMotion,sm)<.1 &&
-                    Math.hypot(clientMotion.vx(),clientMotion.vz())<.03 && Math.hypot(sm.vx(),sm.vz())<.03){
-                if(clientWalk<.15 || serverWalk<.15)throw new IllegalStateException("Physical HUD ended without client/server walking proof");
-                if(writeTrace(sample,"PASSED",true)){
-                    trace.finish(System.currentTimeMillis(),"passed","PASSED","Physical HUD input produced bounded vanilla walking on client and server");
-                    traceResult="passed";durationMs=(now-keys.startedAt())/1_000_000;completed=true;views.close();
-                }
-            }else writeTrace(sample,"LANDING",false);
+            boolean settled=grounded(clientMotion) && grounded(sm) && distance(clientMotion,sm)<.1 &&
+                    Math.hypot(clientMotion.vx(),clientMotion.vz())<.03 && Math.hypot(sm.vx(),sm.vz())<.03;
+            var result=completion.update(now,settled,clientWalk,serverWalk);
+            // The server can still be one packet behind at the first slow
+            // client tick. Wait for the same complete resting interval before
+            // either passing or rejecting its final displacement proof.
+            if(result==HudMovementCompletion.Result.INSUFFICIENT_WALK)
+                throw new IllegalStateException("Physical HUD ended without client/server walking proof");
+            if(result==HudMovementCompletion.Result.PASSED && writeTrace(sample,"PASSED",true)){
+                trace.finish(System.currentTimeMillis(),"passed","PASSED","Physical HUD input produced bounded vanilla walking on client and server");
+                traceResult="passed";durationMs=(now-keys.startedAt())/1_000_000;completed=true;views.close();
+            }else writeTrace(sample,settled?"RESTING":"LANDING",false);
         }else writeTrace(sample,!clientMotion.onGround()?"JUMPING":keys.neutral(now)?"RESTING":"WALKING",false);
     }
     private void startTrace(MinecraftClient client,long now)throws IOException{
@@ -201,6 +223,7 @@ public final class HudPhysicalMovement {
                 Math.abs(sample.motion().x())>.001 || Math.abs(sample.motion().z())>.001)
             throw new IllegalStateException("Physical HUD first edge lacks exact settled anchor");
         anchor=sample.motion();
+        boundary=new HudMovementBoundary(patch,anchor);
         String world=save.substring("MineCome-HudStream-".length());
         var context=new MovementTraceSink.Context(patch.run(),patch.sha256(),patch.sourceKind(),save,world,
                 patch.centerX(),patch.centerY(),patch.centerZ(),MovementTraceSink.Profile.HUD_PHYSICAL,anchor.x(),anchor.y(),anchor.z());
@@ -278,6 +301,12 @@ public final class HudPhysicalMovement {
         e.addProperty("view_first_sequence",firstView);e.addProperty("view_last_sequence",lastView);e.addProperty("view_updates",viewUpdates);
         if(views!=null)e.add("view_reader",views.diagnostics(System.currentTimeMillis(),System.nanoTime()));
         if(viewFailure!=null)e.add("view_failure",viewFailure.deepCopy());
+        if(boundaryStop!=null){
+            var stop=new JsonObject();stop.addProperty("reason",boundaryStop.reason());stop.addProperty("flat_support",boundaryStop.flat());
+            if(Double.isFinite(boundaryStop.minGround()))stop.addProperty("minimum_ground",boundaryStop.minGround());
+            if(Double.isFinite(boundaryStop.maxGround()))stop.addProperty("maximum_ground",boundaryStop.maxGround());
+            stop.addProperty("predicted_reach",boundaryStop.reach());e.add("boundary_stop",stop);
+        }
         e.addProperty("post_settle_corrections",corrections.get()-baselineCorrections);e.addProperty("client_proxy_released",clientReleased);e.addProperty("server_proxy_released",serverReleased.get());
         e.addProperty("controls_released",!client.options.forwardKey.isPressed()&&!client.options.backKey.isPressed()&&!client.options.leftKey.isPressed()&&!client.options.rightKey.isPressed()&&!client.options.jumpKey.isPressed());
         return e;
@@ -302,5 +331,13 @@ public final class HudPhysicalMovement {
         var p=entity.getPos();var v=entity.getVelocity();return new MovementTraceSink.Motion(p.x,p.y,p.z,v.x,v.y,v.z,entity.isOnGround(),support);
     }
     private static double distance(MovementTraceSink.Motion a,MovementTraceSink.Motion b){return Math.sqrt(Math.pow(a.x()-b.x(),2)+Math.pow(a.y()-b.y(),2)+Math.pow(a.z()-b.z(),2));}
-    private static double predictedDistance(MovementTraceSink.Motion a,MovementTraceSink.Motion b){return Math.sqrt(Math.pow(a.x()+a.vx()*2-b.x(),2)+Math.pow(a.y()+Math.max(0,a.vy())*2-b.y(),2)+Math.pow(a.z()+a.vz()*2-b.z(),2));}
+    private static double accelerationBound(MinecraftClient client){
+        // Reserve the vanilla 30% sprint transition even if it occurs after
+        // this callback. The actual key polling and movement stay vanilla.
+        if(!client.player.getStatusEffects().isEmpty())throw new IllegalStateException("Physical HUD movement effects unsupported");
+        return client.player.getMovementSpeed()*1.3+.00001;
+    }
+    private static double jumpVelocity(MinecraftClient client){
+        return client.player.getAttributeValue(EntityAttributes.GENERIC_JUMP_STRENGTH)+.00001;
+    }
 }
