@@ -136,6 +136,10 @@ Never load newer retail1.5.6 saves into this older1.5.5 development game. Backup
   remains unverified. Dispatch-stage timing is retained to measure that effect. Reducing playback
   to 150 ms would introduce a known right-point underrun in the earlier
   autonomous replay. Native target leases and source timestamps remain fixed.
+  Physical source publication now uses fixed 100 ms slots, preventing delayed
+  callbacks from shifting every subsequent deadline. Offline timing, forced-end,
+  clock and six-second byte-budget tests pass; its live effect remains unverified.
+  It does not add backfill records, change nominal frequency or reduce the buffer.
   The previous buffered phase failure `d838...` is repaired: the new combined
   trace passes two authoritative LANDING samples. Earlier independent fixtures
   passed but missed that brief transition; their claims remain narrower.

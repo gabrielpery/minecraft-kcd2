@@ -42,7 +42,8 @@ The source-time buffer preserves Minecraft's actual server motion timing and
 intentionally adds 200 ms of playback delay. This smoother run is the baseline
 for measuring input responsiveness; it is not yet a final playable build. Parser
 warmup now removes measured first-use processing overhead in offline checks;
-its live responsiveness benefit still needs validation. Camera delivery runs
+physical sampling also keeps a fixed 100 ms schedule instead of accumulating
+delay after late callbacks. Both changes still need live responsiveness validation. Camera delivery runs
 independently and stayed fresh. Boundary pauses require releasing
 controls before pressing again in an allowed direction. The lab allows at most
 five seconds of input plus one second of settling inside the 30-second HUD

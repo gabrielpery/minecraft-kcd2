@@ -1,12 +1,34 @@
 # MineCome progress — 2026-10-27
 
-**End-of-session handoff:** implementation `c90da08973da9db54ad2c7a1c94d2def1b34cec0`
-is pushed. The user stopped to conserve usage and will resume next week. Both
+**End-of-session handoff:** the user requested additional offline progress after
+the first handoff. Implementation `d150024667683ce6366f4800528528d8b9ab9f0b` adds
+fixed-schedule physical sampling to the finish/warmup fixes in `c90da08`. Both
 KCD2 and Minecraft are closed. The old `2dd6...` movement arm was archived;
 replacement KCD process 48256 was closed before any new HUD/controller comparison.
-No physical test of the warmup/finish candidate occurred. See
+No physical test of the warmup/finish/cadence candidate occurred. See
 [NEXT_SESSION.md](NEXT_SESSION.md#start-here-next-week) for the exact restart and
 validation sequence; no reinstall or repeat component test campaign is needed.
+
+**Additional offline implementation:** `MovementTraceSink` now anchors ordinary
+HUD_PHYSICAL/HUD_PHYSICAL_FIXTURE publication to 100 ms slots from the first
+successfully written sample. Late callbacks skip elapsed slots instead of moving
+all subsequent deadlines. Actual capture/server timestamps remain untouched;
+there are no synthetic catch-up records. Forced initial/final samples still obey
+freshness and sequence checks, and physical timestamps must advance strictly.
+Clock overflow is rejected before schedule state changes. Legacy GROUND and
+HUD_COUPLED spacing remains unchanged.
+
+Java24 `compileJava`, `groundPatchTest` (807 checks, including the trace cases) and
+`hudPhysicalMovementTest` (282 checks) pass without launching either game.
+In the deterministic synthetic six-second jitter test, legacy scheduling emits
+59 samples and accumulates 155 ms drift; the fixed schedule emits 60 with maximum
+55 ms lateness, within the test's 56 ms maximum callback interval. This measures
+scheduling only, not physical keypress or display latency. Full six-second
+initial/ordinary/forced-final/termination tests with 128-character run identifiers
+and long double fields fit 57,069 bytes for physical and 57,699 for fixture traces:
+61 samples, 63 records, intact 2 KiB end reserve and unchanged 64 KiB/200-record
+limits. Independent review found no blocker. The 200 ms playback buffer and all
+native limits are unchanged; the next live check must measure real cadence.
 
 **Latest combined movement looks substantially smoother, but input delay and the
 normal-finish handshake remain unfinished.** The user reports that it worked and

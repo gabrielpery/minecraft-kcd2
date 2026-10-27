@@ -2,15 +2,18 @@
 
 ## Start here next week
 
-The user stopped work to conserve the remaining usage allowance. **Do not launch
-another demo until they resume.** Both `KingdomCome` and `java` were checked and
+The user requested further offline progress before this handoff to conserve the
+remaining usage allowance; the sampling fix below is now complete. **Do not launch
+another demo until they resume.** Both games remain closed; `KingdomCome` and `java` were checked and
 are closed. The replacement KCD process 48256 was closed by the user before a new
 walking controller/HUD comparison started; this is not a new test failure.
 
-- Latest implementation is committed and pushed as
-  `c90da08973da9db54ad2c7a1c94d2def1b34cec0` on public default branch
+- Latest implementation is committed as
+  `d150024667683ce6366f4800528528d8b9ab9f0b` on public default branch
   `codex/initial-import`, remote `https://github.com/gabrielpery/minecraft-kcd2`.
-  This handoff is a subsequent documentation update; inspect `git log -3` and
+  It adds fixed-schedule physical sampling on top of the finish/warmup fixes in
+  `c90da08973da9db54ad2c7a1c94d2def1b34cec0`. This handoff is a subsequent
+  documentation update; inspect `git log -3` and
   `git status --short` rather than resetting to the implementation commit.
 - Workspace: `C:\Users\xephi\Documents\ChatGPT\New project\MineCome`.
 - The old `2dd6...` movement arm was already archived at 17:40:47 UTC on
@@ -20,9 +23,10 @@ walking controller/HUD comparison started; this is not a new test failure.
   that old session again.** Recheck process/file state before the next launch.
 - No new native installation, renderer rebuild, PowerShell setup or administrator
   session is needed. The installed walking bundle is unchanged.
-- The only immediate live check outstanding is the combined physical comparison
-  of parser warmup plus native normal completion. No physical test of `c90da08`
-  has happened yet. The last user feedback remains: "a lot smoother", with delay.
+- The immediate live check outstanding is the combined physical comparison of
+  parser warmup, native normal completion and the fixed sampling schedule.
+  Neither `c90da08` nor `d150024` has been physically tested. The last user
+  feedback remains: "a lot smoother", with delay.
 
 ### What is already proved
 
@@ -31,7 +35,15 @@ walking controller/HUD comparison started; this is not a new test failure.
 | Walking with the real HUD | User confirmed repeated movement in all directions and later much smoother motion. Latest physical path passes 52/52 source observations. Its original overall result remains failed because the watchdog, rather than the normal finish path, performed the exact return. |
 | Normal finish repair | `FinishBufferedMovementFollower` seals the timeline and restores after its final observed point on the game thread. A separate real-KCD replay passes 51/51, explicit end, exact restoration, timers and FPS cleanup. This did not use Minecraft/HUD or human input. |
 | Parser delay reduction | Before arming, disposable diagnostic state warms the parser. Five fresh-process profiles improve first recorded-packet processing from 69.13 ms to 8.52 ms median. Its effect on live responsiveness is still unverified. |
-| Regression checks | Lua 79, buffered proof 79, warmup 86 and physical receiver 119 checks passed. Do not repeat these unchanged suites or the confirmed stone/HUD tests merely to resume. |
+| Sampling schedule | Physical and fixture profiles keep the first successful sample's 100 ms schedule instead of restarting the wait after every late callback. They skip missed slots, preserve actual timestamps and emit no backfill. A synthetic six-second comparison changes 59 samples/155 ms accumulated drift to 60 samples/55 ms lateness, within its 56 ms maximum callback interval. No live latency gain is claimed. |
+| Regression checks | Java24 compile, ground/trace 807 and physical-controller 282 checks pass after the sampling change. Existing Lua 79, buffered proof 79, warmup 86 and physical receiver 119 checks remain unchanged. Do not repeat unchanged suites or confirmed stone/HUD tests merely to resume. |
+
+The new sampler retains legacy GROUND/HUD_COUPLED behavior, the 250 ms server
+freshness limit, 200-record/64 KiB trace bounds and reserved termination space.
+Six-second tests with maximum-length run identifiers and long double values fit
+57,069 bytes (physical) and 57,699 bytes (fixture), with 61 samples/63 records.
+Forced final samples still need fresh advancing server observations and strictly
+advancing actual time. The 200 ms native buffer and all movement limits are unchanged.
 
 ### Exact next action after the user resumes
 
@@ -65,7 +77,9 @@ walking controller/HUD comparison started; this is not a new test failure.
    `view-timings.json`. Require every source crossing, `explicit_end` restoration,
    fresh camera delivery and normal Minecraft/FPS/resource cleanup. Separate
    measured validation/preparation/HTTP times from native readback and subjective
-   responsiveness; HTTP success does not prove native application.
+   responsiveness; HTTP success does not prove native application. Also measure
+   actual source publication/server intervals and total trace bytes for the new
+   cadence; its synthetic timing result is not a live performance result.
 5. If it passes, record the user's result and pursue longer walking and integration
    with the already working aimed-block controls. If it fails, diagnose this run
    before another restart. Do not lower buffers, widen guards, or rewrite failed
@@ -412,7 +426,8 @@ successful combined result remains unverified.
 
 ## Validation and remaining checks
 
-- Current Java controller checks: 282; ground checks: 180; reverse input: 353.
+- Current Java controller checks: 282; ground/trace checks: 807 after the
+  fixed-schedule sampling regressions; reverse input: 353 (unchanged).
 - PowerShell camera worker: 57; receipt cursor: 74; path protection: 23;
   physical profile: 119; fixture checks: 43; ground movement: 134; coupled proof: 80;
   legacy trace receiver: 16.
@@ -449,8 +464,9 @@ successful combined result remains unverified.
    needed. Respect the current Computer Use state and never load newer retail saves.
 4. Preserve all 52-source path proof and the prior autonomous replay. That earlier
    trace needs 188.903 ms of right-point availability; a blanket 150 ms buffer
-   would introduce a known underrun. Source cadence changes need bounded evidence
-   and explicit byte/record budgets before reducing the buffer.
+   would introduce a known underrun. The fixed 100 ms sampling schedule now has
+   offline timing and byte/record-budget evidence, but its real source intervals
+   still need measurement before considering any buffer reduction.
 5. For the next combined check, verify all source crossings, normal restoration,
    FPS/camera/Minecraft cleanup and user-reported smoothness/responsiveness. Keep
    the five-second movement window and intentional playback latency explicit.

@@ -163,6 +163,13 @@ and -1.45 m to +1.45 m vertical clearance, with a 1.8 m hard radius and sampled
 ground coverage. This physical-only descent change does not alter the legacy
 scripted follower's -0.2 m to +1.5 m range.
 
+Physical source publication now uses 100 ms slots anchored at its first accepted
+sample. Late callbacks skip missed slots without shifting future deadlines or
+backfilling records; original timestamps and freshness checks are preserved.
+Legacy ground/coupled profiles keep their previous scheduling. The change passes
+offline timing and full six-second byte-budget checks, but has not run in the
+combined physical lab yet. Do not infer a live latency improvement from it.
+
 The physical follower uses a fixed 200 ms source-time buffer. It derives each
 server observation's original time from `monotonic_ns - server_age_ns`, anchors
 the first grounded settling sample at zero, and preserves all subsequent timing
