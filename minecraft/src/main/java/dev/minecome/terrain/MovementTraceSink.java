@@ -43,7 +43,7 @@ final class MovementTraceSink implements AutoCloseable {
     private final Path path;
     private final Context context;
     private final OutputStream output;
-    private long sequence,lastServerSequence,lastSampleNs;
+    private long sequence,lastServerSequence,lastSampleNs,sampleAnchorNs,lastSampleSlot;
     private int bytes;
     private boolean sampled,closed;
     private MovementTraceSink(Path path,Context context,OutputStream output){this.path=path;this.context=context;this.output=output;}
@@ -74,13 +74,29 @@ final class MovementTraceSink implements AutoCloseable {
     boolean sample(long nowNs,long utcMs,String phase,Motion client,Motion server,long serverSequence,long receivedAtNs,boolean force) throws IOException {
         if(closed)return false;
         validatePhase(phase);
+        boolean phaseLocked=context.profile()==Profile.HUD_PHYSICAL || context.profile()==Profile.HUD_PHYSICAL_FIXTURE;
         long age=nowNs-receivedAtNs;
-        if(age<0 || age>MAX_SERVER_AGE_NS || serverSequence<=lastServerSequence || serverSequence<1)return false;
-        if(sampled && (nowNs<lastSampleNs || (!force && nowNs-lastSampleNs<PERIOD_NS)))return false;
+        if(age<0 || age>MAX_SERVER_AGE_NS || (phaseLocked && receivedAtNs>nowNs) ||
+                serverSequence<=lastServerSequence || serverSequence<1)return false;
+        long slot=0;
+        if(sampled){
+            if(nowNs<lastSampleNs || (phaseLocked && nowNs==lastSampleNs))return false;
+            if(phaseLocked){
+                // Keep the first accepted sample's phase. A late callback may
+                // skip slots, but never shifts the schedule or backfills them.
+                long elapsed;
+                try{elapsed=Math.subtractExact(nowNs,sampleAnchorNs);}
+                catch(ArithmeticException overflow){return false;}
+                slot=elapsed/PERIOD_NS;
+                if(!force && slot<=lastSampleSlot)return false;
+            }else if(!force && nowNs-lastSampleNs<PERIOD_NS)return false;
+        }
         String record=prefix("sample",utcMs)+",\"phase\":"+quote(phase)+",\"monotonic_ns\":"+nowNs+
                 ",\"server_seq\":"+serverSequence+",\"server_age_ns\":"+age+
                 ",\"client\":"+motion(client)+",\"server\":"+motion(server)+"}";
-        write(record,false);lastServerSequence=serverSequence;lastSampleNs=nowNs;sampled=true;return true;
+        write(record,false);
+        if(phaseLocked){if(!sampled)sampleAnchorNs=nowNs;lastSampleSlot=slot;}
+        lastServerSequence=serverSequence;lastSampleNs=nowNs;sampled=true;return true;
     }
     void finish(long utcMs,String result,String phase,String reason) throws IOException {
         if(closed)return;
