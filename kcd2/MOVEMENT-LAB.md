@@ -152,19 +152,34 @@ installed and a fresh KCD test world open:
 & './scripts/Start-HudWalkingAimed.ps1' -WideWalking
 ```
 
-The existing standalone Minecraft fixture needs no KCD process or physical input:
+With the fresh KCD world open, the scripted two-game check needs no physical input:
 
 ```powershell
-& './scripts/Test-HudPhysicalMovementFixture.ps1' -ExtendedWalking -WideWalking
+& './scripts/Start-HudCoupledMovementLab.ps1' -WideWalking
+```
+
+It captures real terrain, walks beyond the old boundary in Minecraft, jumps and
+lands, verifies matching KCD player/camera readbacks and restores the starting
+position. Its HUD uses the standalone receiver; it does not verify composition
+inside KCD or physical keyboard forwarding. The first wide run passed with
+3.018 metres of movement and 24 confirmed KCD updates.
+
+The standalone Minecraft fixture needs no KCD process or physical input:
+
+```powershell
+& './scripts/Test-HudPhysicalMovementFixture.ps1' -ExtendedWalking -WideWalking -AimedBlocks
 ```
 
 It verifies that both client and server travel beyond the old two-metre limit,
-remain within four metres, show the HUD while walking, suppress inventory
-movement, resume walking and clean up. On 28 October, both reached 3.234 metres;
-the run passed with 72 walking HUD frames and zero inventory displacement.
+remain within four metres, show the HUD while walking, complete six vanilla
+top/side block actions, suppress inventory movement, resume walking and clean up.
+`-GroundPatchFile <captured ground-patch.json>` exercises retained KCD terrain;
+without it, the fixture uses flat synthetic terrain. On 28 October, the captured
+terrain run reached 2.587 metres, completed all six actions, recorded 71 walking
+HUD frames and zero inventory displacement, and restored the owned block region
+without changing imported terrain. Source hashes matched throughout the run.
 Lua and controller checks also passed. Live KCD composition/input for this larger
-area remains unverified. `-AimedBlocks` is not supported by the wide standalone
-fixture; the existing small-area combined fixture remains available.
+area remains unverified; scripted tests make no physical-input claim.
 
 ## Physical walking with the HUD in KCD
 

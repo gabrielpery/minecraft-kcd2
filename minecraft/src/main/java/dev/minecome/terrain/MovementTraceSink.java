@@ -37,7 +37,7 @@ final class MovementTraceSink implements AutoCloseable {
         Context {
             if(!run.matches("[A-Za-z0-9_-]{1,128}") || !patchSha256.matches("[0-9a-f]{64}") ||
                     !sourceKind.matches("[A-Za-z0-9_-]{1,64}") || !world.equals(UUID.fromString(world).toString()) ||
-                    profile==null || (wide&&!profile.physical) || !save.equals(profile.savePrefix+world) ||
+                    profile==null || (wide&&!profile.physical&&profile!=Profile.HUD_COUPLED) || !save.equals(profile.savePrefix+world) ||
                     (profile!=Profile.GROUND && !sourceKind.equals(profile.fixture?"standalone_ground_fixture":"live_kcd_ground_patch")) || !finite(centerX,centerY,centerZ,anchorX,anchorY,anchorZ) ||
                     Math.abs(anchorX)>.01 || Math.abs(anchorZ)>.01 || anchorY<52 || anchorY>76 ||
                     (!profile.physical && (anchorX!=0 || anchorY!=64 || anchorZ!=0)) ||

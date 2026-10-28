@@ -1,6 +1,7 @@
 # Pure configuration and evidence checks for the standalone HUD/ground fixture.
 . (Join-Path $PSScriptRoot 'HudWalkingArea.ps1')
-function Assert-HudGroundMovementMode([bool]$GroundMovementFixture,[bool]$Standalone,[bool]$Composite,[bool]$Coupled=$false) {
+function Assert-HudGroundMovementMode([bool]$GroundMovementFixture,[bool]$Standalone,[bool]$Composite,[bool]$Coupled=$false,[switch]$WideWalking) {
+    if($WideWalking -and -not $Coupled){throw 'Wide scripted ground movement requires explicit coupled HUD mode.'}
     if(($GroundMovementFixture -and $Coupled) -or (($GroundMovementFixture -or $Coupled) -and (-not $Standalone -or $Composite))) {
         throw 'HUD ground movement requires one explicit mode and a standalone receiver without KCD composition.'
     }
@@ -94,7 +95,9 @@ function New-HudGroundMovementPatch([string]$Run,[switch]$WideWalking) {
     if($WideWalking){$patch.walking_area='wide'}
     return $patch
 }
-function Assert-HudGroundMovementMarkers($Receipt,[bool]$Expected,[bool]$Coupled=$false) {
+function Assert-HudGroundMovementMarkers($Receipt,[bool]$Expected,[bool]$Coupled=$false,[switch]$WideWalking) {
+    if($WideWalking -and -not $Coupled){throw 'Wide scripted ground markers require explicit coupled HUD mode.'}
+    Assert-HudWalkingArea $Receipt ([bool]$WideWalking)
     if($Expected -and $Coupled){throw 'Conflicting HUD ground movement modes.'}
     $markers=@{ui_ground_movement_fixture=$Expected;ui_ground_movement_coupled=$Coupled;standalone=($Expected -or $Coupled)}
     foreach($field in $markers.Keys){
@@ -110,12 +113,13 @@ function Assert-HudGroundMovementMarkers($Receipt,[bool]$Expected,[bool]$Coupled
         }
     }
 }
-function Assert-HudGroundMovementProof($Guest,[string]$Run,[string]$PatchHash,[bool]$Coupled=$false,[string]$PatchRun,[string]$TraceFile) {
-    Assert-HudGroundMovementMarkers $Guest (-not $Coupled) $Coupled
+function Assert-HudGroundMovementProof($Guest,[string]$Run,[string]$PatchHash,[bool]$Coupled=$false,[string]$PatchRun,[string]$TraceFile,[switch]$WideWalking) {
+    Assert-HudGroundMovementMarkers $Guest (-not $Coupled) $Coupled -WideWalking:$WideWalking
     if($Run -cnotmatch '^[0-9a-f]{32}$' -or $PatchHash -cnotmatch '^[0-9a-f]{64}$' -or $Guest.run -cne $Run -or $Guest.result -cne 'passed') {throw 'Ground/HUD result does not belong to this completed stream.'}
     if(-not $Coupled){$PatchRun=$Run}
     elseif($PatchRun -cnotmatch '^[0-9a-f]{32}$' -or -not $TraceFile){throw 'Coupled HUD proof requires its captured patch run and trace.'}
     $proof=$Guest.lab_evidence.ground_movement
+    Assert-HudWalkingArea $proof ([bool]$WideWalking)
     $kind=if($Coupled){'minecome_hud_ground_movement_coupled_v1'}else{'minecome_hud_ground_movement_fixture_v1'}
     $source=if($Coupled){'live_kcd_ground_patch'}else{'standalone_fixture'}
     if($proof.schema -ne 1 -or $proof.kind -cne $kind -or
@@ -139,6 +143,15 @@ function Assert-HudGroundMovementProof($Guest,[string]$Run,[string]$PatchHash,[b
         $value=$proof.$field
         if(($value -isnot [double] -and $value -isnot [int] -and $value -isnot [long] -and $value -isnot [decimal]) -or
             -not [double]::IsFinite([double]$value) -or $value -lt 0.3 -or $value -gt 4){throw 'Vanilla walk was not confirmed inside the bounded patch.'}
+        if($WideWalking -and $value -le 2){throw 'Wide coupled walk never crossed the old walking boundary.'}
+    }
+    if($WideWalking){
+        if($proof.wide_boundary_crossed -isnot [bool] -or -not $proof.wide_boundary_crossed){throw 'Wide crossing proof is missing.'}
+        foreach($field in @('client_max_horizontal_excursion','server_max_horizontal_excursion')){
+            $value=$proof.$field
+            if(($value -isnot [double] -and $value -isnot [int] -and $value -isnot [long] -and $value -isnot [decimal]) -or
+                -not [double]::IsFinite([double]$value) -or $value -le 2 -or $value -gt 4){throw 'Wide coupled excursion is outside its verified crossing range.'}
+        }
     }
     foreach($field in @('client_proxy_queries','server_proxy_queries')){
         if(($proof.$field -isnot [int] -and $proof.$field -isnot [long]) -or $proof.$field -lt 1){throw 'Both game threads must query imported ground collision.'}

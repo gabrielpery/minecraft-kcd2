@@ -30,6 +30,10 @@ public final class HudStreamProducer implements AutoCloseable {
         }
     }
     private record Sample(byte[] rgba,int width,int height,JsonObject metadata,String name){}
+    private static final Set<String> WALKING_AIMED_SAMPLE_STATES=Set.of(
+            "fixture_settling","fixture_inventory_blocked","fixture_hotbar_ready","fixture_scripted_walking",
+            "fixture_aimed_interactions","fixture_extended_wait","fixture_post_walk_inventory_blocked",
+            "fixture_final_settling","fixture_cleanup");
     private record PublicationStage(String name,long at){}
     private final Identity identity;
     private final Path root,directory;
@@ -41,7 +45,7 @@ public final class HudStreamProducer implements AutoCloseable {
     private final boolean offscreenPresentation,offscreenTrial;
     private final HudGroundMovementMode.Mode groundMovementMode;
     private final boolean standalone;
-    private final boolean physicalMovement;
+    private final boolean physicalMovement,walkingAimedFixture;
     private final HudMovementSession movementSession;
     private final AtomicReference<Frame> latest=new AtomicReference<>();
     private final AtomicReference<String> terminal=new AtomicReference<>(),failure=new AtomicReference<>();
@@ -69,6 +73,8 @@ public final class HudStreamProducer implements AutoCloseable {
         this.root=root.normalize();this.directory=directory.normalize();this.identity=identity;this.save=save;this.genuine=genuine;this.inputMode=inputMode;
         groundMovementMode=HudGroundMovementMode.mode(System.getProperties());
         physicalMovement=HudPhysicalMovementMode.require(System.getProperties());
+        walkingAimedFixture=physicalMovement && HudPhysicalMovementMode.fixture(System.getProperties())
+                && Boolean.getBoolean("minecome.hudWalkingAimedFixture");
         movementSession=HudMovementSession.selected(System.getProperties());
         if(physicalMovement && (!genuine || inputMode!=(HudPhysicalMovementMode.fixture(System.getProperties())?0:1)))
             throw new IllegalArgumentException("Physical movement requires genuine pixels and its exact live or standalone fixture input profile");
@@ -157,6 +163,7 @@ public final class HudStreamProducer implements AutoCloseable {
         r.addProperty("mapping",identity.mappingName());r.addProperty("mapping_name",identity.mappingName());r.addProperty("mutex_name",identity.mutexName());r.addProperty("mapping_bytes",MAPPING_BYTES);
         r.addProperty("save",save);r.addProperty("source_kind",genuine?"minecraft_vanilla_ui_stream_v1":"standalone_transport_fixture");
         if(groundMovementMode!=HudGroundMovementMode.Mode.NONE){
+            if(HudPhysicalMovementMode.wide(System.getProperties()))r.addProperty("walking_area","wide");
             r.addProperty(groundMovementMode==HudGroundMovementMode.Mode.FIXTURE?"ui_ground_movement_fixture":"ui_ground_movement_coupled",true);
             r.addProperty("standalone",standalone);
         }
@@ -235,9 +242,7 @@ public final class HudStreamProducer implements AutoCloseable {
                 long publishedAt=System.nanoTime();if(lastPublishedAt!=0)maxPublicationGapNanos=Math.max(maxPublicationGapNanos,publishedAt-lastPublishedAt);lastPublishedAt=publishedAt;
                 lastPublishedUtcMs=System.currentTimeMillis();lastPublishedCaptureUtcMs=frame.capturedUtcMs();maxPublishedCaptureAgeMs=Math.max(maxPublishedCaptureAgeMs,lastPublishedUtcMs-frame.capturedUtcMs());publicationStage("frame_metadata");
                 JsonObject meta=JsonParser.parseString(frame.metadata()).getAsJsonObject();String stage=meta.get("state").getAsString();
-                if(!stage.matches("[a-z0-9_]{1,40}"))throw new IOException("Invalid sample state");
-                if(states.add(stage)) {
-                    if(states.size()>8)throw new IOException("Sample state bound exceeded");
+                if(recordSampleState(states,stage,walkingAimedFixture)) {
                     String name="sample-"+stage+".png";
                     meta.addProperty("width",width);meta.addProperty("height",height);meta.addProperty("sequence",sequence);pendingSamples.add(new Sample(rgba,width,height,meta,name));
                 }
@@ -311,6 +316,15 @@ public final class HudStreamProducer implements AutoCloseable {
             }catch(Exception e){failure.compareAndSet(null,e.toString());}
             finished.set(true);
         }
+    }
+    /** One retained image per diagnostic phase; combined cleanup is its ninth and final phase. */
+    static boolean recordSampleState(Set<String> states,String stage,boolean walkingAimedFixture)throws IOException{
+        if(stage==null || !stage.matches("[a-z0-9_]{1,40}"))throw new IOException("Invalid sample state");
+        if(walkingAimedFixture && !WALKING_AIMED_SAMPLE_STATES.contains(stage))throw new IOException("Unexpected walking/aimed sample state");
+        if(states.contains(stage))return false;
+        int limit=walkingAimedFixture?WALKING_AIMED_SAMPLE_STATES.size():8;
+        if(states.size()>=limit)throw new IOException("Sample state bound exceeded");
+        return states.add(stage);
     }
     private static IOException nativeFailure(Kernel32 api,String operation){return new IOException(operation+" failed: "+api.GetLastError());}
     private static boolean lock(Kernel32 api,WinNT.HANDLE mutex)throws IOException {

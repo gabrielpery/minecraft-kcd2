@@ -41,7 +41,7 @@ final class HudPhysicalMovementFixture implements AutoCloseable {
         if(!HudPhysicalMovementMode.fixture(System.getProperties()) || Boolean.getBoolean("minecome.hudStreamInput"))
             throw new IllegalArgumentException("Scripted physical controller fixture requires its separate standalone mode");
         this.movement=movement;extended=movement.session().extended();
-        if(wide&&(!extended||aimedMode))throw new IllegalArgumentException("Wide crossing fixture requires extended walking without aimed blocks");
+        if(wide&&!extended)throw new IllegalArgumentException("Wide crossing fixture requires extended walking");
         codes=wide?new int[]{0x57,0x53,0x57,0x57,0x53}:extended?new int[]{0x57,0x57,0x53,0x57,0x53}:new int[]{0x57,0x57,0x53};
         ui=new HudVanillaUiAdapter(client,false);server=client.getServer();player=client.player.getUuid();
         patch=GroundPatch.read(patchFile,wide);

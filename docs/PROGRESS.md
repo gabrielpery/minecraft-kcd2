@@ -1,5 +1,28 @@
 # MineCome progress — 2026-10-28
 
+## Larger area — SCRIPTED TWO-GAME MOVEMENT AND COMBINED MINECRAFT PASS
+
+The existing coupled harness now supports `-WideWalking`, retaining explicit
+scripted provenance, authenticated live terrain, original deadlines and restoration.
+Run `6615c9eb30984caa91463af12a5e5ac6` passed: 3.018 m client/server movement,
+jump/landing, 25 forwarded poses, 24 confirmed KCD player/camera updates, restored
+position and frame cap. Evidence:
+`runtime/evidence/coupled-movement-20261028-173613-6615c9eb30984caa91463af12a5e5ac6/`.
+
+Wide walking also supports `-AimedBlocks` in the actual Minecraft fixture. Run
+`0c33d84d3f504c638765c9a9b3d74535` used the captured KCD terrain and passed 2.587 m
+walking, six top/side placement/break confirmations, inventory suppression, resumed
+walking, 71 walking HUD frames and complete cleanup. Imported terrain was unchanged;
+source hashes matched. Evidence:
+`runtime/evidence/hud-physical-fixture-20261028-174140-0c33d84d3f504c638765c9a9b3d74535/`.
+The initial combined run exposed a diagnostic screenshot limit at cleanup; the
+validated combined fixture now permits exactly its nine known stages, retaining
+the existing eight-state limit for other modes. Focused Java, Lua and PS checks
+pass. Both games closed normally; no installed addon or persistent setting changed.
+Physical input, KCD HUD composition in the wider area, and the two-session addon
+still need their batched live acceptance. These scripted results do not establish
+continuous free roaming or those remaining checks.
+
 ## Larger fixed walking area — IMPLEMENTED / COMPILED / MINECRAFT PASS; KCD LIVE PENDING
 
 Optional `-WideWalking` connects an 81-point KCD capture to Minecraft collision,

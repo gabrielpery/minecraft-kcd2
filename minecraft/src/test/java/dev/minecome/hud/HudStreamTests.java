@@ -16,6 +16,7 @@ public final class HudStreamTests {
     private static HudStreamProducer producer(Path root,Path parent,String child,HudStreamProducer.Identity id){return new HudStreamProducer(root,parent.resolve(child),id,"MineCome-HudStream-"+UUID.randomUUID(),false);}
     private static HudStreamProducer.Frame frame(long time){return new HudStreamProducer.Frame(2,1,new byte[]{64,0,0,(byte)128,0,0,0,0},time,1,0,"{\"state\":\"fixture\"}");}
     public static void main(String[] args)throws Exception {
+        sampleStates();
         var layout=HudStreamLayout.configured();
         check(layout.width()==1280 && layout.height()==720 && layout.guiScale()==2,"stream default1280x720 GUI2");
         check(layout.width()/layout.guiScale()==640 && layout.height()/layout.guiScale()==360,"vanilla logical canvas independent of host fit");
@@ -105,6 +106,28 @@ public final class HudStreamTests {
             rejects(()->new HudStreamProducer(root,parent.resolve("invalid-fixture"),id,save,false,2),"forced live mouse rejects fixture producer");
             check(!Files.exists(parent.resolve("invalid-ordinary")) && !Files.exists(parent.resolve("invalid-fixture")),"invalid forced modes create no output/session");
         }finally{if(previous==null)System.clearProperty("minecome.hudStreamLiveMouse");else System.setProperty("minecome.hudStreamLiveMouse",previous);}
+    }
+    private static void sampleStates()throws Exception {
+        var combined=new HashSet<String>();
+        for(String phase:List.of("settling","inventory_blocked","hotbar_ready","scripted_walking","aimed_interactions",
+                "extended_wait","post_walk_inventory_blocked","final_settling","cleanup")){
+            String stage="fixture_"+phase;
+            check(HudStreamProducer.recordSampleState(combined,stage,true),"Complete combined sequence retains one image per observed phase including cleanup");
+            check(!HudStreamProducer.recordSampleState(combined,stage,true),"Repeated phase does not retain additional pixels");
+        }
+        check(combined.size()==9,"Combined evidence remains bounded to exactly nine possible states");
+        try{HudStreamProducer.recordSampleState(combined,"fixture_unknown",true);throw new AssertionError("Accepted unknown combined phase");}
+        catch(java.io.IOException expected){checks++;}
+        check(combined.size()==9,"Rejected combined phase is never retained");
+        var regular=new HashSet<String>();
+        for(int i=0;i<8;i++)check(HudStreamProducer.recordSampleState(regular,"state_"+i,false),"Existing mode preserves eight-image budget");
+        try{HudStreamProducer.recordSampleState(regular,"state_8",false);throw new AssertionError("Accepted ninth ordinary state");}
+        catch(java.io.IOException expected){checks++;}
+        check(regular.size()==8,"Ordinary over-budget state is rejected before retention");
+        for(String invalid:List.of("../escape","","X")){
+            try{HudStreamProducer.recordSampleState(new HashSet<>(),invalid,false);throw new AssertionError("Accepted malformed state");}
+            catch(java.io.IOException expected){checks++;}
+        }
     }
     private static void stoneModeReceipts(Path root,Path parent)throws Exception {
         String[] properties={"minecome.hudStoneBridge","minecome.hudStoneFixture","minecome.hudStoneLive","minecome.hudStreamLiveMouse","minecome.hudStreamOffscreenPresentation","minecome.hudStreamOffscreenTrial"};

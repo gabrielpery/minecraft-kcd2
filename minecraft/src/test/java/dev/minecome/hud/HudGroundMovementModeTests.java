@@ -29,6 +29,13 @@ public final class HudGroundMovementModeTests {
         check(HudGroundMovementMode.require(fixture()),"Explicit standalone fixture admitted");
         check(HudGroundMovementMode.mode(coupled())==HudGroundMovementMode.Mode.COUPLED,"Explicit coupled mode selected separately");
         check(!HudGroundMovementMode.require(coupled()),"Coupled mode does not claim synthetic fixture");
+        var wide=coupled();wide.setProperty("minecome.hudWideWalking","true");
+        check(HudGroundMovementMode.mode(wide)==HudGroundMovementMode.Mode.COUPLED,"Wide opt-in retains authenticated scripted coupled identity");
+        check(!HudPhysicalMovementMode.require(wide),"Wide coupled does not claim physical input");
+        var wideFixture=fixture();wideFixture.setProperty("minecome.hudWideWalking","true");reject(wideFixture,"wide legacy synthetic ground fixture");
+        var mixed=(Properties)wide.clone();mixed.setProperty("minecome.hudPhysicalMovement","true");reject(mixed,"coupled mixed physical mode");
+        mixed=(Properties)wide.clone();mixed.setProperty("minecome.hudPhysicalMovementExtended","true");reject(mixed,"coupled mixed extended physical clock");
+        var malformed=(Properties)wide.clone();malformed.setProperty("minecome.hudWideWalking","yes");reject(malformed,"malformed wide selector");
         for(String required:List.of("hudStreamLab","hudStreamStandalone","groundPatchFile")){
             var p=fixture();p.remove("minecome."+required);reject(p,"missing "+required);
         }

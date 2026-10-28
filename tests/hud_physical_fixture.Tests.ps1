@@ -179,6 +179,35 @@ for($index=0;$index -lt 6;$index++){
 }
 $combinedProof | Add-Member -NotePropertyName aimed_blocks -NotePropertyValue $aimed
 $null=Assert-HudPhysicalFixtureResult $combined $run $hash -ExtendedWalking -AimedBlocks;Check $true 'Combined fixture proves walked, placed/broke exact faces, and resumed walking'
+$wideCombined=Clone $wide
+$wideCombined | Add-Member NoteProperty save $combined.save
+$wideCombined | Add-Member NoteProperty ui_walking_aimed_fixture $true
+$wideCombinedProof=$wideCombined.lab_evidence.physical_controller_fixture
+$wideCombinedProof.physical_movement | Add-Member NoteProperty patch_run ('c'*32)
+$wideCombinedProof | Add-Member NoteProperty ui_walking_aimed_fixture $true
+$wideCombinedProof | Add-Member NoteProperty aimed_hud_frames 10
+$wideAimed=Clone $aimed
+$wideAimed | Add-Member NoteProperty walking_area 'wide'
+$wideAimed | Add-Member NoteProperty max_host_ray_range 4.5
+$wideAimed | Add-Member NoteProperty top_aim_point ([pscustomobject]@{x=4.25;y=65;z=.5})
+foreach($cell in @($wideAimed.seed,$wideAimed.support,$wideAimed.arena.seed,$wideAimed.arena.build_region.support,$wideAimed.arena.arena_minimum,$wideAimed.arena.arena_maximum_inclusive)){$cell.x+=2}
+foreach($row in @($wideAimed.confirmations)+@($wideAimed.arena.confirmations)+@($wideAimed.arena.requests)){$row.target.x+=2;$row.hit_block.x+=2}
+$wideAimed.arena.build_region.protected_imported_cells=64
+$wideCombinedProof | Add-Member NoteProperty aimed_blocks $wideAimed
+$null=Assert-HudPhysicalFixtureResult $wideCombined $run $hash -ExtendedWalking -WideWalking -AimedBlocks
+Check $true 'Wide combined fixture retains crossing, six actions, protected terrain and finite reach'
+foreach($change in @('marker','support','terrain_low','terrain_high','reach','top')){
+    $bad=Clone $wideCombined;$a=$bad.lab_evidence.physical_controller_fixture.aimed_blocks
+    switch($change){
+        marker{$a.PSObject.Properties.Remove('walking_area')}
+        support{$a.seed.x=2}
+        terrain_low{$a.arena.build_region.protected_imported_cells=63}
+        terrain_high{$a.arena.build_region.protected_imported_cells=129}
+        reach{$a.max_host_ray_range=4.6}
+        top{$a.top_aim_point.x=4.5}
+    }
+    Reject {Assert-HudPhysicalFixtureResult $bad $run $hash -ExtendedWalking -WideWalking -AimedBlocks} "Wide combined proof rejects $change"
+}
 Reject {Assert-HudPhysicalFixtureResult $combined $run $hash -ExtendedWalking} 'Ordinary extended fixture cannot accept combined proof'
 Reject {Assert-HudPhysicalFixtureResult $extended $run $hash -ExtendedWalking -AimedBlocks} 'Combined mode cannot accept ordinary extended proof'
 Reject {Assert-HudPhysicalFixtureResult $combined $run $hash -AimedBlocks} 'Combined mode requires explicit extended selection'

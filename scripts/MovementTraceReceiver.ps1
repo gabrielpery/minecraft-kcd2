@@ -119,8 +119,9 @@ function Assert-MineComeTraceClock {
 
 function New-MineComeTraceReceiver {
     [CmdletBinding()]
-    param([Parameter(Mandatory)][string]$PatchFile,[Parameter(Mandatory)]$MinimumUtcMs,[string]$ExpectedHudSave,[switch]$PhysicalMovement,[switch]$BufferedPhysicalMovement,[switch]$ExtendedWalking,[switch]$WideWalking)
-    if($WideWalking -and -not $PhysicalMovement){throw 'Wide walking requires explicit physical movement.'}
+    param([Parameter(Mandatory)][string]$PatchFile,[Parameter(Mandatory)]$MinimumUtcMs,[string]$ExpectedHudSave,[switch]$PhysicalMovement,[switch]$BufferedPhysicalMovement,[switch]$ExtendedWalking,[switch]$WideWalking,[switch]$ScriptedHudCoupled)
+    if($ScriptedHudCoupled -and ($PhysicalMovement -or -not $ExpectedHudSave)){throw 'Scripted coupled movement requires an exact HUD save without physical input mode.'}
+    if($WideWalking -and -not ($PhysicalMovement -or $ScriptedHudCoupled)){throw 'Wide walking requires explicit physical or scripted coupled HUD movement.'}
     $area=Get-HudWalkingArea -WideWalking:$WideWalking
     Assert-MineComeTraceClock $MinimumUtcMs
     if($BufferedPhysicalMovement -and -not $PhysicalMovement){throw 'Buffered playback requires the physical movement profile.'}
@@ -174,7 +175,7 @@ function New-MineComeTraceReceiver {
             if([Math]::Abs($x-($center.x+(($index-1)%$area.Grid)-$area.HalfWidth)) -gt 0.0001 -or [Math]::Abs($y-($center.y+[Math]::Floor(($index-1)/$area.Grid)-$area.HalfWidth)) -gt 0.0001 -or -not (Get-MineComeTraceBoolean $point 'valid') -or (Get-MineComeTraceString $point 'result') -cne 'hit') { throw 'Invalid patch coverage.' }
             foreach($axis in @('nx','ny','nz')) { [void](Get-MineComeTraceNumber $point $axis -1.01 1.01) }
         }
-        return [pscustomobject]@{ExpectedRun=$run;PatchHash=$hash;Center=$center;ExpectedHudSave=$ExpectedHudSave;PhysicalMovement=[bool]$PhysicalMovement;BufferedPhysicalMovement=[bool]$BufferedPhysicalMovement;ExtendedWalking=[bool]$ExtendedWalking;WideWalking=[bool]$WideWalking;Anchor=[pscustomobject]@{x=0.0;y=64.0;z=0.0};AnchorVerified=$false;MinimumUtcMs=[long]$MinimumUtcMs;LastSeq=[long]0;LastServerSeq=[long]0;LastFreshPassedSeq=[long]0;LastPassedUtcMs=[long]0;LastPassedServerAgeMs=[double]0;World=$null;Save=$null;Begun=$false;Ended=$false;GroundProved=$false;Bytes=0;Records=0}
+        return [pscustomobject]@{ExpectedRun=$run;PatchHash=$hash;Center=$center;ExpectedHudSave=$ExpectedHudSave;PhysicalMovement=[bool]$PhysicalMovement;BufferedPhysicalMovement=[bool]$BufferedPhysicalMovement;ExtendedWalking=[bool]$ExtendedWalking;WideWalking=[bool]$WideWalking;ScriptedHudCoupled=[bool]$ScriptedHudCoupled;Anchor=[pscustomobject]@{x=0.0;y=64.0;z=0.0};AnchorVerified=$false;MinimumUtcMs=[long]$MinimumUtcMs;LastSeq=[long]0;LastServerSeq=[long]0;LastFreshPassedSeq=[long]0;LastPassedUtcMs=[long]0;LastPassedServerAgeMs=[double]0;World=$null;Save=$null;Begun=$false;Ended=$false;GroundProved=$false;Bytes=0;Records=0}
     } finally { $document.Dispose() }
 }
 

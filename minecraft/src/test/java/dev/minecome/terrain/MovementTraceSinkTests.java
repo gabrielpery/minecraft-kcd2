@@ -267,6 +267,21 @@ final class MovementTraceSinkTests {
             check(context().profile()==MovementTraceSink.Profile.GROUND,"Legacy context retains explicit Ground default");
             var hud=hudContext(hudSave,world,"live_kcd_ground_patch");
             check(hud.profile()==MovementTraceSink.Profile.HUD_COUPLED && hud.save().equals(hudSave),"HUD profile binds exact canonical save");
+            var wideHud=new MovementTraceSink.Context(hud.run(),hud.patchSha256(),hud.sourceKind(),hud.save(),hud.world(),
+                    hud.centerX(),hud.centerY(),hud.centerZ(),MovementTraceSink.Profile.HUD_COUPLED,0,64,0,true);
+            Path wideFile=run.resolve("wide-hud-coupled.ndjson");
+            var wideMotion=new MovementTraceSink.Motion(-2.3,64,.5,0,0,0,true,true,true);
+            try(var sink=MovementTraceSink.open(wideFile,root,wideHud,0,1000)){
+                check(sink.sample(100_000_000L,1100,"WALKING",wideMotion,wideMotion,1,100_000_000L,false),"Wide coupled trace admits observed motion past old bounds");
+                try{sink.sample(200_000_000L,1200,"RESTING",motion(.5),motion(.5),2,200_000_000L,false);throw new AssertionError("Mixed area sample admitted");}
+                catch(IllegalArgumentException expected){checks++;}
+                sink.finish(1200,"passed","PASSED","Synthetic wide coupled trace provenance check");
+            }
+            for(String line:Files.readAllLines(wideFile)){
+                var record=JsonParser.parseString(line).getAsJsonObject();
+                check(record.get("walking_area").getAsString().equals("wide")&&record.get("source_kind").getAsString().equals("live_kcd_ground_patch"),
+                        "Every wide trace retains captured source provenance without physical relabelling");
+            }
             try{new MovementTraceSink.Context("run","a".repeat(64),"live_kcd_ground_patch",hudSave,world,100,200,10);throw new AssertionError("Legacy constructor accepted HUD save");}
             catch(IllegalArgumentException expected){checks++;}
             try{hudContext(context().save(),world,"live_kcd_ground_patch");throw new AssertionError("HUD profile accepted Ground save");}

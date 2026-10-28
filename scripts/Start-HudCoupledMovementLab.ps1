@@ -1,7 +1,7 @@
 # Existing tools world -> real sampled terrain -> HUD-world vanilla movement ->
 # bounded KCD follower. This does not launch KCD or arm HUD composition.
 [CmdletBinding()]
-param([switch]$PreflightOnly)
+param([switch]$PreflightOnly,[switch]$WideWalking)
 . (Join-Path $PSScriptRoot 'powershell7.ps1')
 if($PSVersionTable.PSVersion.Major -lt 7){
     $bootstrapExit=Invoke-MineComePowerShell7 -ScriptPath $PSCommandPath -BoundParameters $PSBoundParameters
@@ -9,4 +9,4 @@ if($PSVersionTable.PSVersion.Major -lt 7){
     return
 }
 $ErrorActionPreference='Stop'
-& (Join-Path $PSScriptRoot 'Test-CoupledMovement.ps1') -HudWorld -PreflightOnly:$PreflightOnly
+& (Join-Path $PSScriptRoot 'Test-CoupledMovement.ps1') -HudWorld -PreflightOnly:$PreflightOnly -WideWalking:$WideWalking

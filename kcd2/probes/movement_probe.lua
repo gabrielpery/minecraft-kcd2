@@ -361,6 +361,7 @@ local FOLLOWER_LOG_MAX_BYTES = 3798 -- Includes the tag, separating space and CR
 -- change profiles, or renew the deadline. Preserve the registry across a module
 -- reload so existing owned timers retain their original profile.
 local SCRIPTED_LIMITS = { hard_ms=FOLLOWER_MS,source_ms=SOURCE_LIMIT_MS,writes=199,receipts=128,radius=2 }
+local WIDE_SCRIPTED_LIMITS = { hard_ms=FOLLOWER_MS,source_ms=SOURCE_LIMIT_MS,writes=199,receipts=128,radius=4,walking_area="wide" }
 local PHYSICAL_LIMITS = { hard_ms=FOLLOWER_MS,source_ms=SOURCE_LIMIT_MS,writes=511,receipts=128,radius=2 }
 local EXTENDED_LIMITS = { hard_ms=18000,source_ms=16000,writes=2047,receipts=256,session="extended",radius=2 }
 local WIDE_PHYSICAL_LIMITS = { hard_ms=FOLLOWER_MS,source_ms=SOURCE_LIMIT_MS,writes=511,receipts=128,radius=4,walking_area="wide" }
@@ -505,14 +506,14 @@ local function follower_stop(p,reason)
 end
 local function begin_follower(run,physical,buffered,extended,walking_area)
     if not token(run) then return false,"invalid_run" end
-    if walking_area ~= nil and (walking_area ~= "wide" or not physical) then return false,"invalid_walking_area" end
+    if walking_area ~= nil and walking_area ~= "wide" then return false,"invalid_walking_area" end
     if state.active or state.follower then return false,"busy" end
     local s,clock = snapshot(),now()
     local unsafe = guards(s,0.05,true,true)
     if not clock then unsafe = "clock_unavailable" end
     if type(field(s.entity,"SetWorldPos")) ~= "function" then unsafe = "position_writer_unavailable" end
     if not Script or type(Script.SetTimerForFunction) ~= "function" or type(Script.KillTimer) ~= "function" then unsafe = "timer_unavailable" end
-    local limits = walking_area == "wide" and (extended and WIDE_EXTENDED_LIMITS or WIDE_PHYSICAL_LIMITS)
+    local limits = walking_area == "wide" and (not physical and WIDE_SCRIPTED_LIMITS or extended and WIDE_EXTENDED_LIMITS or WIDE_PHYSICAL_LIMITS)
         or extended and EXTENDED_LIMITS or physical and PHYSICAL_LIMITS or SCRIPTED_LIMITS
     local p = {run=run,entity=s.entity,id=s.id,created=clock,deadline=clock and clock+limits.hard_ms/1000,origin=copy(s.position.value),
         camera_origin=copy(s.camera.position.value),last_owned=copy(s.position.value),last_snapshot=s,timers={},data={},

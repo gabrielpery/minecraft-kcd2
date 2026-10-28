@@ -10,14 +10,18 @@ public final class GroundPatchTests {
     private static void check(boolean value,String message){checks++;if(!value)throw new AssertionError(message);}
     private static byte[] bytes(JsonObject object){return object.toString().getBytes(StandardCharsets.UTF_8);}
     private static JsonObject fixture() {
+        return fixture(5);
+    }
+    private static JsonObject fixture(int grid) {
         JsonObject root=new JsonObject();root.addProperty("schema",1);root.addProperty("run","fixture-1");
-        root.addProperty("grid_size",5);root.addProperty("spacing",1);
-        root.addProperty("stable_player",true);root.addProperty("point_count",25);root.addProperty("valid_count",25);
+        root.addProperty("grid_size",grid);root.addProperty("spacing",1);
+        if(grid==9)root.addProperty("walking_area","wide");
+        root.addProperty("stable_player",true);root.addProperty("point_count",grid*grid);root.addProperty("valid_count",grid*grid);
         JsonObject center=new JsonObject();center.addProperty("x",100);center.addProperty("y",200);center.addProperty("z",10);root.add("center",center);
         JsonObject provenance=new JsonObject();provenance.addProperty("kind","standalone_fixture");root.add("provenance",provenance);
         JsonArray points=new JsonArray();
-        for(int row=0;row<5;row++)for(int col=0;col<5;col++) {
-            JsonObject point=new JsonObject();point.addProperty("index",row*5+col+1);point.addProperty("x",100+col-2);point.addProperty("y",200+row-2);
+        for(int row=0;row<grid;row++)for(int col=0;col<grid;col++) {
+            JsonObject point=new JsonObject();point.addProperty("index",row*grid+col+1);point.addProperty("x",100+col-(grid-1)/2);point.addProperty("y",200+row-(grid-1)/2);
             point.addProperty("z",10);point.addProperty("nx",0);point.addProperty("ny",0);point.addProperty("nz",1);
             point.addProperty("valid",true);point.addProperty("result","hit");points.add(point);
         }
@@ -65,11 +69,31 @@ public final class GroundPatchTests {
         reject(json.replaceFirst("\"z\":10","\"z\":1e999").getBytes(StandardCharsets.UTF_8),"overflowing numeric exponent");
         reject(new byte[]{(byte)0xc3,(byte)0x28},"malformed UTF8");reject(new byte[GroundPatch.MAX_BYTES+1],"oversize file");
         sequence(patch);
+        wideSequence(GroundPatch.parse(bytes(fixture(9)),true));
         checks+=MovementTraceSinkTests.run();
         checks+=WideWalkingTests.run();
         System.out.println("GroundPatchTests: "+checks+" checks passed (no Minecraft/game bootstrap)");
     }
     private static GroundMovementSequence.Motion ground(double x){return new GroundMovementSequence.Motion(x,64,0.5,0,0,0,true,true);}
+    private static void wideSequence(GroundPatch patch){
+        var sequence=new GroundMovementSequence(patch,0);
+        sequence.update(0,ground(.5),ground(.5),1);sequence.update(2_000_000_000L,ground(.5),ground(.5),1);
+        for(int i=1;i<=13;i++)sequence.update(2_000_000_000L+i*50_000_000L,ground(.5-i*.2),ground(.5-Math.max(0,i-1)*.2),1);
+        check(sequence.phase()==GroundMovementSequence.Phase.WALKING,"Wide walk waits for the server as well as the client crossing target");
+        sequence.update(2_700_000_000L,ground(-2.3),ground(-2.1),1);
+        check(sequence.phase()==GroundMovementSequence.Phase.RESTING&&sequence.clientWalk()>2.5&&sequence.serverWalk()>2.5,"Wide crossing releases held input at actual observed distance");
+        sequence.update(2_750_000_000L,ground(-2.3),ground(-2.1),1);
+        check(sequence.update(3_750_000_000L,ground(-2.3),ground(-2.1),1).jump(),"Wide crossing preserves released rest before jump");
+        var clientAir=new GroundMovementSequence.Motion(-2.3,64.5,.5,0,.2,0,false,false);
+        var serverAir=new GroundMovementSequence.Motion(-2.1,64.5,.5,0,.2,0,false,false);
+        sequence.update(3_800_000_000L,clientAir,serverAir,1);sequence.update(3_850_000_000L,clientAir,serverAir,1);
+        sequence.update(4_400_000_000L,ground(-2.3),ground(-2.1),1);sequence.update(4_950_000_000L,ground(-2.3),ground(-2.1),1);
+        check(sequence.phase()==GroundMovementSequence.Phase.PASSED,"Wide walk and jump can complete within the original six-second source budget");
+        var blocked=new GroundMovementSequence(patch,0);
+        blocked.update(0,ground(.5),ground(.5),1);blocked.update(2_000_000_000L,ground(.5),ground(.5),1);
+        for(int i=1;i<=21;i++)blocked.update(2_000_000_000L+i*50_000_000L,ground(.5),ground(.5),1);
+        check(blocked.phase()==GroundMovementSequence.Phase.FAILED,"Obstructed wide walking cannot hold input indefinitely");
+    }
     private static void sequence(GroundPatch patch) {
         var sequence=new GroundMovementSequence(patch,0);
         check(!sequence.update(0,ground(0.5),ground(0.5),1).forward(),"initial ground does not immediately walk");

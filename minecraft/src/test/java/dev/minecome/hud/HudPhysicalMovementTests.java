@@ -71,7 +71,9 @@ public final class HudPhysicalMovementTests {
         var wideFixture=new Properties();wideFixture.putAll(extendedFixture);wideFixture.setProperty("minecome.hudWideWalking","true");
         check(HudPhysicalMovementMode.require(wideFixture),"Wide crossing fixture retains extended movement");
         wideFixture.setProperty("minecome.hudWalkingAimedFixture","true");
-        reject(()->HudPhysicalMovementMode.require(wideFixture),"wide crossing proof cannot silently use aimed fixture path");
+        check(HudPhysicalMovementMode.require(wideFixture),"Wide extended fixture supports aimed blocks after its boundary crossing");
+        var wideAimedShort=new Properties();wideAimedShort.putAll(wideFixture);wideAimedShort.remove("minecome.hudPhysicalMovementExtended");
+        reject(()->HudPhysicalMovementMode.require(wideAimedShort),"wide aimed fixture still requires extended timing");
         wideFixture.remove("minecome.hudWalkingAimedFixture");wideFixture.remove("minecome.hudPhysicalMovementExtended");
         reject(()->HudPhysicalMovementMode.require(wideFixture),"short fixture cannot claim wide crossing scenario");
         var combined=new Properties();combined.putAll(extendedFixture);combined.setProperty("minecome.hudWalkingAimedFixture","true");
@@ -358,5 +360,20 @@ public final class HudPhysicalMovementTests {
             check(Files.readString(target).equals(second),"Replacement after sharing release preserves original queued sequence/time");
         }finally{Files.deleteIfExists(temp);Files.deleteIfExists(target);Files.deleteIfExists(root);}
     }
-    public static void main(String[] args)throws Exception{modes();wire();holds();extendedHolds();views();reader();readerRaces();fixturePublication();checks+=HudMovementTimingTests.run();checks+=dev.minecome.terrain.HudMovementBoundaryTests.run();System.out.println("HudPhysicalMovementTests: "+checks+" checks passed");}
+    private static void fixtureAimingGeometry(){
+        for(boolean wide:new boolean[]{false,true}){
+            var seed=new dev.minecome.protocol.AimGeometry.Cell(wide?4:2,64,0);
+            var point=HudWalkingAimedFixture.topAimPoint(wide,seed);
+            check(point.x()==seed.x()+(wide?.25:.5)&&point.y()==65&&point.z()==.5,"Fixture top aim retains selected patch geometry");
+            for(double z:new double[]{-.25,.5,1.0}){
+                var eye=new dev.minecome.protocol.Protocol.Vec3(0,65.62,z);
+                double x=point.x()-eye.x(),y=point.y()-eye.y(),dz=point.z()-eye.z(),length=Math.sqrt(x*x+y*y+dz*dz);
+                var ray=new dev.minecome.protocol.AimGeometry.Ray(eye,new dev.minecome.protocol.Protocol.Vec3(x/length,y/length,dz/length),4.5);
+                var hit=dev.minecome.protocol.AimGeometry.intersect(ray,seed.bounds());
+                check(hit.isPresent()&&hit.get().face()==dev.minecome.protocol.AimGeometry.Face.UP&&hit.get().distance()<4.5,
+                        "Reference top-face aim remains within unchanged reach after walking; real fixture still uses vanilla OUTLINE");
+            }
+        }
+    }
+    public static void main(String[] args)throws Exception{modes();wire();holds();extendedHolds();views();reader();readerRaces();fixturePublication();fixtureAimingGeometry();checks+=HudMovementTimingTests.run();checks+=dev.minecome.terrain.HudMovementBoundaryTests.run();System.out.println("HudPhysicalMovementTests: "+checks+" checks passed");}
 }

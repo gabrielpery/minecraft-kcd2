@@ -46,7 +46,14 @@ final class GroundMovementSequence {
             }
             case WALKING -> {
                 clientWalk=Math.max(clientWalk,client.distance(clientStart));serverWalk=Math.max(serverWalk,server.distance(serverStart));
-                if(walkTicks++<6)return new Held(true,false);
+                if(patch.wide()){
+                    // Stop on actual distance in both worlds. A finite tick cap
+                    // prevents held input from extending an obstructed crossing.
+                    if(Math.min(clientWalk,serverWalk)<2.5){
+                        if(walkTicks++<20)return new Held(true,false);
+                        fail("Wide vanilla walk did not reach both observed targets");return Held.NONE;
+                    }
+                }else if(walkTicks++<6)return new Held(true,false);
                 phase=Phase.RESTING;phaseAt=now;stableSince=-1;
             }
             case RESTING -> {
@@ -54,7 +61,7 @@ final class GroundMovementSequence {
                 if(!grounded || client.horizontalSpeed()>0.015 || server.horizontalSpeed()>0.015){stableSince=-1;return Held.NONE;}
                 if(stableSince<0)stableSince=now;
                 if(now-phaseAt>=1_000_000_000L && now-stableSince>=500_000_000L) {
-                    if(clientWalk<0.3 || serverWalk<0.3){fail("Vanilla walk not confirmed on both client and server");return Held.NONE;}
+                    if(clientWalk<(patch.wide()?2.5:0.3) || serverWalk<(patch.wide()?2.5:0.3)){fail("Vanilla walk not confirmed on both client and server");return Held.NONE;}
                     clientJump=client;serverJump=server;phase=Phase.JUMPING;phaseAt=now;jumpTicks=1;
                     return new Held(false,true);
                 }

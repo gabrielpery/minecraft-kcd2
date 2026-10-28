@@ -2,6 +2,7 @@ package dev.minecome.terrain;
 
 import com.google.gson.JsonObject;
 import dev.minecome.hud.HudGroundMovementMode;
+import dev.minecome.hud.HudPhysicalMovementMode;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.entity.Entity;
 import net.minecraft.server.MinecraftServer;
@@ -52,7 +53,9 @@ public final class HudGroundMovementFixture {
         this(file,run,save,HudGroundMovementMode.Mode.FIXTURE,null);
     }
     public HudGroundMovementFixture(Path file,String run,String save,HudGroundMovementMode.Mode mode,Path traceFile) throws IOException {
-        patch=GroundPatch.read(file);this.save=save;this.hudRun=run;this.mode=mode;this.traceFile=traceFile;
+        boolean wide=HudPhysicalMovementMode.wide(System.getProperties());
+        if(wide && mode!=HudGroundMovementMode.Mode.COUPLED)throw new IllegalArgumentException("Wide HUD ground requires explicit coupled movement");
+        patch=GroundPatch.read(file,wide);this.save=save;this.hudRun=run;this.mode=mode;this.traceFile=traceFile;
         HudGroundMovementMode.requirePatch(mode,run,patch.run(),patch.sourceKind(),save);
         if((mode==HudGroundMovementMode.Mode.COUPLED)!=(traceFile!=null) || (traceFile!=null && !traceFile.isAbsolute()))
             throw new IllegalArgumentException("Only coupled HUD movement requires an absolute fresh trace path");
@@ -244,6 +247,12 @@ public final class HudGroundMovementFixture {
         e.addProperty("ground_source_kind",patch.sourceKind());e.addProperty("synthetic_input",true);e.addProperty("kcd_calls",false);
         e.addProperty("kcd_movement_applied",false);e.addProperty("physical_input_verified",false);e.addProperty("phase",phase());
         e.addProperty("client_walk",sequence==null?0:sequence.clientWalk());e.addProperty("server_walk",sequence==null?0:sequence.serverWalk());
+        if(patch.wide()){
+            e.addProperty("walking_area","wide");
+            e.addProperty("wide_boundary_crossed",sequence!=null&&sequence.clientWalk()>2&&sequence.serverWalk()>2);
+            e.addProperty("client_max_horizontal_excursion",sequence==null?0:sequence.clientWalk());
+            e.addProperty("server_max_horizontal_excursion",sequence==null?0:sequence.serverWalk());
+        }
         e.addProperty("client_air",sequence!=null&&sequence.clientAir());e.addProperty("server_air",sequence!=null&&sequence.serverAir());
         e.addProperty("client_land",sequence!=null&&sequence.clientLand());e.addProperty("server_land",sequence!=null&&sequence.serverLand());
         e.addProperty("client_proxy_queries",clientQueries);e.addProperty("server_proxy_queries",serverQueries);
@@ -268,7 +277,7 @@ public final class HudGroundMovementFixture {
             throw new IOException("HUD movement trace requires the owned workspace run directory");
         String world=save.substring("MineCome-HudStream-".length());
         var context=new MovementTraceSink.Context(patch.run(),patch.sha256(),patch.sourceKind(),save,world,
-                patch.centerX(),patch.centerY(),patch.centerZ(),MovementTraceSink.Profile.HUD_COUPLED);
+                patch.centerX(),patch.centerY(),patch.centerZ(),MovementTraceSink.Profile.HUD_COUPLED,0,64,0,patch.wide());
         trace=MovementTraceSink.open(traceFile,project.resolve("runtime/evidence"),context,now,System.currentTimeMillis());
         traceResult="pending";firstTraceSamplePending=true;
     }
@@ -276,8 +285,8 @@ public final class HudGroundMovementFixture {
         var c=clientMotion;var s=observed.motion();
         // Timestamp only after selecting the immutable authoritative observation.
         boolean written=trace.sample(System.nanoTime(),System.currentTimeMillis(),sequence.phase().name(),
-                new MovementTraceSink.Motion(c.x(),c.y(),c.z(),c.vx(),c.vy(),c.vz(),c.onGround(),c.proxySupport()),
-                new MovementTraceSink.Motion(s.x(),s.y(),s.z(),s.vx(),s.vy(),s.vz(),s.onGround(),s.proxySupport()),
+                new MovementTraceSink.Motion(c.x(),c.y(),c.z(),c.vx(),c.vy(),c.vz(),c.onGround(),c.proxySupport(),patch.wide()),
+                new MovementTraceSink.Motion(s.x(),s.y(),s.z(),s.vx(),s.vy(),s.vz(),s.onGround(),s.proxySupport(),patch.wide()),
                 observed.sequence(),observed.at(),force);
         if(written)firstTraceSamplePending=false;
         return written;

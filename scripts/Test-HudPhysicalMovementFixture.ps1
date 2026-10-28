@@ -12,8 +12,8 @@ Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'HudGroundMovement.ps1')
 if($AimedBlocks -and -not $ExtendedWalking){throw 'Combined aimed blocks require the explicit extended standalone walking fixture.'}
 if($AimedBlocks -and $YawDegrees -ne 0){throw 'Combined aimed blocks require the tested zero-yaw fixture.'}
-if($WideWalking -and (-not $ExtendedWalking -or $AimedBlocks)){throw 'Wide walking fixture requires ExtendedWalking without AimedBlocks.'}
-function Assert-HudWalkingAimedFixtureProof($Aimed,$Fixture,$Guest,[string]$PatchHash) {
+if($WideWalking -and -not $ExtendedWalking){throw 'Wide walking fixture requires ExtendedWalking.'}
+function Assert-HudWalkingAimedFixtureProof($Aimed,$Fixture,$Guest,[string]$PatchHash,[switch]$WideWalking) {
     function Flag($Object,[string]$Name,[bool]$Expected){if($Object.$Name -isnot [bool] -or $Object.$Name -ne $Expected){throw "Combined fixture boolean mismatch: $Name"}}
     function Text($Object,[string]$Name,[string]$Expected){if($Object.$Name -isnot [string] -or $Object.$Name -cne $Expected){throw "Combined fixture text mismatch: $Name"}}
     function Count($Object,[string]$Name,[long]$Expected){if(($Object.$Name -isnot [int] -and $Object.$Name -isnot [long]) -or $Object.$Name -ne $Expected){throw "Combined fixture integer mismatch: $Name"}}
@@ -24,6 +24,7 @@ function Assert-HudWalkingAimedFixtureProof($Aimed,$Fixture,$Guest,[string]$Patc
     function Cell($Value){foreach($axis in @('x','y','z')){if(($Value.$axis -isnot [int] -and $Value.$axis -isnot [long]) -or [Math]::Abs([double]$Value.$axis) -gt 10000000){throw 'Combined fixture integer cell required.'}}}
     function SameCell($Actual,$Expected){Cell $Actual;Cell $Expected;foreach($axis in @('x','y','z')){if($Actual.$axis -ne $Expected.$axis){throw 'Combined fixture cell correlation differs.'}}}
     Text $Aimed kind 'standalone_hud_walking_aimed_fixture_v1'
+    Assert-HudWalkingArea $Aimed ([bool]$WideWalking)
     if(($Fixture.aimed_hud_frames -isnot [int] -and $Fixture.aimed_hud_frames -isnot [long]) -or $Fixture.aimed_hud_frames -lt 2){throw 'Combined fixture lacks actual HUD frames during block interactions.'}
     foreach($name in @('scripted_input','synthetic_host_rays','completed','alignment_before_movement','bootstrap_before_movement','movement_before_interactions','movement_resumed_after_interactions','support_client_server_prepared','support_client_server_restored_air','imported_cells_unchanged','final_client_server_air')){Flag $Aimed $name $true}
     foreach($name in @('physical_input_verified','kcd_connected')){Flag $Aimed $name $false}
@@ -32,6 +33,13 @@ function Assert-HudWalkingAimedFixtureProof($Aimed,$Fixture,$Guest,[string]$Patc
     Count $Aimed arena_direct_block_writes 0
     [void](Number $Aimed.walk_before_m .05 4);[void](Number $Aimed.walk_after_m .05 4)
     $seed=$Aimed.seed;Cell $seed
+    if($WideWalking -and ($seed.x -ne 4 -or $seed.z -ne 0)){throw 'Wide fixture support must remain outside the imported terrain.'}
+    if($WideWalking){
+        [void](Number $Aimed.max_host_ray_range 4.5 4.5)
+        [void](Number $Aimed.top_aim_point.x ($seed.x+.25) ($seed.x+.25))
+        [void](Number $Aimed.top_aim_point.y ($seed.y+1) ($seed.y+1))
+        [void](Number $Aimed.top_aim_point.z ($seed.z+.5) ($seed.z+.5))
+    }
     $support=[pscustomobject]@{x=$seed.x;y=$seed.y-1;z=$seed.z};SameCell $Aimed.support $support
     $top=[pscustomobject]@{x=$seed.x;y=$seed.y+1;z=$seed.z};$west=[pscustomobject]@{x=$seed.x-1;y=$seed.y;z=$seed.z}
     $targets=@($seed,$top,$top,$west,$west,$seed);$hits=@($support,$seed,$top,$seed,$west,$seed)
@@ -44,9 +52,10 @@ function Assert-HudWalkingAimedFixtureProof($Aimed,$Fixture,$Guest,[string]$Patc
     Flag $arena vanilla_outline_raycast $true;Text $arena fluid_raycast 'NONE';Flag $arena live_transport_enabled $false
     $region=$arena.build_region
     Text $region patch_run $Aimed.patch_run;Text $region patch_sha256 $PatchHash;SameCell $region.support $support;Flag $region support_editable $false
-    # Each of the sixteen half-height imported slabs intersects one or two
+    # Each imported half-height slab intersects one or two
     # integer block cells; these cells are protected, not arena-owned stones.
-    if(($region.protected_imported_cells -isnot [int] -and $region.protected_imported_cells -isnot [long]) -or $region.protected_imported_cells -lt 16 -or $region.protected_imported_cells -gt 32){throw 'Combined fixture protected terrain count is outside the sampled slab bound.'}
+    $slabs=if($WideWalking){64}else{16}
+    if(($region.protected_imported_cells -isnot [int] -and $region.protected_imported_cells -isnot [long]) -or $region.protected_imported_cells -lt $slabs -or $region.protected_imported_cells -gt 2*$slabs){throw 'Combined fixture protected terrain count is outside the sampled slab bound.'}
     foreach($name in @('block_writes','inventory_writes','camera_writes','owned_count','omitted_receipts')){Count $arena $name 0}
     Flag $arena pending $false
     if($null -ne $arena.failure -or @($arena.owned_cells).Count -ne 0 -or @($Aimed.confirmations).Count -ne 6 -or @($arena.confirmations).Count -ne 6 -or @($arena.requests).Count -ne 6){throw 'Combined fixture requires exactly six confirmed actions and complete arena cleanup.'}
@@ -78,7 +87,7 @@ function Assert-HudWalkingAimedFixtureProof($Aimed,$Fixture,$Guest,[string]$Patc
 }
 function Assert-HudPhysicalFixtureResult($Guest,[string]$Run,[string]$PatchHash,[switch]$ExtendedWalking,[switch]$AimedBlocks,[switch]$WideWalking) {
     if($AimedBlocks -and -not $ExtendedWalking){throw 'Combined aimed blocks require the extended walking fixture.'}
-    if($WideWalking -and (-not $ExtendedWalking -or $AimedBlocks)){throw 'Wide walking fixture requires ExtendedWalking without AimedBlocks.'}
+    if($WideWalking -and -not $ExtendedWalking){throw 'Wide walking fixture requires ExtendedWalking.'}
     if($Guest.schema -ne 1 -or $Guest.run -cne $Run -or $Guest.result -cne 'passed' -or $Guest.source_kind -cne 'minecraft_vanilla_ui_stream_v1' -or
         $Guest.ui_physical_controller_fixture -isnot [bool] -or -not $Guest.ui_physical_controller_fixture -or $Guest.ui_input_physical_movement -isnot [bool] -or $Guest.ui_input_physical_movement -or
         $Guest.scripted_input -isnot [bool] -or -not $Guest.scripted_input -or $Guest.physical_input_verified -isnot [bool] -or $Guest.physical_input_verified -or
@@ -178,7 +187,7 @@ function Assert-HudPhysicalFixtureResult($Guest,[string]$Run,[string]$PatchHash,
         ([double]([decimal]$binding[0].monotonic_ns-[decimal]$edge.received_monotonic_ns))/1000000
     })
     $proof | Add-Member -NotePropertyName scripted_receive_to_binding_ms -NotePropertyValue $delays -Force
-    if($AimedBlocks){Assert-HudWalkingAimedFixtureProof $proof.aimed_blocks $proof $Guest $PatchHash}
+    if($AimedBlocks){Assert-HudWalkingAimedFixtureProof $proof.aimed_blocks $proof $Guest $PatchHash -WideWalking:$WideWalking}
     return $proof
 }
 function Get-HudPhysicalFixtureSources([string]$Root) {
@@ -188,7 +197,7 @@ function Get-HudPhysicalFixtureSources([string]$Root) {
             $files.Add($file.Substring($Root.Length+1).Replace('\','/'))
         }
     }
-    foreach($file in @('minecraft/build.gradle','scripts/Test-HudPhysicalMovementFixture.ps1','scripts/Run-HudStreamClient.ps1')){$files.Add($file)}
+    foreach($file in @('minecraft/build.gradle','scripts/Test-HudPhysicalMovementFixture.ps1','scripts/Run-HudStreamClient.ps1','scripts/HudWalkingArea.ps1','scripts/HudGroundMovement.ps1')){$files.Add($file)}
     return @($files | Sort-Object -Unique)
 }
 $root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))

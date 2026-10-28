@@ -2,8 +2,8 @@
 # Pure receipt/append-only file checks shared by the bounded follower controller.
 # Callers authenticate the live patch and processes; these helpers do not call games.
 . (Join-Path $PSScriptRoot 'HudWalkingSession.ps1')
-function Assert-CoupledHudReady($Ready,[int]$HelperPid,[string]$HelperStart,[long]$MinimumUtcMs) {
-    Assert-HudGroundMovementMarkers $Ready $false $true
+function Assert-CoupledHudReady($Ready,[int]$HelperPid,[string]$HelperStart,[long]$MinimumUtcMs,[switch]$WideWalking) {
+    Assert-HudGroundMovementMarkers $Ready $false $true -WideWalking:$WideWalking
     $world=[Guid]::Empty
     if($Ready.schema -ne 1 -or $Ready.run -cnotmatch '^[0-9a-f]{32}$' -or
         $Ready.source_kind -cne 'minecraft_vanilla_ui_stream_v1' -or $Ready.mapping_bytes -ne 8294656 -or
@@ -18,7 +18,8 @@ function Assert-CoupledHudReady($Ready,[int]$HelperPid,[string]$HelperStart,[lon
         throw 'HUD readiness does not bind the exact standalone helper, producer and save.'
     }
 }
-function Assert-CoupledHudCompletion($Verification,$Ready,$Guest,$Receiver,[string]$TraceFile,[int]$HelperPid,[string]$HelperStart,[string]$HelperHash) {
+function Assert-CoupledHudCompletion($Verification,$Ready,$Guest,$Receiver,[string]$TraceFile,[int]$HelperPid,[string]$HelperStart,[string]$HelperHash,[switch]$WideWalking) {
+    foreach($receipt in @($Verification,$Ready)){Assert-HudWalkingArea $receipt ([bool]$WideWalking)}
     if($Verification.schema -ne 1 -or $Verification.kind -cne 'minecome_hud_stream_controller_v1' -or
         $Verification.result -cne 'passed' -or $Verification.failure -or $Verification.run -cne $Ready.run -or
         $Verification.target_kind -cne 'standalone_controller' -or [string]$Verification.target_pid -cne [string]$HelperPid -or
@@ -30,7 +31,7 @@ function Assert-CoupledHudCompletion($Verification,$Ready,$Guest,$Receiver,[stri
         if($Verification.$field -isnot [bool] -or $Verification.$field){throw 'HUD helper claims an incompatible operation.'}
     }
     if($Verification.ground_movement_coupled -isnot [bool] -or -not $Verification.ground_movement_coupled){throw 'HUD helper did not verify coupled movement.'}
-    $proof=Assert-HudGroundMovementProof $Guest $Ready.run $Receiver.PatchHash $true $Receiver.ExpectedRun $TraceFile
+    $proof=Assert-HudGroundMovementProof $Guest $Ready.run $Receiver.PatchHash $true $Receiver.ExpectedRun $TraceFile -WideWalking:$WideWalking
     if($proof.trace_records -ne $Receiver.Records -or
         ($Verification.ground_movement | ConvertTo-Json -Depth 12 -Compress) -cne ($proof | ConvertTo-Json -Depth 12 -Compress)){
         throw 'HUD and trace completion proofs disagree.'
@@ -67,7 +68,7 @@ function Read-CoupledTraceLines($Reader,[switch]$ExtendedWalking) {
         $lines[$i]
     }
 }
-function Assert-CoupledFollowerProof($Receipts,$Forwarded,[string]$Run,$Center) {
+function Assert-CoupledFollowerProof($Receipts,$Forwarded,[string]$Run,$Center,[switch]$WideWalking) {
     $begin=@($Receipts | Where-Object event -CEQ 'begin')
     $terminal=@($Receipts | Where-Object terminal -EQ $true)
     if($begin.Count -ne 1 -or $begin[0].result -cne 'awaiting_first_pose' -or
@@ -82,6 +83,8 @@ function Assert-CoupledFollowerProof($Receipts,$Forwarded,[string]$Run,$Center) 
         throw 'Follower restoration stages are incomplete or out of order.'
     }
     foreach($receipt in $Receipts) {
+        Assert-HudWalkingArea $receipt ([bool]$WideWalking)
+        if($receipt.PSObject.Properties['physical_movement']){throw 'Scripted coupled proof cannot claim physical movement.'}
         if($receipt.schema -ne 1 -or $receipt.run -cne $Run -or $receipt.event -cnotin @('begin','applied','heartbeat','restoring','restored') -or
             $receipt.terminal -isnot [bool] -or ($receipt.event -cne 'restored' -and $receipt.terminal)){
             throw 'Follower contains an uncorrelated or rejected operation.'
@@ -146,5 +149,8 @@ function Assert-CoupledFollowerProof($Receipts,$Forwarded,[string]$Run,$Center) 
     $x=$applied.target.x | Measure-Object -Minimum -Maximum
     $z=$applied.target.z | Measure-Object -Minimum -Maximum
     if($x.Maximum-$x.Minimum -lt 0.3 -or $z.Maximum-$z.Minimum -lt 0.5){throw 'Follower did not reflect sufficient real walk/jump displacement.'}
+    if($WideWalking -and @($applied | Where-Object {
+        ($_.target.x-$Center.x)*($_.target.x-$Center.x)+($_.target.y-$Center.y)*($_.target.y-$Center.y) -gt 4
+    }).Count -eq 0){throw 'No applied KCD readback crossed the old two-metre boundary.'}
     return $applied
 }

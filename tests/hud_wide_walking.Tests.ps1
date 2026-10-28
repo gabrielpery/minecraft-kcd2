@@ -47,7 +47,7 @@ function Receiver([string]$Path,[bool]$Wide){
 }
 function Trace($State,[string]$Kind,[long]$Seq,[double]$X=0){
     $record=[ordered]@{schema=1;kind=$Kind;run=$State.ExpectedRun;patch_sha256=$State.PatchHash;
-        source_kind=(Get-HudWalkingSession).SourceKind;save=$save;world=$world;seq=$Seq;utc_ms=$minimumUtc;phase='SETTLING'}
+        source_kind=$(if($State.PhysicalMovement){(Get-HudWalkingSession).SourceKind}else{'live_kcd_ground_patch'});save=$save;world=$world;seq=$Seq;utc_ms=$minimumUtc;phase='SETTLING'}
     if($State.WideWalking){$record.walking_area='wide'}
     if($Kind -ceq 'begin'){
         $record.started_monotonic_ns=0L;$record.center=$State.Center;$record.anchor_mc=@{x=0.0;y=64.0;z=0.0}
@@ -92,6 +92,17 @@ try{
     $sample=Trace $state sample 4 3;$sample.walking_area='narrow';Reject-Record $state $sample 'Mismatched sample marker rejected'
     $state=Receiver $narrowFile $false;Begin-Trace $state
     Reject-Record $state (Trace $state sample 3 3) 'Default receiver retains old bounds'
+    Reject {New-MineComeTraceReceiver -PatchFile $wideFile -MinimumUtcMs $minimumUtc -WideWalking -ScriptedHudCoupled} 'Scripted coupled wide requires exact HUD save'
+    Reject {New-MineComeTraceReceiver -PatchFile $wideFile -MinimumUtcMs $minimumUtc -ExpectedHudSave $save -WideWalking -ScriptedHudCoupled -PhysicalMovement} 'Scripted coupled and physical modes are exclusive'
+    $state=New-MineComeTraceReceiver -PatchFile $wideFile -MinimumUtcMs $minimumUtc -ExpectedHudSave $save -WideWalking -ScriptedHudCoupled
+    Check ($state.ScriptedHudCoupled -and -not $state.PhysicalMovement) 'Explicit scripted wide receiver preserves nonphysical identity'
+    Begin-Trace $state
+    $sample=Trace $state sample 3 3;$sample.source_kind=(Get-HudWalkingSession).SourceKind
+    Reject-Record $state $sample 'Scripted coupled cannot consume live physical source'
+    $sample.source_kind='standalone_ground_fixture';Reject-Record $state $sample 'Standalone fixture cannot claim coupled live capture'
+    $sample.source_kind='live_kcd_ground_patch';$accepted=Receive $state $sample
+    Check ($accepted.Kind -ceq 'sample' -and $accepted.Target.x -eq 123) 'Explicit scripted coupled wide crosses old boundary'
+    Reject-Record $state (Trace $state sample 4 4.01) 'Scripted wide retains bounded coordinates'
     $warmup=Initialize-HudBufferedMovementPipeline -PatchFile $wideFile -ExpectedHudSave $save -MinimumUtcMs $minimumUtc -WideWalking -ExtendedWalking
     Check ($warmup.status -ceq 'completed' -and $warmup.diagnostic_records -eq 3) 'Wide buffered warmup uses disposable valid marked records'
     Write-Output "HUD_WIDE_WALKING_TESTS_PASS checks=$script:checks no_game_started=true"

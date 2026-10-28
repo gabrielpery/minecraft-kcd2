@@ -132,6 +132,44 @@ foreach($sample in @(
 $bad=Clone-Receipt $receipts
 $bad[4].target.x=[double][BitConverter]::Int32BitsToSingle([BitConverter]::SingleToInt32Bits([single]$bad[4].target.x)+1)
 Reject {Assert-CoupledFollowerProof $bad $forwarded $run $center} 'Adjacent wrong heartbeat float32 target accepted'
+# Wide mode is separately selected and preserves scripted provenance.
+Assert-HudGroundMovementMode $false $true $false $true -WideWalking
+Reject {Assert-HudGroundMovementMode $false $true $false -WideWalking} 'Wide without coupled mode accepted'
+Reject {Assert-HudGroundMovementMode $true $true $false -WideWalking} 'Synthetic old ground fixture silently widened'
+$wideReady=Clone-Receipt $ready;$wideReady | Add-Member walking_area 'wide'
+Assert-CoupledHudReady $wideReady 321 $start 1000 -WideWalking
+Reject {Assert-CoupledHudReady $wideReady 321 $start 1000} 'Narrow readiness accepted wide marker'
+Reject {Assert-CoupledHudReady $ready 321 $start 1000 -WideWalking} 'Wide readiness accepted missing marker'
+$wideProof=Clone-Receipt $proof
+$wideProof | Add-Member walking_area 'wide';$wideProof | Add-Member wide_boundary_crossed $true
+$wideProof | Add-Member client_max_horizontal_excursion 2.6;$wideProof | Add-Member server_max_horizontal_excursion 2.6
+$wideProof.client_walk=2.6;$wideProof.server_walk=2.6
+$wideGuest=Clone-Receipt $guest;$wideGuest | Add-Member walking_area 'wide';$wideGuest.lab_evidence.ground_movement=$wideProof
+$wideVerification=Clone-Receipt $verification;$wideVerification | Add-Member walking_area 'wide';$wideVerification.ground_movement=$wideProof
+$null=Assert-CoupledHudCompletion $wideVerification $wideReady $wideGuest $receiver $trace 321 $start $hash -WideWalking
+Check $true 'Wide guest proves old boundary crossing without claiming physical input'
+foreach($field in @('client_walk','server_walk','client_max_horizontal_excursion','server_max_horizontal_excursion')){
+    $bad=Clone-Receipt $wideGuest;$bad.lab_evidence.ground_movement.$field=2
+    Reject {Assert-HudGroundMovementProof $bad $run $hash $true $patchRun $trace -WideWalking} "Insufficient wide crossing $field accepted"
+}
+foreach($change in @(
+    {param($p)$p.walking_area='Wide'},
+    {param($p)$p.wide_boundary_crossed=$false},
+    {param($p)$p.physical_input_verified=$true},
+    {param($p)$p.ground_source_kind='standalone_ground_fixture'})){
+    $bad=Clone-Receipt $wideGuest;& $change $bad.lab_evidence.ground_movement
+    Reject {Assert-HudGroundMovementProof $bad $run $hash $true $patchRun $trace -WideWalking} 'Invalid wide proof accepted'
+}
+$wideFrames=Clone-Receipt $forwarded;$wideReceipts=Clone-Receipt $receipts
+foreach($entry in $wideReceipts){$entry | Add-Member walking_area 'wide'}
+Reject {Assert-CoupledFollowerProof $wideReceipts $wideFrames $run $center -WideWalking} 'Wide KCD proof without boundary crossing accepted'
+$wideFrames[1].Target.x=122.5;$wideFrames[2].Target.x=122.6
+$wideReceipts[2].target.x=[double][single]122.5;$wideReceipts[3].target.x=[double][single]122.6;$wideReceipts[4].target.x=[double][single]122.6
+Check (@(Assert-CoupledFollowerProof $wideReceipts $wideFrames $run $center -WideWalking).Count -eq 3) 'Applied KCD and guest crossings accepted with exact targets'
+$bad=Clone-Receipt $wideReceipts;$bad[1].walking_area='Wide'
+Reject {Assert-CoupledFollowerProof $bad $wideFrames $run $center -WideWalking} 'Incorrect follower marker accepted'
+$bad=Clone-Receipt $wideReceipts;$bad[0] | Add-Member physical_movement $true
+Reject {Assert-CoupledFollowerProof $bad $wideFrames $run $center -WideWalking} 'Physical follower admitted as scripted coupled proof'
 $dir=Join-Path $root ('runtime/evidence/coupled-hud-pure-'+[guid]::NewGuid().ToString('N'))
 [void][IO.Directory]::CreateDirectory($dir)
 'SYNTHETIC ONLY; no Minecraft or KCD calls.' | Set-Content (Join-Path $dir 'FIXTURE.txt')

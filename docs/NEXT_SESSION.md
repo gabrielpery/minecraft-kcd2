@@ -7,37 +7,47 @@ testing. Apply the delivery workflow in AGENTS.md. Do not start this session wit
 another first-click countdown. The warm-up below is implemented; its live validation
 can be included in the next feature acceptance session.
 
-The optional larger walking area is now implemented and automatically verified in
-Minecraft. The repeat-session addon is compiled and staged. Batch their remaining
+The larger walking area now passes automated two-game movement and the combined
+Minecraft block/HUD fixture. The repeat-session addon is compiled and staged. Batch their remaining
 live acceptance into one session when the user is available; do not launch another
 small countdown test by default. Keep the verified current profile available and
 use existing actual-Minecraft fixtures and coupled-game checks for regression.
 
 ## Current result
 
-**Newest implementation: larger fixed walking area; actual Minecraft PASS, KCD live pending.**
+**Newest result: larger-area scripted two-game movement and combined Minecraft fixture PASS.**
 `-WideWalking` flows through the walking and combined aimed launchers, capture,
 Java collision/input, trace admission and Lua follower. Explicit grid9/81 samples,
 8×8-metre footprint, four-metre radial limit; defaults remain unchanged. Strict
 `walking_area="wide"` markers cannot enable wide authority without the caller flag.
 Combined aiming keeps its support outside the expanded terrain at x4. No terrain
-streaming, longer duration, DLL installation or game settings change was made.
+streaming, longer duration, DLL installation or persistent game settings change was made.
 
-Actual automatic fixture `997f5dd5373e46a1bccd7a0d954211d1` passed:
-`runtime/evidence/hud-physical-fixture-20261028-170749-997f5dd5373e46a1bccd7a0d954211d1/verification.json`.
-Client/server maximum excursion 3.234 m, 72 walking HUD frames, inventory stationary,
-five pulses including later movement, normal cleanup and exit 0. No user input or
-KCD process was used. Focused Java, Lua and PS tests pass; do not repeat this fixture
-without a relevant change. Reproduce with
-`scripts/Test-HudPhysicalMovementFixture.ps1 -ExtendedWalking -WideWalking`.
-The wide fixture deliberately excludes `-AimedBlocks`; wide live aiming is compiled,
-with region ownership checks tested, but not game-verified.
+Automatic coupled run `6615c9eb30984caa91463af12a5e5ac6` passed:
+`runtime/evidence/coupled-movement-20261028-173613-6615c9eb30984caa91463af12a5e5ac6/verification.json`.
+Actual 81-point KCD capture, 3.018 m client/server walking, jump/landing, 25 forwarded
+poses, 24 confirmed KCD readbacks, restoration and temporary frame-cap cleanup.
+Use `Start-HudCoupledMovementLab.ps1 -WideWalking` with the fresh KCD world open.
+This explicitly scripted mode retains live-ground provenance and does not claim
+physical input or KCD HUD composition.
+
+Combined Minecraft fixture `0c33d84d3f504c638765c9a9b3d74535` passed on that captured
+terrain: `runtime/evidence/hud-physical-fixture-20261028-174140-0c33d84d3f504c638765c9a9b3d74535/verification.json`.
+2.587 m excursion, six top/side vanilla actions, 71 walking HUD frames, stationary
+inventory, later walking, complete cleanup, unchanged terrain and matching source
+hashes. `Test-HudPhysicalMovementFixture.ps1 -ExtendedWalking -WideWalking -AimedBlocks`
+now supports the combined sequence; add `-GroundPatchFile` for captured terrain.
+An initial run exposed the nine-stage fixture's old eight-screenshot limit. The
+validated combined fixture now admits exactly its nine known states; other modes
+retain eight. Focused Java/Lua/PS checks passed. Do not repeat successful game runs
+without a relevant change.
 
 Next useful acceptance: wide capture plus a complete repeat-session lifecycle,
 using `Start-HudWalkingAimed.ps1 -WideWalking -RepeatSession` and the previous arm
 receipt for session two. Install the staged repeat profile first as documented in
-MOVEMENT-LAB.md. KCD was closed throughout this implementation; no countdown is
-pending. Beyond that, rolling terrain requires explicit patch ownership and a
+MOVEMENT-LAB.md. The fresh KCD test world was launched automatically, restored,
+then closed normally; Minecraft exited normally too. No countdown is pending.
+Beyond that, rolling terrain requires explicit patch ownership and a
 stable coordinate anchor; current wide capture is one immutable patch.
 
 **Repeat sessions: offline verified; not installed/live verified.**

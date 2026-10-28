@@ -35,6 +35,9 @@ final class WideWalkingTests {
         check(wide.containsFeet(3.7,-3.7,.3)&&!wide.containsFeet(3.71,0,.3),"Feet stay inside the expanded capture");
         var region=new HudBuildRegion(wide,new dev.minecome.protocol.AimGeometry.Cell(4,63,0));
         check(region.seed().x()==4&&region.isImported(new dev.minecome.protocol.AimGeometry.Cell(3,63,0)),"Wide live build support stays beside protected imported ground");
+        check(region.targetRejection(new dev.minecome.protocol.AimGeometry.Cell(4,65,0))==null
+                &&region.targetRejection(new dev.minecome.protocol.AimGeometry.Cell(3,64,0))==null,
+                "Wide fixture top and facing-side targets remain separate from protected imported cells");
         reject(()->new HudBuildRegion(wide,new dev.minecome.protocol.AimGeometry.Cell(2,63,0)),"old lab support cannot overwrite newly covered terrain");
         reject(()->GroundPatch.parse(bytes(data)),"wide capture without opt-in");
         reject(()->GroundPatch.parse(bytes(patch(5)),true),"narrow capture in wide profile");

@@ -24,9 +24,11 @@ It is intended to run two bounded sessions without relaunching KCD2. The full
 two-session game check is pending; this does not yet provide continuous free roaming.
 
 An optional [larger walking area](kcd2/MOVEMENT-LAB.md#larger-fixed-walking-area)
-now captures 8×8 metres of terrain instead of 4×4. An automatic Minecraft run
-walked 3.23 metres from its start with the HUD active, verified inventory movement
-suppression, and cleaned up. Live KCD2 validation of this larger area is pending.
+captures 8×8 metres of terrain instead of 4×4. An automatic two-game check now
+passes walking beyond three metres, jumping, KCD player/camera following and
+restoration. A separate Minecraft check passes top/side placement, breaks,
+inventory and resumed walking on captured KCD terrain. Physical controls and
+HUD composition in this larger area still need live acceptance.
 
 ## What works today
 

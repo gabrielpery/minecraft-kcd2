@@ -16,6 +16,8 @@ public final class HudGroundMovementMode {
         boolean coupled=Boolean.parseBoolean(properties.getProperty("minecome.hudGroundMovementCoupled"));
         if(!fixture && !coupled)return Mode.NONE;
         if(fixture && coupled)throw new IllegalArgumentException("HUD ground fixture and coupled modes are exclusive");
+        if(HudPhysicalMovementMode.wide(properties) && !coupled)
+            throw new IllegalArgumentException("Wide scripted ground movement requires the authenticated coupled profile");
         if (!Boolean.parseBoolean(properties.getProperty("minecome.hudStreamLab")) ||
                 !Boolean.parseBoolean(properties.getProperty("minecome.hudStreamStandalone")))
             throw new IllegalArgumentException("HUD ground movement requires the explicit standalone HUD stream");
@@ -24,7 +26,8 @@ public final class HudGroundMovementMode {
                 "hudStreamOffscreenPresentation", "hudStreamOffscreenTrial", "hudStoneBridge",
                 "hudStoneFixture", "hudStoneLive", "hudAimedStoneBridge", "groundMovementLab",
                 "externalInputLab", "externalInputFixture", "aimedStoneLab", "aimedBridgeLab",
-                "hudAimedBridgeLab", "hudExportLab", "interactiveStoneLab", "smokeWorld", "dynamicBridgeSmoke")) {
+                "hudAimedBridgeLab", "hudExportLab", "interactiveStoneLab", "smokeWorld", "dynamicBridgeSmoke",
+                "hudPhysicalMovement", "hudPhysicalMovementFixture", "hudPhysicalMovementExtended", "hudWalkingAimed", "hudWalkingAimedFixture")) {
             if (Boolean.parseBoolean(properties.getProperty("minecome." + mode)))
                 throw new IllegalArgumentException("HUD ground fixture cannot combine with " + mode);
         }
