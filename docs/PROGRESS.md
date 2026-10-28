@@ -1,4 +1,40 @@
-# MineCome progress — 2026-10-27
+# MineCome progress — 2026-10-28
+
+## New input-phase repair: compiled and standalone verified
+
+Physical input used to be consumed at the end of Minecraft's client tick, while
+movement KeyBindings were written at the next tick's start. `HudStreamLab` now
+consumes the complete ordered physical/UI queue at START before vanilla polling.
+The standalone physical fixture uses the same phase; other HUD profiles retain
+their original END path. Ownership, freshness, deadlines, inventory suspension,
+post-tick server observations and cleanup remain enforced. This removes the
+mandatory extra client tick in source; the live responsiveness effect is pending.
+
+Actual Minecraft run `cf2fbd1c64b347d8951a27545f9e146b` passes the updated verifier:
+`runtime/evidence/hud-physical-fixture-20261028-121745-cf2fbd1c64b347d8951a27545f9e146b/`.
+It performs three W/W/S pulses, holds both client and server still in inventory,
+publishes 106 real HUD frames, and completes 58 trace records in 5,562 ms.
+Client/server maximum walk is 1.498988 m with zero corrections. Proxies, camera
+worker and controls release and Minecraft exits normally. Original scripted
+receipt-to-KeyBinding delays are 8.9611/0.2784/0.2117 ms, from the shared JVM clock.
+No native input mapping, KCD commands or renderer arming occurs in this fixture;
+these are not physical input-to-display measurements.
+
+Bounded `physical_movement.input_timing` now retains original capture UTC,
+receipt monotonic/UTC time, accepted-down decisions and actual binding snapshots.
+Movement-edge watermarks do not imply every consumed edge affected vanilla;
+batched down/up can cancel. Diagnostics never drive movement or renew leases.
+After the fixture, retention was capped at 32 entries per series with explicit
+truncation/full counters. Its 8 events and 12 states fit that cap. Worst-width,
+nested pretty JSON remains below 24 KiB, leaving at least 40 KiB of the stream
+receipt for existing evidence. Final Java24 compilation, `assemble` and 299 physical-input
+checks pass, including signed-clock, cancellation, export mutation and byte-bound
+cases. The earlier 200 ms native buffer and working installed bundle are unchanged.
+
+The user requested automated work only this round. Both games are closed; the
+expired `38d11...` arm is now archived by its ownership receipt. The next human
+comparison should assess this phase change and collect the new timing evidence,
+without rerunning the already passed baseline below. See the updated handoff.
 
 ## Latest live result: walking and HUD pass with normal completion
 
@@ -41,10 +77,9 @@ trace. The next work is remaining latency measurement/tuning or longer walking
 and integration with the already working aimed-block controls, not repeating
 this passed comparison.
 
-Current state: KCD PID 50636 remains open with its `38d11...` arm consumed;
-Minecraft is closed. The previous `2dd6...` arm is already archived. For a later
-test, close normally, archive the exact latest `capture/stream-arming.json`, and
-start a fresh supported process. Recheck current process/tool state before acting.
+At that baseline's completion KCD PID 50636 remained open with its arm consumed.
+It has since closed and the exact `38d11...` arm has been archived. The previous
+`2dd6...` arm is already archived too. Recheck current process/tool state before acting.
 The concise [NEXT_SESSION.md](NEXT_SESSION.md) contains exact commands and limits.
 
 ## Earlier implementation and evidence

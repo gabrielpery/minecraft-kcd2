@@ -51,6 +51,7 @@ public final class HudStreamLab {
     private HudGroundMovementFixture groundMovement;
     private final boolean physicalMovementMode=HudPhysicalMovementMode.require(System.getProperties());
     private final boolean physicalFixtureMode=HudPhysicalMovementMode.fixture(System.getProperties());
+    private final boolean physicalInputAtStart=inputMode && physicalMovementMode && !physicalFixtureMode;
     private HudPhysicalMovement physicalMovement;
     private HudPhysicalMovementFixture physicalFixture;
     private final boolean backgroundTrial=Boolean.getBoolean("minecome.hudStreamBackgroundTrial");
@@ -163,9 +164,34 @@ public final class HudStreamLab {
     }
     public static void groundPositionCorrection(){var lab=active;if(lab!=null){if(lab.groundMovement!=null)lab.groundMovement.positionCorrection();if(lab.physicalMovement!=null)lab.physicalMovement.positionCorrection();}}
     private void timingTick(MinecraftClient client){
+        // Consume physical movement and UI edges in their original sequence
+        // before vanilla polls KeyBindings. Reading at END made every accepted
+        // movement edge wait for the following client tick. The labelled fixture
+        // exercises the same phase; other profiles keep their existing END route.
+        // Readiness transitions never run both paths.
+        if(physicalMovementMode)physicalControlsStartTick(client);
         if(groundMovement!=null && !stopping){try{groundMovement.beforeTick(client,System.nanoTime());}catch(Exception e){fail(client,"HUD ground movement: "+e.getMessage());}}
         if(physicalMovement!=null && !stopping){try{physicalMovement.beforeTick(client,System.nanoTime());}catch(Exception e){fail(client,"HUD physical movement: "+e.getMessage());}}
         if(timing!=null && !stopping)timing.tick(armedAt!=0,client.isWindowFocused(),client.getOverlay()!=null,System.nanoTime());
+    }
+    private void physicalControlsStartTick(MinecraftClient client){
+        // Creation, terrain setup, post-vanilla observations and final output
+        // shutdown remain at END. Do not acquire input before that setup exists.
+        if(stopping || terminal || physicalMovement==null || output==null || !given || streamAt==0)return;
+        long now=System.nanoTime();
+        // Keep the same lifetime/identity gates as tick() ahead of the earlier
+        // input dispatch. inputTick retains freshness, focus, sequence and UI gates.
+        if(now-initializedAt>=(inputMode?180_000_000_000L:120_000_000_000L)){fail(client,"Global HUD deadline");return;}
+        if(!owned(client)){fail(client,"World/player/server identity changed");return;}
+        if(now-worldAt>=(inputMode?100_000_000_000L:35_000_000_000L)){fail(client,"World HUD deadline");return;}
+        if(serverFailure.get()!=null){fail(client,serverFailure.get());return;}
+        if(client.getOverlay()!=null)return;
+        if(output.failure()!=null){fail(client,"HUD stream worker: "+output.failure());return;}
+        if(!output.isReady())return;
+        try{
+            if(physicalFixtureMode){if(physicalFixture!=null)physicalFixture.tick(client,now);}
+            else if(physicalInputAtStart)inputTick(client,now);
+        }catch(Exception e){fail(client,physicalFixtureMode?"HUD scripted physical fixture: "+e.getMessage():"HUD input: "+e.getMessage());}
     }
     public static boolean skipDesktopSwap(long window){
         var lab=active;if(lab==null || !lab.offscreenPresentation || !lab.inputMode)return false;
@@ -348,10 +374,10 @@ public final class HudStreamLab {
             long elapsed=now-streamAt;
             if(physicalFixtureMode){
                 try{
-                    physicalFixture.tick(client,now);
                     if(physicalFixture.finished()){
                         var proof=new JsonObject();proof.addProperty("new_world",true);proof.addProperty("real_creative_packets",true);
                         proof.addProperty("normal_vanilla_render_path",true);proof.addProperty("scripted_input",true);proof.addProperty("physical_input_verified",false);
+                        proof.addProperty("input_tick_phase","start_before_vanilla");
                         proof.add("physical_controller_fixture",physicalFixture.evidence(client));
                         output.finish("passed",proof);terminal=true;terminalAt=now;
                     }
@@ -359,7 +385,7 @@ public final class HudStreamLab {
             }else if(inputMode){
                 try{
                     if(backgroundTrial && !backgroundComplete)backgroundTrialTick(client,now);if(offscreenTrial)offscreenTrialTick(client,now);
-                    inputTick(client,now);
+                    if(!physicalInputAtStart)inputTick(client,now);
                     if(stoneBridge!=null && inputEndingProof==null && !terminal){
                         stoneBridge.tick(client,stoneActionsEnabled);
                         if(stoneBridge.failed())throw new IllegalStateException("Combined stone bridge: "+stoneBridge.failure());
@@ -509,6 +535,7 @@ public final class HudStreamLab {
     private void finishInput(MinecraftClient client,long now,String reason){
         if(inputPointerFixture && inputFailure==null && (pointerFixture==null || !pointerFixture.complete()))throw new IllegalStateException("Pointer fixture ended before all real gesture proofs");
         var proof=new JsonObject();proof.addProperty("input_fixture",inputFixture);proof.addProperty("input_armed",armedAt!=0);proof.addProperty("end_reason",reason);
+        proof.addProperty("input_tick_phase",physicalInputAtStart?"start_before_vanilla":"end_after_vanilla");
         proof.addProperty("aimed_stone_bridge",aimedStone);
         proof.addProperty("live_mouse",liveMouse);proof.addProperty("pointer_events_applied",pointerEventsApplied);if(ui!=null)proof.add("pointer_adapter",ui.pointerDiagnostics());
         proof.addProperty("pointer_fixture",inputPointerFixture);if(pointerFixture!=null)proof.add("pointer_evidence",pointerFixture.evidence());

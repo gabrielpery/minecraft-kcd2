@@ -110,6 +110,12 @@ Never load newer retail1.5.6 saves into this older1.5.5 development game. Backup
 
 ## Gameplay scope
 
+- A new physical-input phase repair is compiled and standalone verified, but not
+  yet live verified in KCD2. Input now runs before vanilla polling instead of
+  waiting from END to the next START tick. Actual Minecraft passes three scripted
+  walking pulses, inventory suppression, real HUD frames and cleanup. New bounded
+  per-edge/binding diagnostics support the next comparison without implying
+  native application or display latency. The 200 ms buffer remains unchanged.
 - Physical HUD walking now passes normal completion and cleanup in live run
   `650a8e00939c4831981f75828b79ff62`: 56/56 source readbacks, native `explicit_end`,
   exact origin restoration, cancelled timers, FPS restoration and normal Minecraft

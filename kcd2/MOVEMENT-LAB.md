@@ -229,6 +229,19 @@ Measure remaining latency before reducing playback delay, and preserve trace
 budgets and sampled-ground safeguards when extending walking or adding aimed-block
 integration. Continuous movement is still unfinished.
 
+The subsequent START-phase repair consumes the whole physical/UI input queue
+before vanilla polls movement KeyBindings. It removes the previous mandatory
+END-to-next-START wait without changing source timing, native interpolation or
+leases. The same phase passes an actual Minecraft scripted fixture with repeated
+W/W/S, zero inventory displacement, HUD frames and normal cleanup. It does not
+exercise the native physical input mapping; a live comparison is still pending.
+Final evidence now includes `physical_movement.input_timing` with original capture
+UTC, receipt timestamps and actual binding snapshots (32 retained rows per
+series, explicit counts/truncation). The watermark is the latest movement-edge
+sequence, not a guarantee that a batched edge reached vanilla. Use these clocks
+to distinguish queue/application delay from the unchanged 200 ms native buffer;
+they do not measure physical input-to-display latency. See PROGRESS for evidence.
+
 The KCD follower retains its independent eight-second deadline and actor/position
 guards. Normal completion requires delayed readbacks
 and verified return to the starting position; restoration only applies while

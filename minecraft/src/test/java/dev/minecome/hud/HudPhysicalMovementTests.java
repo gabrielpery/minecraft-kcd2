@@ -288,5 +288,5 @@ public final class HudPhysicalMovementTests {
             check(Files.readString(target).equals(second),"Replacement after sharing release preserves original queued sequence/time");
         }finally{Files.deleteIfExists(temp);Files.deleteIfExists(target);Files.deleteIfExists(root);}
     }
-    public static void main(String[] args)throws Exception{modes();wire();holds();views();reader();readerRaces();fixturePublication();checks+=dev.minecome.terrain.HudMovementBoundaryTests.run();System.out.println("HudPhysicalMovementTests: "+checks+" checks passed");}
+    public static void main(String[] args)throws Exception{modes();wire();holds();views();reader();readerRaces();fixturePublication();checks+=HudMovementTimingTests.run();checks+=dev.minecome.terrain.HudMovementBoundaryTests.run();System.out.println("HudPhysicalMovementTests: "+checks+" checks passed");}
 }

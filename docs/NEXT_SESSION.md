@@ -1,10 +1,41 @@
-# Resume checkpoint — 27 October 2026
+# Resume checkpoint — 28 October 2026
 
 Physical walking and Minecraft's real HUD now pass together in KCD2, including
 normal restoration and cleanup. The user says **"still delay, but smooth"**.
 The warmup, native finish and fixed sampling comparison is complete; do not
-repeat it merely to resume. Continue with remaining latency measurement/tuning
-or longer walking and integration with the already working aimed-block controls.
+repeat it merely to resume. A new input-phase repair is compiled and verified
+in standalone Minecraft; its KCD2 comparison remains pending. The user's latest
+instruction is **automated work only**; do not start a human F8 countdown without
+renewed availability.
+
+## New work after the live baseline
+
+- `HudStreamLab` now consumes physical movement and UI events at START_CLIENT_TICK,
+  before `HudPhysicalMovement.beforeTick` writes vanilla KeyBindings. Previously
+  END_CLIENT_TICK consumption required an additional tick before application.
+  Preserve whole-queue UI event ordering, freshness, ownership and cleanup gates.
+  Other input profiles retain their original END path.
+- The labelled physical fixture uses the same START phase. Setup, authoritative
+  post-tick observations and final output remain at END.
+- `HudMovementTiming` records original input capture UTC, JVM receipt time,
+  accepted-down decisions and actual KeyBinding snapshots in final evidence at
+  `physical_movement.input_timing`. `after_input_sequence` refers only to movement
+  edges; batched down/up can cancel before polling. This is not native/display
+  latency proof. Each series retains its first 32 entries with full counts and
+  explicit truncation, leaving space in the unchanged 64 KiB stream receipt.
+- Java24 `compileJava`, `assemble` and `hudPhysicalMovementTest` pass **299 checks**, including
+  rejected/batched input, signed clocks, immutable exports and worst-width nested
+  receipt-size coverage. The final 32-entry cap was tightened after the fixture;
+  that fixture retained only 8 events/12 states, below the new cap.
+- Actual Minecraft fixture `cf2fbd1c64b347d8951a27545f9e146b` passes:
+  `runtime/evidence/hud-physical-fixture-20261028-121745-cf2fbd1c64b347d8951a27545f9e146b/`.
+  Three W/W/S pulses, zero client/server inventory movement, 106 real HUD frames,
+  58 trace records, 1.498988 m maximum walk on both sides, zero corrections,
+  normal exit and all controls/proxies released. Scripted receive-to-KeyBinding
+  delays are 8.9611/0.2784/0.2117 ms. This does not measure physical key capture,
+  native mapping/focus, KCD motion or display latency.
+- No compositor/Lua/controller buffer change or new installation is needed.
+  Keep 200 ms; the next live comparison should isolate this earlier input phase.
 
 ## Repository and implementation
 
@@ -14,7 +45,8 @@ or longer walking and integration with the already working aimed-block controls.
 - Live-validated implementation: `d150024667683ce6366f4800528528d8b9ab9f0b`
   (fixed 100 ms physical sampling schedule), on
   `c90da08973da9db54ad2c7a1c94d2def1b34cec0` (parser warmup/native finish).
-  Inspect current Git status/log rather than resetting to those commits.
+  New START-phase changes follow those commits; inspect current Git status/log
+  rather than resetting to the older live baseline.
 - No new native installation, renderer rebuild, PowerShell setup or administrator
   session is needed. The installed walking bundle remains unchanged.
 - Detailed history, prior failures and component checks are in [PROGRESS.md](PROGRESS.md).
@@ -62,18 +94,19 @@ these protections while planning longer walking or aimed-block integration.
 
 ## Current process state and any later test
 
-KCD PID **50636 remains open**; Minecraft is closed. Its `38d11...` HUD arm is
-consumed. The previous `2dd6...` arm is already archived; do not archive it again.
+Both games are closed as checked on 28 October. The `38d11...` HUD arm was
+archived with its exact ownership receipt in this round; `capture/arm-archive.json`
+and `capture/MineComeHudMovement.expired.ini` preserve it. The previous `2dd6...`
+arm is also already archived; do not archive either again.
 Recheck actual processes, arm receipts and Computer Use availability on resumption.
 Earlier Escape presses stopped Computer Use; do not assume that persists forever
 or that observing the screen causes game failures.
 
-When a new test is needed, close KCD normally first, then archive the exact latest
-expired arm and launch a fresh official tools world:
+When the user is available for a new test, launch a fresh official tools world
+from the current closed state:
 
 ```powershell
 $mineComeRoot = 'C:/Users/xephi/Documents/ChatGPT/New project/MineCome'
-& "$mineComeRoot/scripts/Archive-HudArm.ps1" -ReceiptPath "$mineComeRoot/runtime/evidence/hud-walking-20261027-181108-38d11f6a4fb943348636cef27b855de9/capture/stream-arming.json"
 & "$mineComeRoot/scripts/Start-Kcd2ToolsTest.ps1"
 ```
 

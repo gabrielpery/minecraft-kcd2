@@ -41,6 +41,20 @@ function Assert-HudPhysicalFixtureResult($Guest,[string]$Run,[string]$PatchHash)
     foreach($name in @('started','completed','trace_closed','client_proxy_released','server_proxy_released','controls_released')){
         if($movement.$name -isnot [bool] -or -not $movement.$name){throw "Actual controller completion/cleanup missing: $name"}
     }
+    if($Guest.lab_evidence.input_tick_phase -cne 'start_before_vanilla'){throw 'Fixture did not exercise input before vanilla polling.'}
+    $timing=$movement.input_timing
+    if($timing.kind -cne 'minecome_hud_movement_timing_v1' -or $timing.truncated -ne $false -or
+        $timing.native_application_measured -ne $false -or $timing.display_latency_measured -ne $false -or
+        $timing.event_count -ne @($timing.events).Count -or $timing.binding_state_count -ne @($timing.binding_states).Count){throw 'Fixture input timing evidence is missing, truncated or claims unsupported proof.'}
+    $accepted=@($timing.events | Where-Object accepted_down -EQ $true)
+    if($accepted.Count -ne 3){throw 'Fixture timing must retain all three accepted scripted presses.'}
+    $delays=@(foreach($edge in $accepted){
+        $bit=if($edge.key -eq 0x57){1}elseif($edge.key -eq 0x53){2}else{throw 'Unexpected scripted movement key.'}
+        $binding=@($timing.binding_states | Where-Object {$_.stage -ceq 'before_vanilla_poll' -and $_.after_input_sequence -eq $edge.input_sequence -and ($_.mask -band $bit) -ne 0})
+        if($binding.Count -ne 1 -or $binding[0].monotonic_ns -lt $edge.received_monotonic_ns){throw 'Scripted press lacks one real pre-vanilla binding observation.'}
+        ([double]([decimal]$binding[0].monotonic_ns-[decimal]$edge.received_monotonic_ns))/1000000
+    })
+    $proof | Add-Member -NotePropertyName scripted_receive_to_binding_ms -NotePropertyValue $delays
     return $proof
 }
 $root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))

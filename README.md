@@ -44,6 +44,11 @@ direction. The lab permits five seconds of input plus one second of settling
 inside a 30-second HUD session. Longer walking and integration with aimed-block
 controls remain next development work; this is not yet a final playable build.
 
+A subsequent input-phase repair removes a mandatory extra Minecraft tick before
+movement controls are applied. Compilation, 299 input/controller checks and an
+actual Minecraft walking/inventory fixture pass. Its effect on physical KCD2
+responsiveness still needs a live comparison; the 200 ms smoothing buffer remains.
+
 Live checks above use the **official KCD2 1.5.5 development build**. The native
 **retail 1.5.6 route remains blocked** by its verified address-library/loader
 prerequisites. A successful development-world test does not establish retail support.

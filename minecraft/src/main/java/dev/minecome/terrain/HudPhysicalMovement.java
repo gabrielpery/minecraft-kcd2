@@ -24,6 +24,7 @@ public final class HudPhysicalMovement {
     private final boolean fixture;
     private final Path traceFile,viewFile;
     private final HudMovementKeys keys=new HudMovementKeys();
+    private final HudMovementTiming inputTiming=new HudMovementTiming();
     private final HudMovementCompletion completion=new HudMovementCompletion();
     private final AtomicReference<Observation> observed=new AtomicReference<>();
     private final AtomicReference<String> failure=new AtomicReference<>();
@@ -88,8 +89,11 @@ public final class HudPhysicalMovement {
         Files.move(temp,target,StandardCopyOption.ATOMIC_MOVE);readyPublished=true;
     }
     public void event(MinecraftClient client,HudInputProtocol.Event event,long now)throws IOException{
+        long receivedUtc=System.currentTimeMillis();
         boolean allowed=now<authorityUntil && inputReady(now) && client.currentScreen==null && client.getOverlay()==null;
-        if(keys.event(event.kind(),event.code(),now,allowed)){
+        boolean accepted=keys.event(event.kind(),event.code(),now,allowed);
+        inputTiming.event(event,receivedUtc,now,accepted);
+        if(accepted){
             events++;
             if(trace==null)startTrace(client,now);
         }
@@ -309,6 +313,7 @@ public final class HudPhysicalMovement {
         e.addProperty("run",identity.run());e.addProperty("save",save);e.addProperty("patch_run",patch.run());e.addProperty("patch_sha256",patch.sha256());
         e.addProperty("ground_source_kind",patch.sourceKind());e.addProperty("input_source",fixture?"scripted_hud_physical_controller_fixture":"hud_input_v2");e.addProperty("scripted_input",fixture);e.addProperty("physical_input_verified",false);
         e.addProperty("started",keys.started());e.addProperty("completed",completed);e.addProperty("movement_events_applied",events);e.addProperty("held_ticks",heldTicks);
+        e.add("input_timing",inputTiming.evidence());
         e.addProperty("client_walk",clientWalk);e.addProperty("server_walk",serverWalk);e.addProperty("client_air",clientAir);e.addProperty("server_air",serverAir);
         e.addProperty("client_land",clientLand);e.addProperty("server_land",serverLand);e.addProperty("duration_ms",durationMs);
         e.addProperty("trace_file",traceFile.toString());e.addProperty("trace_records",trace==null?0:trace.records());e.addProperty("trace_closed",trace!=null&&trace.closed());e.addProperty("trace_result",traceResult);
@@ -333,10 +338,16 @@ public final class HudPhysicalMovement {
         c.options.forwardKey.setPressed(keys.down(0x57,now));c.options.backKey.setPressed(keys.down(0x53,now));
         c.options.leftKey.setPressed(keys.down(0x41,now));c.options.rightKey.setPressed(keys.down(0x44,now));c.options.jumpKey.setPressed(keys.down(0x20,now));
         c.options.sneakKey.setPressed(false);c.options.sprintKey.setPressed(false);if(!keys.neutral(now))heldTicks++;
+        recordBindings(c,true);
     }
     private void release(MinecraftClient c){
         controlsOwned=true;c.options.forwardKey.setPressed(false);c.options.backKey.setPressed(false);c.options.leftKey.setPressed(false);c.options.rightKey.setPressed(false);
         c.options.jumpKey.setPressed(false);c.options.sneakKey.setPressed(false);c.options.sprintKey.setPressed(false);
+        recordBindings(c,false);
+    }
+    private void recordBindings(MinecraftClient c,boolean beforeVanilla){
+        inputTiming.bindings(System.currentTimeMillis(),System.nanoTime(),c.options.forwardKey.isPressed(),c.options.backKey.isPressed(),
+                c.options.leftKey.isPressed(),c.options.rightKey.isPressed(),c.options.jumpKey.isPressed(),beforeVanilla);
     }
     private boolean grounded(MovementTraceSink.Motion m){return m.onGround()&&m.proxySupport()&&Math.abs(m.y()-patch.groundForFeet(m.x(),m.z(),.3))<.15;}
     private boolean allAir(BlockView world){for(var cell:patch.cells())if(!world.getBlockState(new BlockPos(cell.x(),cell.y(),cell.z())).isAir())return false;return true;}
