@@ -255,4 +255,46 @@ foreach($bad in @((Sample 2 'JUMPING'),(Sample 2 'SETTLING' 0 63.625 0 $false),(
 $s=BufferedState;$null=Receive $s (Begin);$bad=Sample 2 'SETTLING';$bad.server.proxy_support='true'
 Reject {Receive $s $bad} 'Malformed buffered support flag gained ground provenance'
 Check (-not $s.GroundProved -and -not $s.AnchorVerified -and $s.LastSeq -eq 1) 'Malformed buffered anchor mutated receiver state'
+# A sustained, labelled stream must cross the old byte budget without changing
+# source points, freshness, geometry or the unchanged 200-record ceiling.
+. (Join-Path $root 'scripts/CoupledMovementProof.ps1')
+Reject {New-MineComeTraceReceiver $patchPath 1000 -ExpectedHudSave $save -PhysicalMovement -ExtendedWalking} 'Extended nonbuffered receiver accepted'
+function ExtendedState {New-MineComeTraceReceiver $patchPath 1000 -ExpectedHudSave $save -PhysicalMovement -BufferedPhysicalMovement -ExtendedWalking}
+$ext=ExtendedState;$extendedBegin=Begin;$extendedBegin.source_kind='live_kcd_hud_physical_movement_extended'
+Reject {Receive (BufferedState) $extendedBegin} 'Extended trace accepted by default receiver'
+Reject {Receive $ext (Begin)} 'Short trace accepted by extended receiver'
+Check ($ext.LastSeq -eq 0 -and $ext.Bytes -eq 0) 'Cross-profile rejection mutated receiver'
+$null=Receive $ext $extendedBegin
+$traceLines=[Collections.Generic.List[string]]::new()
+$traceLines.Add(($extendedBegin | ConvertTo-Json -Depth 8 -Compress))
+for($i=2;$i -le 163;$i++){
+    $phase=if($i -eq 2){'SETTLING'}elseif($i -eq 163){'PASSED'}else{'RESTING'}
+    $sample=Sample $i $phase
+    $sample.source_kind='live_kcd_hud_physical_movement_extended'
+    $sample.utc_ms=1000+($i-2)*100;$sample.monotonic_ns=[long]($i-2)*100000000
+    $json=$sample | ConvertTo-Json -Depth 8 -Compress
+    $r=Receive-MineComeMovementTrace $ext $json $sample.utc_ms
+    if($r.Kind -cne 'sample' -or $r.Record.monotonic_ns -ne $sample.monotonic_ns){throw 'Sustained source changed or was omitted'}
+    $traceLines.Add($json)
+}
+Check ($ext.Bytes -gt 65536 -and $ext.Bytes -lt 262144 -and $ext.Records -eq 163) 'Extended receiver did not actually exercise the larger byte budget'
+$traceFile=Join-Path $dir 'extended.ndjson'
+[IO.File]::WriteAllText($traceFile,([string]::Join("`n",$traceLines)+"`n"),[Text.UTF8Encoding]::new($false))
+$reader=[pscustomobject]@{Path=$traceFile;Stream=$null;Bytes=[byte[]]::new(0)}
+try{
+    Reject {Read-CoupledTraceLines $reader} 'Default file reader accepted extended byte budget'
+    Check (@(Read-CoupledTraceLines $reader -ExtendedWalking).Count -eq 163) 'Extended file reader omitted source lines'
+    $rewrite=[IO.File]::Open($traceFile,[IO.FileMode]::Open,[IO.FileAccess]::Write,[IO.FileShare]::ReadWrite)
+    try{$rewrite.WriteByte(32)}finally{$rewrite.Dispose()}
+    Reject {Read-CoupledTraceLines $reader -ExtendedWalking} 'Extended stream prefix rewrite accepted'
+}finally{if($reader.Stream){$reader.Stream.Dispose()}}
+$ext.Bytes=262140
+$beforeSeq=$ext.LastSeq
+Reject {Receive $ext (Sample 164 'RESTING')} 'Extended stream byte bound ignored'
+Check ($ext.LastSeq -eq $beforeSeq) 'Byte rejection consumed a source sequence'
+$ext=ExtendedState;$null=Receive $ext $extendedBegin
+$bad=Sample 2 SETTLING;$bad.source_kind='standalone_hud_physical_movement_extended_fixture'
+Reject {Receive $ext $bad} 'Scripted extended fixture accepted as live evidence'
+$bad.source_kind='live_kcd_hud_physical_movement_extended'
+Check ((Receive $ext $bad 1301).Kind -ceq 'stale' -and -not $ext.GroundProved) 'Extended initial anchor bypassed freshness'
 Write-Output "HUD_PHYSICAL_MOVEMENT_TESTS checks=$script:checks PASS"

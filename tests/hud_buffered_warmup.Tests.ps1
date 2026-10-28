@@ -128,7 +128,7 @@ $tokens=$null;$errors=$null
 $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $root 'scripts/HudBufferedMovement.ps1'),[ref]$tokens,[ref]$errors)
 Check ($errors.Count -eq 0) 'Buffered helper contains syntax errors.'
 $warmupAst=$ast.Find({param($node)$node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Initialize-HudBufferedMovementPipeline'},$true)
-$allowed=@('New-MineComeTraceReceiver','New-HudBufferedSourceState','Receive-MineComeMovementTrace','ConvertTo-Json','ConvertFrom-Json','Get-HudBufferedSourceTime')
+$allowed=@('New-MineComeTraceReceiver','New-HudBufferedSourceState','Receive-MineComeMovementTrace','ConvertTo-Json','ConvertFrom-Json','Get-HudBufferedSourceTime','Get-HudWalkingSession')
 foreach($command in $warmupAst.Body.FindAll({param($node)$node -is [Management.Automation.Language.CommandAst]},$true)){
     Check ($command.GetCommandName() -cin $allowed) 'Warmup contains an unapproved external or file-writing command.'
 }

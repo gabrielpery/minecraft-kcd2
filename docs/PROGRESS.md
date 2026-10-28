@@ -1,5 +1,79 @@
 # MineCome progress — 2026-10-28
 
+## Optional 15-second walking mode
+
+**Live PASS:** HUD `a673494c0d084564ac3c83e3fdcdd47d`, probe
+`e50b03b5a7eb4f1c92b58f42d3da012b`, evidence:
+`runtime/evidence/hud-walking-20261028-131455-e50b03b5a7eb4f1c92b58f42d3da012b/`.
+All **156 forwarded source points and 156 delayed native readbacks** verify.
+Guest duration is 15,560 ms with 158 trace records, client/server walk 0.606181 m,
+zero corrections and three boundary pauses/two resumptions. All 611 camera views
+are fresh; normal restoration, camera/resource cleanup, FPS restoration and Minecraft
+exit pass. The user confirms "worked. still delay, but worked." This repeat used
+W/S near the start and again after eight seconds; inventory evidence is separate.
+
+Derived `timing-analysis.json` preserves seven source hashes. Four W/S/W/S presses
+pair to actual bindings; the last two arrive at 5.90 and 6.81 seconds after the
+first. Median producer capture-to-receipt is33 ms and receipt-to-binding0.1289 ms;
+these are not hardware/display latency. The trace is121,488 bytes, native history
+174 receipts; exact restoration occurs at15,815.24609 ms after129 writes including
+restoration. All retained readback errors are zero; maximum segment observation
+gap17.1814 ms. The original fixed200 ms playback buffer remains unchanged.
+
+Implemented explicit `-ExtendedWalking` on the walking starter/controller and
+standalone fixture. Short mode remains the default. The extended profile uses
+15 seconds of input plus one second settling, 16-second source timestamps,
+an 18-second native deadline, 2,047 ordinary writes plus restoration, 256 native
+receipts and a 256 KiB trace. The 200-record ceiling and existing freshness,
+geometry, input, fixed 200 ms buffer and restoration checks remain. Matching
+session markers and distinct source kinds reject cross-profile evidence. A first
+movement press must arrive within 12 seconds after F8 so completion fits the
+unchanged 30-second HUD lifetime. Inventory and boundary pauses cannot renew it.
+
+Validation: Java compilation/assembly; 327 input checks; 1,547 ground/trace checks;
+87 Lua cases; 101 buffered controller checks; 149 physical receiver checks;
+87 parser warmup checks; 80 append-only/coupled checks; 97 fixture receipt checks.
+The Lua harness traverses a full 16-second source timeline with 161 delayed ACKs,
+more than 511 writes and exact restoration. It also tests lease/deadline/source/
+sequence/spatial/write/receipt limits and module reload for both new and older
+active followers. These Lua checks use a harness, not a live game.
+
+Actual Minecraft fixture `e0636c8c8087435588172cfe5513d343` passes in
+`runtime/evidence/hud-physical-fixture-20261028-130405-e0636c8c8087435588172cfe5513d343/`:
+five W/W/S/W/S pulses, inventory reopened after six seconds and held still,
+later walking, 15,593 ms duration, 159 trace records, 255 real HUD/inventory
+frames, client/server maximum walk 1.498988 m, zero corrections and normal exit.
+This fixture does not arm the compositor or call KCD2.
+
+An additional automated Minecraft fixture uses numeric samples from the actual
+KCD terrain capture: `e13eb8ecdd1e4f69b4b12d740e1d92cf`, evidence
+`runtime/evidence/hud-physical-fixture-20261028-131809-e13eb8ecdd1e4f69b4b12d740e1d92cf/`.
+It passes all five pulses and the reopened-inventory checks:15,517 ms,158 records,
+252 UI frames,0.637031 m client/server maximum walk,zero corrections,4 boundary
+pauses,12 reopened-inventory frames and zero inventory movement. It preserves
+original capture hash `93e1ced12e3f5340b2337fabeee885513055e42a76b9eb188485125967a4c23c`
+while explicitly labelling the copy as a standalone fixture. It is not additional
+live KCD proof. Legacy receiver16 cases and movement-path23 checks also pass.
+
+First live extended attempt: HUD `3641392e225c4629a1fadabf05a996f3`, probe
+`a3735cb0c58f4ab6919ea481215ba453`, evidence in
+`runtime/evidence/hud-walking-20261028-130751-a3735cb0c58f4ab6919ea481215ba453/`.
+The user reports "all worked fine", including later walking, inventory and HUD.
+The recorded run is **not a full PASS**: KCD lost foreground focus 13,515 ms after
+activation, ending input after about 11 seconds of movement. Native evidence
+records `eligibility_lost`, foreground false, with fresh ACK and HUD publications.
+Guest trace ends STOPPED; controller rejects incomplete movement. 109 sources
+were forwarded, 106 had delayed ACKs before cleanup; restoration, camera shutdown
+and FPS restoration succeeded. Original failed verification and post-run logs are
+preserved. Its consumed arm was archived after normal Alt+F4 closure; the repeat
+above passes full completion without code changes.
+
+Walking plus aimed placement is still separate work. The current walking world
+uses collision-only terrain and AIR-cell checks; aimed bootstrap expects a solid
+Minecraft support block. The walking compositor also lacks world-click capture.
+Integration needs an explicit owned-block/terrain contract and a settled-position
+click barrier for the 200 ms host lag, preserving the existing eye/reach checks.
+
 ## Latest live PASS: earlier input and first-step descent
 
 The user confirms **"it worked this time, but there is still a little delay."**

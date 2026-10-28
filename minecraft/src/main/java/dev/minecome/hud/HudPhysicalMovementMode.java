@@ -9,6 +9,8 @@ public final class HudPhysicalMovementMode {
     public static boolean fixture(Properties p){return Boolean.parseBoolean(p.getProperty("minecome.hudPhysicalMovementFixture"));}
     public static boolean require(Properties p){
         boolean live=Boolean.parseBoolean(p.getProperty("minecome.hudPhysicalMovement")),fixture=fixture(p);
+        if(HudMovementSession.selected(p).extended() && !live && !fixture)
+            throw new IllegalArgumentException("Extended movement requires its physical live or fixture profile");
         if(!live && !fixture)return false;
         if(live && fixture)throw new IllegalArgumentException("Physical movement live and scripted fixture profiles are exclusive");
         for(String required:fixture?List.of("hudStreamLab","hudStreamStandalone"):List.of("hudStreamLab","hudStreamInput","hudStreamLiveMouse","hudStreamOffscreenPresentation"))

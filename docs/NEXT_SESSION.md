@@ -1,175 +1,138 @@
 # Resume checkpoint — 28 October 2026
 
-Physical walking and Minecraft's real HUD pass together in KCD2 with the earlier
-input phase and a repaired first-step downhill transition. Latest feedback:
-**"it worked this time, but there is still a little delay."** The user permits
-moving on and revisiting latency later. Keep the stable 200 ms buffer; next work
-should extend bounded walking and integrate aimed block controls, without
-naively lifting time, trace, sampled-ground or displacement limits. Do not repeat
-this passed comparison merely to resume. Manual testing is authorized when
-needed; check availability before a new timed activation if time has elapsed.
+## Current result and user preference
 
-## Latest live PASS and timing
+Optional **15-second physical walking + real Minecraft HUD now passes live in KCD2**.
+User feedback: **"worked. still delay, but worked."** Keep the intentional 200 ms
+buffer and the verified short mode. Latest instruction: the user is AFK; continue
+automated work only until they return. Do not start another F8 countdown or ask for
+manual actions while they are away. The next feature is walking with aimed block
+interactions; it is not yet implemented as a combined mode.
 
-- HUD `477d2e51c02a4c4fbd61815bcb45a7c2`, probe
-  `b850ba28250a4a0f8e90edb611996d89`, evidence:
-  `runtime/evidence/hud-walking-20261028-124409-b850ba28250a4a0f8e90edb611996d89/`.
-- **57/57 sources and delayed native readbacks**, `explicit_end`, zero position
-  error, 167 writes including restoration, 5,865.31 ms. All 467 camera samples
-  fresh; timers, camera resources, FPS and Minecraft clean up normally.
-- Five effective W/S/A/D/W presses; matched capture-to-receipt UTC delays
-  56/3/17/7/16 ms (median 16). Receipt-to-KeyBinding delays
-  8.8987/0.1413/0.0837/0.1114/0.0865 ms (median 0.1114).
-  No unmatched/canceled presses or truncated histories. Three later downs were
-  correctly blocked beyond the five-second input budget. Maximum client/server
-  walk 0.594361 m; zero corrections; four boundary pauses/resumptions.
-- `timing-analysis.json` preserves paired rows, six source hashes and caveats.
-  These measure producer observation/receipt/binding, not hardware actuation,
-  native actor application or display. First source capture-to-dispatch 56 ms,
-  later median 17.5 ms. No quantitative before/after key timing claim is justified.
-- Slot 2 selection confirmed activation before walking. Inventory was not opened
-  in this run; earlier inventory proof remains separate.
+## Latest full live PASS
 
-## Repairs made during the live comparison
+- HUD `a673494c0d084564ac3c83e3fdcdd47d`, probe
+  `e50b03b5a7eb4f1c92b58f42d3da012b`.
+- Evidence: `runtime/evidence/hud-walking-20261028-131455-e50b03b5a7eb4f1c92b58f42d3da012b/`.
+- **156/156 forwarded source points and delayed native readbacks**; guest 15,560 ms,
+  158 trace records/121,488 bytes. Final source time 15,548.294922 ms.
+- Native `explicit_end`, exact origin with zero error, 129 writes including
+  restoration, 15,815.24609 ms. 174 receipts, all source crossings proved.
+  Maximum recorded segment observation gap 17.1814 ms; zero readback error.
+- All 611 camera samples fresh; resources/timers closed, FPS restored, Minecraft
+  normal exit 0, input/mappings/proxies released. Client/server maximum walk 0.606181 m,
+  zero corrections, 3 boundary pauses/2 resumptions.
+- Four W/S/W/S presses paired to actual pre-vanilla bindings. Later presses at
+  5.90 and 6.81 seconds prove the old five-second cutoff is gone. Median producer
+  capture-to-receipt 33 ms, receipt-to-binding 0.1289 ms. No truncation/unmatched
+  events. `timing-analysis.json` records seven original hashes and methods.
+  Producer capture is not hardware actuation; no display/end-to-end latency claim.
+- This final run did not open inventory. Inventory has separate automated proof
+  below and user confirmation in the earlier focus-ended attempt.
 
-The initial attempt (`4a7fb2...`) never activated F8: zero events/forwarded points,
-normal guest timeout. The user's initial "almost no delay" observation cannot
-be attributed to MineCome. A camera request was rejected without recording its
-return reason. `HudCameraDelivery` now logs a bounded JSON-safe rejection token
-with exact run/sequence; the worker fails promptly without retrying or renewing
-authority. Camera tests 72, receipt tests 75 and exact Lua-wrapper tests 33 pass.
+## What changed
 
-The next attempt (`6cd20f...`) activated and accepted W, but its first motion
-sample was airborne while stepping downhill. The receiver had not counted the
-verified grounded SETTLING anchor as ground provenance, so it returned `observe`
-and the controller aborted; camera expiry was secondary. No native position
-write occurred. Only buffered physical mode now establishes ground provenance
-from that fresh, exact, supported initial anchor. Stale/invalid anchors and
-legacy modes retain their behavior. Tests pass: physical receiver 137, warmup 86,
-buffered proof 79. Original recorded timestamps now accept the failed run's
-seq 1–3 as begin/sample/sample; original failed evidence remains unchanged.
-Controller errors now identify refused sequence, phase and result kind.
+- `-ExtendedWalking` is opt-in on `Start-HudWalkingLab.ps1`, `Test-HudWalking.ps1`,
+  `Test-HudPhysicalMovementFixture.ps1` and the child launcher.
+- Java `HudMovementSession` selects 15s input + 1s settling, 256 KiB trace, same 200-record
+  ceiling. First movement must start within 12s after F8; activation/inventory/
+  boundary pauses never renew deadlines. Old 5+1s mode remains the default.
+- New Lua `BeginExtendedBufferedPhysicalMovementFollower` selects 16s source time,
+  fixed 18s native deadline, 2047 ordinary writes + restoration, 256 receipts with
+  termination slots reserved. Profile state survives module reload; an older
+  active follower gets only its original baseline limits.
+- Explicit `movement_session="extended"` in ready/result/physical-ready/native
+  receipts. Distinct trace kinds `live_kcd_hud_physical_movement_extended` and
+  `standalone_hud_physical_movement_extended_fixture`; no profile borrowing.
+- `HudWalkingSession.ps1` binds controller-selected budgets. Receiver/readers/
+  timestamp and native ACK checks use the selected bounds. Completion must prove
+  an integer 15,000–16,000 ms duration, not merely an extended label.
+- Fixed 200 ms buffer, original server timestamps, 8 active points, 400 ms destination
+  lease, 2m sphere/vertical bounds, sampled ground, delayed readbacks and rollback
+  remain. No compositor installation or native renderer rebuild was needed.
+- Lua source SHA256: `38E81FA00B6AC43607743275CD24E65E3A0411BB629FCC31D12018FFA26C8D7F`.
 
-## Input-phase implementation
+## Automated verification completed
 
-- `HudStreamLab` now consumes physical movement and UI events at START_CLIENT_TICK,
-  before `HudPhysicalMovement.beforeTick` writes vanilla KeyBindings. Previously
-  END_CLIENT_TICK consumption required an additional tick before application.
-  Preserve whole-queue UI event ordering, freshness, ownership and cleanup gates.
-  Other input profiles retain their original END path.
-- The labelled physical fixture uses the same START phase. Setup, authoritative
-  post-tick observations and final output remain at END.
-- `HudMovementTiming` records original input capture UTC, JVM receipt time,
-  accepted-down decisions and actual KeyBinding snapshots in final evidence at
-  `physical_movement.input_timing`. `after_input_sequence` refers only to movement
-  edges; batched down/up can cancel before polling. This is not native/display
-  latency proof. Each series retains its first 32 entries with full counts and
-  explicit truncation, leaving space in the unchanged 64 KiB stream receipt.
-- Java24 `compileJava`, `assemble` and `hudPhysicalMovementTest` pass **299 checks**, including
-  rejected/batched input, signed clocks, immutable exports and worst-width nested
-  receipt-size coverage. The final 32-entry cap was tightened after the fixture;
-  that fixture retained only 8 events/12 states, below the new cap.
-- Actual Minecraft fixture `cf2fbd1c64b347d8951a27545f9e146b` passes:
-  `runtime/evidence/hud-physical-fixture-20261028-121745-cf2fbd1c64b347d8951a27545f9e146b/`.
-  Three W/W/S pulses, zero client/server inventory movement, 106 real HUD frames,
-  58 trace records, 1.498988 m maximum walk on both sides, zero corrections,
-  normal exit and all controls/proxies released. Scripted receive-to-KeyBinding
-  delays are 8.9611/0.2784/0.2117 ms. This does not measure physical key capture,
-  native mapping/focus, KCD motion or display latency.
-- No compositor/Lua/controller buffer change or new installation is needed.
-  The phase change and receiver repair now have the live PASS above. Keep 200 ms.
+Java compile/assemble; 327 input checks; 1547 ground/trace checks; 87 Lua cases;
+101 buffered checks; 149 physical receiver checks; 87 warmup checks; 80 append-only/
+coupled checks; 97 fixture receipt checks; 16 legacy receiver cases; 23 path checks.
+Lua harness covers full 16s progression/161 ACKs, limits/reload/restoration; it is
+not live-game proof. Do not repeat unchanged suites just to resume.
 
-## Repository and implementation
+Actual Minecraft extended fixtures both pass five W/W/S/W/S pulses, inventory
+reopened after6s with zero movement, then later walking and normal cleanup:
 
-- Workspace: `C:\Users\xephi\Documents\ChatGPT\New project\MineCome`.
-- Public default branch: `codex/initial-import`,
-  `https://github.com/gabrielpery/minecraft-kcd2`.
-- Live-validated implementation: `d150024667683ce6366f4800528528d8b9ab9f0b`
-  (fixed 100 ms physical sampling schedule), on
-  `c90da08973da9db54ad2c7a1c94d2def1b34cec0` (parser warmup/native finish).
-  START-phase implementation is `7dbde04bbcbcd49e9039db7c43cbf47f9c67a299`;
-  the receiver/diagnostic repairs follow it. Inspect current Git status/log
-  rather than resetting to an older baseline.
-- No new native installation, renderer rebuild, PowerShell setup or administrator
-  session is needed. The installed walking bundle remains unchanged.
-- Detailed history, prior failures and component checks are in [PROGRESS.md](PROGRESS.md).
+- Flat terrain: `runtime/evidence/hud-physical-fixture-20261028-130405-e0636c8c8087435588172cfe5513d343/`;
+  15,593ms,159 records,255 UI frames,1.498988m walk,zero corrections.
+- Captured KCD terrain: `runtime/evidence/hud-physical-fixture-20261028-131809-e13eb8ecdd1e4f69b4b12d740e1d92cf/`;
+  15,517ms,158 records,252 UI frames,0.637031m walk,zero corrections,4 boundary
+  pauses,12 reopened-inventory frames and zero client/server inventory movement.
+  Original capture `ground-patch-20261028-131456-9f4aeb95285b4f3bbff56bc8c8f345e8/ground-patch.json`,
+  SHA256 `93e1ced12e3f5340b2337fabeee885513055e42a76b9eb188485125967a4c23c`.
+  Only numeric terrain samples are relabelled as a standalone fixture. No KCD
+  commands, renderer arm or physical-input claim is made by either fixture.
 
-## Earlier passed physical evidence (27 October)
+## Keep the earlier incomplete run
 
-HUD `650a8e00939c4831981f75828b79ff62`, probe
-`38d11f6a4fb943348636cef27b855de9`:
-`runtime/evidence/hud-walking-20261027-181108-38d11f6a4fb943348636cef27b855de9/`.
+First extended live attempt `a3735cb0c58f4ab6919ea481215ba453`:
+`runtime/evidence/hud-walking-20261028-130751-a3735cb0c58f4ab6919ea481215ba453/`.
+User said "all worked fine", but switched away 13,515 ms after F8. ReShade reports
+`eligibility_lost`, foreground=false with fresh ACK/images. Guest ended STOPPED
+~11s into motion. 109 sources/106 readbacks before cleanup; restoration and cleanup
+passed. Preserve primary failed verification/post-run logs. This was expected
+focus revocation, not a crash; no code change was needed for the successful retry.
+Earlier short baseline `b850ba...` passed 57/57. Full historical evidence is in
+[PROGRESS.md](PROGRESS.md); do not reinterpret failed trials as passes.
 
-- Controller exits 0: **56/56** forwarded sources and delayed readbacks pass.
-- Native `explicit_end` restores the exact origin with zero error, cancels timers,
-  and completes in 5,830.59 ms with 137 writes including restoration.
-- All 588 camera publications are fresh; camera resources, FPS and Minecraft
-  clean up normally. Client/server maximum walk is 0.594376 m, with zero corrections.
-- Eighty retained native readbacks each advance one frame: median 16.113 ms,
-  maximum 16.960 ms, zero position errors and no intermediate source holds.
-- This run did not open inventory. Earlier inventory and aimed-block results
-  remain separate; unrestricted or continuous movement is not established.
-- `verification.json` is the primary PASS; `latency-analysis.json` preserves
-  derived metrics, source hashes, calibration rows and comparison limitations.
+## Next implementation: walking and aimed blocks together
 
-## Remaining delay and limits
+Do not just enable both existing profiles. Walking uses collision-only sampled
+terrain with AIR-cell invariants; `AimedStoneArena` bootstrap expects real solid
+Minecraft support. The walking compositor currently excludes world-click capture.
 
-In the earlier 27 October run, first capture-to-dispatch is 50 ms (later median 20 ms).
-First sample validation/preparation/HTTP take 4.94/10.23/18.65 ms; diagnostic
-warmup takes 744.63 ms before arming. Conditional clock alignment estimates first
-capture-to-native acceptance at 68.4 ms and first actual write at 279.3 ms, versus
-123.8/333.9 ms previously. These are separate runs with cached-frame uncertainty,
-not physical keypress/display measurements or proof of a single change's effect.
-Source capture is median 100.38 ms/max 133.98 ms; server-source gaps reach 151.43 ms.
+1. Define explicit ownership for placed blocks versus imported terrain, so
+   movement collision checks tolerate only confirmed owned edits and clean them
+   up without touching unrelated content.
+2. Build a separate combined fixture/profile that starts from real sampled-ground
+   walking and the actual vanilla interaction path. Keep existing modes intact.
+3. Initially admit aimed clicks only after motion is settled and host/guest eye
+   alignment is fresh. The200ms host lag can exceed the current0.25m eye-origin
+   tolerance while walking; do not solve this by weakening reach/eye checks.
+4. Add the combined compositor input capability and exact bundle/profile hashes
+   only after guest terrain/interaction tests pass. Retail1.5.6 remains blocked
+   by loader/address-library prerequisites; official tools1.5.5 only.
 
-Keep the intentional **200 ms buffer**. This run needs 97.812 ms for right-point
-availability, but earlier replay `477...` needs 188.903 ms; 150 ms would underrun
-that earlier trace. Do not lower it based only on the latest trial. Per-key
-capture/application and display timestamps are absent, so measure those stages
-before claiming input-to-photon latency or attributing improvement solely to
-warmup/cadence. The newer binding diagnostics above add input-stage measurements,
-but still no display timing. HTTP success alone is not native application proof.
+## Current processes and later live restart
 
-The lab retains five seconds of input plus one second of settling inside the
-30-second HUD session, sampled-ground coverage, a 2 m host sphere and the existing
-freshness/write/trace bounds. Native Lua seals and finishes after its final
-observed point; controller ACK polling no longer delays restoration. Preserve
-these protections while planning longer walking or aimed-block integration.
+KCD PID 39628 remains open. Minecraft fixtures have exited normally. The successful
+`e50b03...` HUD arm is consumed and unarchived. Older `a3735...`, `b850ba...`,
+`4a7fb2...`, `6cd20f...`, `38d11...`, `2dd6...` arms are already archived.
+Recheck processes and exact receipts before acting. Computer Use worked this turn
+and closed only the owned previous test world normally via Alt+F4. Do not assume
+an old Escape stop persists; respect any new stop reported by the tool.
 
-## Current process state and any later test
-
-KCD PID **9224 remains open**; Minecraft has exited normally. The successful
-`b850ba...` arm is consumed and not archived. Earlier `38d11...`, `4a7fb2...`,
-`6cd20f...` and `2dd6...` arms are already archived; do not archive them again.
-Recheck actual processes, arm receipts and Computer Use availability on resumption.
-Earlier Escape presses stopped Computer Use; do not assume that persists forever
-or that observing the screen causes game failures.
-
-When another test is needed, close KCD normally, archive the exact consumed arm,
-then launch a fresh official tools world. Escape stopped Computer Use during
-this turn; respect any current stop and recheck availability on a later turn.
+After closing KCD normally, archive only the current arm and start a fresh world:
 
 ```powershell
-$mineComeRoot = 'C:/Users/xephi/Documents/ChatGPT/New project/MineCome'
-& "$mineComeRoot/scripts/Archive-HudArm.ps1" -ReceiptPath "$mineComeRoot/runtime/evidence/hud-walking-20261028-124409-b850ba28250a4a0f8e90edb611996d89/capture/stream-arming.json"
-& "$mineComeRoot/scripts/Start-Kcd2ToolsTest.ps1"
+$r = 'C:/Users/xephi/Documents/ChatGPT/New project/MineCome'
+& "$r/scripts/Archive-HudArm.ps1" -ReceiptPath "$r/runtime/evidence/hud-walking-20261028-131455-e50b03b5a7eb4f1c92b58f42d3da012b/capture/stream-arming.json"
+& "$r/scripts/Start-Kcd2ToolsTest.ps1"
 ```
 
-Let the fresh world load. Do not load retail 1.5.6 saves into the 1.5.5 development
-build. For a later walking trial, these exact commands use the installed PS7:
+Only when another manual check is needed and the user has returned:
 
 ```powershell
-& 'C:/Users/xephi/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/powershell/pwsh.exe' -NoProfile -File 'C:/Users/xephi/Documents/ChatGPT/New project/MineCome/scripts/Test-HudWalking.ps1' -PreflightOnly
-& 'C:/Users/xephi/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/powershell/pwsh.exe' -NoProfile -File 'C:/Users/xephi/Documents/ChatGPT/New project/MineCome/scripts/Test-HudWalking.ps1'
+& 'C:/Users/xephi/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/powershell/pwsh.exe' -NoProfile -File 'C:/Users/xephi/Documents/ChatGPT/New project/MineCome/scripts/Test-HudWalking.ps1' -ExtendedWalking
 ```
 
-Wait for `HUD_WALKING_READY` before prompting F8. Verify slot 2 changes before
-movement so ordinary KCD walking cannot be mistaken for active MineCome control.
-Use the actual reported activation window and a brief sequence suited to the new change; do not spend that window on
-unrelated work. The return near six seconds and normal Minecraft shutdown are
-intentional. Check source crossings, `explicit_end`, actor/FPS restoration and
-camera/Minecraft cleanup separately from the user's responsiveness report.
+Wait for HUD_WALKING_READY before the F8 prompt. Verify slot2, start walking soon,
+and keep KCD foreground until HUD disappearance30s after F8. Movement returns at
+~16s. No administrator mode, PowerShell setup or install is needed. Never load
+retail1.5.6 saves into tools1.5.5. Routine development/launches/tests/Git pushes are
+authorized; formatted commands precede question widgets when user action is needed.
 
-Routine development, launches, tests and Git pushes are already authorized.
-Keep commands formatted in chat before any question widget. Do not repeat
-unchanged suites, reinstall working components or erase failed historical evidence.
+Workspace: `C:/Users/xephi/Documents/ChatGPT/New project/MineCome`.
+Public repo/default branch: `https://github.com/gabrielpery/minecraft-kcd2`,
+`codex/initial-import`. Previous checkpoint `cdc272e82efa3171055bed751fc3c395ec40f7ed`;
+inspect current Git log/status for the extended-mode commit rather than resetting.

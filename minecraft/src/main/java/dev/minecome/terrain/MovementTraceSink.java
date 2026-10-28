@@ -4,15 +4,24 @@ import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.util.*;
+import dev.minecome.hud.HudMovementSession;
 
 /** Bounded prototype file IPC. Only immutable scalar observations enter this writer. */
 final class MovementTraceSink implements AutoCloseable {
     static final int MAX_RECORDS=200,MAX_BYTES=64*1024,END_RESERVE=2048;
     static final long PERIOD_NS=100_000_000L,MAX_SERVER_AGE_NS=250_000_000L;
     enum Profile {
-        GROUND("MineCome-Ground-"),HUD_COUPLED("MineCome-HudStream-"),HUD_PHYSICAL("MineCome-HudStream-"),HUD_PHYSICAL_FIXTURE("MineCome-HudStream-");
+        GROUND("MineCome-Ground-"),HUD_COUPLED("MineCome-HudStream-"),
+        HUD_PHYSICAL(false,HudMovementSession.SHORT),HUD_PHYSICAL_FIXTURE(true,HudMovementSession.SHORT),
+        HUD_PHYSICAL_EXTENDED(false,HudMovementSession.EXTENDED),HUD_PHYSICAL_EXTENDED_FIXTURE(true,HudMovementSession.EXTENDED);
         private final String savePrefix;
-        Profile(String savePrefix){this.savePrefix=savePrefix;}
+        private final boolean physical,fixture;
+        private final HudMovementSession session;
+        Profile(String savePrefix){this.savePrefix=savePrefix;physical=false;fixture=false;session=HudMovementSession.SHORT;}
+        Profile(boolean fixture,HudMovementSession session){savePrefix="MineCome-HudStream-";physical=true;this.fixture=fixture;this.session=session;}
+        static Profile physical(boolean fixture,HudMovementSession session){
+            return session.extended()?(fixture?HUD_PHYSICAL_EXTENDED_FIXTURE:HUD_PHYSICAL_EXTENDED):(fixture?HUD_PHYSICAL_FIXTURE:HUD_PHYSICAL);
+        }
     }
     record Context(String run,String patchSha256,String sourceKind,String save,String world,
                    double centerX,double centerY,double centerZ,Profile profile,double anchorX,double anchorY,double anchorZ) {
@@ -26,9 +35,9 @@ final class MovementTraceSink implements AutoCloseable {
             if(!run.matches("[A-Za-z0-9_-]{1,128}") || !patchSha256.matches("[0-9a-f]{64}") ||
                     !sourceKind.matches("[A-Za-z0-9_-]{1,64}") || !world.equals(UUID.fromString(world).toString()) ||
                     profile==null || !save.equals(profile.savePrefix+world) ||
-                    (profile!=Profile.GROUND && !sourceKind.equals(profile==Profile.HUD_PHYSICAL_FIXTURE?"standalone_ground_fixture":"live_kcd_ground_patch")) || !finite(centerX,centerY,centerZ,anchorX,anchorY,anchorZ) ||
+                    (profile!=Profile.GROUND && !sourceKind.equals(profile.fixture?"standalone_ground_fixture":"live_kcd_ground_patch")) || !finite(centerX,centerY,centerZ,anchorX,anchorY,anchorZ) ||
                     Math.abs(anchorX)>.01 || Math.abs(anchorZ)>.01 || anchorY<52 || anchorY>76 ||
-                    (profile!=Profile.HUD_PHYSICAL && profile!=Profile.HUD_PHYSICAL_FIXTURE && (anchorX!=0 || anchorY!=64 || anchorZ!=0)) ||
+                    (!profile.physical && (anchorX!=0 || anchorY!=64 || anchorZ!=0)) ||
                     Math.abs(centerX)>10_000_000 || Math.abs(centerY)>10_000_000 || Math.abs(centerZ)>10_000_000)
                 throw new IllegalArgumentException("Invalid movement trace context");
         }
@@ -74,7 +83,7 @@ final class MovementTraceSink implements AutoCloseable {
     boolean sample(long nowNs,long utcMs,String phase,Motion client,Motion server,long serverSequence,long receivedAtNs,boolean force) throws IOException {
         if(closed)return false;
         validatePhase(phase);
-        boolean phaseLocked=context.profile()==Profile.HUD_PHYSICAL || context.profile()==Profile.HUD_PHYSICAL_FIXTURE;
+        boolean phaseLocked=context.profile().physical;
         long age=nowNs-receivedAtNs;
         if(age<0 || age>MAX_SERVER_AGE_NS || (phaseLocked && receivedAtNs>nowNs) ||
                 serverSequence<=lastServerSequence || serverSequence<1)return false;
@@ -112,13 +121,13 @@ final class MovementTraceSink implements AutoCloseable {
     private String prefix(String kind,long utcMs) {
         if(utcMs<0)throw new IllegalArgumentException("Invalid UTC timestamp");
         return "{\"schema\":1,\"kind\":"+quote(kind)+",\"run\":"+quote(context.run())+
-                ",\"patch_sha256\":"+quote(context.patchSha256())+",\"source_kind\":"+quote(context.profile()==Profile.HUD_PHYSICAL?"live_kcd_hud_physical_movement":context.profile()==Profile.HUD_PHYSICAL_FIXTURE?"standalone_hud_physical_movement_fixture":context.sourceKind())+
+                ",\"patch_sha256\":"+quote(context.patchSha256())+",\"source_kind\":"+quote(context.profile().physical?context.profile().session.traceSource(context.profile().fixture):context.sourceKind())+
                 ",\"save\":"+quote(context.save())+",\"world\":"+quote(context.world())+
                 ",\"seq\":"+(sequence+1)+",\"utc_ms\":"+utcMs;
     }
     private void write(String record,boolean end) throws IOException {
         byte[] line=(record+"\n").getBytes(StandardCharsets.UTF_8);
-        int limit=end?MAX_BYTES:MAX_BYTES-END_RESERVE;
+        int maximum=context.profile().session.traceBytes(),limit=end?maximum:maximum-END_RESERVE;
         if(sequence>=(end?MAX_RECORDS:MAX_RECORDS-1) || bytes+line.length>limit)
             throw new IOException("Movement trace bounded record/byte budget exhausted");
         output.write(line);output.flush();bytes+=line.length;sequence++;

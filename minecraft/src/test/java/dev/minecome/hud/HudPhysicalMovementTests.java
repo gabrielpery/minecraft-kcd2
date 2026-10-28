@@ -38,6 +38,14 @@ public final class HudPhysicalMovementTests {
     private static void modes()throws Exception{
         check(!HudPhysicalMovementMode.require(new Properties()),"Legacy defaults unchanged");
         check(HudPhysicalMovementMode.require(mode()),"Explicit complete movement profile accepted");
+        check(HudMovementSession.selected(mode())==HudMovementSession.SHORT,"Physical default retains short session");
+        var extended=mode();extended.setProperty("minecome.hudPhysicalMovementExtended","true");
+        check(HudPhysicalMovementMode.require(extended) && HudMovementSession.selected(extended)==HudMovementSession.EXTENDED,"Complete live mode permits explicitly extended policy");
+        var orphan=new Properties();orphan.setProperty("minecome.hudPhysicalMovementExtended","true");
+        reject(()->HudPhysicalMovementMode.require(orphan),"extended option cannot enable another mode implicitly");
+        for(String invalid:List.of("TRUE","15","1","","extended")){
+            var p=mode();p.setProperty("minecome.hudPhysicalMovementExtended",invalid);reject(()->HudPhysicalMovementMode.require(p),"malformed extended option "+invalid);
+        }
         for(String key:List.of("hudStreamLab","hudStreamInput","hudStreamLiveMouse","hudStreamOffscreenPresentation","groundPatchFile","movementTraceFile","hudHostViewFile")){
             var p=mode();p.remove("minecome."+key);reject(()->HudPhysicalMovementMode.require(p),"missing "+key);
         }
@@ -51,6 +59,8 @@ public final class HudPhysicalMovementTests {
         for(String key:List.of("hudPhysicalMovementFixture","hudStreamLab","hudStreamStandalone"))fixture.setProperty("minecome."+key,"true");
         for(String key:List.of("groundPatchFile","movementTraceFile","hudHostViewFile"))fixture.setProperty("minecome."+key,"fixture-file");
         check(HudPhysicalMovementMode.require(fixture) && HudPhysicalMovementMode.fixture(fixture),"Separate labelled scripted physical controller mode");
+        var extendedFixture=new Properties();extendedFixture.putAll(fixture);extendedFixture.setProperty("minecome.hudPhysicalMovementExtended","true");
+        check(HudPhysicalMovementMode.require(extendedFixture) && HudMovementSession.selected(extendedFixture)==HudMovementSession.EXTENDED,"Fixture opts into the same extended controller policy explicitly");
         for(String key:List.of("hudPhysicalMovement","hudStreamInput","hudStreamLiveMouse","hudStreamOffscreenPresentation","hudGroundMovementFixture","hudGroundMovementCoupled","hudStreamInputFixture")){
             var p=new Properties();p.putAll(fixture);p.setProperty("minecome."+key,"true");reject(()->HudPhysicalMovementMode.require(p),"fixture cannot acquire "+key);
         }
@@ -140,6 +150,43 @@ public final class HudPhysicalMovementTests {
         check(gate.event(1,0x53,now+50_000_002L,true),"balanced release and fresh press in the same input batch can resume");
         gate.suppressAtBoundary();gate.event(2,0x53,now+50_000_003L,true);
         check(!gate.event(1,0x41,now+50_000_004L,true),"release without a renewed authority lease cannot rearm");
+    }
+    private static void extendedHolds(){
+        var session=HudMovementSession.EXTENDED;long at=1_000_000_000L;
+        check(session.activeNs()==15_000_000_000L && session.maximumMotionNs()==16_000_000_000L,"Extended session has fixed15s input plus1s settling");
+        check(session.traceBytes()==256*1024 && HudMovementSession.SHORT.traceBytes()==64*1024,"Trace byte budgets are explicitly isolated by session");
+        check(!session.traceSource(false).equals(HudMovementSession.SHORT.traceSource(false)) &&
+                !session.traceSource(true).equals(session.traceSource(false)),"Extended live and fixture trace identities are distinct");
+        check(session.mayStart(-10_000_000_000L,1_999_999_999L),"Admission handles valid signed monotonic clocks");
+        check(!session.mayStart(at,at-1) && !session.mayStart(Long.MIN_VALUE,Long.MAX_VALUE),"Regressed or overflowing admission interval is rejected");
+        var gate=new HudMovementKeys(session);gate.authority(at,true);
+        check(!gate.event(1,0x57,at,true) && !gate.started() && gate.lateStartsDenied()==1,"Extended controls cannot start before activation is supplied");
+        gate.close();
+        gate=new HudMovementKeys(session);gate.activate(at);gate.authority(at,true);gate.event(1,0x57,at,true);
+        gate.event(2,0x57,at+1,true);gate.suspend();
+        long later=at+6_000_000_000L;gate.authority(later,true);
+        check(gate.event(1,0x53,later,true) && gate.down(0x53,later),"Fresh movement beyond five seconds remains possible only in extended mode");
+        gate.suppressAtBoundary();gate.authority(later+1,true);
+        check(!gate.down(0x53,later+1),"Extended boundary pause never resumes an old held key");
+        gate.event(2,0x53,later+2,true);
+        check(gate.event(1,0x44,later+3,true),"Extended boundary permits fresh reverse direction after balancing");
+        check(!gate.down(0x44,later+HudMovementKeys.HOLD_LEASE_NS+1),"Longer session retains150ms hold lease");
+        gate.event(2,0x44,later+HudMovementKeys.HOLD_LEASE_NS+2,false);
+        long end=at+session.activeNs();gate.authority(end-1,true);
+        check(gate.event(1,0x41,end-1,true),"Extended fresh input can run immediately before original15s limit");
+        gate.activate(end-1);gate.authority(end,true);
+        check(gate.ended() && gate.neutral(end) && gate.startedAt()==at,"Inventory, boundary and repeated activation cannot renew original15s limit");
+        gate.event(2,0x41,end,true);
+        check(!gate.event(1,0x57,end+1,true),"Expired extended session cannot restart");
+        gate.close();check(gate.rawCount()==0,"Extended close balances all raw input");
+        gate=new HudMovementKeys(session);gate.activate(at);long last=at+HudMovementSession.START_WINDOW_NS-1;gate.authority(last,true);
+        check(gate.event(1,0x57,last,true),"Initial down immediately before12s cutoff is admitted");
+        gate=new HudMovementKeys(session);gate.activate(at);gate.activate(at+10_000_000_000L);long cutoff=at+HudMovementSession.START_WINDOW_NS;gate.authority(cutoff,true);
+        check(!gate.event(1,0x57,cutoff,true) && !gate.started() && gate.lateStartsDenied()==1,"Exact12s cutoff denies first down and activation cannot renew it");
+        gate.event(2,0x57,cutoff+1,true);check(gate.rawCount()==0,"Denied late down still permits its balancing release");
+        gate.authority(cutoff+2,true);check(!gate.event(1,0x53,cutoff+2,true),"Neutral release does not reopen expired admission window");
+        var shortGate=new HudMovementKeys();shortGate.authority(cutoff,true);
+        check(shortGate.event(1,0x57,cutoff,true),"Short baseline retains original admission behavior");
     }
     private static void views()throws Exception{
         var parsed=parse(view(1,NOW));
@@ -288,5 +335,5 @@ public final class HudPhysicalMovementTests {
             check(Files.readString(target).equals(second),"Replacement after sharing release preserves original queued sequence/time");
         }finally{Files.deleteIfExists(temp);Files.deleteIfExists(target);Files.deleteIfExists(root);}
     }
-    public static void main(String[] args)throws Exception{modes();wire();holds();views();reader();readerRaces();fixturePublication();checks+=HudMovementTimingTests.run();checks+=dev.minecome.terrain.HudMovementBoundaryTests.run();System.out.println("HudPhysicalMovementTests: "+checks+" checks passed");}
+    public static void main(String[] args)throws Exception{modes();wire();holds();extendedHolds();views();reader();readerRaces();fixturePublication();checks+=HudMovementTimingTests.run();checks+=dev.minecome.terrain.HudMovementBoundaryTests.run();System.out.println("HudPhysicalMovementTests: "+checks+" checks passed");}
 }

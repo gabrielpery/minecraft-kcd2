@@ -4,6 +4,7 @@ import com.google.gson.*;
 import java.io.IOException;
 import java.nio.file.*;
 import java.util.*;
+import dev.minecome.hud.HudMovementSession;
 
 /** Bounded file fixtures only; no Minecraft classes or host setters. */
 final class MovementTraceSinkTests {
@@ -160,6 +161,54 @@ final class MovementTraceSinkTests {
                 check(sink.records()<=MovementTraceSink.MAX_RECORDS && sink.byteCount()<=MovementTraceSink.MAX_BYTES,"Exhausted physical stream still writes its bounded final cleanup record");
             }
         }
+    }
+    private static void extendedBudget(Path root,Path run,MovementTraceSink.Context live,MovementTraceSink.Context fixture)throws Exception{
+        for(var base:List.of(live,fixture)){
+            boolean scripted=base.profile()==MovementTraceSink.Profile.HUD_PHYSICAL_FIXTURE;
+            var profile=MovementTraceSink.Profile.physical(scripted,HudMovementSession.EXTENDED);
+            var context=new MovementTraceSink.Context("0123456789abcdef0123456789abcdef".repeat(4),"d".repeat(64),base.sourceKind(),base.save(),base.world(),
+                    123.45678901234567,2041.2345678901234,56.159265358979324,profile,0,64.43802833557129,0);
+            String expected=HudMovementSession.EXTENDED.traceSource(scripted);
+            Path file=run.resolve("extended-full-"+profile+".ndjson");
+            var origin=new MovementTraceSink.Motion(0,context.anchorY(),0,0,0,0,true,true);
+            try(var sink=MovementTraceSink.open(file,root,context,0,1000)){
+                check(sink.sample(0,1000,"SETTLING",origin,origin,1,0,true),"Extended anchor remains exact and fresh");
+                for(int i=1;i<160;i++){
+                    long at=i*MovementTraceSink.PERIOD_NS+7_654_321L;
+                    var client=new MovementTraceSink.Motion(.4234567890123456+i*.000001,64.43802833557129,-.6256789012345678,
+                            .01234567890123456,-.0784000015258789,-.02345678901234567,true,true);
+                    var server=new MovementTraceSink.Motion(.4123456789012345+i*.000001,64.43802833557129,-.6123456789012345,
+                            .01123456789012345,-.0784000015258789,-.02234567890123456,true,true);
+                    check(sink.sample(at,1000+i*100L+7,"WALKING",client,server,i+1,at-50_000_000L,false),"Extended source retains each actual scheduled observation");
+                }
+                check(sink.sample(16_000_000_000L,17000,"PASSED",origin,origin,161,16_000_000_000L,true),"Extended final source at16s is retained");
+                check(sink.byteCount()>MovementTraceSink.MAX_BYTES && sink.byteCount()<=HudMovementSession.EXTENDED.traceBytes()-MovementTraceSink.END_RESERVE,
+                        "Full extended trace exceeds short byte budget while preserving dedicated extended end reserve");
+                sink.finish(17000,"passed","PASSED","Synthetic full extended-session source budget");
+                check(sink.records()==163 && sink.byteCount()<=HudMovementSession.EXTENDED.traceBytes(),"Extended stream fits unchanged200record ceiling and256KiB");
+                System.out.printf(Locale.ROOT,"SYNTHETIC_EXTENDED_TRACE_BUDGET profile=%s samples=161 records=%d bytes=%d limit=%d game_calls=false%n",profile,sink.records(),sink.byteCount(),HudMovementSession.EXTENDED.traceBytes());
+            }
+            for(String line:Files.readAllLines(file))check(JsonParser.parseString(line).getAsJsonObject().get("source_kind").getAsString().equals(expected),"Every extended record identifies its exact live or fixture profile");
+            Path exhausted=run.resolve("extended-exhausted-"+profile+".ndjson");
+            try(var sink=MovementTraceSink.open(exhausted,root,context,0,1000)){
+                boolean stopped=false;
+                for(int i=0;i<=MovementTraceSink.MAX_RECORDS;i++){
+                    try{sink.sample(i*MovementTraceSink.PERIOD_NS,1000+i*100L,"RESTING",origin,origin,i+1,i*MovementTraceSink.PERIOD_NS,false);}
+                    catch(IOException expectedFailure){stopped=true;break;}
+                }
+                check(stopped && sink.records()==199,"Extended writer reserves unchanged200th record for termination");
+                sink.finish(25000,"failed","FAILED","Synthetic extended budget exhaustion");
+                check(sink.records()==200 && sink.byteCount()<=HudMovementSession.EXTENDED.traceBytes(),"Extended exhaustion retains final end slot");
+            }
+            try{new MovementTraceSink.Context("run","a".repeat(64),scripted?"live_kcd_ground_patch":"standalone_ground_fixture",base.save(),base.world(),0,0,10,profile);
+                throw new AssertionError("Extended live/fixture provenance was interchangeable");}
+            catch(IllegalArgumentException expectedFailure){checks++;}
+        }
+        var extendedLive=new MovementTraceSink.Context(live.run(),live.patchSha256(),live.sourceKind(),live.save(),live.world(),live.centerX(),live.centerY(),live.centerZ(),
+                MovementTraceSink.Profile.HUD_PHYSICAL_EXTENDED,live.anchorX(),live.anchorY(),live.anchorZ());
+        var extendedFixture=new MovementTraceSink.Context(fixture.run(),fixture.patchSha256(),fixture.sourceKind(),fixture.save(),fixture.world(),fixture.centerX(),fixture.centerY(),fixture.centerZ(),
+                MovementTraceSink.Profile.HUD_PHYSICAL_EXTENDED_FIXTURE,fixture.anchorX(),fixture.anchorY(),fixture.anchorZ());
+        phaseLockedSampling(root,Files.createDirectory(run.resolve("extended-cadence")),extendedLive,extendedFixture,hudContext(live.save(),live.world(),live.sourceKind()));
     }
     static int run() throws Exception {
         checks=0;Path temp=Files.createTempDirectory("minecome-trace-fixture-");
@@ -322,6 +371,7 @@ final class MovementTraceSinkTests {
             catch(IllegalArgumentException expected){checks++;}
             phaseLockedSampling(root,run,physical,fixture,hud);
             samplingComparisonAndBudget(root,run,physical,fixture);
+            extendedBudget(root,run,physical,fixture);
         } finally {
             // Only this fresh fixture directory is cleaned, using its resolved path.
             Path ownedRoot=temp.toRealPath();

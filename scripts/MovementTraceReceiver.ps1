@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Pure bounded receiver for terrain/MovementTraceSink.java. No game/process calls.
 # File provenance authentication remains the starter/controller's responsibility.
+. (Join-Path $PSScriptRoot 'HudWalkingSession.ps1')
 
 function Assert-MineComeTraceJsonTree {
     param([System.Text.Json.JsonElement]$Element,[int]$Depth,[ref]$Count)
@@ -117,9 +118,10 @@ function Assert-MineComeTraceClock {
 
 function New-MineComeTraceReceiver {
     [CmdletBinding()]
-    param([Parameter(Mandatory)][string]$PatchFile,[Parameter(Mandatory)]$MinimumUtcMs,[string]$ExpectedHudSave,[switch]$PhysicalMovement,[switch]$BufferedPhysicalMovement)
+    param([Parameter(Mandatory)][string]$PatchFile,[Parameter(Mandatory)]$MinimumUtcMs,[string]$ExpectedHudSave,[switch]$PhysicalMovement,[switch]$BufferedPhysicalMovement,[switch]$ExtendedWalking)
     Assert-MineComeTraceClock $MinimumUtcMs
     if($BufferedPhysicalMovement -and -not $PhysicalMovement){throw 'Buffered playback requires the physical movement profile.'}
+    if($ExtendedWalking -and -not $BufferedPhysicalMovement){throw 'Extended walking requires explicit buffered physical movement.'}
     if($PhysicalMovement -and -not $ExpectedHudSave){throw 'Physical movement trace requires one exact HUD save.'}
     if($PSBoundParameters.ContainsKey('ExpectedHudSave')) {
         $saveWorld=[Guid]::Empty
@@ -168,7 +170,7 @@ function New-MineComeTraceReceiver {
             if([Math]::Abs($x-($center.x+(($index-1)%5)-2)) -gt 0.0001 -or [Math]::Abs($y-($center.y+[Math]::Floor(($index-1)/5)-2)) -gt 0.0001 -or -not (Get-MineComeTraceBoolean $point 'valid') -or (Get-MineComeTraceString $point 'result') -cne 'hit') { throw 'Invalid patch coverage.' }
             foreach($axis in @('nx','ny','nz')) { [void](Get-MineComeTraceNumber $point $axis -1.01 1.01) }
         }
-        return [pscustomobject]@{ExpectedRun=$run;PatchHash=$hash;Center=$center;ExpectedHudSave=$ExpectedHudSave;PhysicalMovement=[bool]$PhysicalMovement;BufferedPhysicalMovement=[bool]$BufferedPhysicalMovement;Anchor=[pscustomobject]@{x=0.0;y=64.0;z=0.0};AnchorVerified=$false;MinimumUtcMs=[long]$MinimumUtcMs;LastSeq=[long]0;LastServerSeq=[long]0;LastFreshPassedSeq=[long]0;LastPassedUtcMs=[long]0;LastPassedServerAgeMs=[double]0;World=$null;Save=$null;Begun=$false;Ended=$false;GroundProved=$false;Bytes=0;Records=0}
+        return [pscustomobject]@{ExpectedRun=$run;PatchHash=$hash;Center=$center;ExpectedHudSave=$ExpectedHudSave;PhysicalMovement=[bool]$PhysicalMovement;BufferedPhysicalMovement=[bool]$BufferedPhysicalMovement;ExtendedWalking=[bool]$ExtendedWalking;Anchor=[pscustomobject]@{x=0.0;y=64.0;z=0.0};AnchorVerified=$false;MinimumUtcMs=[long]$MinimumUtcMs;LastSeq=[long]0;LastServerSeq=[long]0;LastFreshPassedSeq=[long]0;LastPassedUtcMs=[long]0;LastPassedServerAgeMs=[double]0;World=$null;Save=$null;Begun=$false;Ended=$false;GroundProved=$false;Bytes=0;Records=0}
     } finally { $document.Dispose() }
 }
 
@@ -179,7 +181,8 @@ function Receive-MineComeMovementTrace {
     if($State.Ended) { throw 'Trace already ended; appends/replay rejected.' }
     if($JsonLine.IndexOfAny([char[]]@("`r","`n")) -ge 0) { throw 'Receiver accepts one complete NDJSON record without separators.' }
     $lineBytes=[Text.UTF8Encoding]::new($false,$true).GetByteCount($JsonLine)
-    if($lineBytes -lt 1 -or $lineBytes -gt 4096 -or $State.Bytes+$lineBytes+1 -gt 65536 -or $State.Records -ge 200) { throw 'Trace line/stream budget exceeded.' }
+    $session=Get-HudWalkingSession -ExtendedWalking:$State.ExtendedWalking
+    if($lineBytes -lt 1 -or $lineBytes -gt 4096 -or $State.Bytes+$lineBytes+1 -gt $session.TraceBytes -or $State.Records -ge 200) { throw 'Trace line/stream budget exceeded.' }
     $document=Read-MineComeTraceJson $JsonLine 4096
     try {
         $root=$document.RootElement
@@ -193,7 +196,7 @@ function Receive-MineComeMovementTrace {
         }
         Assert-MineComeTraceKeys $root $keys
         [void](Get-MineComeTraceInteger $root 'schema' 1 1)
-        $sourceKind=if($State.PhysicalMovement){'live_kcd_hud_physical_movement'}else{'live_kcd_ground_patch'}
+        $sourceKind=if($State.PhysicalMovement){$session.SourceKind}else{'live_kcd_ground_patch'}
         if((Get-MineComeTraceString $root 'run') -cne $State.ExpectedRun -or (Get-MineComeTraceString $root 'patch_sha256') -cne $State.PatchHash -or (Get-MineComeTraceString $root 'source_kind') -cne $sourceKind) { throw 'Trace patch/run/source identity mismatch.' }
         $world=Get-MineComeTraceString $root 'world';$save=Get-MineComeTraceString $root 'save';$uuid=[Guid]::Empty
         $expectedSave=if($State.ExpectedHudSave){$State.ExpectedHudSave}else{'MineCome-Ground-'+$world}

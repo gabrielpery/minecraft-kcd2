@@ -1,6 +1,7 @@
 #requires -Version 7.0
 # Pure receipt/append-only file checks shared by the bounded follower controller.
 # Callers authenticate the live patch and processes; these helpers do not call games.
+. (Join-Path $PSScriptRoot 'HudWalkingSession.ps1')
 function Assert-CoupledHudReady($Ready,[int]$HelperPid,[string]$HelperStart,[long]$MinimumUtcMs) {
     Assert-HudGroundMovementMarkers $Ready $false $true
     $world=[Guid]::Empty
@@ -36,7 +37,7 @@ function Assert-CoupledHudCompletion($Verification,$Ready,$Guest,$Receiver,[stri
     }
     return $proof
 }
-function Read-CoupledTraceLines($Reader) {
+function Read-CoupledTraceLines($Reader,[switch]$ExtendedWalking) {
     # Keep this handle open without FileShare.Delete: the leaf cannot be swapped
     # while following it. Comparing every observed byte also detects rewriting a
     # partial tail or any previously consumed record, not just a shrinking file.
@@ -47,7 +48,8 @@ function Read-CoupledTraceLines($Reader) {
         $Reader.Stream=[IO.FileStream]::new($Reader.Path,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::ReadWrite)
     }
     $stream=$Reader.Stream;$length=$stream.Length
-    if($length -gt 65536 -or $length -lt $Reader.Bytes.Length){throw 'Movement trace was truncated or exceeded 64 KiB.'}
+    $session=Get-HudWalkingSession -ExtendedWalking:$ExtendedWalking
+    if($length -gt $session.TraceBytes -or $length -lt $Reader.Bytes.Length){throw 'Movement trace was truncated or exceeded its selected byte budget.'}
     $bytes=[byte[]]::new([int]$length);$stream.Position=0;$read=0
     while($read -lt $bytes.Length) {
         $n=$stream.Read($bytes,$read,$bytes.Length-$read)

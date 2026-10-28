@@ -42,6 +42,7 @@ public final class HudStreamProducer implements AutoCloseable {
     private final HudGroundMovementMode.Mode groundMovementMode;
     private final boolean standalone;
     private final boolean physicalMovement;
+    private final HudMovementSession movementSession;
     private final AtomicReference<Frame> latest=new AtomicReference<>();
     private final AtomicReference<String> terminal=new AtomicReference<>(),failure=new AtomicReference<>();
     private final AtomicReference<JsonObject> finalEvidence=new AtomicReference<>();
@@ -67,6 +68,7 @@ public final class HudStreamProducer implements AutoCloseable {
         this.root=root.normalize();this.directory=directory.normalize();this.identity=identity;this.save=save;this.genuine=genuine;this.inputMode=inputMode;
         groundMovementMode=HudGroundMovementMode.mode(System.getProperties());
         physicalMovement=HudPhysicalMovementMode.require(System.getProperties());
+        movementSession=HudMovementSession.selected(System.getProperties());
         if(physicalMovement && (!genuine || inputMode!=(HudPhysicalMovementMode.fixture(System.getProperties())?0:1)))
             throw new IllegalArgumentException("Physical movement requires genuine pixels and its exact live or standalone fixture input profile");
         standalone=Boolean.getBoolean("minecome.hudStreamStandalone");
@@ -149,6 +151,7 @@ public final class HudStreamProducer implements AutoCloseable {
             r.addProperty("standalone",standalone);
         }
         if(physicalMovement){
+            if(movementSession.extended())r.addProperty("movement_session",movementSession.id());
             boolean scripted=HudPhysicalMovementMode.fixture(System.getProperties());
             r.addProperty("ui_input_physical_movement",!scripted);
             if(scripted){r.addProperty("ui_physical_controller_fixture",true);r.addProperty("standalone",true);r.addProperty("scripted_input",true);r.addProperty("physical_input_verified",false);}

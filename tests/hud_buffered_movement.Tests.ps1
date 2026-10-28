@@ -243,4 +243,47 @@ Check ((Assert-HudBufferedMovementReceipt $longClock $forwarded).SourceMs -eq 0)
 $bad=Clone $longClock;$bad.playback_epoch_engine_seconds=[double][MathF]::BitIncrement([single]$bad.playback_epoch_engine_seconds)
 Reject {Assert-HudBufferedMovementReceipt $bad $forwarded} 'An independently shifted initial epoch passed native precision proof'
 
+# Extension must be explicit at both ends, never inferred from a large clock.
+$extended=New-HudBufferedSourceState -ExtendedWalking
+[void](Get-HudBufferedSourceTime $extended (ClockRecord 2 0 0 1 SETTLING))
+Check ((Get-HudBufferedSourceTime $extended (ClockRecord 3 10100000000 0 2)) -eq 10100) 'Extended source after the old deadline was rejected'
+Check ((Get-HudBufferedSourceTime $extended (ClockRecord 4 16000000000 0 3 PASSED)) -eq 16000) 'Exact extended source limit rejected'
+$before=Clone $extended
+Reject {Get-HudBufferedSourceTime $extended (ClockRecord 5 16000000001 0 4)} 'Extended source duration became unbounded'
+Check (($extended | ConvertTo-Json -Compress) -ceq ($before | ConvertTo-Json -Compress)) 'Rejected source changed clock state'
+
+$extendedPoints=Clone $forwarded
+for($i=1;$i -lt $extendedPoints.Count;$i++){$extendedPoints[$i].SourceMs+=10000}
+$extendedAck=Clone $receipt
+$extendedAck | Add-Member movement_session extended
+$extendedAck.source_ms+=10000
+$s=Clone $samples[-1]
+foreach($field in @('written_engine_seconds','observed_engine_seconds','bracket_to_received_engine_seconds')){$s.$field+=10}
+foreach($field in @('bracket_from_ms','bracket_to_ms','playback_source_ms')){$s.$field+=10000}
+$extendedAck.sampled_engine_seconds=$s.observed_engine_seconds
+$extendedAck.segment_update_count=1;$extendedAck.segment_observation_count=1
+$extendedAck.segment_max_readback_error=$s.readback_error
+$extendedAck.segment_observed_samples=@($s)
+Check ((Assert-HudBufferedMovementReceipt $extendedAck $extendedPoints -ExtendedWalking).SourceMs -eq 10100) 'Delayed extended native observation did not preserve its original source clock'
+Reject {Assert-HudBufferedMovementReceipt $extendedAck $extendedPoints} 'Extended receipt crossed into default profile'
+Reject {Assert-HudBufferedMovementReceipt $receipt $forwarded -ExtendedWalking} 'Unlabelled short receipt impersonated extended playback'
+foreach($value in @($null,15,'EXTENDED','short',$true)){
+    $bad=Clone $extendedAck;$bad.movement_session=$value
+    Reject {Assert-HudBufferedMovementReceipt $bad $extendedPoints -ExtendedWalking} 'Malformed or mismatched native session accepted'
+}
+$summary=[pscustomobject]@{movement_session='extended';hard_deadline_ms=18000;writes=2048;elapsed_ms=16050}
+Assert-HudWalkingFollowerSession @($summary) -ExtendedWalking
+Reject {Assert-HudWalkingFollowerSession @($summary)} 'Extended native bounds accepted by short controller'
+$summary.writes=2049
+Reject {Assert-HudWalkingFollowerSession @($summary) -ExtendedWalking} 'Native write budget ignored'
+$summary.writes=1;$summary.hard_deadline_ms=18001
+Reject {Assert-HudWalkingFollowerSession @($summary) -ExtendedWalking} 'Native hard deadline extended by receipt'
+$summary.hard_deadline_ms=18000
+Reject {Assert-HudWalkingFollowerSession (@($summary)*257) -ExtendedWalking} 'Native receipt history unbounded'
+foreach($duration in @(5999,14999,16001,15000.5,'15000',$null)){
+    Reject {Assert-HudWalkingDuration ([pscustomobject]@{duration_ms=$duration}) -ExtendedWalking} 'Extended label substituted for actual bounded duration'
+}
+Assert-HudWalkingDuration ([pscustomobject]@{duration_ms=15000}) -ExtendedWalking
+Assert-HudWalkingDuration ([pscustomobject]@{duration_ms=16000}) -ExtendedWalking
+
 Write-Output "HUD_BUFFERED_MOVEMENT_TESTS_PASS checks=$checks game_calls=false"

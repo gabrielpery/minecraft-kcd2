@@ -22,8 +22,9 @@ public final class HudPhysicalMovement {
     private final String save;
     private final HudInputProtocol.Identity identity;
     private final boolean fixture;
+    private final HudMovementSession session;
     private final Path traceFile,viewFile;
-    private final HudMovementKeys keys=new HudMovementKeys();
+    private final HudMovementKeys keys;
     private final HudMovementTiming inputTiming=new HudMovementTiming();
     private final HudMovementCompletion completion=new HudMovementCompletion();
     private final AtomicReference<Observation> observed=new AtomicReference<>();
@@ -54,7 +55,11 @@ public final class HudPhysicalMovement {
     }
     /** Fixture mode is explicit and emits a trace the live follower must reject. */
     public HudPhysicalMovement(Path patchFile,Path traceFile,Path viewFile,String save,HudInputProtocol.Identity identity,boolean fixture)throws IOException{
+        this(patchFile,traceFile,viewFile,save,identity,fixture,HudMovementSession.SHORT);
+    }
+    public HudPhysicalMovement(Path patchFile,Path traceFile,Path viewFile,String save,HudInputProtocol.Identity identity,boolean fixture,HudMovementSession session)throws IOException{
         patch=GroundPatch.read(patchFile);this.traceFile=traceFile;this.viewFile=viewFile;this.save=save;this.identity=identity;this.fixture=fixture;
+        this.session=java.util.Objects.requireNonNull(session);keys=new HudMovementKeys(session);
         if(!patch.sourceKind().equals(fixture?"standalone_ground_fixture":"live_kcd_ground_patch") || patch.run().equals(identity.run()) ||
                 !patch.run().matches("[0-9a-f]{32}") || !save.equals("MineCome-HudStream-"+UUID.fromString(save.substring("MineCome-HudStream-".length()))) ||
                 !traceFile.isAbsolute() || !viewFile.isAbsolute())
@@ -62,6 +67,8 @@ public final class HudPhysicalMovement {
     }
     public void positionCorrection(){corrections.incrementAndGet();}
     public boolean completed(){return completed;}
+    public HudMovementSession session(){return session;}
+    public void activate(long now){keys.activate(now);}
     public boolean inputReady(long now){return ready && !closing && (completed || (views!=null && views.current(System.currentTimeMillis(),now)!=null));}
     public void authority(MinecraftClient client,long now,boolean fresh){
         boolean allowed=fresh && inputReady(now) && client.currentScreen==null && client.getOverlay()==null && !client.isPaused();
@@ -79,6 +86,7 @@ public final class HudPhysicalMovement {
         if(!parent.startsWith(evidenceRoot.toRealPath()))throw new IOException("Physical readiness outside evidence");
         var e=new JsonObject();e.addProperty("schema",1);e.addProperty("kind",fixture?"minecome_hud_physical_fixture_ready_v1":"minecome_hud_physical_ready_v1");e.addProperty("ready",true);
         e.addProperty("scripted_input",fixture);
+        if(session.extended())e.addProperty("movement_session",session.id());
         e.addProperty("run",identity.run());e.addProperty("save",save);e.addProperty("patch_run",patch.run());e.addProperty("patch_sha256",patch.sha256());
         e.addProperty("target_pid",identity.targetPid());e.addProperty("target_start_filetime",Long.toUnsignedString(identity.targetStart()));
         e.addProperty("utc_ms",System.currentTimeMillis());e.addProperty("view_seq",view.view().sequence());
@@ -217,7 +225,7 @@ public final class HudPhysicalMovement {
         keys.expire(now);
         if(keys.ended()){
             release(client);if(endedAt==0)endedAt=now;
-            if(now-keys.startedAt()>HudMovementKeys.ACTIVE_NS+HudMovementKeys.SETTLE_NS || now-endedAt>HudMovementKeys.SETTLE_NS)
+            if(now-keys.startedAt()>session.maximumMotionNs() || now-endedAt>HudMovementSession.SETTLE_NS)
                 throw new IllegalStateException("Physical HUD final settling deadline");
             boolean settled=grounded(clientMotion) && grounded(sm) && distance(clientMotion,sm)<.1 &&
                     Math.hypot(clientMotion.vx(),clientMotion.vz())<.03 && Math.hypot(sm.vx(),sm.vz())<.03;
@@ -242,7 +250,7 @@ public final class HudPhysicalMovement {
         boundary=new HudMovementBoundary(patch,anchor);
         String world=save.substring("MineCome-HudStream-".length());
         var context=new MovementTraceSink.Context(patch.run(),patch.sha256(),patch.sourceKind(),save,world,
-                patch.centerX(),patch.centerY(),patch.centerZ(),fixture?MovementTraceSink.Profile.HUD_PHYSICAL_FIXTURE:MovementTraceSink.Profile.HUD_PHYSICAL,anchor.x(),anchor.y(),anchor.z());
+                patch.centerX(),patch.centerY(),patch.centerZ(),MovementTraceSink.Profile.physical(fixture,session),anchor.x(),anchor.y(),anchor.z());
         trace=MovementTraceSink.open(traceFile,evidenceRoot,context,now,System.currentTimeMillis());traceResult="pending";
         if(!writeTrace(sample,"SETTLING",true))throw new IllegalStateException("Physical HUD initial trace sample rejected");
     }
@@ -310,6 +318,11 @@ public final class HudPhysicalMovement {
     }
     public JsonObject evidence(MinecraftClient client){
         var e=new JsonObject();e.addProperty("schema",1);e.addProperty("kind","minecome_hud_physical_movement_v1");
+        if(session.extended()){
+            e.addProperty("movement_session",session.id());e.addProperty("active_limit_ms",session.activeNs()/1_000_000);
+            e.addProperty("settle_limit_ms",HudMovementSession.SETTLE_NS/1_000_000);e.addProperty("start_window_ms",HudMovementSession.START_WINDOW_NS/1_000_000);
+            e.addProperty("late_starts_denied",keys.lateStartsDenied());
+        }
         e.addProperty("run",identity.run());e.addProperty("save",save);e.addProperty("patch_run",patch.run());e.addProperty("patch_sha256",patch.sha256());
         e.addProperty("ground_source_kind",patch.sourceKind());e.addProperty("input_source",fixture?"scripted_hud_physical_controller_fixture":"hud_input_v2");e.addProperty("scripted_input",fixture);e.addProperty("physical_input_verified",false);
         e.addProperty("started",keys.started());e.addProperty("completed",completed);e.addProperty("movement_events_applied",events);e.addProperty("held_ticks",heldTicks);

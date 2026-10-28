@@ -109,13 +109,13 @@ terrain capture, ordinary Minecraft movement/gravity/jumping on client and serve
 and fresh KCD camera direction for walking orientation. Only fresh server poses
 drive the KCD follower. Source compilation and automated contract/lifecycle checks
 pass. Camera delivery now uses a separate bounded worker and retained log handle.
-The 27 October source-time buffered combined run passes all 56 source transfers,
+The latest optional extended run passes all 156 source transfers,
 delayed native readbacks, normal `explicit_end` restoration and cleanup. The user
-reports "still delay, but smooth". The actor returns to its exact starting
-position, timers cancel, FPS restores and Minecraft exits normally. All 588
+reports "worked. still delay, but worked." The actor returns to its exact starting
+position, timers cancel, FPS restores and Minecraft exits normally. All 611
 camera publications stay fresh. Parser warmup, native finish and fixed sampling
 are now exercised together in this live pass; repeating that comparison is not
-the next milestone. Remaining latency and longer movement/integration are next.
+the next milestone. Integration with aimed blocks is next; remaining latency is deferred.
 This remains a bounded development test with an intentional 200 ms playback
 buffer. See [the current evidence](../docs/PROGRESS.md) for practical limits.
 
@@ -149,8 +149,9 @@ Completion requires
 walking on both Minecraft sides followed by 500 ms of grounded stability. Optional
 jumping has separate observations and is not a completed live milestone.
 
-Movement accepts new held input for at most five seconds from the first accepted
-movement edge, then allows at most one second for neutral settling. The HUD can
+Default movement accepts new held input for at most five seconds from the first
+accepted edge; `-ExtendedWalking` selects fifteen seconds. Both allow at most one
+additional second for neutral settling. The HUD can
 continue for up to 30 seconds after F8. E opens inventory and Escape closes it;
 inventory transitions release movement, and a held key cannot silently resume
 when inventory closes. Native camera look remains available outside inventory.
@@ -377,3 +378,27 @@ availability in the already-running official tools world. It does not disable
 input/physics, move the player, or start a timed physical-input test. Its live
 findings and remaining ownership requirements are in
 [KCD input research](../docs/research/KCD-INPUT.md#live-control-capability-inspection--2026-10-12).
+## Optional extended walking session
+
+`scripts/Start-HudWalkingLab.ps1 -ExtendedWalking` selects 15 seconds of input
+plus at most one second of settling, within the same 30-second HUD session.
+Without the switch, the verified five-second input mode remains the default.
+Begin movement within 12 seconds of F8. Inventory and boundary pauses consume
+wall time; they cannot restart either deadline. Stay in KCD2 until the HUD closes:
+switching away revokes input and ends the trace, even if the controls worked.
+
+The extension uses explicit matching session markers in readiness, completion
+and native receipts, with distinct live/fixture trace source kinds. Its native
+entry point is `BeginExtendedBufferedPhysicalMovementFollower`, with a 16-second
+source timeline, fixed 18-second deadline, 2,047 writes plus restoration and 256
+receipts. Trace capacity is 256 KiB with the same 200-record ceiling. The old
+profile retains its original budgets. Neither profile accepts the other's data.
+The 200 ms buffer, original timestamps, eight-point queue, 400 ms destination
+lease, sampled terrain, two-metre sphere and delayed readback checks are unchanged.
+No renderer installation is needed: the guarded controller loads the Lua probe.
+
+The extended standalone Minecraft fixture passes five W/W/S/W/S pulses, including
+movement after the old cutoff and inventory reopened after walking. Its 15,593 ms
+run records 159 trace records, 255 real UI frames, zero inventory displacement and
+zero client/server corrections. This is actual Minecraft proof, not KCD proof.
+See [progress](../docs/PROGRESS.md) for live outcomes and current evidence.

@@ -1,7 +1,7 @@
 # Actual Minecraft controller/physics/HUD exercise with explicitly scripted edges.
 # No KCD commands, renderer arm, reverse-input mapping, or physical-input claims.
 [CmdletBinding()]
-param([string]$JavaHome,[string]$GroundPatchFile,[ValidateRange(-180,180)][double]$YawDegrees=0,[switch]$PreflightOnly)
+param([string]$JavaHome,[string]$GroundPatchFile,[ValidateRange(-180,180)][double]$YawDegrees=0,[switch]$PreflightOnly,[switch]$ExtendedWalking)
 . (Join-Path $PSScriptRoot 'powershell7.ps1')
 if($PSVersionTable.PSVersion.Major -lt 7){
     $bootstrapExit=Invoke-MineComePowerShell7 -ScriptPath $PSCommandPath -BoundParameters $PSBoundParameters
@@ -10,7 +10,7 @@ if($PSVersionTable.PSVersion.Major -lt 7){
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'HudGroundMovement.ps1')
-function Assert-HudPhysicalFixtureResult($Guest,[string]$Run,[string]$PatchHash) {
+function Assert-HudPhysicalFixtureResult($Guest,[string]$Run,[string]$PatchHash,[switch]$ExtendedWalking) {
     if($Guest.schema -ne 1 -or $Guest.run -cne $Run -or $Guest.result -cne 'passed' -or $Guest.source_kind -cne 'minecraft_vanilla_ui_stream_v1' -or
         $Guest.ui_physical_controller_fixture -isnot [bool] -or -not $Guest.ui_physical_controller_fixture -or $Guest.ui_input_physical_movement -isnot [bool] -or $Guest.ui_input_physical_movement -or
         $Guest.scripted_input -isnot [bool] -or -not $Guest.scripted_input -or $Guest.physical_input_verified -isnot [bool] -or $Guest.physical_input_verified -or
@@ -26,14 +26,39 @@ function Assert-HudPhysicalFixtureResult($Guest,[string]$Run,[string]$PatchHash)
         $proof.physical_input_verified -isnot [bool] -or $proof.physical_input_verified -or $proof.kcd_compositing_verified -isnot [bool] -or $proof.kcd_compositing_verified -or
         $proof.completed -isnot [bool] -or -not $proof.completed -or $proof.camera_worker_stopped -isnot [bool] -or -not $proof.camera_worker_stopped -or
         $proof.inventory_client_max_displacement -gt .01 -or $proof.inventory_server_max_displacement -gt .01 -or $proof.inventory_frames -lt 2 -or $proof.walking_hud_frames -lt 2 -or $proof.synthetic_camera_samples -lt 10){throw 'Fixture did not verify actual inventory suppression, HUD frames and camera cleanup.'}
-    if(@($proof.pulses).Count -ne 3){throw 'Fixture requires three actual movement pulses.'}
-    for($index=0;$index -lt 3;$index++){
+    $movement=$proof.physical_movement
+    foreach($marker in @($Guest,$proof,$movement)){
+        $field=$marker.PSObject.Properties['movement_session']
+        if($ExtendedWalking){
+            if($null -eq $field -or $field.Value -isnot [string] -or $field.Value -cne 'extended'){throw 'Extended fixture requires its exact session marker.'}
+        }elseif($null -ne $field -and ($field.Value -isnot [string] -or $field.Value -cne 'short')){throw 'Short fixture cannot accept another movement session.'}
+    }
+    $keys=if($ExtendedWalking){@('W','W','S','W','S')}else{@('W','W','S')}
+    if(@($proof.pulses).Count -ne $keys.Count){throw 'Fixture actual movement pulse count differs.'}
+    $lastPulseMs=-1.0
+    for($index=0;$index -lt $keys.Count;$index++){
         $pulse=$proof.pulses[$index]
-        if($pulse.key -cne @('W','W','S')[$index] -or $pulse.step_m -isnot [ValueType] -or $pulse.step_m -is [bool] -or -not [double]::IsFinite([double]$pulse.step_m) -or $pulse.step_m -lt .05 -or
+        if($pulse.key -cne $keys[$index] -or $pulse.step_m -isnot [ValueType] -or $pulse.step_m -is [bool] -or -not [double]::IsFinite([double]$pulse.step_m) -or $pulse.step_m -lt .05 -or
             $pulse.server_step_m -isnot [ValueType] -or $pulse.server_step_m -is [bool] -or -not [double]::IsFinite([double]$pulse.server_step_m) -or $pulse.server_step_m -lt .05 -or
             $pulse.client_server_distance -isnot [ValueType] -or $pulse.client_server_distance -is [bool] -or -not [double]::IsFinite([double]$pulse.client_server_distance) -or $pulse.client_server_distance -lt 0 -or $pulse.client_server_distance -gt .1){throw 'Fixture repeated movement/server agreement failed.'}
+        if($ExtendedWalking){
+            $elapsed=$pulse.elapsed_from_first_movement_ms
+            if($elapsed -isnot [ValueType] -or $elapsed -is [bool] -or -not [double]::IsFinite([double]$elapsed) -or $elapsed -le $lastPulseMs -or $elapsed -gt 16000 -or ($index -ge 3 -and $elapsed -le 5000)){throw 'Extended fixture lacks ordered movement beyond the short session.'}
+            $lastPulseMs=[double]$elapsed
+        }
     }
-    $movement=$proof.physical_movement
+    if($ExtendedWalking){
+        foreach($name in @('post_walk_inventory_opened','post_walk_inventory_closed')){
+            if($proof.$name -isnot [bool] -or -not $proof.$name){throw 'Extended fixture did not reopen and close the actual inventory.'}
+        }
+        foreach($name in @('post_walk_inventory_client_max_displacement','post_walk_inventory_server_max_displacement')){
+            $value=$proof.$name
+            if($value -isnot [ValueType] -or $value -is [bool] -or -not [double]::IsFinite([double]$value) -or $value -lt 0 -or $value -gt .01){throw 'Extended fixture moved while the reopened inventory was active.'}
+        }
+        if(($proof.post_walk_inventory_frames -isnot [int] -and $proof.post_walk_inventory_frames -isnot [long]) -or $proof.post_walk_inventory_frames -lt 2){throw 'Extended fixture lacks reopened inventory frames.'}
+        $duration=$movement.duration_ms
+        if(($duration -isnot [int] -and $duration -isnot [long]) -or $duration -lt 15000 -or $duration -gt 16000){throw 'Extended fixture did not complete its bounded fifteen-second session.'}
+    }
     if($movement.run -cne $Run -or $movement.patch_sha256 -cne $PatchHash -or $movement.ground_source_kind -cne 'standalone_ground_fixture' -or
         $movement.input_source -cne 'scripted_hud_physical_controller_fixture' -or $movement.scripted_input -isnot [bool] -or -not $movement.scripted_input -or
         $movement.physical_input_verified -isnot [bool] -or $movement.physical_input_verified -or $movement.trace_result -cne 'passed' -or $movement.post_settle_corrections -ne 0 -or
@@ -47,14 +72,29 @@ function Assert-HudPhysicalFixtureResult($Guest,[string]$Run,[string]$PatchHash)
         $timing.native_application_measured -ne $false -or $timing.display_latency_measured -ne $false -or
         $timing.event_count -ne @($timing.events).Count -or $timing.binding_state_count -ne @($timing.binding_states).Count){throw 'Fixture input timing evidence is missing, truncated or claims unsupported proof.'}
     $accepted=@($timing.events | Where-Object accepted_down -EQ $true)
-    if($accepted.Count -ne 3){throw 'Fixture timing must retain all three accepted scripted presses.'}
+    if($accepted.Count -ne $keys.Count){throw 'Fixture timing must retain every accepted scripted press.'}
+    for($index=0;$index -lt $accepted.Count;$index++){
+        $expected=if($keys[$index] -ceq 'W'){0x57}else{0x53}
+        if($accepted[$index].key -ne $expected){throw 'Accepted scripted keys do not match the observed movement pulses.'}
+    }
+    if($ExtendedWalking){
+        $first=$accepted[0].received_monotonic_ns
+        $previous=$null
+        for($index=0;$index -lt $accepted.Count;$index++){
+            $stamp=$accepted[$index].received_monotonic_ns
+            if(($stamp -isnot [long] -and $stamp -isnot [int]) -or ($null -ne $previous -and $stamp -le $previous)){throw 'Extended fixture movement clocks are not ordered integers.'}
+            $elapsed=[decimal]$stamp-[decimal]$first
+            if($elapsed -lt 0 -or $elapsed -ge 15000000000 -or ($index -ge 3 -and $elapsed -le 5000000000)){throw 'Extended fixture late movement did not occur inside its selected input window.'}
+            $previous=$stamp
+        }
+    }
     $delays=@(foreach($edge in $accepted){
         $bit=if($edge.key -eq 0x57){1}elseif($edge.key -eq 0x53){2}else{throw 'Unexpected scripted movement key.'}
         $binding=@($timing.binding_states | Where-Object {$_.stage -ceq 'before_vanilla_poll' -and $_.after_input_sequence -eq $edge.input_sequence -and ($_.mask -band $bit) -ne 0})
         if($binding.Count -ne 1 -or $binding[0].monotonic_ns -lt $edge.received_monotonic_ns){throw 'Scripted press lacks one real pre-vanilla binding observation.'}
         ([double]([decimal]$binding[0].monotonic_ns-[decimal]$edge.received_monotonic_ns))/1000000
     })
-    $proof | Add-Member -NotePropertyName scripted_receive_to_binding_ms -NotePropertyValue $delays
+    $proof | Add-Member -NotePropertyName scripted_receive_to_binding_ms -NotePropertyValue $delays -Force
     return $proof
 }
 $root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
@@ -91,25 +131,28 @@ $expires=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()+120000
 $passed=$false;$failure=$null;$proof=$null
 try{
     Write-Output "HUD_PHYSICAL_FIXTURE_START run=$run evidence=$directory scripted_input=true kcd_unchanged=true"
-    & (Join-Path $PSScriptRoot 'Run-HudStreamClient.ps1') -EvidenceDirectory $directory -Run $run -TargetPid $PID -TargetStart $targetStart -ExpiresUtcMs $expires -JavaHome $JavaHome -Standalone -PhysicalMovementFixture -GroundPatchFile $patchPath -MovementTraceFile $tracePath -HostViewFile $viewPath -PhysicalFixtureYaw $YawDegrees
+    & (Join-Path $PSScriptRoot 'Run-HudStreamClient.ps1') -EvidenceDirectory $directory -Run $run -TargetPid $PID -TargetStart $targetStart -ExpiresUtcMs $expires -JavaHome $JavaHome -Standalone -PhysicalMovementFixture -GroundPatchFile $patchPath -MovementTraceFile $tracePath -HostViewFile $viewPath -PhysicalFixtureYaw $YawDegrees -ExtendedWalking:$ExtendedWalking
     if($LASTEXITCODE -ne 0){throw "Minecraft fixture child failed: $LASTEXITCODE"}
     $guest=Get-Content -LiteralPath (Join-Path $directory 'capture/stream-result.json') -Raw | ConvertFrom-Json
     if($guest.result -ceq 'failed'){
         $reason=if($guest.PSObject.Properties.Name -contains 'failure'){$guest.failure}elseif($guest.lab_evidence.PSObject.Properties.Name -contains 'failure'){$guest.lab_evidence.failure}else{'Producer reported failure without a diagnostic'}
         throw "Minecraft fixture failed: $reason"
     }
-    $proof=Assert-HudPhysicalFixtureResult $guest $run $patchHash
+    $proof=Assert-HudPhysicalFixtureResult $guest $run $patchHash -ExtendedWalking:$ExtendedWalking
+    $traceLimit=if($ExtendedWalking){256KB}else{64KB}
+    if((Get-Item -LiteralPath $tracePath).Length -gt $traceLimit){throw 'Fixture trace exceeded its selected byte budget.'}
     $records=@(Get-Content -LiteralPath $tracePath | ForEach-Object {$_ | ConvertFrom-Json})
     if($records.Count -lt 5 -or $records.Count -gt 200 -or $records[0].kind -cne 'begin' -or $records[-1].kind -cne 'end' -or $records[-1].result -cne 'passed'){throw 'Fixture actual controller trace did not complete.'}
-    foreach($record in $records){if($record.source_kind -cne 'standalone_hud_physical_movement_fixture' -or $record.run -cne $patchRun -or $record.patch_sha256 -cne $patchHash){throw 'Fixture trace provenance/session differs.'}}
+    $traceKind=if($ExtendedWalking){'standalone_hud_physical_movement_extended_fixture'}else{'standalone_hud_physical_movement_fixture'}
+    foreach($record in $records){if($record.source_kind -cne $traceKind -or $record.run -cne $patchRun -or $record.patch_sha256 -cne $patchHash){throw 'Fixture trace provenance/session differs.'}}
     foreach($state in @('fixture_inventory_blocked','fixture_scripted_walking')){
         $sample=@($guest.samples | Where-Object state -CEQ $state)
         if($sample.Count -ne 1 -or $sample[0].png_file -notmatch '^sample-[a-z0-9_]+\.png$'){throw 'Fixture real HUD/inventory PNG sample absent.'}
         $png=Join-Path $directory ('capture/'+$sample[0].png_file)
         if((Get-Item -LiteralPath $png).Length -lt 100 -or (Get-FileHash -LiteralPath $png -Algorithm SHA256).Hash.ToLowerInvariant() -cne $sample[0].png_sha256){throw 'Fixture captured PNG hash differs.'}
     }
-    $passed=$true;Write-Output "HUD_PHYSICAL_FIXTURE_VERIFIED run=$run pulses=3 inventory_movement_suppressed=true actual_minecraft=true physical_input_verified=false kcd_compositing_verified=false"
+    $passed=$true;Write-Output "HUD_PHYSICAL_FIXTURE_VERIFIED run=$run pulses=$(@($proof.pulses).Count) inventory_movement_suppressed=true actual_minecraft=true physical_input_verified=false kcd_compositing_verified=false"
 }catch{$failure=$_.Exception.Message;throw}
 finally{
-    [ordered]@{schema=1;kind='standalone_hud_physical_controller_fixture_verification_v1';run=$run;result=$(if($passed){'passed'}else{'failed'});failure=$failure;scripted_input=$true;physical_input_verified=$false;kcd_compositing_verified=$false;kcd_commands_sent=0;renderer_armed=$false;reverse_input_mapping_created=$false;patch_sha256=$patchHash;original_capture_sha256=$sourceHash;yaw_degrees=$YawDegrees;proof=$proof} | ConvertTo-Json -Depth 16 | Set-Content -LiteralPath (Join-Path $directory 'verification.json') -Encoding utf8NoBOM
+    [ordered]@{schema=1;kind='standalone_hud_physical_controller_fixture_verification_v1';run=$run;result=$(if($passed){'passed'}else{'failed'});failure=$failure;movement_session=$(if($ExtendedWalking){'extended'}else{'short'});scripted_input=$true;physical_input_verified=$false;kcd_compositing_verified=$false;kcd_commands_sent=0;renderer_armed=$false;reverse_input_mapping_created=$false;patch_sha256=$patchHash;original_capture_sha256=$sourceHash;yaw_degrees=$YawDegrees;proof=$proof} | ConvertTo-Json -Depth 16 | Set-Content -LiteralPath (Join-Path $directory 'verification.json') -Encoding utf8NoBOM
 }

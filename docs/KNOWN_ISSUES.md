@@ -110,6 +110,14 @@ Never load newer retail1.5.6 saves into this older1.5.5 development game. Backup
 
 ## Gameplay scope
 
+- Optional `-ExtendedWalking` now passes live: 15 seconds of input plus settling,
+  156/156 delayed native source readbacks, exact restoration and normal cleanup.
+  The user reports "worked. still delay, but worked." Default short mode remains
+  available. Start movement within 12 seconds of F8 and keep KCD foreground until
+  the 30-second HUD ends; an early focus loss correctly aborts incomplete movement.
+  Spatial/sampled-terrain limits and the 200 ms buffer remain. Combining walking
+  with aimed blocks still needs a shared owned-block/terrain contract and settled
+  click handling; simply enabling both existing modes would break their invariants.
 - The earlier-input repair and first-step descent fix now pass live in `b850ba...`:
   57/57 source readbacks, exact restoration and normal cleanup. The user confirms
   walking/HUD work with a little delay remaining. Accepted keys reach pre-vanilla
@@ -139,12 +147,13 @@ Never load newer retail1.5.6 saves into this older1.5.5 development game. Backup
   This run needs 97.812 ms of right-point availability, but an earlier replay
   needs 188.903 ms. Reducing globally to 150 ms would underrun that earlier trace.
   Keep the smoother 200 ms baseline while measuring remaining latency or planning
-  longer walking and aimed-block integration. Native leases and bounds stay fixed.
+  aimed-block integration. The optional longer mode above has separate fixed
+  session budgets and retains freshness and spatial bounds.
   The previous buffered phase failure `d838...` is repaired: the latest combined
   trace passes two authoritative LANDING samples. Earlier independent fixtures
   passed but missed that brief transition; their claims remain narrower.
   Continuous, exclusive or unrestricted movement is not established. Boundary
-  pauses require release and a fresh press without restarting the five-second
+  pauses require release and a fresh press without restarting the selected input
   window. Physical travel remains within the 2 m host sphere and -1.5 m/+1.5 m
   vertical envelope, with tighter Java prediction and sampled ground coverage.
   The lab allows one further second for settling. Camera delivery remains

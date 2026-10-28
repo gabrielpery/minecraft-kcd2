@@ -1,4 +1,5 @@
 # Buffered source timing, observed-path proof and disposable warmup. No game calls.
+. (Join-Path $PSScriptRoot 'HudWalkingSession.ps1')
 function Get-HudBufferedNumber($Value,[string]$Name,[double]$Minimum,[double]$Maximum) {
     if($Value -isnot [ValueType] -or $Value -is [bool] -or $Value -is [char] -or
         $Value -is [datetime] -or -not [double]::IsFinite([double]$Value) -or
@@ -21,9 +22,25 @@ function Get-HudBufferedField($Value,[string]$Name) {
     }
     return ,($Value.$Name)
 }
-function New-HudBufferedSourceState {
+function Assert-HudWalkingFollowerSession($Receipts,[switch]$ExtendedWalking) {
+    $session=Get-HudWalkingSession -ExtendedWalking:$ExtendedWalking
+    if(@($Receipts).Count -lt 1 -or @($Receipts).Count -gt $session.Receipts){throw 'Follower receipt budget exceeded or absent.'}
+    foreach($receipt in $Receipts){
+        Assert-HudWalkingSession $receipt -ExtendedWalking:$ExtendedWalking
+        [void](Get-HudBufferedNumber (Get-HudBufferedField $receipt 'hard_deadline_ms') 'hard deadline' $session.DeadlineMs $session.DeadlineMs)
+        [void](Get-HudBufferedInteger (Get-HudBufferedField $receipt 'writes') 'follower writes' 0 ($session.OrdinaryWrites+1))
+        # Restoration is observed on a later frame; it does not extend motion authority.
+        [void](Get-HudBufferedNumber (Get-HudBufferedField $receipt 'elapsed_ms') 'follower elapsed' 0 ($session.DeadlineMs+1000))
+    }
+}
+function Assert-HudWalkingDuration($Movement,[switch]$ExtendedWalking) {
+    $session=Get-HudWalkingSession -ExtendedWalking:$ExtendedWalking
+    $minimum=if($ExtendedWalking){$session.InputMs}else{0}
+    [void](Get-HudBufferedInteger (Get-HudBufferedField $Movement 'duration_ms') 'completed movement duration' $minimum $session.SourceMs)
+}
+function New-HudBufferedSourceState([switch]$ExtendedWalking) {
     return [pscustomobject]@{Kind='minecome_hud_buffered_source_state_v1';Count=0;
-        AnchorNs=$null;LastSourceNs=$null;LastMonotonicNs=$null;LastTraceSeq=0L;LastServerSeq=0L}
+        ExtendedWalking=[bool]$ExtendedWalking;AnchorNs=$null;LastSourceNs=$null;LastMonotonicNs=$null;LastTraceSeq=0L;LastServerSeq=0L}
 }
 function Get-HudBufferedSourceTime($State,$Record) {
     if((Get-HudBufferedField $State 'Kind') -cne 'minecome_hud_buffered_source_state_v1') {
@@ -61,7 +78,8 @@ function Get-HudBufferedSourceTime($State,$Record) {
             throw 'Buffered source clocks and sequences must strictly advance.'
         }
         $elapsed=[decimal]$source-[decimal]$anchor
-        if($elapsed -lt 0 -or $elapsed -gt 6000000000){throw 'Buffered source exceeds the six-second trace bound.'}
+        $session=Get-HudWalkingSession -ExtendedWalking:$State.ExtendedWalking
+        if($elapsed -lt 0 -or $elapsed -gt ([decimal]$session.SourceMs*1000000)){throw 'Buffered source exceeds the selected trace duration.'}
         $milliseconds=[double]($elapsed/1000000)
     }
     # No state changes until every check succeeds. The caller still enforces
@@ -74,7 +92,7 @@ function Initialize-HudBufferedMovementPipeline {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$PatchFile,
         [Parameter(Mandatory)][string]$ExpectedHudSave,
-        [Parameter(Mandatory)]$MinimumUtcMs)
+        [Parameter(Mandatory)]$MinimumUtcMs,[switch]$ExtendedWalking)
     $ErrorActionPreference='Stop'
     $watch=[Diagnostics.Stopwatch]::StartNew()
     try {
@@ -82,13 +100,13 @@ function Initialize-HudBufferedMovementPipeline {
         # Validate the caller's inputs normally, then bind only this fresh state
         # to a separate synthetic world so these records cannot name the HUD save.
         $diagnosticReceiver=New-MineComeTraceReceiver -PatchFile $PatchFile -MinimumUtcMs $MinimumUtcMs `
-            -ExpectedHudSave $ExpectedHudSave -PhysicalMovement -BufferedPhysicalMovement
+            -ExpectedHudSave $ExpectedHudSave -PhysicalMovement -BufferedPhysicalMovement -ExtendedWalking:$ExtendedWalking
         $diagnosticWorld=[Guid]::NewGuid().ToString('D')
         $diagnosticSave='MineCome-HudStream-'+$diagnosticWorld
         $diagnosticReceiver.ExpectedHudSave=$diagnosticSave
-        $diagnosticClock=New-HudBufferedSourceState
+        $diagnosticClock=New-HudBufferedSourceState -ExtendedWalking:$ExtendedWalking
         $diagnosticIdentity=[ordered]@{schema=1;run=$diagnosticReceiver.ExpectedRun;patch_sha256=$diagnosticReceiver.PatchHash;
-            source_kind='live_kcd_hud_physical_movement';save=$diagnosticSave;world=$diagnosticWorld;utc_ms=[long]$MinimumUtcMs}
+            source_kind=(Get-HudWalkingSession -ExtendedWalking:$ExtendedWalking).SourceKind;save=$diagnosticSave;world=$diagnosticWorld;utc_ms=[long]$MinimumUtcMs}
         $diagnosticBegin=[ordered]@{}
         foreach($entry in $diagnosticIdentity.GetEnumerator()){$diagnosticBegin[$entry.Key]=$entry.Value}
         $diagnosticBegin.kind='begin';$diagnosticBegin.seq=1L;$diagnosticBegin.phase='SETTLING'
@@ -157,7 +175,9 @@ function Get-HudBufferedCamera($Value,[string]$Name) {
     }
     return [pscustomobject]@{position=$position;forward=$forward;up=$up;fov=$fov}
 }
-function Assert-HudBufferedMovementReceipt($Receipt,$Forwarded) {
+function Assert-HudBufferedMovementReceipt($Receipt,$Forwarded,[switch]$ExtendedWalking) {
+    $session=Get-HudWalkingSession -ExtendedWalking:$ExtendedWalking
+    Assert-HudWalkingSession $Receipt -ExtendedWalking:$ExtendedWalking
     # This proves retained observed path samples, not unrecorded frames or visual
     # smoothness. The caller separately pins run/process/source provenance and
     # checks common epoch/increasing source acknowledgements across receipts.
@@ -167,7 +187,7 @@ function Assert-HudBufferedMovementReceipt($Receipt,$Forwarded) {
     $points=[Collections.Generic.List[object]]::new();$bySeq=@{};$lastSeq=0L;$lastMs=-1.0
     foreach($point in $Forwarded){
         $seq=Get-HudBufferedInteger (Get-HudBufferedField $point 'TraceSeq') 'forwarded sequence' 1 200
-        $ms=Get-HudBufferedNumber (Get-HudBufferedField $point 'SourceMs') 'forwarded source time' 0 6000
+        $ms=Get-HudBufferedNumber (Get-HudBufferedField $point 'SourceMs') 'forwarded source time' 0 $session.SourceMs
         if($ms -ne [double][single]$ms){throw 'Forwarded SourceMs must retain the exact float32 wire value.'}
         $target=Get-HudBufferedVector (Get-HudBufferedField $point 'Target') 'forwarded target'
         if($seq -le $lastSeq -or $ms -le $lastMs -or ($points.Count -eq 0 -and $ms -ne 0)) {
@@ -193,7 +213,7 @@ function Assert-HudBufferedMovementReceipt($Receipt,$Forwarded) {
     $sourceSeq=Get-HudBufferedInteger (Get-HudBufferedField $Receipt 'source_seq') 'crossed source sequence' 1 200
     if($seq -ne $sourceSeq -or -not $bySeq.ContainsKey($seq)){throw 'Buffered ACK has no unique dispatched source point.'}
     $source=$bySeq[$seq]
-    $sourceMs=Get-HudBufferedNumber (Get-HudBufferedField $Receipt 'source_ms') 'acknowledged source time' 0 6000
+    $sourceMs=Get-HudBufferedNumber (Get-HudBufferedField $Receipt 'source_ms') 'acknowledged source time' 0 $session.SourceMs
     if($sourceMs -ne $source.Ms){throw 'Acknowledged source time differs from dispatch.'}
     Assert-HudBufferedExactVector (Get-HudBufferedVector (Get-HudBufferedField $Receipt 'source_target') 'acknowledged source target') $source.Target 'source target'
     $crossed=Get-HudBufferedInteger (Get-HudBufferedField $Receipt 'source_points_crossed') 'crossed source count' 1 8
@@ -205,7 +225,7 @@ function Assert-HudBufferedMovementReceipt($Receipt,$Forwarded) {
     # Engine timestamps are float32 on the pinned tools build. Account for one
     # representable clock step in acceptance comparisons, not a renewed lease.
     $originTolerance=[Math]::Max(.0000001,$clockUlp)
-    $sampled=Get-HudBufferedNumber (Get-HudBufferedField $Receipt 'sampled_engine_seconds') 'receipt engine time' $epoch ($epoch+8)
+    $sampled=Get-HudBufferedNumber (Get-HudBufferedField $Receipt 'sampled_engine_seconds') 'receipt engine time' $epoch ($epoch+$session.DeadlineMs/1000)
     $sourceAge=Get-HudBufferedNumber (Get-HudBufferedField $Receipt 'target_receipt_age_ms') 'acknowledged source age' 0 400
     if($sourceAge -le 0){throw 'Buffered source ACK must be delayed after acceptance.'}
     $sourceAccepted=$sampled-$sourceAge/1000
@@ -215,7 +235,7 @@ function Assert-HudBufferedMovementReceipt($Receipt,$Forwarded) {
     if($sourceMs -eq 0 -and -not (Test-HudBufferedArithmetic $epoch ($sourceAccepted+.2) $singleInitialEpoch)){
         throw 'The source-zero acknowledgement does not anchor the fixed 200 ms epoch.'
     }
-    $updates=Get-HudBufferedInteger (Get-HudBufferedField $Receipt 'segment_update_count') 'segment setter count' 0 511
+    $updates=Get-HudBufferedInteger (Get-HudBufferedField $Receipt 'segment_update_count') 'segment setter count' 0 $session.OrdinaryWrites
     $observations=Get-HudBufferedInteger (Get-HudBufferedField $Receipt 'segment_observation_count') 'segment observation count' 1 8192
     $maxError=Get-HudBufferedNumber (Get-HudBufferedField $Receipt 'segment_max_readback_error') 'maximum observed error' 0 .05
     $maxGap=Get-HudBufferedNumber (Get-HudBufferedField $Receipt 'segment_max_observation_gap_ms') 'maximum observation gap' 0 400
@@ -233,8 +253,8 @@ function Assert-HudBufferedMovementReceipt($Receipt,$Forwarded) {
         $toSeq=Get-HudBufferedInteger (Get-HudBufferedField $sample 'bracket_to_seq') 'right bracket sequence' 1 200
         if(-not $bySeq.ContainsKey($fromSeq) -or -not $bySeq.ContainsKey($toSeq)){throw 'Observed bracket references an unknown source point.'}
         $from=$bySeq[$fromSeq];$to=$bySeq[$toSeq]
-        $fromMs=Get-HudBufferedNumber (Get-HudBufferedField $sample 'bracket_from_ms') 'left source time' 0 6000
-        $toMs=Get-HudBufferedNumber (Get-HudBufferedField $sample 'bracket_to_ms') 'right source time' 0 6000
+        $fromMs=Get-HudBufferedNumber (Get-HudBufferedField $sample 'bracket_from_ms') 'left source time' 0 $session.SourceMs
+        $toMs=Get-HudBufferedNumber (Get-HudBufferedField $sample 'bracket_to_ms') 'right source time' 0 $session.SourceMs
         if($fromMs -ne $from.Ms -or $toMs -ne $to.Ms){throw 'Observed bracket time differs from dispatch.'}
         $fromTarget=Get-HudBufferedVector (Get-HudBufferedField $sample 'bracket_from_target') 'left bracket target'
         $toTarget=Get-HudBufferedVector (Get-HudBufferedField $sample 'bracket_to_target') 'right bracket target'
@@ -259,7 +279,7 @@ function Assert-HudBufferedMovementReceipt($Receipt,$Forwarded) {
                 ($null -ne $previousFrame -and $observedFrame -le $previousFrame)){throw 'Native observation frame did not advance.'}
             $previousFrame=$observedFrame
         }
-        $playback=Get-HudBufferedNumber (Get-HudBufferedField $sample 'playback_source_ms') 'playback source time' 0 8000
+        $playback=Get-HudBufferedNumber (Get-HudBufferedField $sample 'playback_source_ms') 'playback source time' 0 $session.DeadlineMs
         $fraction=Get-HudBufferedNumber (Get-HudBufferedField $sample 'fraction') 'interpolation fraction' 0 1
         $hold=Get-HudBufferedField $sample 'source_hold'
         if($hold -isnot [bool] -or [Math]::Abs($playback-($written-$epoch)*1000) -gt .001 -or $playback -le $previousPlayback) {

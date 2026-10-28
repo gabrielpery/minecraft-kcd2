@@ -82,7 +82,8 @@ local function fixture()
         GetViewCameraUpDir=function() return f.up or {x=0,y=0,z=1} end,GetViewCameraFov=function() return 1.1 end,
         SetViewCamera=forbidden,ClearKeyState=forbidden,SpawnEntity=forbidden,RemoveEntity=forbidden}
     Script={SetTimerForFunction=function(ms,name,data,paused)
-        eq(paused,true);assert(ms>=1 and ms<=(name=="MineCome_MovementFollowerExpiry" and 8000 or 750));f.schedules=f.schedules+1
+        eq(paused,true);assert(ms>=1 and ms<=(name=="MineCome_MovementFollowerExpiry" and 18000 or 750));f.schedules=f.schedules+1
+        if name=="MineCome_MovementFollowerExpiry" then assert(ms==8000 or ms==18000,"unknown native deadline profile") end
         if f.fail_schedule==f.schedules then return nil end
         local id=f.nextId;f.nextId=id+1
         if f.userdata_timer and f.schedules==1 then id=io.stderr end
@@ -693,8 +694,9 @@ test("legacy follower retains fixed camera offset metric and original receipt sc
     eq(player.position.x,120);eq(f:activeTimers(),0)
 end)
 
-local function buffered_fixture()
-    local f=fixture();f:verify();eq(MineCome.BeginBufferedPhysicalMovementFollower("b"),true)
+local function buffered_fixture(extended)
+    local f=fixture();f:verify()
+    eq((extended and MineCome.BeginExtendedBufferedPhysicalMovementFollower or MineCome.BeginBufferedPhysicalMovementFollower)("b"),true)
     function f:point(seq,source_ms,dx)
         return MineCome.ApplyBufferedMovementFollower("b",seq,120+(dx or 0),2040,56,source_ms)
     end
@@ -1029,6 +1031,126 @@ test("buffered finish keeps the ordinary setter budget and restoration reserve",
     eq(MineCome.FinishBufferedMovementFollower("b",3),true);f:advance(.4)
     eq(#f.writes,512);eq(player.position.x,120);eq(f:activeTimers(),0);assert(f:contains('"end_result":"write_budget"'))
     assert(not f:contains('"end_result":"explicit_end"'))
+end)
+
+test("extended profile drains sixteen seconds with all source readbacks and exact restoration",function()
+    local f=buffered_fixture(true);local p=MineCome._movement_probe.follower
+    local hard=p.timers.hard;near(p.deadline-p.created,18)
+    eq(f:point(1,0),true);local epoch=p.buffer_epoch
+    for index=1,160 do
+        f:advance(.1)
+        eq(f:point(index+1,index*100,.35*math.sin(index/5)),true)
+        eq(p.timers.hard,hard);near(p.deadline,18);near(p.buffer_epoch,epoch)
+        assert(#p.buffer_queue+(p.buffer_anchor and 1 or 0)<=8)
+        if index==80 then
+            dofile(MINECOME_MODULE_PATH)
+            eq(MineCome._movement_probe.follower,p);eq(p.timers.hard,hard)
+        end
+        if index%20==0 then eq(MineCome.SamplePhysicalHudView("b"),true) end
+    end
+    eq(MineCome.FinishBufferedMovementFollower("b",161),true)
+    f:advance(.35)
+    eq(player.position.x,120);eq(player.position.y,2040);eq(player.position.z,56)
+    eq(f:activeTimers(),0);eq(MineCome._movement_probe.follower,nil)
+    assert(#f.writes>511 and #f.writes<=2048)
+    eq(p.last_buffered_ack_seq,161);eq(p.end_result,"explicit_end")
+    local count=0
+    for _,line in ipairs(f.logs) do
+        if line:find('[MineComeMovementFollower]',1,true) then
+            assert(line:find('"movement_session":"extended"',1,true))
+            eq(receipt_number(line,"hard_deadline_ms"),18000)
+            if line:find('"event":"applied"',1,true) then
+                count=count+1;eq(receipt_number(line,"source_seq"),count)
+                eq(receipt_number(line,"source_ms"),(count-1)*100)
+                assert(line:find('"readback":true',1,true));buffered_samples(line)
+            end
+        end
+    end
+    eq(count,161);assert(p.records<256)
+    assert(f:last():find('"event":"restored","result":"restored"',1,true))
+end)
+
+test("extended entry point is explicit and never changes the baseline budgets or schema",function()
+    local f=buffered_fixture();local p=MineCome._movement_probe.follower
+    eq(MineCome.BeginExtendedBufferedPhysicalMovementFollower("b"),false)
+    eq(f:point(1,0),true)
+    local ok,why=f:point(2,6000.01);eq(ok,false);eq(why,"source_time_invalid")
+    near(p.deadline-p.created,8);f:advance(.05)
+    assert(not f:contains('"movement_session"'));eq(receipt_number(f:last(),"hard_deadline_ms"),8000)
+    f=fixture();f:verify()
+    eq(MineCome.BeginBufferedPhysicalMovementFollower("b",18000,16000,2047),true)
+    near(MineCome._movement_probe.follower.deadline,8)
+    eq(MineCome.ApplyBufferedMovementFollower("b",1,120,2040,56,0),true)
+    eq(MineCome.ApplyBufferedMovementFollower("b",2,120,2040,56,16000),false)
+    f:advance(.05);assert(not f:contains('"movement_session"'))
+end)
+
+test("extended source and sequence bounds are exact and retain spatial bounds",function()
+    local f=buffered_fixture(true);eq(f:point(1,0),true)
+    eq(f:point(200,16000),true)
+    local ok,why=f:point(201,16000);eq(ok,false);eq(why,"sequence_invalid");f:advance(.05)
+    for _,source in ipairs({16000.0001,-1,math.huge,0/0}) do
+        f=buffered_fixture(true);eq(f:point(1,0),true)
+        ok,why=f:point(2,source);eq(ok,false);eq(why,"source_time_invalid");f:advance(.05)
+    end
+    for _,row in ipairs({{122,56,true},{122.0001,56,false},{120,57.5,true},{120,57.5001,false},
+            {120,54.5,true},{120,54.4999,false}}) do
+        f=buffered_fixture(true);eq(f:point(1,0),true)
+        ok,why=MineCome.ApplyBufferedMovementFollower("b",2,row[1],2040,row[2],100)
+        eq(ok,row[3]);if not row[3] then eq(why,"target_out_of_bounds") end
+        eq(MineCome.EndMovementFollower("b"),true);f:advance(.05);eq(f:activeTimers(),0)
+    end
+end)
+
+test("extended source freshness remains four hundred milliseconds and restoration is guarded",function()
+    local f=buffered_fixture(true);eq(f:point(1,0),true);eq(f:point(2,100,.2),true)
+    f:tick(.31);f:tick(.33);near(player.position.x,120.2)
+    f:tick(.4001);f:advance(.05)
+    eq(player.position.x,120);eq(f:activeTimers(),0)
+    assert(f:contains('"end_result":"frame_lease_expired"'))
+    assert(not f:contains('"end_result":"explicit_end"'))
+end)
+
+test("extended hard deadline restores at eighteen seconds without relying on host cleanup",function()
+    local f=buffered_fixture(true);eq(f:point(1,0),true);eq(f:point(2,100,.2),true)
+    f:tick(.31);f:tick(.33);local p=MineCome._movement_probe.follower
+    local hard
+    for _,event in ipairs(f.queue) do if event.alive and event.name=="MineCome_MovementFollowerExpiry" then hard=event end end
+    assert(hard);near(hard.at,18);hard.alive=false;f.time=hard.at
+    _G[hard.name](hard.data,hard.id);f:advance(.05)
+    eq(player.position.x,120);eq(f:activeTimers(),0);eq(p.end_result,"hard_deadline")
+    eq(receipt_number(f:last(),"hard_deadline_ms"),18000)
+end)
+
+test("extended fast callbacks reserve one of exactly 2048 writes for restoration",function()
+    local f=buffered_fixture(true)
+    eq(f:point(1,0),true);eq(f:point(2,100,.4),true);eq(f:point(3,200,.8),true)
+    f:advance(.19);f.physical_frame_seconds=.00005;f:tick(.2);f:advance(.2)
+    eq(#f.writes,2048);eq(player.position.x,120);eq(f:activeTimers(),0)
+    assert(f:contains('"end_result":"write_budget"'))
+end)
+
+test("extended receipts reserve two records for restoration and termination",function()
+    local f=buffered_fixture(true);eq(f:point(1,0),true);eq(f:point(2,100,.2),true)
+    f:tick(.31);f:tick(.33);local p=MineCome._movement_probe.follower
+    -- Reach the receipt cap deterministically without inventing source points:
+    -- previous cases exercise actual ACK emission over a sustained full session.
+    p.records=254;f:tick(.35);f:advance(.05)
+    eq(p.records,256);eq(player.position.x,120);eq(f:activeTimers(),0)
+    assert(f:contains('"event":"restoring"'));assert(f:contains('"event":"restored"'))
+    eq(p.end_result,"receipt_budget")
+end)
+
+test("pre-profile active follower reload retains baseline ownership and budgets",function()
+    local f=buffered_fixture();eq(f:point(1,0),true);eq(f:point(2,100,.2),true)
+    f:tick(.25);local p=MineCome._movement_probe.follower;local hard=p.timers.hard
+    -- The previous module's active state did not contain a profile registry.
+    MineCome._movement_probe.follower_profiles=nil
+    dofile(MINECOME_MODULE_PATH)
+    eq(MineCome._movement_probe.follower,p);eq(p.timers.hard,hard);near(p.deadline,8)
+    local ok,why=f:point(3,6000.01);eq(ok,false);eq(why,"source_time_invalid")
+    f:advance(.08);eq(player.position.x,120);eq(f:activeTimers(),0)
+    assert(not f:contains('"movement_session"'));eq(receipt_number(f:last(),"hard_deadline_ms"),8000)
 end)
 print(string.format("Verified %d standalone movement-probe cases in %s; engine bindings simulated",passed,_VERSION))
 print(string.format("Maximum tested buffered receipt: %d bytes plus CRLF; serialized subset of eight retained observations",maximum_buffered_receipt_bytes))

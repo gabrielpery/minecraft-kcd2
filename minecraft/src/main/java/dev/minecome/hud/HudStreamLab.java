@@ -51,6 +51,7 @@ public final class HudStreamLab {
     private HudGroundMovementFixture groundMovement;
     private final boolean physicalMovementMode=HudPhysicalMovementMode.require(System.getProperties());
     private final boolean physicalFixtureMode=HudPhysicalMovementMode.fixture(System.getProperties());
+    private final HudMovementSession movementSession=HudMovementSession.selected(System.getProperties());
     private final boolean physicalInputAtStart=inputMode && physicalMovementMode && !physicalFixtureMode;
     private HudPhysicalMovement physicalMovement;
     private HudPhysicalMovementFixture physicalFixture;
@@ -346,7 +347,7 @@ public final class HudStreamLab {
                 if(physicalMovement==null){
                     var wire=new HudInputProtocol.Identity(identity.run(),output.producerPid(),output.producerStart(),identity.targetPid(),identity.targetStart(),identity.expiresUtcMs());
                     physicalMovement=new HudPhysicalMovement(Path.of(required("minecome.groundPatchFile")),Path.of(required("minecome.movementTraceFile")),
-                            Path.of(required("minecome.hudHostViewFile")),save,wire,physicalFixtureMode);
+                            Path.of(required("minecome.hudHostViewFile")),save,wire,physicalFixtureMode,movementSession);
                     if(physicalFixtureMode)physicalFixture=new HudPhysicalMovementFixture(client,physicalMovement,Path.of(required("minecome.groundPatchFile")),Path.of(required("minecome.hudHostViewFile")),wire);
                 }
                 physicalMovement.afterTick(client,System.nanoTime());
@@ -486,7 +487,7 @@ public final class HudStreamLab {
         if(hostState==1){
             if(backgroundTrial && !backgroundComplete)throw new IllegalStateException("Background fixture armed before comparison completed");
             if(offscreenTrial && offscreenTrialEvidence==null)throw new IllegalStateException("Offscreen fixture armed before background readiness");
-            if(armedAt==0){armedAt=now;LOG.info("HUD_INPUT_ARMED run={} fixture={}",identity.run(),inputFixture);}
+            if(armedAt==0){armedAt=now;if(physicalMovement!=null)physicalMovement.activate(now);LOG.info("HUD_INPUT_ARMED run={} fixture={}",identity.run(),inputFixture);}
             for(int count=0;count<64;count++){
                 var event=input.poll();if(event==null)break;
                 if(offscreenPresentation){
