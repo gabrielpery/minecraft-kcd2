@@ -2,11 +2,14 @@
 # Original bounded stream arm. Input mode still requires a physical F8 latch.
 # No game launch, movement or process injection.
 [CmdletBinding()]
-param([string]$ReadyManifest, [string]$BundleDirectory, [switch]$PreflightOnly, [switch]$InputMode, [switch]$OffscreenPresentation, [switch]$LiveMouse, [switch]$StoneLive, [switch]$WorldClicks, [switch]$SelectiveMouse, [ValidateSet(1,2,3,4)][int]$SelectiveRevision=1, [switch]$AimedStone, [switch]$PhysicalMovement, [switch]$WalkingAimed)
+param([string]$ReadyManifest, [string]$BundleDirectory, [switch]$PreflightOnly, [switch]$InputMode, [switch]$OffscreenPresentation, [switch]$LiveMouse, [switch]$StoneLive, [switch]$WorldClicks, [switch]$SelectiveMouse, [ValidateSet(1,2,3,4)][int]$SelectiveRevision=1, [switch]$AimedStone, [switch]$PhysicalMovement, [switch]$WalkingAimed, [switch]$RepeatSession, [string]$PreviousArmReceipt)
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'HudPhysicalMovement.ps1')
 . (Join-Path $PSScriptRoot 'HudWalkingAimedProfile.ps1')
+if($RepeatSession -and -not $WalkingAimed){throw 'RepeatSession requires the WalkingAimed profile.'}
+if($PreviousArmReceipt -and -not $RepeatSession){throw 'PreviousArmReceipt requires explicit RepeatSession.'}
+if($RepeatSession){. (Join-Path $PSScriptRoot 'HudRepeatSession.ps1')}
 if($WalkingAimed -and (-not $InputMode -or -not $LiveMouse -or -not $OffscreenPresentation -or $PhysicalMovement -or $StoneLive -or $WorldClicks -or $SelectiveMouse -or $AimedStone -or $SelectiveRevision -ne 1)){throw 'WalkingAimed requires its separate live input profile without legacy mode flags.'}
 if($PhysicalMovement -and (-not $InputMode -or -not $LiveMouse -or -not $OffscreenPresentation -or $StoneLive -or $WorldClicks -or $SelectiveMouse -or $AimedStone -or $SelectiveRevision -ne 1)){throw 'Physical walking requires its separate live input profile.'}
 $inputProtocol=if($PhysicalMovement -or $WalkingAimed){2}else{1}
@@ -39,9 +42,9 @@ $expectedArm=if($SelectiveMouse){'minecome-hud/addons/MineComeHudSelective.ini'}
 $exeHash='a32d077e6b54e5cd0c5a5f3194f473779706ff266a711e4745ccdb598843340a'
 $proxyHash='0cee63f9c9f13f3ac909c5b4903f4dbb4b719a7ab3b4f13b0deaf83c814b94f7'
 if($WalkingAimed){
-    $mouseProfile=Get-MineComeWalkingAimedProfile;$proxyHash=$mouseProfile.runtime_sha256
-    if(-not $PSBoundParameters.ContainsKey('BundleDirectory')){$BundleDirectory=Join-Path $runtimeRoot 'hud-compositor-walking-aimed'}
-    $expectedArm='minecome-hud/addons/MineComeHudWalkingAimed.ini'
+    $mouseProfile=Get-MineComeWalkingAimedProfile -RepeatSession:$RepeatSession;$proxyHash=$mouseProfile.runtime_sha256
+    if(-not $PSBoundParameters.ContainsKey('BundleDirectory')){$BundleDirectory=Join-Path $runtimeRoot $(if($RepeatSession){'hud-compositor-walking-repeat'}else{'hud-compositor-walking-aimed'})}
+    $expectedArm=if($RepeatSession){'minecome-hud/addons/MineComeHudWalkingRepeat.ini'}else{'minecome-hud/addons/MineComeHudWalkingAimed.ini'}
 }elseif($PhysicalMovement){
     $mouseProfile=Get-MineComePhysicalMovementProfile;$proxyHash=$mouseProfile.runtime_sha256
     if(-not $PSBoundParameters.ContainsKey('BundleDirectory')){$BundleDirectory=Join-Path $runtimeRoot 'hud-compositor-walking'}
@@ -104,8 +107,14 @@ function Assert-LoadedStream {
 }
 Assert-LoadedStream
 $armPath=Assert-Unlinked (Join-Path $bin $bundle.arm_config_relative_path)
-foreach($name in @('MineComeHud.ini','MineComeHudStream.ini','MineComeHudInput.ini','MineComeHudMouse.ini','MineComeHudWorld.ini','MineComeHudSelective.ini','MineComeHudMovement.ini','MineComeHudWalkingAimed.ini')){
-    if(Test-Path -LiteralPath (Join-Path $bin ('minecome-hud/addons/'+$name))){throw 'Existing HUD arm preserved; ownership-checked cleanup is required first.'}
+$previous=$null
+if($PreviousArmReceipt){$previous=Complete-HudRepeatPreviousArm -ReceiptPath $PreviousArmReceipt -Context $context -PreflightOnly}
+foreach($name in @('MineComeHud.ini','MineComeHudStream.ini','MineComeHudInput.ini','MineComeHudMouse.ini','MineComeHudWorld.ini','MineComeHudSelective.ini','MineComeHudMovement.ini','MineComeHudWalkingAimed.ini','MineComeHudWalkingRepeat.ini')){
+    $existing=Join-Path $bin ('minecome-hud/addons/'+$name)
+    if(Test-Path -LiteralPath $existing){
+        if($previous -and $existing.Equals($previous.ArmPath,[StringComparison]::OrdinalIgnoreCase)){continue}
+        throw 'Existing HUD arm preserved; ownership-checked cleanup is required first.'
+    }
 }
 if($PreflightOnly) {Write-Output 'HUD_STREAM_ARM_PREFLIGHT_PASS no_changes=true';return}
 if(-not $ReadyManifest) {throw 'A fresh actual Minecraft stream-ready.json is required.'}
@@ -141,6 +150,8 @@ try {
 } finally {$producer.Dispose()}
 $processInfo=Get-CimInstance Win32_Process -Filter "ProcessId=$([uint32]$ready.producer_pid)"
 if($processInfo.CommandLine -notmatch 'net\.fabricmc\.devlaunchinjector\.Main' -or $processInfo.CommandLine -notlike ('*'+(Join-Path $root 'minecraft')+'*')) {throw 'Readiness producer is not this workspace Fabric client.'}
+if($previous -and ($ready.run -ceq $previous.PreviousRun -or $ready.producer_pid -eq $previous.PreviousProducerPid -or
+    [long]$ready.producer_start_filetime -le [long]$previous.PreviousProducerStart)){throw 'Repeat session requires a new run and a later, different Minecraft producer.'}
 $text=@('[HudStream]','Schema=1',"Run=$($ready.run)","TargetPid=$($context.GamePid)","TargetStart=$start","ProducerPid=$($ready.producer_pid)","ProducerStart=$($ready.producer_start_filetime)","ExpiresUtcMs=$($ready.expires_utc_ms)") -join "`n"
 $bytes=[Text.UTF8Encoding]::new($false).GetBytes($text+"`n")
 $hash=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
@@ -153,9 +164,11 @@ $receipt.world_clicks=[bool]($WorldClicks -or $WalkingAimed)
 $receipt.selective_mouse=[bool]($SelectiveMouse -or $WalkingAimed)
 $receipt.physical_movement=[bool]($PhysicalMovement -or $WalkingAimed)
 if($WalkingAimed){$receipt.walking_aimed=$true;$receipt.movement_session='extended';$receipt.selective_revision=4}
+if($RepeatSession){$receipt.repeat_session=$true;$receipt.session_generation=if($previous){2}else{1}}
 if($SelectiveRevision -ge 2){$receipt.selective_revision=$SelectiveRevision}
 $receiptPath=Join-Path $evidenceDirectory 'stream-arming.json'
 if(Test-Path -LiteralPath $receiptPath) {throw 'Existing stream arm receipt preserved.'}
+if($previous){$null=Complete-HudRepeatPreviousArm -ReceiptPath $PreviousArmReceipt -Context $context}
 $receipt | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $receiptPath -Encoding utf8NoBOM
 $temporary=$armPath+'.'+$ready.run+'.tmp'
 try {

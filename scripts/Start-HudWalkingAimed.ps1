@@ -2,7 +2,8 @@
 # Fresh, explicitly combined15-second walking/aiming session and30-second HUD.
 [CmdletBinding()]
 param([switch]$PreflightOnly,[string]$JavaHome,[string]$BundleDirectory,
-    [ValidateSet('WalkingBreak','TopFaceInventory','SideFaceInventory')][string]$Scenario='WalkingBreak')
+    [ValidateSet('WalkingBreak','TopFaceInventory','SideFaceInventory')][string]$Scenario='WalkingBreak',
+    [switch]$RepeatSession,[string]$PreviousArmReceipt)
 $ErrorActionPreference='Stop'
 if($PSVersionTable.PSVersion.Major -lt 7){
     . (Join-Path $PSScriptRoot 'powershell7.ps1')
@@ -11,6 +12,8 @@ if($PSVersionTable.PSVersion.Major -lt 7){
     if($PreflightOnly){$arguments+='-PreflightOnly'}
     if($JavaHome){$arguments+=@('-JavaHome',$JavaHome)}
     if($BundleDirectory){$arguments+=@('-BundleDirectory',$BundleDirectory)}
+    if($RepeatSession){$arguments+='-RepeatSession'}
+    if($PreviousArmReceipt){$arguments+=@('-PreviousArmReceipt',$PreviousArmReceipt)}
     $arguments+=@('-Scenario',$Scenario)
     & $pwsh @arguments
     if($LASTEXITCODE -ne 0){throw 'Combined walking/aimed controller failed.'}

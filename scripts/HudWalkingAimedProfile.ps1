@@ -1,8 +1,9 @@
 # Explicit combined profile. Neither existing walking nor selective r4 can select it implicitly.
 . (Join-Path $PSScriptRoot 'HudPhysicalMovement.ps1')
 function Get-MineComeWalkingAimedProfile {
+    param([switch]$RepeatSession)
     $base=Get-MineComeMouseProfile -WorldClicks -SelectiveMouse -SelectiveRevision 4
-    $path=Join-Path $PSScriptRoot '../config/hud-walking-aimed-profile.json'
+    $path=Join-Path $PSScriptRoot $(if($RepeatSession){'../config/hud-walking-repeat-profile.json'}else{'../config/hud-walking-aimed-profile.json'})
     $cursor=[IO.Path]::GetFullPath($path)
     while($cursor){
         if((Test-Path -LiteralPath $cursor) -and ((Get-Item -LiteralPath $cursor -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)){throw 'Linked walking aimed profile refused.'}
@@ -10,7 +11,8 @@ function Get-MineComeWalkingAimedProfile {
     }
     if((Get-Item -LiteralPath $path).Length -gt 16KB){throw 'Walking aimed profile exceeded its bound.'}
     $profile=Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
-    if($profile.schema -ne 1 -or $profile.kind -cne 'minecome_hud_walking_aimed_profile_v1' -or
+    $kind=if($RepeatSession){'minecome_hud_walking_repeat_profile_v1'}else{'minecome_hud_walking_aimed_profile_v1'}
+    if($profile.schema -ne 1 -or $profile.kind -cne $kind -or
         $profile.ui_input_protocol -ne 2 -or $profile.mouse_capture_api -ne 2 -or
         $profile.runtime_sha256 -cne $base.runtime_sha256 -or $profile.shader_sha256 -cne $base.shader_sha256 -or
         $profile.build_receipt_sha256 -cne $base.build_receipt_sha256 -or
@@ -18,9 +20,16 @@ function Get-MineComeWalkingAimedProfile {
         $profile.addon_sha256 -ceq $base.addon_sha256 -or $profile.addon_sha256 -ceq (Get-MineComePhysicalMovementProfile).addon_sha256){
         throw 'Exact separate walking aimed profile required.'
     }
+    if($RepeatSession -and $profile.addon_sha256 -ceq (Get-MineComeWalkingAimedProfile).addon_sha256){throw 'Repeat sessions require their separate native build.'}
     return $profile
 }
 function Assert-MineComeWalkingAimedBundle($Manifest,$Profile){
+    $repeat=$Profile.kind -ceq 'minecome_hud_walking_repeat_profile_v1'
+    $arm=if($repeat){'minecome-hud/addons/MineComeHudWalkingRepeat.ini'}else{'minecome-hud/addons/MineComeHudWalkingAimed.ini'}
+    $repeatMarker=$Manifest.PSObject.Properties['repeat_sessions']
+    if($repeat){
+        if($null -eq $repeatMarker -or ($repeatMarker.Value -isnot [int] -and $repeatMarker.Value -isnot [long]) -or $repeatMarker.Value -ne 2){throw 'Explicit two-session bundle required.'}
+    }elseif($null -ne $repeatMarker){throw 'Repeat-session bundle requires the explicit repeat profile.'}
     foreach($field in @('schema','stream_protocol','ui_input_protocol','mouse_capture_api')){
         if($Manifest.$field -isnot [int] -and $Manifest.$field -isnot [long]){throw 'Walking aimed protocol versions must be integers.'}
     }
@@ -30,7 +39,7 @@ function Assert-MineComeWalkingAimedBundle($Manifest,$Profile){
     if($Manifest.schema -ne 1 -or $Manifest.kind -cne 'minecome_hud_compositor_bundle_v1' -or
         $Manifest.stream_protocol -ne 1 -or $Manifest.ui_input_protocol -ne 2 -or $Manifest.mouse_capture_api -ne 2 -or
         ($Manifest.selective_revision -isnot [int] -and $Manifest.selective_revision -isnot [long]) -or $Manifest.selective_revision -ne 4 -or
-        $Manifest.arm_config_relative_path -cne 'minecome-hud/addons/MineComeHudWalkingAimed.ini' -or
+        $Manifest.arm_config_relative_path -cne $arm -or
         $Manifest.runtime.version -cne '6.8.0' -or $Manifest.runtime.full_addon_support -isnot [bool] -or -not $Manifest.runtime.full_addon_support -or
         $Manifest.runtime.reshade64_sha256 -cne $Profile.runtime_sha256 -or
         $Manifest.runtime.build_receipt_sha256 -cne $Profile.build_receipt_sha256 -or @($Manifest.files).Count -ne 6){

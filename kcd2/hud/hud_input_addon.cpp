@@ -19,6 +19,13 @@
 #include "stream_channel.hpp"
 #include "input_channel.hpp"
 #include "input_diagnostics.hpp"
+#ifdef MINECOME_HUD_REPEAT_SESSION
+#include "rearm_receipt.hpp"
+#include "rearm_native.hpp"
+#if !defined(MINECOME_HUD_WALKING_AIMED)
+#error Repeat sessions require the explicit walking aimed profile.
+#endif
+#endif
 #if defined(MINECOME_HUD_WALKING_AIMED) && (!defined(MINECOME_HUD_PHYSICAL_MOVEMENT) || !defined(MINECOME_HUD_WORLD_CLICKS) || !defined(MINECOME_HUD_SELECTIVE_MOUSE))
 #error Walking aimed input requires its explicit movement, world-click and selective capture definitions.
 #endif
@@ -138,13 +145,17 @@ constexpr char effect_name[] = "MineComeHud.fx", semantic[] = "MINECOME_HUD_1";
 // Stable until module unload; fallback callbacks must never dereference Service
 // without the runtime lifetime lock while AddonUninit can delete it.
 std::atomic<bool> has_armed{false};
-std::atomic<bool> input_has_started{false},input_force_close{false};
-ui::FirstClose first_close;
+struct InputSignals {
+    std::atomic<bool> input_has_started{false},input_force_close{false};
+    ui::FirstClose first_close;
+};
+// A contended callback retains its original signals, never the next run's.
+std::atomic<std::shared_ptr<InputSignals>> input_signals{std::make_shared<InputSignals>()};
 void record_close(ui::CloseCause cause) noexcept {
-    ui::CloseSnapshot snapshot;snapshot.cause=cause;snapshot.utc=st::utc_ms();first_close.publish(snapshot);
+    ui::CloseSnapshot snapshot;snapshot.cause=cause;snapshot.utc=st::utc_ms();input_signals.load()->first_close.publish(snapshot);
 }
 bool close_receipt(std::string_view run) {
-    ui::CloseSnapshot value;if(!first_close.read(value))return false;
+    ui::CloseSnapshot value;if(!input_signals.load()->first_close.read(value))return false;
     auto predicate=[&](unsigned mask){return !value.eligibility_sampled?"null":(value.eligibility_failures&mask)?"false":"true";};
     std::ostringstream line;
     line << "[MineComeHudInput] {\"schema\":1,\"event\":\"first_input_close\",\"run\":\"" << run
@@ -200,6 +211,11 @@ struct Session {
         return utc < identity.expires_utc_ms && steady >= begun && steady < deadline;
     }
 };
+#ifdef MINECOME_HUD_REPEAT_SESSION
+namespace rearm = minecome::hud::rearm;
+bool prepare_repeat_generation();
+bool repeat_render_retired();
+#endif
 struct Service {
     st::Handle stop{CreateEventW(nullptr,TRUE,FALSE,nullptr)};
     std::thread worker;
@@ -208,9 +224,9 @@ struct Service {
     std::atomic<std::shared_ptr<const Session>> session;
     std::atomic<std::shared_ptr<const st::Frame>> publication;
     std::atomic<std::shared_ptr<const ui::Status>> input_status;
-    ui::Mailbox input_mailbox;
+    std::unique_ptr<ui::Mailbox> input_mailbox=std::make_unique<ui::Mailbox>();
 #ifdef MINECOME_HUD_WORLD_CLICKS
-    world::Queue world_clicks;
+    std::unique_ptr<world::Queue> world_clicks=std::make_unique<world::Queue>();
     world::Click pending_click;
 #endif
     std::atomic<unsigned> input_request{0}; // 0 waiting, 1 arm, 2 close.
@@ -218,10 +234,17 @@ struct Service {
     std::atomic<api::effect_runtime *> input_owner{nullptr};
     std::atomic<std::uint64_t> uploaded{0}, dropped{0}, submitted{0};
     std::atomic<unsigned> renderer_error{0};
+#ifdef MINECOME_HUD_REPEAT_SESSION
+    rearm::Policy rearm_policy;
+    std::atomic<bool> retiring{false};
+    st::Handle producer;
+#endif
     explicit Service(HMODULE module) {
         const auto path = st::module_path(module); const auto slash = path.find_last_of(L"/\\");
         if (slash != path.npos) config = path.substr(0,slash+1)+
-#ifdef MINECOME_HUD_WALKING_AIMED
+#ifdef MINECOME_HUD_REPEAT_SESSION
+            L"MineComeHudWalkingRepeat.ini";
+#elif defined(MINECOME_HUD_WALKING_AIMED)
             L"MineComeHudWalkingAimed.ini";
 #elif defined(MINECOME_HUD_PHYSICAL_MOVEMENT)
             L"MineComeHudMovement.ini";
@@ -241,11 +264,11 @@ struct Service {
         // Worker-only formatting/log IO. No record may outlive the current
         // activation, image, ACK or original physical capture freshness.
         for(unsigned i=0;i<world::max_clicks;++i){
-            if(!pending_click.sequence&&!world_clicks.pop(pending_click))return;
+            if(!pending_click.sequence&&!world_clicks->pop(pending_click))return;
             const auto now=st::steady_ms(),utc=st::utc_ms();const auto &peer=inputs.status();
             const auto frame=publication.load(std::memory_order_acquire);
             const auto rendered=last_input_render.load(std::memory_order_acquire);
-            const bool closed=stopping()||terminal.load(std::memory_order_acquire)||input_force_close.load(std::memory_order_acquire)||
+            const bool closed=stopping()||terminal.load(std::memory_order_acquire)||input_signals.load()->input_force_close.load(std::memory_order_acquire)||
                 input_request.load(std::memory_order_acquire)==2||peer.state!=1;
             // HUD freshness is 250 ms, but strict mouse ownership expires at
             // 100 ms. Re-query its exact captured owner/generation here; a
@@ -260,7 +283,7 @@ struct Service {
             const bool session_live=accepted.live(utc,now),ack_fresh=ui::fresh(peer.ack.utc,utc),
                 observation_fresh=now>=peer.observed&&now-peer.observed<=ui::fresh_ms,
                 render_fresh=rendered&&now>=rendered&&now-rendered<=ui::fresh_ms,
-                image_fresh=frame&&st::uploaded_fresh(frame->observation,now),overflow=world_clicks.overflowed();
+                image_fresh=frame&&st::uploaded_fresh(frame->observation,now),overflow=world_clicks->overflowed();
             const bool live=!closed&&session_live&&peer.live&&peer.ack.state==1&&ack_fresh&&
                 observation_fresh&&render_fresh&&image_fresh&&!overflow;
             const auto decision=world::delivery_with_capture(pending_click,live,utc,now,peer.ack.sequence,peer.ack.screen,
@@ -286,7 +309,7 @@ struct Service {
                         <<",\"capture_owner_matches\":"<<(capture.token==pending_click.token)
                         <<",\"capture_lease_remaining_ms\":"<<capture.lease_remaining_ms<<'}';
                     reshade::log::message(reshade::log::level::info,details.str().c_str());
-                    record_close(ui::CloseCause::mouse_transition);input_force_close.store(true,std::memory_order_release);
+                    record_close(ui::CloseCause::mouse_transition);input_signals.load()->input_force_close.store(true,std::memory_order_release);
                     inputs.finish("world_click_delivery_failed");
                     receipt("world_click","delivery_failed",accepted.identity.run);
                 }
@@ -297,15 +320,15 @@ struct Service {
             line<<"[MineComeWorldInput] {\"schema\":1,\"run\":\""<<accepted.identity.run<<"\",\"sequence\":"<<pending_click.sequence
                 <<",\"utc_ms\":"<<pending_click.utc<<",\"action\":"<<pending_click.action<<'}';
             // Re-check asynchronous closure immediately before publication.
-            if(!input_force_close.load(std::memory_order_acquire)&&!terminal.load(std::memory_order_acquire)&&!stopping())
+            if(!input_signals.load()->input_force_close.load(std::memory_order_acquire)&&!terminal.load(std::memory_order_acquire)&&!stopping())
                 reshade::log::message(reshade::log::level::info,line.str().c_str());
             pending_click={};
         }
     }
 #endif
     void end(std::string_view why, std::string_view run) {
-        if(input_has_started.load(std::memory_order_acquire))record_close(ui::CloseCause::session_end);
-        input_force_close.store(true,std::memory_order_release);
+        if(input_signals.load()->input_has_started.load(std::memory_order_acquire))record_close(ui::CloseCause::session_end);
+        input_signals.load()->input_force_close.store(true,std::memory_order_release);
         terminal.store(true,std::memory_order_release);
         publication.store({},std::memory_order_release);
         receipt("session_end",why,run);
@@ -315,6 +338,60 @@ struct Service {
                  << ",\"submitted\":" << submitted.load() << ",\"visual_verified\":false}";
         reshade::log::message(reshade::log::level::info,counters.str().c_str());
     }
+#ifdef MINECOME_HUD_REPEAT_SESSION
+    bool retire_session(const ui::Status &closed,std::string_view reason,std::vector<ui::Event> &pending) {
+        const auto owner=rearm_policy.current();
+        ui::CloseSnapshot closure;
+        if(!input_signals.load()->first_close.read(closure)||!rearm::normal_input_close(closure.cause,reason)||
+           closed.state!=2||closed.ack.state!=2||closed.sequence!=closed.ack.sequence||renderer_error.load()||
+           input_mailbox->overflowed()||world_clicks->overflowed()) {
+            rearm_policy.fail(owner);receipt("rearm","unclean_native_close",owner.arm.identity.run);return false;
+        }
+        if(rearm_policy.begin_retirement(owner,rearm::Outcome::completed,st::steady_ms())!=rearm::Result::accepted)return false;
+        // Render callbacks hide and relinquish capture on their own thread.
+        // The worker only observes their receipts under the lifetime lock.
+        retiring.store(true,std::memory_order_release);
+        const auto prefix=config+L"."+std::wstring(owner.arm.identity.run.begin(),owner.arm.identity.run.end());
+        const auto until=st::steady_ms()+60000;
+        while(!stopping()&&st::steady_ms()<until) {
+            if(!repeat_render_retired()||WaitForSingleObject(producer.value,0)!=WAIT_OBJECT_0) {
+                WaitForSingleObject(stop.value,25);continue;
+            }
+            std::vector<std::uint8_t> bytes;
+            rearm::ControllerCleanup cleanup;std::string error,digest;
+            if(!st::read_file(prefix+L".cleanup.ini",4096,stop.value,&bytes,nullptr)) {
+                WaitForSingleObject(stop.value,25);continue;
+            }
+            if(!rearm::parse_cleanup(std::string_view(reinterpret_cast<const char *>(bytes.data()),bytes.size()),owner,cleanup,error)||
+               !st::read_file(prefix+L".verification.json",1024u*1024u,stop.value,nullptr,&digest)||digest!=cleanup.verification_sha256) {
+                receipt("rearm","controller_proof_rejected",owner.arm.identity.run);rearm_policy.fail(owner);return false;
+            }
+            // With callbacks retired, discard only this closed generation's
+            // undelivered records. Fresh queues are allocated before next arm.
+            pending.clear();ui::Event ignored;while(input_mailbox->pop(ignored)){}
+            world::Click click;while(world_clicks->pop(click)){}pending_click={};
+            const auto now=st::steady_ms();rearm::Retirement proof;
+            proof.input={owner,now,{true,true,closed.sequence,closed.ack.sequence}};
+            proof.queues={owner,now,{true,0,0,false}};
+            proof.renderer={owner,now,{true,true,true,true}};
+            proof.capture={owner,now,{true,true,false}};
+            proof.producer={owner,now,{true}};
+            proof.controller={owner,now,cleanup};
+            if(rearm_policy.retire(proof,now)!=rearm::Result::accepted)return false;
+            const auto text=rearm::format_retired(owner,cleanup,rearm_policy.phase());
+            const auto temporary=prefix+L".retired.ini.tmp",destination=prefix+L".retired.ini";
+            st::Handle file(CreateFileW(temporary.c_str(),GENERIC_WRITE,0,nullptr,CREATE_NEW,FILE_ATTRIBUTE_NORMAL,nullptr));
+            DWORD written=0;
+            if(text.empty()||!file||!WriteFile(file.value,text.data(),static_cast<DWORD>(text.size()),&written,nullptr)||
+               written!=text.size()||!FlushFileBuffers(file.value))return false;
+            file.reset();
+            if(!MoveFileExW(temporary.c_str(),destination.c_str(),MOVEFILE_WRITE_THROUGH))return false;
+            receipt("rearm",rearm_policy.phase()==rearm::Phase::idle?"idle":"exhausted",owner.arm.identity.run);
+            return rearm_policy.phase()==rearm::Phase::idle;
+        }
+        rearm_policy.fail(owner);receipt("rearm","cleanup_timeout",owner.arm.identity.run);return false;
+    }
+#endif
     void run() noexcept {
         try {
             std::string digest;
@@ -324,14 +401,34 @@ struct Service {
             const auto pid=GetCurrentProcessId(); const auto start=st::process_start();
             if (!start || config.empty()) { receipt("compatibility","process_identity_failed"); return; }
             compatible.store(true,std::memory_order_release); receipt("compatibility","exact_tools_exe");
+#ifdef MINECOME_HUD_REPEAT_SESSION
+            for(unsigned attempt=0;attempt<rearm::maximum_sessions&&!stopping();++attempt) {
+            bool repeat_ready=false;
+            std::string arm_digest;
+#endif
             st::Identity identity;
             std::string last_error;
             while (!stopping()) {
                 std::vector<std::uint8_t> bytes;
-                if (st::read_file(config,st::max_arm_bytes,stop.value,&bytes,nullptr)) {
+                if (st::read_file(config,st::max_arm_bytes,stop.value,&bytes,
+#ifdef MINECOME_HUD_REPEAT_SESSION
+                                  &arm_digest
+#else
+                                  nullptr
+#endif
+                                  )) {
                     std::string error;
                     if (st::parse_arm(std::string_view(reinterpret_cast<const char *>(bytes.data()),bytes.size()),
-                                      pid,start,st::utc_ms(),identity,error)) break;
+                                      pid,start,st::utc_ms(),identity,error)) {
+#ifdef MINECOME_HUD_REPEAT_SESSION
+                        // Leave the retired arm untouched until the explicit
+                        // controller archives it; never auto-replay that arm.
+                        if(attempt&&identity.run==rearm_policy.current().arm.identity.run) {
+                            WaitForSingleObject(stop.value,100);continue;
+                        }
+#endif
+                        break;
+                    }
                     if (error != last_error) { receipt("arm",error); last_error=error; }
                 }
                 WaitForSingleObject(stop.value,100);
@@ -347,6 +444,23 @@ struct Service {
             accepted->deadline=accepted->begun+(identity.expires_utc_ms-utc);
             st::Channel channel;
             if (!channel.open(identity)) { end(channel.reason(),identity.run); return; }
+#ifdef MINECOME_HUD_REPEAT_SESSION
+            producer.reset(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION|SYNCHRONIZE,FALSE,identity.producer_pid));
+            if(!producer||st::process_start(producer.value)!=identity.producer_start){end("producer_identity",identity.run);return;}
+            std::shared_ptr<const st::Frame> initial;
+            while(!stopping()&&!initial) {
+                const auto result=channel.poll(initial);
+                if(result==st::Poll::closed||result==st::Poll::failed){end("initial_frame_failed",identity.run);return;}
+                if(!initial)WaitForSingleObject(stop.value,5);
+            }
+            if(stopping())return;
+            rearm::Arm arm{{identity.run,arm_digest,identity.target_pid,identity.producer_pid,identity.target_start,identity.producer_start},
+                {initial->header.width,initial->header.height,initial->header.pitch},identity.expires_utc_ms};
+            if(rearm_policy.admit(arm,true,st::utc_ms(),st::steady_ms())!=rearm::Result::accepted||!prepare_repeat_generation()) {
+                end("rearm_admission_failed",identity.run);return;
+            }
+            publication.store(initial,std::memory_order_release);
+#endif
             session.store(accepted,std::memory_order_release); has_armed.store(true,std::memory_order_release);
             receipt("arm","accepted",identity.run);
             ui::Writer inputs;
@@ -366,12 +480,12 @@ struct Service {
 #endif
                     const auto now=st::steady_ms();
                     const auto last_render=last_input_render.load(std::memory_order_acquire);
-                    if(input_force_close.load(std::memory_order_acquire)||input_request.load(std::memory_order_acquire)==2||input_mailbox.overflowed()
+                    if(input_signals.load()->input_force_close.load(std::memory_order_acquire)||input_request.load(std::memory_order_acquire)==2||input_mailbox->overflowed()
 #ifdef MINECOME_HUD_WORLD_CLICKS
-                        ||world_clicks.overflowed()
+                        ||world_clicks->overflowed()
 #endif
                         ) {
-                        if(input_mailbox.overflowed())record_close(ui::CloseCause::mailbox_overflow);
+                        if(input_mailbox->overflowed())record_close(ui::CloseCause::mailbox_overflow);
                         inputs.finish("ownership_closed");
                     } else if(inputs.status().state==1&&(!last_render||now<last_render||now-last_render>ui::fresh_ms)) {
                         record_close(ui::CloseCause::render_stale);
@@ -384,7 +498,7 @@ struct Service {
                         }
                         if(inputs.status().state==1) {
                             ui::Event event;
-                            while(pending_input.size()<ui::ring_count&&input_mailbox.pop(event))pending_input.push_back(event);
+                            while(pending_input.size()<ui::ring_count&&input_mailbox->pop(event))pending_input.push_back(event);
                             if(!pending_input.empty()&&inputs.append(pending_input))pending_input.clear();
                         }
                     }
@@ -421,6 +535,11 @@ struct Service {
                         input_receipt("input_final",inputs,identity.run,st::steady_ms()-close_started);
                         if(!first_close_logged)first_close_logged=close_receipt(identity.run);
                     }
+#ifdef MINECOME_HUD_REPEAT_SESSION
+                    if(result==st::Poll::closed&&input_created&&retire_session(inputs.status(),inputs.reason(),pending_input)) {
+                        repeat_ready=true;break;
+                    }
+#endif
                     return;
                 }
                 if (next) {
@@ -444,7 +563,14 @@ struct Service {
                 }
                 WaitForSingleObject(stop.value,5);
             }
+#ifdef MINECOME_HUD_REPEAT_SESSION
+            if(repeat_ready)continue;
+#endif
             end("stopped",identity.run);
+#ifdef MINECOME_HUD_REPEAT_SESSION
+            return;
+            }
+#endif
         } catch (...) {
             terminal.store(true,std::memory_order_release); publication.store({},std::memory_order_release);
             try { end("worker_exception",{}); } catch (...) { /* Already hidden; no exception may leave the worker. */ }
@@ -458,6 +584,9 @@ struct Service {
 Service *service=nullptr;
 struct Upload { api::resource buffer{}; std::uint64_t completion=0; };
 struct RuntimeState {
+#ifdef MINECOME_HUD_REPEAT_SESSION
+    bool repeat_retired=false;
+#endif
     HWND window=nullptr;
     api::resource texture{};
     api::resource_view view{};
@@ -524,7 +653,7 @@ void release_mouse(api::effect_runtime *runtime,RuntimeState &state) {
 #endif
 }
 bool queue_input(RuntimeState &state,const ui::Event &event) {
-    if(!service->input_mailbox.push(event))return false;
+    if(!service->input_mailbox->push(event))return false;
     ++state.forwarded_events;return true;
 }
 bool queue_pointer(RuntimeState &state,const ui::PointerBatch &batch) {
@@ -544,9 +673,9 @@ bool queue_movement(RuntimeState &state,const ui::MovementEdges &edges,std::uint
 #endif
 void close_keyboard(api::effect_runtime *runtime,ui::CloseCause cause,const ui::CloseSnapshot *snapshot=nullptr) noexcept {
     if(service&&service->input_owner.load(std::memory_order_acquire)==runtime) {
-        if(snapshot)first_close.publish(*snapshot);else record_close(cause);
+        if(snapshot)input_signals.load()->first_close.publish(*snapshot);else record_close(cause);
         service->input_request.store(2,std::memory_order_release);
-        input_force_close.store(true,std::memory_order_release);
+        input_signals.load()->input_force_close.store(true,std::memory_order_release);
     }
 }
 void capture_keyboard(api::effect_runtime *runtime,RuntimeState &state,bool composed,std::uint32_t composition_stage) {
@@ -578,7 +707,7 @@ void capture_keyboard(api::effect_runtime *runtime,RuntimeState &state,bool comp
     std::uint32_t failures=(!composed?1u:0u)|(state.reshade_overlay?2u:0u)|(!window_eligible?4u:0u)|
         ((!peer->live||peer->state>=2)?8u:0u)|(peer->ack.state!=1?16u:0u)|(!ui::fresh(peer->ack.utc,utc)?32u:0u)|
         ((now<peer->observed||now-peer->observed>ui::fresh_ms)?64u:0u)|
-        (input_force_close.load(std::memory_order_acquire)?128u:0u)|(service->terminal.load(std::memory_order_acquire)?256u:0u);
+        (input_signals.load()->input_force_close.load(std::memory_order_acquire)?128u:0u)|(service->terminal.load(std::memory_order_acquire)?256u:0u);
 #ifdef MINECOME_HUD_LIVE_MOUSE
     if(!state.keyboard.consumed()&&(!mouse_capable||mouse_buttons))failures|=512u;
 #ifdef MINECOME_HUD_SELECTIVE_MOUSE
@@ -619,7 +748,7 @@ void capture_keyboard(api::effect_runtime *runtime,RuntimeState &state,bool comp
     api::effect_runtime *empty=nullptr;
     if(service->input_owner.load(std::memory_order_acquire)!=runtime&&
         !service->input_owner.compare_exchange_strong(empty,runtime,std::memory_order_acq_rel))return;
-    input_has_started.store(true,std::memory_order_release);
+    input_signals.load()->input_has_started.store(true,std::memory_order_release);
     service->last_input_render.store(now,std::memory_order_release);
     unsigned request=0;
     service->input_request.compare_exchange_strong(request,1,std::memory_order_acq_rel);
@@ -736,7 +865,7 @@ void capture_keyboard(api::effect_runtime *runtime,RuntimeState &state,bool comp
         if(!queue_input(state,event)){close_keyboard(runtime,ui::CloseCause::mailbox_overflow);release_mouse(runtime,state);return;}
         if(toggle){state.transition=true;state.transition_sequence=state.forwarded_events;state.transition_screen=keys[i]==0x45&&peer->ack.screen==0;}
 #else
-        if(!service->input_mailbox.push(event)) {close_keyboard(runtime,ui::CloseCause::mailbox_overflow);return;}
+        if(!service->input_mailbox->push(event)) {close_keyboard(runtime,ui::CloseCause::mailbox_overflow);return;}
 #endif
     }
     state.previous_keys=held&((1u<<ui_key_count)-1);
@@ -762,7 +891,7 @@ void capture_keyboard(api::effect_runtime *runtime,RuntimeState &state,bool comp
         if(state.world_click.failure()!=world::Gate::Failure::none){close_keyboard(runtime,ui::CloseCause::mouse_transition);release_mouse(runtime,state);return;}
         click.window=reinterpret_cast<std::uintptr_t>(state.window);click.token=reinterpret_cast<std::uintptr_t>(runtime);click.generation=state.mouse_generation;
         click.lease_deadline=now+world_capture.lease_remaining_ms;
-        if(click.sequence&&!service->world_clicks.push(click)){close_keyboard(runtime,ui::CloseCause::mailbox_overflow);release_mouse(runtime,state);return;}
+        if(click.sequence&&!service->world_clicks->push(click)){close_keyboard(runtime,ui::CloseCause::mailbox_overflow);release_mouse(runtime,state);return;}
 #elif !defined(MINECOME_HUD_PHYSICAL_MOVEMENT)
         if(!mouse_buttons)release_mouse(runtime,state);
 #endif
@@ -920,6 +1049,51 @@ bool upload(api::effect_runtime *runtime, api::command_list *commands, RuntimeSt
 #endif
     ++service->uploaded; return true;
 }
+#ifdef MINECOME_HUD_REPEAT_SESSION
+bool prepare_repeat_generation() {
+    std::lock_guard lock(runtimes_mutex);
+    for(const auto &[runtime,state]:runtimes) {
+        if(state.failed||(service->rearm_policy.admitted_count()>1&&!state.repeat_retired))return false;
+    }
+    // New input gates and sequence state; keep same-sized GPU storage and its
+    // fences. Same-queue ordering protects reuse without a render-thread wait.
+    for(auto &[runtime,state]:runtimes) {
+        RuntimeState next;
+        next.window=state.window;next.reshade_overlay=state.reshade_overlay;
+        next.texture=state.texture;next.view=state.view;next.fence=state.fence;next.uploads=state.uploads;
+        next.width=state.width;next.height=state.height;next.pitch=state.pitch;next.next_fence=state.next_fence;
+        state=std::move(next);
+    }
+    service->session.store({});service->publication.store({});service->input_status.store({});
+    service->input_mailbox=std::make_unique<ui::Mailbox>();service->world_clicks=std::make_unique<world::Queue>();
+    service->pending_click={};service->input_request.store(0);service->input_owner.store(nullptr);service->last_input_render.store(0);
+    service->uploaded.store(0);service->dropped.store(0);service->submitted.store(0);
+    input_signals.store(std::make_shared<InputSignals>(),std::memory_order_release);
+    service->terminal.store(false,std::memory_order_release);service->retiring.store(false,std::memory_order_release);
+    return true;
+}
+bool repeat_render_retired() {
+    std::unique_lock lock(runtimes_mutex,std::try_to_lock);
+    if(!lock.owns_lock()||runtimes.empty()||service->publication.load())return false;
+    for(const auto &[runtime,state]:runtimes)if(!state.repeat_retired||state.failed)return false;
+    return true;
+}
+void retire_render_generation(api::effect_runtime *runtime,RuntimeState &state) {
+    hide(runtime,state);
+    state.repeat_retired=false;
+    if(service->input_owner.load(std::memory_order_acquire)==runtime) {
+        mouse::Snapshot capture;
+        // query alone does not assert token ownership in API2. Release checks
+        // the real window/token even if an earlier release already succeeded.
+        const auto token=reinterpret_cast<std::uintptr_t>(runtime);
+        const auto result=mouse_api->release(reinterpret_cast<std::uintptr_t>(state.window),token,&capture);
+        if(!rearm::capture_released(result,capture,token,state.mouse_generation))return;
+        state.mouse_leased=false;state.selective_lease.released();
+    } else if(state.mouse_leased) return;
+    state.uploaded_sequence=0;state.uploaded_observation=0;state.uploaded_screen=0;
+    state.repeat_retired=true;
+}
+#endif
 void on_init(api::effect_runtime *runtime) {
     if (runtime->get_device()->get_api() != api::device_api::d3d12) return;
     std::lock_guard lock(runtimes_mutex);
@@ -951,10 +1125,12 @@ bool on_overlay(api::effect_runtime *runtime,bool open,api::input_source) {
     return false; // Observe ReShade's UI; never prevent it opening.
 }
 void on_begin(api::effect_runtime *runtime, api::command_list *commands, api::resource_view rtv, api::resource_view) {
+    const auto callback_signals=input_signals.load(std::memory_order_acquire);
     std::unique_lock lock(runtimes_mutex,std::try_to_lock);
     if (!lock.owns_lock()) {
-        if(input_has_started.load(std::memory_order_acquire)) {
-            record_close(ui::CloseCause::runtime_lock_contention);input_force_close.store(true,std::memory_order_release);
+        if(callback_signals->input_has_started.load(std::memory_order_acquire)) {
+            ui::CloseSnapshot snapshot;snapshot.cause=ui::CloseCause::runtime_lock_contention;snapshot.utc=st::utc_ms();
+            callback_signals->first_close.publish(snapshot);callback_signals->input_force_close.store(true,std::memory_order_release);
         }
         // Another runtime may be in a lifecycle callback. Do not wait, and do
         // not leave this runtime's previous layer enabled. Only a fresh handle
@@ -971,6 +1147,13 @@ void on_begin(api::effect_runtime *runtime, api::command_list *commands, api::re
     const auto it=runtimes.find(runtime);
     if (it == runtimes.end() || !service || !service->compatible.load(std::memory_order_acquire)) return;
     auto &state=it->second;
+#ifdef MINECOME_HUD_REPEAT_SESSION
+    if(callback_signals!=input_signals.load(std::memory_order_acquire))return;
+    if(service->retiring.load(std::memory_order_acquire)) {
+        try {retire_render_generation(runtime,state);} catch(...) {fail(state,6);}
+        return;
+    }
+#endif
     InputFrame input_frame{runtime,state};
     try {
         // A withdrawn/expired publication must hide previously enabled effects.
@@ -1022,7 +1205,10 @@ void on_begin(api::effect_runtime *runtime, api::command_list *commands, api::re
     } catch (...) { fail(state,5); hide(runtime,state); }
 }
 } // namespace
-#ifdef MINECOME_HUD_WALKING_AIMED
+#ifdef MINECOME_HUD_REPEAT_SESSION
+extern "C" __declspec(dllexport) const char *NAME="MineCome repeatable walking aimed lab";
+extern "C" __declspec(dllexport) const char *DESCRIPTION="Opt-in two-session profile; each session retains its original 30-second input limit. A new producer and verified native/controller cleanup are required before explicit rearm.";
+#elif defined(MINECOME_HUD_WALKING_AIMED)
 extern "C" __declspec(dllexport) const char *NAME="MineCome bounded walking aimed lab";
 extern "C" __declspec(dllexport) const char *DESCRIPTION="Exact KCD2 tools/D3D12 genuine HUD; explicit input v2 walking and UI keys, selective inventory capture and original physical world-click edges; one F8 activation at most30 seconds and sixteen clicks. Guest/controller settled proof is required for aimed actions.";
 #elif defined(MINECOME_HUD_PHYSICAL_MOVEMENT)

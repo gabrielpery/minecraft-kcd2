@@ -2,9 +2,10 @@
 # Original tools-only update of the owned, disabled MineCome HUD installation.
 # Does not start/stop a game. Preflight is read-only, including when the game is open.
 [CmdletBinding()]
-param([string]$BundleDirectory, [string]$PreviousBundleDirectory, [switch]$PreflightOnly, [switch]$LiveMouse, [switch]$WorldClicks, [switch]$SelectiveMouse, [ValidateSet(1,2,3,4)][int]$SelectiveRevision=1, [switch]$PhysicalMovement, [switch]$WalkingAimed)
+param([string]$BundleDirectory, [string]$PreviousBundleDirectory, [switch]$PreflightOnly, [switch]$LiveMouse, [switch]$WorldClicks, [switch]$SelectiveMouse, [ValidateSet(1,2,3,4)][int]$SelectiveRevision=1, [switch]$PhysicalMovement, [switch]$WalkingAimed, [switch]$RepeatSession)
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
+if($RepeatSession -and -not $WalkingAimed){throw 'RepeatSession requires the WalkingAimed profile.'}
 if($WalkingAimed -and ($PhysicalMovement -or $LiveMouse -or $WorldClicks -or $SelectiveMouse -or $SelectiveRevision -ne 1)){throw 'WalkingAimed is a separate update profile.'}
 if($PhysicalMovement -and ($LiveMouse -or $WorldClicks -or $SelectiveMouse -or $SelectiveRevision -ne 1)){throw 'PhysicalMovement is a separate update profile.'}
 if($WorldClicks -and -not $LiveMouse){throw 'World clicks update requires explicit LiveMouse mode.'}
@@ -19,9 +20,9 @@ $proxyHash='0cee63f9c9f13f3ac909c5b4903f4dbb4b719a7ab3b4f13b0deaf83c814b94f7'
 $previousProxyHash=$proxyHash
 if($WalkingAimed){
     . (Join-Path $PSScriptRoot 'HudWalkingAimedProfile.ps1')
-    $mouseProfile=Get-MineComeWalkingAimedProfile;$proxyHash=$mouseProfile.runtime_sha256
-    if(-not $PSBoundParameters.ContainsKey('BundleDirectory')){$BundleDirectory=Join-Path $runtimeRoot 'hud-compositor-walking-aimed'}
-    if(-not $PSBoundParameters.ContainsKey('PreviousBundleDirectory')){$PreviousBundleDirectory=Join-Path $runtimeRoot 'hud-compositor-walking'}
+    $mouseProfile=Get-MineComeWalkingAimedProfile -RepeatSession:$RepeatSession;$proxyHash=$mouseProfile.runtime_sha256
+    if(-not $PSBoundParameters.ContainsKey('BundleDirectory')){$BundleDirectory=Join-Path $runtimeRoot $(if($RepeatSession){'hud-compositor-walking-repeat'}else{'hud-compositor-walking-aimed'})}
+    if(-not $PSBoundParameters.ContainsKey('PreviousBundleDirectory')){$PreviousBundleDirectory=Join-Path $runtimeRoot $(if($RepeatSession){'hud-compositor-walking-aimed'}else{'hud-compositor-walking'})}
 }elseif($PhysicalMovement){
     . (Join-Path $PSScriptRoot 'HudPhysicalMovement.ps1')
     $mouseProfile=Get-MineComePhysicalMovementProfile;$proxyHash=$mouseProfile.runtime_sha256
@@ -137,8 +138,13 @@ if($old.schema-ne 1 -or $old.kind-cne'minecome_hud_install_v1' -or $old.exe_sha2
    -not ([IO.Path]::GetFullPath($old.bundle).Equals($PreviousBundleDirectory,[StringComparison]::OrdinalIgnoreCase)) -or @($old.files).Count-ne 6){throw 'Previous receipt does not own this exact six-file tools installation.'}
 if($WalkingAimed){
     $previousManifest=Read-Json (Join-Path $PreviousBundleDirectory 'bundle.json')
-    $previousMouseProfile=Get-MineComePhysicalMovementProfile
-    Assert-MineComePhysicalMovementBundle $previousManifest $previousMouseProfile
+    if($RepeatSession){
+        $previousMouseProfile=Get-MineComeWalkingAimedProfile
+        Assert-MineComeWalkingAimedInstalledBundle $previousManifest $old $previousMouseProfile
+    }else{
+        $previousMouseProfile=Get-MineComePhysicalMovementProfile
+        Assert-MineComePhysicalMovementBundle $previousManifest $previousMouseProfile
+    }
     foreach($relative in $expected){
         $staged=@($previousManifest.files | Where-Object path -CEQ $relative);$owned=@($old.files | Where-Object path -CEQ $relative)
         if($staged.Count -ne 1 -or $owned.Count -ne 1){throw 'Previous walking bundle requires six exact installed files.'}
@@ -184,7 +190,7 @@ $disabledPresent=Test-Path -LiteralPath $disabledProxy -PathType Leaf
 if($activePresent -and ($disabledPresent -or -not $PreflightOnly)){throw 'Update requires the active owned proxy to be disabled first; preserved all paths.'}
 if(-not $activePresent -and -not $disabledPresent){throw 'Owned proxy is missing.'}
 $armPath=Assert-Unlinked (Join-Path $bin $manifest.arm_config_relative_path)
-$allArmPaths=@('MineComeHud.ini','MineComeHudStream.ini','MineComeHudInput.ini','MineComeHudMouse.ini','MineComeHudWorld.ini','MineComeHudSelective.ini','MineComeHudMovement.ini','MineComeHudWalkingAimed.ini') | ForEach-Object {Assert-Unlinked (Join-Path $bin ('minecome-hud/addons/'+$_))}
+$allArmPaths=@('MineComeHud.ini','MineComeHudStream.ini','MineComeHudInput.ini','MineComeHudMouse.ini','MineComeHudWorld.ini','MineComeHudSelective.ini','MineComeHudMovement.ini','MineComeHudWalkingAimed.ini','MineComeHudWalkingRepeat.ini') | ForEach-Object {Assert-Unlinked (Join-Path $bin ('minecome-hud/addons/'+$_))}
 $existingArms=@($allArmPaths | Where-Object {Test-Path -LiteralPath $_})
 if($existingArms.Count -and -not $PreflightOnly){throw 'Existing HUD arm configuration preserved. Update requires an unarmed installation.'}
 $installedPath=Assert-InRuntime (Join-Path $BundleDirectory 'installed.json')

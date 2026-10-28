@@ -18,6 +18,11 @@ capturing Minecraft's actual HUD and inventory pixels for display in the host re
 work, but this is not yet a complete playable mod or a ready-to-install release.
 The public repository contains source, build scripts and development procedures.
 
+The new [repeat-session development profile](kcd2/MOVEMENT-LAB.md#repeat-sessions-in-one-kcd-process)
+is implemented, compiled and staged, with automated cleanup/rearm checks passing.
+It is intended to run two bounded sessions without relaunching KCD2. The full
+two-session game check is pending; this does not yet provide continuous free roaming.
+
 ## What works today
 
 | Capability | Verified scope |

@@ -2,7 +2,8 @@
 # Explicit combined15-second movement/aiming session and30-second HUD.
 [CmdletBinding()]
 param([switch]$PreflightOnly,[string]$JavaHome,[string]$BundleDirectory,
-    [ValidateSet('WalkingBreak','TopFaceInventory','SideFaceInventory')][string]$Scenario='WalkingBreak')
+    [ValidateSet('WalkingBreak','TopFaceInventory','SideFaceInventory')][string]$Scenario='WalkingBreak',
+    [switch]$RepeatSession,[string]$PreviousArmReceipt)
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'KcdToolsProbeHelpers.ps1')
@@ -18,14 +19,16 @@ Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'HudWalkingAimed.ps1')
 . (Join-Path $PSScriptRoot 'HudAimedRelay.ps1')
 . (Join-Path $PSScriptRoot 'HudInputPrompt.ps1')
+if($PreviousArmReceipt -and -not $RepeatSession){throw 'PreviousArmReceipt requires explicit RepeatSession.'}
+if($RepeatSession){. (Join-Path $PSScriptRoot 'HudRepeatSession.ps1')}
 $ExtendedWalking=$true
 $root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $walkingSession=Get-HudWalkingSession -ExtendedWalking:$ExtendedWalking
 if(-not $JavaHome){$JavaHome='C:\Program Files\Java\jdk-24'}
 if(-not(Test-Path -LiteralPath (Join-Path $JavaHome 'bin/java.exe'))){throw 'A local supported JDK is required.'}
-if(-not $BundleDirectory){$BundleDirectory=Join-Path $root 'runtime/hud-compositor-walking-aimed'}
+if(-not $BundleDirectory){$BundleDirectory=Join-Path $root $(if($RepeatSession){'runtime/hud-compositor-walking-repeat'}else{'runtime/hud-compositor-walking-aimed'})}
 $context=Get-MineComeProbeContext
-& (Join-Path $PSScriptRoot 'Arm-HudStream.ps1') -WalkingAimed -InputMode -LiveMouse -OffscreenPresentation -BundleDirectory $BundleDirectory -PreflightOnly
+& (Join-Path $PSScriptRoot 'Arm-HudStream.ps1') -WalkingAimed -InputMode -LiveMouse -OffscreenPresentation -BundleDirectory $BundleDirectory -PreflightOnly -RepeatSession:$RepeatSession -PreviousArmReceipt $PreviousArmReceipt
 if($PreflightOnly){Write-Output "HUD_WALKING_AIMED_PREFLIGHT_PASS scenario=$Scenario no_changes=true";return}
 $scenarioProof=$null
 $probe=$null;$helper=$null;$arm=$null;$budget=$null;$budgetEvidence=$null;$failure=$null
@@ -164,7 +167,7 @@ try{
             $parserWarmup=Initialize-HudBufferedMovementPipeline -PatchFile $patchFile -ExpectedHudSave $ready.save -MinimumUtcMs $minimumUtc -ExtendedWalking:$ExtendedWalking
             $receiver=New-MineComeTraceReceiver $patchFile $minimumUtc -ExpectedHudSave $ready.save -PhysicalMovement -BufferedPhysicalMovement -ExtendedWalking:$ExtendedWalking
             if($receiver.PatchHash -cne $livePatch.Hash){throw 'Live terrain changed before trace binding.'}
-            $arm=& (Join-Path $PSScriptRoot 'Arm-HudStream.ps1') -WalkingAimed -InputMode -LiveMouse -OffscreenPresentation -BundleDirectory $BundleDirectory -ReadyManifest $readyPath
+            $arm=& (Join-Path $PSScriptRoot 'Arm-HudStream.ps1') -WalkingAimed -InputMode -LiveMouse -OffscreenPresentation -BundleDirectory $BundleDirectory -ReadyManifest $readyPath -RepeatSession:$RepeatSession -PreviousArmReceipt $PreviousArmReceipt
             $readyHash=(Get-FileHash -LiteralPath $readyPath).Hash
             $producerIdentity=[pscustomobject]@{Pid=$ready.producer_pid;Start=[string]$ready.producer_start_filetime}
             Write-Output "HUD_WALKING_AIMED_ARMED run=$run scenario=$Scenario waiting_for_settled_guest=true"
@@ -401,4 +404,11 @@ finally{
     }
     if($traceReader.Stream){$traceReader.Stream.Dispose()}
     if($helper){$helper.Dispose()}
+    if($RepeatSession -and $passed -and $arm){
+        Publish-HudRepeatCleanup -Arm $arm -VerificationPath (Join-Path $probe.Directory 'verification.json') -AimedVerificationPath (Join-Path $probe.Directory 'aimed-verification.json') -Context $context
+        Wait-HudRepeatRetirement -Arm $arm -Context $context
+        if($arm.session_generation -eq 1){
+            Write-Output "HUD_REPEAT_NEXT_ARM_RECEIPT path=$(Join-Path $probe.Directory 'capture/stream-arming.json')"
+        }
+    }
 }

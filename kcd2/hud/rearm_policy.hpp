@@ -1,5 +1,5 @@
 #pragma once
-// Standalone preparation only: not connected to an addon, renderer or controller.
+// Used by the opt-in repeat-session addon; original profiles remain one-shot.
 // A single owner serializes calls. Adapters must obtain real, identity-checked
 // receipts; this policy validates their scope and completeness, not their truth.
 // It neither resets one-shot channels nor grants input/render/engine authority.

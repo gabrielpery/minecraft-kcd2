@@ -1,14 +1,14 @@
 #Requires -Version 7.3
 # Workspace staging only; reuses the frozen selective r4 runtime and notices.
 [CmdletBinding()]
-param([Parameter(Mandatory)][string]$AddonPath,[string]$OutputDirectory)
+param([Parameter(Mandatory)][string]$AddonPath,[string]$OutputDirectory,[switch]$RepeatSession)
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'HudWalkingAimedProfile.ps1')
 $root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-$profile=Get-MineComeWalkingAimedProfile
+$profile=Get-MineComeWalkingAimedProfile -RepeatSession:$RepeatSession
 $base=Join-Path $root 'runtime/hud-compositor-selective-r4'
-if(-not $OutputDirectory){$OutputDirectory=Join-Path $root 'runtime/hud-compositor-walking-aimed'}
+if(-not $OutputDirectory){$OutputDirectory=Join-Path $root $(if($RepeatSession){'runtime/hud-compositor-walking-repeat'}else{'runtime/hud-compositor-walking-aimed'})}
 $OutputDirectory=[IO.Path]::GetFullPath($OutputDirectory)
 if(-not $OutputDirectory.StartsWith((Join-Path $root 'runtime')+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)){throw 'Walking aimed bundle must remain in workspace runtime.'}
 function Assert-StagingPath([string]$Path){
@@ -42,12 +42,13 @@ foreach($entry in $manifest.files){
     $entries += [pscustomobject]@{path=$entry.path;source=$source;sha256=$hash;bytes=$bytes}
 }
 $manifest.ui_input_protocol=2
-$manifest.arm_config_relative_path='minecome-hud/addons/MineComeHudWalkingAimed.ini'
+$manifest.arm_config_relative_path=if($RepeatSession){'minecome-hud/addons/MineComeHudWalkingRepeat.ini'}else{'minecome-hud/addons/MineComeHudWalkingAimed.ini'}
 $manifest.original_addon_source=[IO.Path]::GetFullPath($AddonPath)
 $manifest.prepare_script_sha256=(Get-FileHash -LiteralPath $PSCommandPath).Hash.ToLowerInvariant()
 $manifest | Add-Member -NotePropertyName base_bundle -NotePropertyValue 'hud-compositor-selective-r4'
 $manifest | Add-Member -NotePropertyName physical_movement -NotePropertyValue $true
 $manifest | Add-Member -NotePropertyName walking_aimed -NotePropertyValue $true
+if($RepeatSession){$manifest | Add-Member -NotePropertyName repeat_sessions -NotePropertyValue 2}
 $manifest.files=@($entries | ForEach-Object {[pscustomobject]@{path=$_.path;bytes=$_.bytes;sha256=$_.sha256}})
 Assert-MineComeWalkingAimedBundle $manifest $profile
 foreach($entry in $entries){

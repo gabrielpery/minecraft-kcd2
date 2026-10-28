@@ -1,5 +1,21 @@
 # MineCome progress — 2026-10-28
 
+## Repeat sessions — IMPLEMENTED / COMPILED / OFFLINE VERIFIED; LIVE PENDING
+
+The opt-in walking-repeat addon now integrates the existing two-generation policy:
+fresh channels, queues, input gates and diagnostics; render-thread hide/capture
+retirement; retained same-size GPU resources without a new GPU wait. Native input
+faults, failed cleanup, stale identities, changed image size and a third session
+cannot rearm. Controller completion is hashed and bound to the old arm/process;
+the next explicit invocation archives that arm only after the native retirement ACK.
+Existing installed artifacts and the frozen walking-aimed profile remain intact.
+
+Built the new addon and staged `runtime/hud-compositor-walking-repeat`. Targeted
+native input/movement/world/rearm tests pass. Controller checks179, repeat checks33
+(including retained actual successful-run evidence), and profile checks155 pass.
+These establish compilation and automated behavior, not a live two-session result.
+No games were launched or installations changed for this work.
+
 ## First-use admission warm-up — OFFLINE PASS, LIVE COMPARISON PENDING
 
 `Initialize-HudWalkingAimedAdmissionWarmup` now exercises the real snapshot reader,

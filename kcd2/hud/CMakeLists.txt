@@ -327,8 +327,21 @@ if(BUILD_TESTING)
     add_test(NAME hud_raw_motion_capture_policy_and_adapter COMMAND minecome_raw_motion_capture_tests)
 endif()
 
-# Pure preparation for an explicit two-generation rearm experiment. No addon
-# links this policy; existing one-shot profiles and their artifacts are unchanged.
+# Explicit two-generation profile. Other addons retain one-shot behavior.
+add_library(minecome_hud_walking_repeat_compositor SHARED hud_input_addon.cpp)
+foreach(property LINK_LIBRARIES INCLUDE_DIRECTORIES COMPILE_DEFINITIONS COMPILE_OPTIONS MSVC_RUNTIME_LIBRARY)
+    get_target_property(value minecome_hud_walking_aimed_compositor ${property})
+    if(value)
+        set_target_properties(minecome_hud_walking_repeat_compositor PROPERTIES ${property} "${value}")
+    endif()
+endforeach()
+target_compile_definitions(minecome_hud_walking_repeat_compositor PRIVATE MINECOME_HUD_REPEAT_SESSION=1)
+set_target_properties(minecome_hud_walking_repeat_compositor PROPERTIES OUTPUT_NAME "MineComeHudCompositor" PREFIX "" SUFFIX ".addon64"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/walking-repeat" ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/walking-repeat"
+    PDB_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/walking-repeat")
+add_custom_command(TARGET minecome_hud_walking_repeat_compositor POST_BUILD
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/shaders/MineComeMouseHud.fx"
+    "$<TARGET_FILE_DIR:minecome_hud_walking_repeat_compositor>/MineComeHud.fx")
 if(BUILD_TESTING)
     add_executable(minecome_hud_rearm_policy_tests rearm_policy_tests.cpp)
     target_compile_features(minecome_hud_rearm_policy_tests PRIVATE cxx_std_20)
@@ -337,4 +350,14 @@ if(BUILD_TESTING)
         target_compile_options(minecome_hud_rearm_policy_tests PRIVATE /W4 /permissive- /utf-8 /EHsc)
     endif()
     add_test(NAME hud_explicit_rearm_policy COMMAND minecome_hud_rearm_policy_tests)
+endif()
+
+if(BUILD_TESTING)
+    add_executable(minecome_hud_rearm_receipt_tests rearm_receipt_tests.cpp)
+    target_compile_features(minecome_hud_rearm_receipt_tests PRIVATE cxx_std_20)
+    if(MSVC)
+        set_target_properties(minecome_hud_rearm_receipt_tests PROPERTIES MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+        target_compile_options(minecome_hud_rearm_receipt_tests PRIVATE /W4 /permissive- /utf-8 /EHsc)
+    endif()
+    add_test(NAME hud_explicit_rearm_receipts COMMAND minecome_hud_rearm_receipt_tests)
 endif()

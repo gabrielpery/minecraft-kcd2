@@ -7,13 +7,26 @@ testing. Apply the delivery workflow in AGENTS.md. Do not start this session wit
 another first-click countdown. The warm-up below is implemented; its live validation
 can be included in the next feature acceptance session.
 
-Next deliverable: integrate repeatable sessions in the same KCD process, rather
-than stopping at the existing standalone rearm policy. Then develop longer playable
+The repeat-session implementation is now integrated, compiled and staged (below).
+Next, validate its complete two-session lifecycle once, then develop longer playable
 sessions with explicit terrain/ownership handling. Keep the verified current profile
-available. Reserve human input for the final foreground/composition check; use the
-existing actual-Minecraft fixtures and coupled-game checks for ordinary regression.
+available. Reserve human input for foreground/composition acceptance; use the existing
+actual-Minecraft fixtures and coupled-game checks for ordinary regression.
 
 ## Current result
+
+**Newest implementation: repeat sessions, offline verified; not installed/live verified.**
+Separate target `minecome_hud_walking_repeat_compositor`, profile
+`config/hud-walking-repeat-profile.json`, staged bundle `runtime/hud-compositor-walking-repeat`.
+The native policy is now wired into actual addon lifetime, render retirement and
+controller cleanup. Two explicit sessions maximum, new producer per session, same
+image size; original input/terrain/time limits remain. No GPU wait is added to rearm.
+Controller `-RepeatSession -PreviousArmReceipt <first capture/stream-arming.json>`
+validates final completion plus native retirement before archiving the first arm.
+Failed native input closures are not reusable even if scene cleanup succeeds.
+Native targeted tests, controller179, repeat33 (real retained completion replay)
+and profile155 checks pass. Installed/default frozen artifacts were not changed.
+See MOVEMENT-LAB.md's repeat-session instructions; no countdown/test is pending.
 
 **Newest implementation, not yet live verified:** startup now prewarms the real
 camera reader, foreground query and pure settled policy using disposable diagnostic
@@ -176,10 +189,10 @@ unknown. Later unchanged camera code passed. Do not mark that intermittent issue
 
 ## Next work
 
-1. Integrate explicit same-process rearm in a separate opt-in profile. A standalone
-   `rearm_policy.hpp` and dedicated CTest now pass 363 assertions; it admits at most
-   two generations only after verified, identity-bound cleanup. Nothing uses it
-   live yet. Replace one-shot session objects, retire render ownership, and avoid
+1. Complete one batched acceptance of the integrated repeat-session profile; do not
+   reimplement the policy/controller/native lifecycle. Verify two completed sessions
+   in the same KCD process and refusal of a third. The code already retires render
+   ownership and reuses same-size GPU storage. Continue to avoid
    `release()`/GPU wait on ordinary render callbacks. Keep current profile intact.
    Terrain streaming follows: current GroundPatch captures remap to local zero and
    GroundCollision.install replaces a singleton map, so longer timers alone cannot

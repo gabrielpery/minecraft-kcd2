@@ -1,5 +1,35 @@
 # Sampled-ground movement lab
 
+## Repeat sessions in one KCD process
+
+The separate repeat profile is implemented, compiled and staged; its complete
+two-session game check is pending. It permits two explicit sessions with a new
+Minecraft process each time, retaining the existing time and terrain bounds.
+It does not grant continuous movement. Failed cleanup/input faults require a restart.
+
+For development acceptance, with KCD closed and the existing walking-aimed bundle
+installed, run from the repository root:
+
+```powershell
+& .\scripts\Update-HudCompositor.ps1 -WalkingAimed -RepeatSession -PreviousBundleDirectory '.\runtime\hud-compositor-walking-aimed'
+& .\scripts\Start-Kcd2ToolsTest.ps1
+```
+
+Once the fresh world loads, run `& .\scripts\Start-HudWalkingAimed.ps1 -RepeatSession`.
+Use its normal F8 start and walking/aimed controls. A successful complete cleanup
+prints `HUD_REPEAT_RETIRED ... state=idle` and `HUD_REPEAT_NEXT_ARM_RECEIPT path=...`.
+Keep KCD open, then run the following with that exact printed receipt path:
+
+```powershell
+& .\scripts\Start-HudWalkingAimed.ps1 -RepeatSession -PreviousArmReceipt '<printed path>'
+```
+
+The second run must use a fresh Minecraft producer in the same KCD process and
+image size. Its cleanup ends with `state=exhausted`; a third run is refused.
+The next invocation verifies both controller cleanup and native renderer/input/
+capture retirement before archiving the old arm. Do not manually delete an arm
+to force reuse. Existing default/frozen profiles remain separate.
+
 This opt-in prototype tests **real Minecraft walking, jumping and landing against
 an approximate patch of sampled KCD2 ground**. The basic lab observes Minecraft;
 the separate coupled test below also moves KCD2's player and verifies camera

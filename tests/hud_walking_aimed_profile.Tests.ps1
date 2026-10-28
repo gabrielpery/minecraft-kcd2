@@ -31,6 +31,20 @@ $bundle=[pscustomobject]@{schema=1;kind='minecome_hud_compositor_bundle_v1';tool
         [pscustomobject]@{path='ReShade-LICENSE.txt';bytes=60;sha256='c'*64})}
 Assert-MineComeWalkingAimedBundle $bundle $profile
 Check $true 'Exact combined bundle accepted'
+$repeatProfile=Get-MineComeWalkingAimedProfile -RepeatSession
+Check ($repeatProfile.addon_sha256 -cne $profile.addon_sha256) 'Repeat sessions use a separately frozen addon'
+$repeatBundle=Clone $bundle
+$repeatBundle.arm_config_relative_path='minecome-hud/addons/MineComeHudWalkingRepeat.ini'
+$repeatBundle.files[1].sha256=$repeatProfile.addon_sha256
+$repeatBundle | Add-Member NoteProperty repeat_sessions 2
+Assert-MineComeWalkingAimedBundle $repeatBundle $repeatProfile
+Check $true 'Explicit repeat-session bundle accepted'
+Reject {Assert-MineComeWalkingAimedBundle $repeatBundle $profile} 'One-shot profile cannot select repeat bundle'
+Reject {Assert-MineComeWalkingAimedBundle $bundle $repeatProfile} 'Repeat profile cannot select one-shot bundle'
+foreach($marker in @($true,'2',1,3)){
+    $bad=Clone $repeatBundle;$bad.repeat_sessions=$marker
+    Reject {Assert-MineComeWalkingAimedBundle $bad $repeatProfile} 'Altered repeat-session limit refused'
+}
 foreach($field in @('tools_only','walking_aimed','physical_movement','world_clicks','selective_mouse')){
     foreach($value in @($false,0,1,'true',$null)){$bad=Clone $bundle;$bad.$field=$value;Reject {Assert-MineComeWalkingAimedBundle $bad $profile} "Malformed combined marker: $field"}
     $bad=Clone $bundle;$bad.PSObject.Properties.Remove($field);Reject {Assert-MineComeWalkingAimedBundle $bad $profile} "Missing combined marker: $field"

@@ -34,7 +34,7 @@ struct CloseSnapshot {
     bool activation_age_valid=false;
     std::uint64_t activation_age_ms=0;
 };
-// Exactly one immutable snapshot per module lifetime. The writing sentinel
+// Exactly one immutable snapshot per owner lifetime. The writing sentinel
 // prevents competing callbacks from racing plain fields. No wait/allocation.
 class FirstClose {
 public:

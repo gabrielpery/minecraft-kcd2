@@ -2,11 +2,12 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Explicit tools-only deployment. Does not start/stop games or replace existing files.
 [CmdletBinding()]
-param([string]$BundleDirectory,[switch]$PreflightOnly,[switch]$WalkingAimed)
+param([string]$BundleDirectory,[switch]$PreflightOnly,[switch]$WalkingAimed,[switch]$RepeatSession)
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
+if($RepeatSession -and -not $WalkingAimed){throw 'RepeatSession requires the WalkingAimed profile.'}
 $root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-if(-not $BundleDirectory){$BundleDirectory=Join-Path $root $(if($WalkingAimed){'runtime/hud-compositor-walking-aimed'}else{'runtime/hud-compositor'})}
+if(-not $BundleDirectory){$BundleDirectory=Join-Path $root $(if($RepeatSession){'runtime/hud-compositor-walking-repeat'}elseif($WalkingAimed){'runtime/hud-compositor-walking-aimed'}else{'runtime/hud-compositor'})}
 $BundleDirectory=(Resolve-Path -LiteralPath $BundleDirectory).Path
 $inventory=Get-Content -LiteralPath (Join-Path $root 'runtime/environment.json') -Raw|ConvertFrom-Json
 $tools=@($inventory.steam.relevant_apps|Where-Object {$_.role -eq 'official_tools' -and $_.installed -and $_.app_id -eq '2429020' -and $_.distribution -eq 'Steam'})
@@ -31,7 +32,7 @@ $manifest=Get-Content -LiteralPath $manifestPath -Raw|ConvertFrom-Json
 $expectedRuntime='0cee63f9c9f13f3ac909c5b4903f4dbb4b719a7ab3b4f13b0deaf83c814b94f7'
 if($WalkingAimed){
     . (Join-Path $PSScriptRoot 'HudWalkingAimedProfile.ps1')
-    $profile=Get-MineComeWalkingAimedProfile;Assert-MineComeWalkingAimedBundle $manifest $profile
+    $profile=Get-MineComeWalkingAimedProfile -RepeatSession:$RepeatSession;Assert-MineComeWalkingAimedBundle $manifest $profile
     $expectedRuntime=$profile.runtime_sha256
 }
 $expected=@('dxgi.dll','ReShade.ini','MineComeHudPreset.ini','ReShade-LICENSE.txt','minecome-hud/addons/MineComeHudCompositor.addon64','minecome-hud/shaders/MineComeHud.fx')
