@@ -41,6 +41,13 @@ public final class HudPhysicalMovementTests {
         check(HudMovementSession.selected(mode())==HudMovementSession.SHORT,"Physical default retains short session");
         var extended=mode();extended.setProperty("minecome.hudPhysicalMovementExtended","true");
         check(HudPhysicalMovementMode.require(extended) && HudMovementSession.selected(extended)==HudMovementSession.EXTENDED,"Complete live mode permits explicitly extended policy");
+        var wide=new Properties();wide.putAll(extended);wide.setProperty("minecome.hudWideWalking","true");
+        check(HudPhysicalMovementMode.require(wide)&&HudPhysicalMovementMode.wide(wide),"Explicit wide live walking retains physical mode");
+        var wideOrphan=new Properties();wideOrphan.setProperty("minecome.hudWideWalking","true");
+        reject(()->HudPhysicalMovementMode.require(wideOrphan),"wide area cannot enable unrelated modes");
+        for(String invalid:List.of("TRUE","9","1","")){
+            var p=mode();p.setProperty("minecome.hudWideWalking",invalid);reject(()->HudPhysicalMovementMode.require(p),"malformed wide option");
+        }
         var orphan=new Properties();orphan.setProperty("minecome.hudPhysicalMovementExtended","true");
         reject(()->HudPhysicalMovementMode.require(orphan),"extended option cannot enable another mode implicitly");
         for(String invalid:List.of("TRUE","15","1","","extended")){
@@ -61,6 +68,12 @@ public final class HudPhysicalMovementTests {
         check(HudPhysicalMovementMode.require(fixture) && HudPhysicalMovementMode.fixture(fixture),"Separate labelled scripted physical controller mode");
         var extendedFixture=new Properties();extendedFixture.putAll(fixture);extendedFixture.setProperty("minecome.hudPhysicalMovementExtended","true");
         check(HudPhysicalMovementMode.require(extendedFixture) && HudMovementSession.selected(extendedFixture)==HudMovementSession.EXTENDED,"Fixture opts into the same extended controller policy explicitly");
+        var wideFixture=new Properties();wideFixture.putAll(extendedFixture);wideFixture.setProperty("minecome.hudWideWalking","true");
+        check(HudPhysicalMovementMode.require(wideFixture),"Wide crossing fixture retains extended movement");
+        wideFixture.setProperty("minecome.hudWalkingAimedFixture","true");
+        reject(()->HudPhysicalMovementMode.require(wideFixture),"wide crossing proof cannot silently use aimed fixture path");
+        wideFixture.remove("minecome.hudWalkingAimedFixture");wideFixture.remove("minecome.hudPhysicalMovementExtended");
+        reject(()->HudPhysicalMovementMode.require(wideFixture),"short fixture cannot claim wide crossing scenario");
         var combined=new Properties();combined.putAll(extendedFixture);combined.setProperty("minecome.hudWalkingAimedFixture","true");
         check(HudPhysicalMovementMode.require(combined),"Combined aimed walking requires explicit standalone extended fixture");
         for(Properties source:List.of(new Properties(),mode(),extended,fixture)){

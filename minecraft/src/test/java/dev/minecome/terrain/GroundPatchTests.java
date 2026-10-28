@@ -66,6 +66,7 @@ public final class GroundPatchTests {
         reject(new byte[]{(byte)0xc3,(byte)0x28},"malformed UTF8");reject(new byte[GroundPatch.MAX_BYTES+1],"oversize file");
         sequence(patch);
         checks+=MovementTraceSinkTests.run();
+        checks+=WideWalkingTests.run();
         System.out.println("GroundPatchTests: "+checks+" checks passed (no Minecraft/game bootstrap)");
     }
     private static GroundMovementSequence.Motion ground(double x){return new GroundMovementSequence.Motion(x,64,0.5,0,0,0,true,true);}

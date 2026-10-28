@@ -3,7 +3,7 @@
 [CmdletBinding()]
 param([switch]$PreflightOnly,[string]$JavaHome,[string]$BundleDirectory,
     [ValidateSet('WalkingBreak','TopFaceInventory','SideFaceInventory')][string]$Scenario='WalkingBreak',
-    [switch]$RepeatSession,[string]$PreviousArmReceipt)
+    [switch]$RepeatSession,[string]$PreviousArmReceipt,[switch]$WideWalking)
 $ErrorActionPreference='Stop'
 if($PSVersionTable.PSVersion.Major -lt 7){
     . (Join-Path $PSScriptRoot 'powershell7.ps1')
@@ -13,6 +13,7 @@ if($PSVersionTable.PSVersion.Major -lt 7){
     if($JavaHome){$arguments+=@('-JavaHome',$JavaHome)}
     if($BundleDirectory){$arguments+=@('-BundleDirectory',$BundleDirectory)}
     if($RepeatSession){$arguments+='-RepeatSession'}
+    if($WideWalking){$arguments+='-WideWalking'}
     if($PreviousArmReceipt){$arguments+=@('-PreviousArmReceipt',$PreviousArmReceipt)}
     $arguments+=@('-Scenario',$Scenario)
     & $pwsh @arguments

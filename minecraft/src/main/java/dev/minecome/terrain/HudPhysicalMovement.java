@@ -61,7 +61,7 @@ public final class HudPhysicalMovement {
         this(patchFile,traceFile,viewFile,save,identity,fixture,HudMovementSession.SHORT);
     }
     public HudPhysicalMovement(Path patchFile,Path traceFile,Path viewFile,String save,HudInputProtocol.Identity identity,boolean fixture,HudMovementSession session)throws IOException{
-        patch=GroundPatch.read(patchFile);this.traceFile=traceFile;this.viewFile=viewFile;this.save=save;this.identity=identity;this.fixture=fixture;
+        patch=GroundPatch.read(patchFile,HudPhysicalMovementMode.wide(System.getProperties()));this.traceFile=traceFile;this.viewFile=viewFile;this.save=save;this.identity=identity;this.fixture=fixture;
         this.session=java.util.Objects.requireNonNull(session);keys=new HudMovementKeys(session);
         inventoryEvidence=HudPhysicalMovementMode.walkingAimed(System.getProperties())||Boolean.getBoolean("minecome.hudWalkingAimedFixture")
                 ?new HudMovementInventoryEvidence():null;
@@ -105,6 +105,7 @@ public final class HudPhysicalMovement {
         if(!parent.startsWith(evidenceRoot.toRealPath()))throw new IOException("Physical readiness outside evidence");
         var e=new JsonObject();e.addProperty("schema",1);e.addProperty("kind",fixture?"minecome_hud_physical_fixture_ready_v1":"minecome_hud_physical_ready_v1");e.addProperty("ready",true);
         e.addProperty("scripted_input",fixture);
+        if(patch.wide())e.addProperty("walking_area","wide");
         if(HudPhysicalMovementMode.walkingAimed(System.getProperties()))e.addProperty("ui_input_walking_aimed",true);
         if(session.extended())e.addProperty("movement_session",session.id());
         e.addProperty("run",identity.run());e.addProperty("save",save);e.addProperty("patch_run",patch.run());e.addProperty("patch_sha256",patch.sha256());
@@ -247,7 +248,7 @@ public final class HudPhysicalMovement {
         }
         var sm=sample.motion();
         if(!patch.containsFeet(clientMotion.x(),clientMotion.z(),.31) || !patch.containsFeet(sm.x(),sm.z(),.31) ||
-                distance(clientMotion,anchor)>1.8 || distance(sm,anchor)>1.8 ||
+                distance(clientMotion,anchor)>(patch.wide()?3.8:1.8) || distance(sm,anchor)>(patch.wide()?3.8:1.8) ||
                 clientMotion.y()-anchor.y()< -1.5 || sm.y()-anchor.y()< -1.5 ||
                 clientMotion.y()-anchor.y()>1.5 || sm.y()-anchor.y()>1.5)
             throw new IllegalStateException("Physical HUD displacement/coverage bound");
@@ -284,7 +285,7 @@ public final class HudPhysicalMovement {
         boundary=new HudMovementBoundary(patch,anchor);
         String world=save.substring("MineCome-HudStream-".length());
         var context=new MovementTraceSink.Context(patch.run(),patch.sha256(),patch.sourceKind(),save,world,
-                patch.centerX(),patch.centerY(),patch.centerZ(),MovementTraceSink.Profile.physical(fixture,session),anchor.x(),anchor.y(),anchor.z());
+                patch.centerX(),patch.centerY(),patch.centerZ(),MovementTraceSink.Profile.physical(fixture,session),anchor.x(),anchor.y(),anchor.z(),patch.wide());
         trace=MovementTraceSink.open(traceFile,evidenceRoot,context,now,System.currentTimeMillis());traceResult="pending";
         if(!writeTrace(sample,"SETTLING",true))throw new IllegalStateException("Physical HUD initial trace sample rejected");
     }
@@ -353,6 +354,7 @@ public final class HudPhysicalMovement {
     }
     public JsonObject evidence(MinecraftClient client){
         var e=new JsonObject();e.addProperty("schema",1);e.addProperty("kind","minecome_hud_physical_movement_v1");
+        if(patch.wide())e.addProperty("walking_area","wide");
         if(session.extended()){
             e.addProperty("movement_session",session.id());e.addProperty("active_limit_ms",session.activeNs()/1_000_000);
             e.addProperty("settle_limit_ms",HudMovementSession.SETTLE_NS/1_000_000);e.addProperty("start_window_ms",HudMovementSession.START_WINDOW_NS/1_000_000);
@@ -418,8 +420,8 @@ public final class HudPhysicalMovement {
         var b=player.getBoundingBox();var below=new Box(b.minX+.001,b.minY-.06,b.minZ+.001,b.maxX-.001,b.minY+.001,b.maxZ-.001);
         for(var shape:world.getBlockCollisions(player,below))if(!shape.isEmpty())return true;return false;
     }
-    private static MovementTraceSink.Motion motion(Entity entity,boolean support){
-        var p=entity.getPos();var v=entity.getVelocity();return new MovementTraceSink.Motion(p.x,p.y,p.z,v.x,v.y,v.z,entity.isOnGround(),support);
+    private MovementTraceSink.Motion motion(Entity entity,boolean support){
+        var p=entity.getPos();var v=entity.getVelocity();return new MovementTraceSink.Motion(p.x,p.y,p.z,v.x,v.y,v.z,entity.isOnGround(),support,patch.wide());
     }
     private static double distance(MovementTraceSink.Motion a,MovementTraceSink.Motion b){return Math.sqrt(Math.pow(a.x()-b.x(),2)+Math.pow(a.y()-b.y(),2)+Math.pow(a.z()-b.z(),2));}
     private static double accelerationBound(MinecraftClient client){

@@ -2,8 +2,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # One read-only terrain diagnostic against an already-running, pinned tools build.
 [CmdletBinding()]
-param([switch]$PreflightOnly,[switch]$Patch)
+param([switch]$PreflightOnly,[switch]$Patch,[switch]$WideWalking)
 $ErrorActionPreference='Stop'
+if($WideWalking -and -not $Patch){throw 'WideWalking requires an explicit terrain Patch capture.'}
+$gridSize=if($WideWalking){9}else{5};$pointCount=$gridSize*$gridSize
 $projectRoot=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $inventory=Get-Content -LiteralPath (Join-Path $projectRoot 'runtime/environment.json') -Raw | ConvertFrom-Json
 $tools=@($inventory.steam.relevant_apps | Where-Object { $_.role -eq 'official_tools' -and $_.installed })
@@ -75,7 +77,8 @@ function Send-Console([string]$Command) {
 try {
     # Unique immutable path avoids this build's cached LoadScript result. Only
     # our new diagnostic function changes; the live stone sink stays loaded.
-    Send-Console ("#local old=MineCome and MineCome.$functionName; Script.LoadScript('$luaPath'); local ok=MineCome and type(MineCome.$functionName)=='function' and MineCome.$functionName~=old; System.LogAlways('[MineComeGroundContract] $runToken '..tostring(not not ok)); if ok then MineCome.$functionName('$runToken') end")
+    $areaArgument=if($WideWalking){",'wide'"}else{''}
+    Send-Console ("#local old=MineCome and MineCome.$functionName; Script.LoadScript('$luaPath'); local ok=MineCome and type(MineCome.$functionName)=='function' and MineCome.$functionName~=old; System.LogAlways('[MineComeGroundContract] $runToken '..tostring(not not ok)); if ok then MineCome.$functionName('$runToken'$areaArgument) end")
     # The engine can leave its newest log record unterminated. A read-only pose
     # log marker produces the next separator; HTTP200 alone is not a probe result.
     Send-Console ("#System.LogAlways('[MineComeGroundFlush] $runToken')")
@@ -97,9 +100,11 @@ try {
     if($Patch) {
         $points=@([regex]::Matches($fresh,'\[MineComeGroundPatchPoint\] (\{[^\r\n]*\})\r?\n') | ForEach-Object { $_.Groups[1].Value | ConvertFrom-Json } | Where-Object { $_.schema -eq 1 -and $_.run -eq $runToken })
         $points | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $runDirectory 'points.json')
-        if($receipt.stable_player -ne $true -or $receipt.grid_size -ne 5 -or $receipt.spacing -ne 1 -or $receipt.point_count -ne 25 -or $receipt.valid_count -ne 25 -or $points.Count -ne 25 -or
+        $area=$receipt.PSObject.Properties['walking_area']
+        if(($WideWalking -and ($null -eq $area -or $area.Value -cne 'wide')) -or (-not $WideWalking -and $null -ne $area)){throw 'Terrain capture walking-area marker differs from the explicit request.'}
+        if($receipt.stable_player -ne $true -or $receipt.grid_size -ne $gridSize -or $receipt.spacing -ne 1 -or $receipt.point_count -ne $pointCount -or $receipt.valid_count -ne $pointCount -or $points.Count -ne $pointCount -or
             @($points | Where-Object { $_.valid -ne $true -or $_.approximate_heightfield -ne $true -or $_.full_collision_export_verified -ne $false }).Count -ne 0 -or
-            @($points.index | Sort-Object -Unique).Count -ne 25 -or @($points | Where-Object { $_.index -lt 1 -or $_.index -gt 25 }).Count -ne 0) { throw 'The terrain patch was incomplete or the player changed; no movement input file published. See diagnostic receipts.' }
+            @($points.index | Sort-Object -Unique).Count -ne $pointCount -or @($points | Where-Object { $_.index -lt 1 -or $_.index -gt $pointCount }).Count -ne 0) { throw 'The terrain patch was incomplete or the player changed; no movement input file published. See diagnostic receipts.' }
         $patchFile=Join-Path $runDirectory 'ground-patch.json'
         $receipt | Add-Member -NotePropertyName points -NotePropertyValue @($points | Sort-Object index)
         $receipt | Add-Member -NotePropertyName provenance -NotePropertyValue ([pscustomobject]@{kind='live_kcd_ground_patch';game_exe_hash=$gameHash;source_sha256=$snapshotHash;game_pid=$game.Id;game_started_utc=$gameStarted;captured_utc=[DateTime]::UtcNow.ToString('o')})
@@ -114,6 +119,8 @@ try {
 finally {
     try { Read-FreshLog | Set-Content -LiteralPath (Join-Path $runDirectory 'fresh-kcd.log') }
     catch { $_.Exception.Message | Set-Content -LiteralPath (Join-Path $runDirectory 'capture-error.txt') }
-    [pscustomobject]@{Kind='Read-only KCD2 ground-interface diagnostic';Patch=[bool]$Patch;GroundPatchFile=$patchFile;GroundPatchHash=$patchHash;Run=$runToken;GamePid=$game.Id;GameStartedUtc=$gameStarted;GamePath=$gameExe;GameHash=$gameHash;SourceHash=$sourceHash;SnapshotHash=$snapshotHash;FreshLogOffset=$offset;FunctionReloadVerified=$contract;EngineReceiptVerified=($null -ne $receipt);GeometryExportVerified=$false;PlayerMovementApplied=$false;Failure=$failure} |
+    $verification=[ordered]@{Kind='Read-only KCD2 ground-interface diagnostic';Patch=[bool]$Patch;GroundPatchFile=$patchFile;GroundPatchHash=$patchHash;Run=$runToken;GamePid=$game.Id;GameStartedUtc=$gameStarted;GamePath=$gameExe;GameHash=$gameHash;SourceHash=$sourceHash;SnapshotHash=$snapshotHash;FreshLogOffset=$offset;FunctionReloadVerified=$contract;EngineReceiptVerified=($null -ne $receipt);GeometryExportVerified=$false;PlayerMovementApplied=$false;Failure=$failure}
+    if($WideWalking){$verification.walking_area='wide'}
+    [pscustomobject]$verification |
         ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $runDirectory 'verification.json')
 }

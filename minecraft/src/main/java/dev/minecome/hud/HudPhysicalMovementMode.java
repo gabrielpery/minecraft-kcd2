@@ -7,6 +7,11 @@ import java.util.Properties;
 public final class HudPhysicalMovementMode {
     private HudPhysicalMovementMode(){}
     public static boolean fixture(Properties p){return Boolean.parseBoolean(p.getProperty("minecome.hudPhysicalMovementFixture"));}
+    public static boolean wide(Properties p){
+        String value=p.getProperty("minecome.hudWideWalking","false");
+        if(!value.equals("true")&&!value.equals("false"))throw new IllegalArgumentException("Wide walking option must be true or false");
+        return value.equals("true");
+    }
     public static boolean walkingAimed(Properties p){
         String value=p.getProperty("minecome.hudWalkingAimed","false");
         if(!value.equals("true") && !value.equals("false"))throw new IllegalArgumentException("Walking aimed option must be true or false");
@@ -14,6 +19,7 @@ public final class HudPhysicalMovementMode {
     }
     public static boolean require(Properties p){
         boolean live=Boolean.parseBoolean(p.getProperty("minecome.hudPhysicalMovement")),fixture=fixture(p);
+        if(wide(p)&&!live&&!fixture)throw new IllegalArgumentException("Wide walking requires explicit physical live or fixture mode");
         boolean combined=walkingAimed(p);
         if(combined){
             if(!live || fixture || !HudMovementSession.selected(p).extended() || Boolean.parseBoolean(p.getProperty("minecome.hudWalkingAimedFixture")))
@@ -26,6 +32,8 @@ public final class HudPhysicalMovementMode {
         if(!aimed.equals("true") && !aimed.equals("false"))throw new IllegalArgumentException("Walking aimed fixture option must be true or false");
         if(aimed.equals("true") && (!fixture || live || !HudMovementSession.selected(p).extended()))
             throw new IllegalArgumentException("Walking aimed blocks require the standalone extended physical fixture");
+        if(wide(p)&&fixture&&(!HudMovementSession.selected(p).extended()||aimed.equals("true")))
+            throw new IllegalArgumentException("Wide crossing fixture requires extended walking without aimed blocks");
         if(HudMovementSession.selected(p).extended() && !live && !fixture)
             throw new IllegalArgumentException("Extended movement requires its physical live or fixture profile");
         if(!live && !fixture)return false;

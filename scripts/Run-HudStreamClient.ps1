@@ -32,6 +32,7 @@ param(
     [switch]$PhysicalMovement,
     [switch]$PhysicalMovementFixture,
     [switch]$ExtendedWalking,
+    [switch]$WideWalking,
     [switch]$AimedBlocks,
     [switch]$WalkingAimed,
     [ValidateRange(-180,180)][double]$PhysicalFixtureYaw=0,
@@ -65,6 +66,8 @@ try {
     Assert-HudWalkingAimedLiveChildMode ([bool]$WalkingAimed) ([bool]$ExtendedWalking) ([bool]$InputMode) ([bool]$LiveMouse) ([bool]$OffscreenPresentation) ([bool]($Standalone -or $PhysicalMovement -or $PhysicalMovementFixture -or $AimedBlocks -or $StoneFixture -or $StoneLive -or $AimedStone -or $GroundMovementFixture -or $GroundMovementCoupled -or $InputFixture -or $InputPointerFixture -or $InputDelayFixture -or $InputBackgroundTrial -or $InputOffscreenTrial)) $GroundPatchFile $MovementTraceFile $HostViewFile $StoneTokenFile
     Assert-HudWalkingAimedChildMode ([bool]$AimedBlocks) ([bool]$Standalone) ([bool]$PhysicalMovementFixture) ([bool]$ExtendedWalking) ([bool]($PhysicalMovement -or $InputMode -or $LiveMouse -or $OffscreenPresentation -or $GroundMovementFixture -or $GroundMovementCoupled -or $InputFixture -or $InputPointerFixture -or $StoneFixture -or $StoneLive -or $AimedStone -or $InputDelayFixture -or $InputBackgroundTrial -or $InputOffscreenTrial)) $PhysicalFixtureYaw
     if($ExtendedWalking -and -not ($PhysicalMovement -or $PhysicalMovementFixture -or $WalkingAimed)){throw 'Extended walking requires an explicit physical movement profile.'}
+    if($WideWalking -and -not ($PhysicalMovement -or $PhysicalMovementFixture -or $WalkingAimed)){throw 'Wide walking requires an explicit physical movement profile.'}
+    if($WideWalking -and $PhysicalMovementFixture -and (-not $ExtendedWalking -or $AimedBlocks)){throw 'Wide walking fixture requires ExtendedWalking without AimedBlocks.'}
     if($AimedStone -and (-not $StoneLive -or $StoneFixture)){throw 'Aimed stone requires the explicit live stone profile.'}
     if($StoneFixture -and ($StoneLive -or -not $InputFixture -or -not $InputOffscreenTrial -or $LiveMouse -or $InputPointerFixture -or $InputDelayFixture -or $InputBackgroundTrial -or -not $StoneTokenFile)){throw 'Stone fixture requires separate offscreen input fixture and explicit token.'}
     if($StoneLive -and ($StoneFixture -or -not $InputMode -or -not $LiveMouse -or -not $OffscreenPresentation -or $InputFixture -or $InputOffscreenTrial -or $InputPointerFixture -or $InputDelayFixture -or $InputBackgroundTrial -or -not $StoneTokenFile)){throw 'Live stone bridge requires the explicit live mouse profile and its owned relay token.'}
@@ -97,6 +100,7 @@ try {
     if($PhysicalMovement){$arguments+=@('-PminecomeHudPhysicalMovement',"-PminecomeGroundPatchFile=$GroundPatchFile","-PminecomeMovementTraceFile=$MovementTraceFile","-PminecomeHudHostViewFile=$HostViewFile")}
     if($WalkingAimed){$arguments+=@('-PminecomeHudWalkingAimed','-PminecomeHudPhysicalMovement','-PminecomeHudStoneBridge','-PminecomeHudStoneLive','-PminecomeHudAimedStoneBridge',"-PminecomeGroundPatchFile=$GroundPatchFile","-PminecomeMovementTraceFile=$MovementTraceFile","-PminecomeHudHostViewFile=$HostViewFile","-PminecomeTokenFile=$StoneTokenFile","-PminecomePort=$StonePort")}
     if($ExtendedWalking){$arguments+='-PminecomeHudPhysicalMovementExtended'}
+    if($WideWalking){$arguments+='-PminecomeHudWideWalking'}
     if($AimedBlocks){$arguments+='-PminecomeHudWalkingAimedFixture'}
     if($PhysicalMovementFixture){$arguments+=@('-PminecomeHudPhysicalMovementFixture',"-PminecomeGroundPatchFile=$GroundPatchFile","-PminecomeMovementTraceFile=$MovementTraceFile","-PminecomeHudHostViewFile=$HostViewFile",('-PminecomeHudPhysicalFixtureYaw='+$PhysicalFixtureYaw.ToString([Globalization.CultureInfo]::InvariantCulture)))}
     if($InputMode){$arguments+='-PminecomeHudStreamInput'}

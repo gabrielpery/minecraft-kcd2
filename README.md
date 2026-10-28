@@ -23,6 +23,11 @@ is implemented, compiled and staged, with automated cleanup/rearm checks passing
 It is intended to run two bounded sessions without relaunching KCD2. The full
 two-session game check is pending; this does not yet provide continuous free roaming.
 
+An optional [larger walking area](kcd2/MOVEMENT-LAB.md#larger-fixed-walking-area)
+now captures 8×8 metres of terrain instead of 4×4. An automatic Minecraft run
+walked 3.23 metres from its start with the HUD active, verified inventory movement
+suppression, and cleaned up. Live KCD2 validation of this larger area is pending.
+
 ## What works today
 
 | Capability | Verified scope |

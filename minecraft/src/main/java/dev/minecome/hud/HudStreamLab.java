@@ -355,7 +355,7 @@ public final class HudStreamLab {
                 }
                 physicalMovement.afterTick(client,System.nanoTime());
                 if(walkingAimedMode && physicalMovement.inputReady(System.nanoTime()) && stoneBridge==null){
-                    if(walkingSupport==null)walkingSupport=new HudWalkingBuildSupport(client,GroundPatch.read(Path.of(required("minecome.groundPatchFile"))),save);
+                    if(walkingSupport==null)walkingSupport=new HudWalkingBuildSupport(client,GroundPatch.read(Path.of(required("minecome.groundPatchFile")),HudPhysicalMovementMode.wide(System.getProperties())),save);
                     if(walkingSupport.prepare(client))stoneBridge=new HudAimedStoneBridge(Path.of(required("minecome.tokenFile")),save,walkingSupport,physicalMovement,output);
                 }
             }catch(Exception e){fail(client,"HUD physical movement: "+e.getMessage());return;}

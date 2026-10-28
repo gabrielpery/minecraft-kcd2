@@ -16,7 +16,7 @@
 -- shared hit table. It cannot describe walls, ceilings, bridges or full meshes.
 
 MineCome = MineCome or {}
-local RANGE, GRID_SIZE, MAX_POSITION = 8, 5, 10000000
+local RANGE, MAX_POSITION = 8, 10000000
 local SEGMENT_TOLERANCE, READBACK_LIMIT = 0.05, 0.1
 
 local function finite(value)
@@ -61,9 +61,12 @@ local function unchanged(expected_player, expected_id, center)
     return dx * dx + dy * dy + dz * dz <= READBACK_LIMIT * READBACK_LIMIT
 end
 
-function MineCome.SampleGroundPatch(runToken)
+function MineCome.SampleGroundPatch(runToken, walking_area)
     if type(runToken) ~= "string" or #runToken < 1 or #runToken > 64
         or not string.match(runToken, "^[0-9a-fA-F]+$") then return false, "invalid_run" end
+    if walking_area ~= nil and walking_area ~= "wide" then return false, "invalid_walking_area" end
+    local grid_size = walking_area == "wide" and 9 or 5
+    local radius = (grid_size - 1) / 2
     if not System or type(System.LogAlways) ~= "function" then return false, "log_unavailable" end
 
     local center, mask, expected_player, expected_id
@@ -81,14 +84,14 @@ function MineCome.SampleGroundPatch(runToken)
             elseif not Physics or type(Physics.RayWorldIntersection) ~= "function" then result = "ray_unavailable"
             elseif not finite(ent_terrain) or ent_terrain <= 0 or ent_terrain > 2147483647
                 or ent_terrain ~= math.floor(ent_terrain) then result = "terrain_mask_unavailable"
-            elseif math.abs(center.x) + 2 > MAX_POSITION or math.abs(center.y) + 2 > MAX_POSITION
+            elseif math.abs(center.x) + radius > MAX_POSITION or math.abs(center.y) + radius > MAX_POSITION
                 or center.z + 2 > MAX_POSITION or center.z - 6 < -MAX_POSITION then result = "patch_out_of_bounds"
             else
                 mask = ent_terrain
-                -- Row-major KCD XY offsets: Y=-2..2 outside, X=-2..2 inside.
+                -- Row-major KCD XY offsets; one immutable center for all rays.
                 -- Results remain private until identity/position readback succeeds.
-                for offset_y = -2, 2 do
-                    for offset_x = -2, 2 do
+                for offset_y = -radius, radius do
+                    for offset_x = -radius, radius do
                         local point = { x = center.x + offset_x, y = center.y + offset_y,
                             valid = false, result = "ray_error" }
                         local origin_z, hits = center.z + 2, {}
@@ -127,7 +130,7 @@ function MineCome.SampleGroundPatch(runToken)
                         point.valid, point.result = false, "player_changed"
                         point.z, point.nx, point.ny, point.nz = nil, nil, nil, nil
                     end
-                elseif valid_count == GRID_SIZE * GRID_SIZE then result = "sampled"
+                elseif valid_count == grid_size * grid_size then result = "sampled"
                 elseif valid_count > 0 then result = "partial"
                 else
                     result = "no_hits"
@@ -148,8 +151,9 @@ function MineCome.SampleGroundPatch(runToken)
         if not emit(line) then return false, "log_failed" end
     end
     local line = string.format(
-        '[MineComeGroundPatch] {"schema":1,"run":"%s","result":"%s","center":%s,"grid_size":5,"spacing":1,"point_count":%d,"valid_count":%d,"ray_count":%d,"mask_name":"ent_terrain","mask":%s,"stable_player":%s,"approximate_heightfield":true,"full_collision_export_verified":false}',
-        runToken, result, vector_json(center), #points, valid_count, rays, number_json(mask), tostring(stable))
+        '[MineComeGroundPatch] {"schema":1,"run":"%s","result":"%s","center":%s,"grid_size":%d,"spacing":1,"point_count":%d,"valid_count":%d,"ray_count":%d,"mask_name":"ent_terrain","mask":%s,"stable_player":%s,"approximate_heightfield":true,"full_collision_export_verified":false%s}',
+        runToken, result, vector_json(center), grid_size, #points, valid_count, rays, number_json(mask), tostring(stable),
+        walking_area == "wide" and ',"walking_area":"wide"' or "")
     if not emit(line) then return false, "log_failed" end
     return true, result
 end

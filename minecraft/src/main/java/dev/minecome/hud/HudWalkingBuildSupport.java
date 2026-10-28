@@ -33,7 +33,7 @@ final class HudWalkingBuildSupport {
         require(patch.sourceKind().equals("live_kcd_ground_patch") && GroundCollision.matches(client.world,patch,false),"Exact live imported ground required");
         this.patch=patch;this.save=save;server=client.getServer();clientWorld=client.world;clientPlayer=client.player;playerId=client.player.getUuid();
         require(Math.abs(client.player.getX())<.001 && Math.abs(client.player.getZ())<.001,"Build support must precede walking");
-        region=new HudBuildRegion(patch,new AimGeometry.Cell(2,(int)Math.floor(client.player.getY())-1,0));support=pos(region.support());
+        region=new HudBuildRegion(patch,new AimGeometry.Cell((int)patch.halfExtent(),(int)Math.floor(client.player.getY())-1,0));support=pos(region.support());
     }
     HudBuildRegion region(){return region;}
     GroundPatch patch(){return patch;}

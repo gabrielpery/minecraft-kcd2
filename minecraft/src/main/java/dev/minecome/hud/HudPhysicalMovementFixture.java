@@ -23,6 +23,7 @@ final class HudPhysicalMovementFixture implements AutoCloseable {
     private final JsonArray pulses=new JsonArray();
     private final int[] codes;
     private final boolean extended;
+    private final boolean wide=HudPhysicalMovementMode.wide(System.getProperties());
     private final boolean aimedMode=Boolean.getBoolean("minecome.hudWalkingAimedFixture");
     private final GroundPatch patch;
     private volatile HudWalkingAimedFixture aimed;
@@ -32,15 +33,18 @@ final class HudPhysicalMovementFixture implements AutoCloseable {
     private int stage,pulse;
     private Vec3d origin,serverOrigin,previous,serverPrevious,postWalkOrigin,postWalkServerOrigin;
     private double inventoryClientMax,inventoryServerMax,postWalkInventoryClientMax,postWalkInventoryServerMax;
+    private double clientMaxExcursion,serverMaxExcursion;
     private boolean finished,postWalkInventoryOpened,postWalkInventoryClosed;
 
     HudPhysicalMovementFixture(MinecraftClient client,HudPhysicalMovement movement,Path patchFile,
                                Path viewFile,HudInputProtocol.Identity identity)throws IOException{
         if(!HudPhysicalMovementMode.fixture(System.getProperties()) || Boolean.getBoolean("minecome.hudStreamInput"))
             throw new IllegalArgumentException("Scripted physical controller fixture requires its separate standalone mode");
-        this.movement=movement;extended=movement.session().extended();codes=extended?new int[]{0x57,0x57,0x53,0x57,0x53}:new int[]{0x57,0x57,0x53};
+        this.movement=movement;extended=movement.session().extended();
+        if(wide&&(!extended||aimedMode))throw new IllegalArgumentException("Wide crossing fixture requires extended walking without aimed blocks");
+        codes=wide?new int[]{0x57,0x53,0x57,0x57,0x53}:extended?new int[]{0x57,0x57,0x53,0x57,0x53}:new int[]{0x57,0x57,0x53};
         ui=new HudVanillaUiAdapter(client,false);server=client.getServer();player=client.player.getUuid();
-        patch=GroundPatch.read(patchFile);
+        patch=GroundPatch.read(patchFile,wide);
         if(!patch.sourceKind().equals("standalone_ground_fixture"))throw new IOException("Fixture patch provenance differs");
         double yaw=Double.parseDouble(System.getProperty("minecome.hudPhysicalFixtureYaw","0"));
         if(!Double.isFinite(yaw) || yaw < -180 || yaw > 180)throw new IllegalArgumentException("Fixture yaw outside finite180 degrees");
@@ -71,6 +75,11 @@ final class HudPhysicalMovementFixture implements AutoCloseable {
         if(failure.get()!=null)throw new IOException(failure.get());
         if(!client.isOnThread() || client.getServer()!=server || client.player==null || !client.player.getUuid().equals(player))
             throw new IllegalStateException("Fixture game-thread/world identity changed");
+        if(origin!=null&&stage<6){
+            var actual=client.player.getPos();var remote=observation(now).position();
+            clientMaxExcursion=Math.max(clientMaxExcursion,Math.hypot(actual.x-origin.x,actual.z-origin.z));
+            serverMaxExcursion=Math.max(serverMaxExcursion,Math.hypot(remote.x-serverOrigin.x,remote.z-serverOrigin.z));
+        }
         if(stage==0){
             if(!movement.inputReady(now))return;
             if(aimedMode){
@@ -104,7 +113,7 @@ final class HudPhysicalMovementFixture implements AutoCloseable {
         }
         if(stage==3){
             movement.authority(client,now,true);
-            if(now-at<150_000_000L)return;
+            if(now-at<(wide&&pulse<2?800_000_000L:150_000_000L))return;
             key(client,codes[pulse],false,now);stage=4;at=now;return;
         }
         if(stage==4){
@@ -149,6 +158,7 @@ final class HudPhysicalMovementFixture implements AutoCloseable {
             movement.authority(client,now,true);
             if(!movement.completed())return;
             if(inventoryFrames<2 || walkingFrames<2)throw new IllegalStateException("Fixture lacks captured inventory/walking HUD frames");
+            if(wide&&(clientMaxExcursion<=2||serverMaxExcursion<=2))throw new IllegalStateException("Wide fixture did not cross the previous two-metre boundary on client and server");
             if(extended && (!postWalkInventoryOpened || !postWalkInventoryClosed || postWalkInventoryFrames<2))
                 throw new IllegalStateException("Extended fixture lacks post-walk inventory capture proof");
             if(aimed!=null){
@@ -170,6 +180,10 @@ final class HudPhysicalMovementFixture implements AutoCloseable {
     }
     JsonObject evidence(MinecraftClient client){
         var e=new JsonObject();e.addProperty("kind","standalone_hud_physical_controller_fixture_v1");e.addProperty("scripted_input",true);
+        if(wide){
+            e.addProperty("walking_area","wide");e.addProperty("wide_boundary_crossed",clientMaxExcursion>2&&serverMaxExcursion>2);
+            e.addProperty("client_max_horizontal_excursion",clientMaxExcursion);e.addProperty("server_max_horizontal_excursion",serverMaxExcursion);
+        }
         if(aimedMode){e.addProperty("ui_walking_aimed_fixture",true);e.addProperty("aimed_hud_frames",aimedFrames);e.add("aimed_blocks",aimed==null?JsonNull.INSTANCE:aimed.evidence());}
         if(extended){
             e.addProperty("movement_session","extended");e.addProperty("post_walk_inventory_opened",postWalkInventoryOpened);e.addProperty("post_walk_inventory_closed",postWalkInventoryClosed);

@@ -3,6 +3,7 @@
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 $root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'));$script:checks=0
+. (Join-Path $root 'scripts/HudWalkingArea.ps1')
 function Check([bool]$value,[string]$why){$script:checks++;if(-not $value){throw $why}}
 function Reject([scriptblock]$work,[string]$why){$failed=$false;try{& $work | Out-Null}catch{$failed=$true};Check $failed $why}
 function Clone($value){ConvertFrom-Json -InputObject (ConvertTo-Json -InputObject $value -Depth 16)}
@@ -126,6 +127,36 @@ $bad=Clone $extended;$bad.lab_evidence.physical_controller_fixture.pulses[3].ser
 $bad=Clone $extended;$bad.lab_evidence.physical_controller_fixture.physical_movement.input_timing.events[3].accepted_down=$false;Reject {Assert-HudPhysicalFixtureResult $bad $run $hash -ExtendedWalking} 'Late key cannot merely be consumed'
 $bad=Clone $extended;$bad.lab_evidence.physical_controller_fixture.physical_movement.input_timing.events[4].key=0x57;Reject {Assert-HudPhysicalFixtureResult $bad $run $hash -ExtendedWalking} 'Accepted key direction must match actual pulse proof'
 $null=Assert-HudPhysicalFixtureResult (Clone $extended) $run $hash -ExtendedWalking;Check $true 'Repeated verification of valid copied evidence remains valid'
+
+# Wide is a separate explicit area: it must cross the original two-metre bound
+# in both actual worlds, while retaining the extended inventory/HUD guarantees.
+$wide=Clone $extended;$wideProof=$wide.lab_evidence.physical_controller_fixture
+foreach($marker in @($wide,$wideProof,$wideProof.physical_movement)){$marker | Add-Member NoteProperty walking_area 'wide'}
+$wideProof | Add-Member NoteProperty wide_boundary_crossed $true
+$wideProof | Add-Member NoteProperty client_max_horizontal_excursion 3.1
+$wideProof | Add-Member NoteProperty server_max_horizontal_excursion 3.1
+$wideProof.pulses[1].key='S';$wideProof.pulses[2].key='W'
+$wideProof.physical_movement.input_timing.events[1].key=0x53;$wideProof.physical_movement.input_timing.binding_states[1].mask=2
+$wideProof.physical_movement.input_timing.events[2].key=0x57;$wideProof.physical_movement.input_timing.binding_states[2].mask=1
+$null=Assert-HudPhysicalFixtureResult $wide $run $hash -ExtendedWalking -WideWalking
+Check $true 'Explicit wide proof crosses the old boundary in client and server with actual HUD/inventory evidence'
+Reject {Assert-HudPhysicalFixtureResult $wide $run $hash -ExtendedWalking} 'Ordinary area cannot accept wide evidence'
+Reject {Assert-HudPhysicalFixtureResult $extended $run $hash -ExtendedWalking -WideWalking} 'Wide area requires its provenance and crossing proof'
+Reject {Assert-HudPhysicalFixtureResult $wide $run $hash -WideWalking} 'Wide fixture requires the extended time profile'
+Reject {Assert-HudPhysicalFixtureResult $wide $run $hash -ExtendedWalking -WideWalking -AimedBlocks} 'Wide fixture cannot claim an unexercised combined aiming sequence'
+foreach($where in @('stream','fixture','movement')){
+    $bad=Clone $wide;$marker=switch($where){stream{$bad}fixture{$bad.lab_evidence.physical_controller_fixture}movement{$bad.lab_evidence.physical_controller_fixture.physical_movement}}
+    $marker.PSObject.Properties.Remove('walking_area')
+    Reject {Assert-HudPhysicalFixtureResult $bad $run $hash -ExtendedWalking -WideWalking} "Wide provenance missing at $where"
+}
+foreach($field in @('client_max_horizontal_excursion','server_max_horizontal_excursion')){
+    foreach($value in @(2.0,4.01,'3.1',[double]::NaN)){
+        $bad=Clone $wide;$bad.lab_evidence.physical_controller_fixture.$field=$value
+        Reject {Assert-HudPhysicalFixtureResult $bad $run $hash -ExtendedWalking -WideWalking} "Wide crossing must be finite, actual and within its bound: $field"
+    }
+}
+$bad=Clone $wide;$bad.lab_evidence.physical_controller_fixture.wide_boundary_crossed=$false
+Reject {Assert-HudPhysicalFixtureResult $bad $run $hash -ExtendedWalking -WideWalking} 'No wide crossing cannot pass on HUD evidence alone'
 
 $combined=Clone $extended;$combinedProof=$combined.lab_evidence.physical_controller_fixture
 $combined | Add-Member -NotePropertyName ui_walking_aimed_fixture -NotePropertyValue $true

@@ -235,4 +235,25 @@ test("logging failures never emit a successful summary or schedule cleanup", fun
     equal(#f.logs, 7); assert(not f.logs[7]:find("[MineComeGroundPatch]", 1, true))
 end)
 
+test("explicit wide area captures one immutable 81-ray row-major patch", function()
+    local f=fixture();local ok,result=MineCome.SampleGroundPatch("a1","wide")
+    equal(ok,true);equal(result,"sampled");equal(#f.rays,81);equal(#f.logs,82);equal(f.reads,2);equal(f.mutations,0)
+    for index,ray in ipairs(f.rays) do
+        equal(ray.origin.x,116+(index-1)%9);equal(ray.origin.y,2036+math.floor((index-1)/9))
+        equal(ray.origin.z,58);equal(ray.direction.z,-8);equal(ray.mask,256);equal(ray.skip,999)
+    end
+    equal(f:summary("grid_size"),"9");equal(f:summary("point_count"),"81");equal(f:summary("valid_count"),"81")
+    equal(f:summary("walking_area"),'"wide"');equal(f:summary("stable_player"),"true")
+end)
+test("unknown area cannot query and wide capture still rejects player changes", function()
+    local f=fixture()
+    for _,area in ipairs({"", "narrow", "wide\n", "WIDE",true,9,{}}) do
+        local ok,reason=MineCome.SampleGroundPatch("a1",area);equal(ok,false);equal(reason,"invalid_walking_area")
+    end
+    equal(f.reads,0);equal(#f.rays,0);equal(#f.logs,0)
+    f.on_read=function(reads,self) if reads==2 then return {x=121,y=2040,z=56} end;return self.position end
+    local ok,result=MineCome.SampleGroundPatch("a1","wide");equal(ok,true);equal(result,"player_changed")
+    equal(#f.rays,81);equal(f:summary("valid_count"),"0")
+    for index=1,81 do equal(f:point(index,"valid"),"false") end
+end)
 print(string.format("Verified %d standalone ground-patch cases in %s; engine bindings simulated", passed, _VERSION))

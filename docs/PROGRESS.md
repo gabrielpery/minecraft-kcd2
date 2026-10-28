@@ -1,5 +1,25 @@
 # MineCome progress — 2026-10-28
 
+## Larger fixed walking area — IMPLEMENTED / COMPILED / MINECRAFT PASS; KCD LIVE PENDING
+
+Optional `-WideWalking` connects an 81-point KCD capture to Minecraft collision,
+physical HUD input, trace admission and the KCD follower. The captured footprint
+is 8×8 metres with a four-metre radial movement limit; default sessions retain
+their previous area. Explicit area selection and matching receipts are required
+throughout. Existing timing, vertical, inventory and restoration limits remain.
+Combined aiming moves its owned support outside the larger imported terrain.
+
+Automatic Minecraft fixture `997f5dd5373e46a1bccd7a0d954211d1` passed: client and
+server each reached 3.234 metres, beyond the old two-metre limit; five input pulses,
+72 walking HUD frames, zero inventory displacement, later movement and complete
+cleanup. Evidence is in
+`runtime/evidence/hud-physical-fixture-20261028-170749-997f5dd5373e46a1bccd7a0d954211d1/`.
+No physical input or KCD composition is claimed by this fixture. Focused Java
+checks (ground1567/physical345), Lua checks (ground16/movement90), wide PS checks58
+and relevant existing controller/fixture checks pass. KCD was not launched; no
+installed addon was changed. Live larger-area acceptance remains pending, and
+continuous terrain streaming remains unfinished.
+
 ## Repeat sessions — IMPLEMENTED / COMPILED / OFFLINE VERIFIED; LIVE PENDING
 
 The opt-in walking-repeat addon now integrates the existing two-generation policy:

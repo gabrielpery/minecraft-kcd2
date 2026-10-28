@@ -3,7 +3,7 @@
 [CmdletBinding()]
 param([switch]$PreflightOnly,[string]$JavaHome,[string]$BundleDirectory,
     [ValidateSet('WalkingBreak','TopFaceInventory','SideFaceInventory')][string]$Scenario='WalkingBreak',
-    [switch]$RepeatSession,[string]$PreviousArmReceipt)
+    [switch]$RepeatSession,[string]$PreviousArmReceipt,[switch]$WideWalking)
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'KcdToolsProbeHelpers.ps1')
@@ -24,11 +24,12 @@ if($RepeatSession){. (Join-Path $PSScriptRoot 'HudRepeatSession.ps1')}
 $ExtendedWalking=$true
 $root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $walkingSession=Get-HudWalkingSession -ExtendedWalking:$ExtendedWalking
+$walkingAreaArgument=if($WideWalking){",'wide'"}else{''}
 if(-not $JavaHome){$JavaHome='C:\Program Files\Java\jdk-24'}
 if(-not(Test-Path -LiteralPath (Join-Path $JavaHome 'bin/java.exe'))){throw 'A local supported JDK is required.'}
 if(-not $BundleDirectory){$BundleDirectory=Join-Path $root $(if($RepeatSession){'runtime/hud-compositor-walking-repeat'}else{'runtime/hud-compositor-walking-aimed'})}
 $context=Get-MineComeProbeContext
-& (Join-Path $PSScriptRoot 'Arm-HudStream.ps1') -WalkingAimed -InputMode -LiveMouse -OffscreenPresentation -BundleDirectory $BundleDirectory -PreflightOnly -RepeatSession:$RepeatSession -PreviousArmReceipt $PreviousArmReceipt
+& (Join-Path $PSScriptRoot 'Arm-HudStream.ps1') -WalkingAimed -InputMode -LiveMouse -OffscreenPresentation -BundleDirectory $BundleDirectory -PreflightOnly -RepeatSession:$RepeatSession -PreviousArmReceipt $PreviousArmReceipt -WideWalking:$WideWalking
 if($PreflightOnly){Write-Output "HUD_WALKING_AIMED_PREFLIGHT_PASS scenario=$Scenario no_changes=true";return}
 $scenarioProof=$null
 $probe=$null;$helper=$null;$arm=$null;$budget=$null;$budgetEvidence=$null;$failure=$null
@@ -74,7 +75,7 @@ function Send-Pose($Sample,[long]$ReceivedUtcMs,[double]$ValidationMs){
     $code=$apply
     if(-not $script:followerStarted){
         $cx=([double]$receiver.Center.x).ToString('R',$culture);$cy=([double]$receiver.Center.y).ToString('R',$culture);$cz=([double]$receiver.Center.z).ToString('R',$culture)
-        $code="local p=player and player:GetWorldPos(); if p and (p.x-($cx))^2+(p.y-($cy))^2+(p.z-($cz))^2<=0.01 then if MineCome.$($walkingSession.BeginFunction)('$($probe.Run)') then $apply end end"
+        $code="local p=player and player:GetWorldPos(); if p and (p.x-($cx))^2+(p.y-($cy))^2+(p.z-($cz))^2<=0.01 then if MineCome.$($walkingSession.BeginFunction)('$($probe.Run)'$walkingAreaArgument) then $apply end end"
     }
     $requestPath='/api/System/Console/ExecuteString?command='+[Uri]::EscapeDataString('#'+$code)
     $dispatchUtc=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
@@ -110,10 +111,10 @@ try{
         if($contract.Count -eq 1){break};Start-Sleep -Milliseconds 30
     }while([DateTime]::UtcNow -lt $until)
     if($contract.Count -ne 1){throw 'No-link contract was not acknowledged.'}
-    $capture=@(& (Join-Path $PSScriptRoot 'Test-KcdGroundProbe.ps1') -Patch | Where-Object {$_ -isnot [string] -and $_.GroundPatchFile})
+    $capture=@(& (Join-Path $PSScriptRoot 'Test-KcdGroundProbe.ps1') -Patch -WideWalking:$WideWalking | Where-Object {$_ -isnot [string] -and $_.GroundPatchFile})
     if($capture.Count -ne 1){throw 'One fresh live terrain capture is required.'}
     $patchFile=$capture[0].GroundPatchFile
-    $livePatch=Read-HudLiveGroundPatch $patchFile $root $context
+    $livePatch=Read-HudLiveGroundPatch $patchFile $root $context -WideWalking:$WideWalking
     $directory=$probe.Directory
     $traceReader.Path=Join-Path $directory 'movement.ndjson'
     $viewFile=Join-Path $directory 'host-view.json'
@@ -147,6 +148,7 @@ try{
         '-GroundPatchFile',$patchFile,'-MovementTraceFile',$traceReader.Path,'-HostViewFile',$viewFile,
         '-StoneTokenFile',$aimRelay.TokenFile,'-StonePort',[string]$aimRelay.Port)
     if($ExtendedWalking){$args+='-ExtendedWalking'}
+    if($WideWalking){$args+='-WideWalking'}
     $quoted=@($args | ForEach-Object {ConvertTo-MineComeWindowsArgument $_})
     $helper=Start-Process -FilePath (Join-Path $PSHOME 'pwsh.exe') -ArgumentList ([string]::Join(' ',$quoted)) -WorkingDirectory $root -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $directory 'helper.log') -RedirectStandardError (Join-Path $directory 'helper-errors.log')
     Write-Output "HUD_WALKING_AIMED_START run=$run scenario=$Scenario evidence=$directory"
@@ -161,13 +163,14 @@ try{
             $ready=Read-HudMovementJson $readyPath
             Assert-HudWalkingAimedProducer $ready
             Assert-HudWalkingSession $ready -ExtendedWalking:$ExtendedWalking
+            Assert-HudWalkingArea $ready ([bool]$WideWalking)
             if($ready.run -cne $run){throw 'Physical HUD producer run mismatch.'}
             # Exercise the cold parser with disposable diagnostic state before
             # arming input. Its synthetic records never enter the live receiver.
-            $parserWarmup=Initialize-HudBufferedMovementPipeline -PatchFile $patchFile -ExpectedHudSave $ready.save -MinimumUtcMs $minimumUtc -ExtendedWalking:$ExtendedWalking
-            $receiver=New-MineComeTraceReceiver $patchFile $minimumUtc -ExpectedHudSave $ready.save -PhysicalMovement -BufferedPhysicalMovement -ExtendedWalking:$ExtendedWalking
+            $parserWarmup=Initialize-HudBufferedMovementPipeline -PatchFile $patchFile -ExpectedHudSave $ready.save -MinimumUtcMs $minimumUtc -ExtendedWalking:$ExtendedWalking -WideWalking:$WideWalking
+            $receiver=New-MineComeTraceReceiver $patchFile $minimumUtc -ExpectedHudSave $ready.save -PhysicalMovement -BufferedPhysicalMovement -ExtendedWalking:$ExtendedWalking -WideWalking:$WideWalking
             if($receiver.PatchHash -cne $livePatch.Hash){throw 'Live terrain changed before trace binding.'}
-            $arm=& (Join-Path $PSScriptRoot 'Arm-HudStream.ps1') -WalkingAimed -InputMode -LiveMouse -OffscreenPresentation -BundleDirectory $BundleDirectory -ReadyManifest $readyPath -RepeatSession:$RepeatSession -PreviousArmReceipt $PreviousArmReceipt
+            $arm=& (Join-Path $PSScriptRoot 'Arm-HudStream.ps1') -WalkingAimed -InputMode -LiveMouse -OffscreenPresentation -BundleDirectory $BundleDirectory -ReadyManifest $readyPath -RepeatSession:$RepeatSession -PreviousArmReceipt $PreviousArmReceipt -WideWalking:$WideWalking
             $readyHash=(Get-FileHash -LiteralPath $readyPath).Hash
             $producerIdentity=[pscustomobject]@{Pid=$ready.producer_pid;Start=[string]$ready.producer_start_filetime}
             Write-Output "HUD_WALKING_AIMED_ARMED run=$run scenario=$Scenario waiting_for_settled_guest=true"
@@ -176,6 +179,7 @@ try{
         if($ready -and -not $physicalReady -and (Test-Path -LiteralPath $physicalReadyPath)){
             $physicalReady=Read-HudMovementJson $physicalReadyPath
             Assert-HudWalkingSession $physicalReady -ExtendedWalking:$ExtendedWalking
+            Assert-HudWalkingArea $physicalReady ([bool]$WideWalking)
             if($physicalReady.schema -ne 1 -or $physicalReady.kind -cne 'minecome_hud_physical_ready_v1' -or
                 $physicalReady.ready -isnot [bool] -or -not $physicalReady.ready -or $physicalReady.run -cne $run -or
                 $physicalReady.save -cne $ready.save -or $physicalReady.patch_run -cne $receiver.ExpectedRun -or
@@ -259,6 +263,7 @@ try{
     $guest=Read-HudMovementJson $resultPath
     Assert-HudWalkingAimedProducer $guest
     Assert-HudWalkingSession $guest -ExtendedWalking:$ExtendedWalking
+    Assert-HudWalkingArea $guest ([bool]$WideWalking)
     if($guest.run -cne $run -or $guest.save -cne $ready.save -or $guest.result -cne 'input_completed'){throw 'Actual HUD input session did not complete.'}
     if(-not $traceEnded -or -not $tracePassed -or -not $followerStarted){throw 'No completed real physical movement trace.'}
     if(-not $aimCleanupBeforeRestore -or -not $aimState.Closed -or $aimCleanupUtcMs -gt $finishRequestUtcMs){throw 'Combined cleanup ordering was not verified.'}
@@ -267,14 +272,14 @@ try{
     if($guest.lab_evidence.stone_bridge.confirmed_network_actions -lt 1){throw 'Combined session did not confirm an aimed interaction.'}
     if((Get-FileHash -LiteralPath $aimReadyPath).Hash -cne $aimReadyHash -or (Get-FileHash -LiteralPath $aimClosedPath).Hash -cne $aimClosedHash){throw 'Combined alignment or closure receipt changed.'}
     $receipts=@(Read-Receipts 'MineComeMovementFollower')
-    Assert-HudWalkingFollowerSession $receipts -ExtendedWalking:$ExtendedWalking
+    Assert-HudWalkingFollowerSession $receipts -ExtendedWalking:$ExtendedWalking -WideWalking:$WideWalking
     $restored=@($receipts | Where-Object {$_.event -ceq 'restored' -and $_.result -ceq 'restored' -and $_.physical_movement -eq $true -and $_.camera_basis_valid -eq $true -and $_.terminal -eq $true -and $_.timers_cancelled -eq $true -and $_.readback -eq $true -and $_.end_result -ceq 'explicit_end' -and $null -ne $_.player_readback_error -and $_.player_readback_error -le 0.15}).Count -eq 1
     if(-not $restored){throw 'Physical KCD follower restoration was not verified.'}
     $applied=@($receipts | Where-Object {$_.event -ceq 'applied' -and $_.physical_movement -eq $true -and $_.readback -eq $true -and $_.camera_basis_valid -eq $true -and $null -ne $_.player_readback_error -and $_.player_readback_error -le 0.15})
     if($applied.Count -lt 3){throw 'Too few actual delayed KCD movement readbacks.'}
     $playbackEpoch=$null;$lastCrossed=0;$crossedPoints=0;$previousSourceIndex=-1
     foreach($receipt in $applied){
-        $proof=Assert-HudBufferedMovementReceipt -Receipt $receipt -Forwarded $forwarded -ExtendedWalking:$ExtendedWalking
+        $proof=Assert-HudBufferedMovementReceipt -Receipt $receipt -Forwarded $forwarded -ExtendedWalking:$ExtendedWalking -WideWalking:$WideWalking
         if(($null -ne $playbackEpoch -and $proof.EpochEngineSeconds -ne $playbackEpoch) -or $proof.CrossedSourceSeq -le $lastCrossed){throw 'Buffered playback changed epoch or replayed a source point.'}
         if($proof.SourcePointsCrossed -ne $proof.SourceIndex-$previousSourceIndex){throw 'Buffered source crossing count differs from actual progress.'}
         $previousSourceIndex=$proof.SourceIndex
@@ -284,6 +289,7 @@ try{
     if($lastCrossed -ne $forwarded[-1].TraceSeq -or $crossedPoints -ne $forwarded.Count){throw 'Buffered playback did not drain all forwarded source points.'}
     $movement=$guest.lab_evidence.physical_movement
     Assert-HudWalkingSession $movement -ExtendedWalking:$ExtendedWalking
+    Assert-HudWalkingArea $movement ([bool]$WideWalking)
     Assert-HudWalkingDuration $movement -ExtendedWalking:$ExtendedWalking
     foreach($field in @('completed','trace_closed','controls_released','client_proxy_released','server_proxy_released')){
         if($movement.$field -isnot [bool] -or -not $movement.$field){throw "Missing physical movement completion: $field"}
@@ -399,8 +405,9 @@ finally{
         $viewTimings=@();$viewCount=0;$cameraEvidence=$null
         if($cameraState){$viewCount=$cameraState.ViewCount;$cameraEvidence=$cameraState | Select-Object -ExcludeProperty Timings;if($cameraState.PSObject.Properties['Timings']){$viewTimings=@($cameraState.Timings)}}
         ConvertTo-Json -InputObject $viewTimings -Depth 4 | Set-Content -LiteralPath (Join-Path $probe.Directory 'view-timings.json') -Encoding utf8NoBOM
-        [ordered]@{schema=1;kind='minecome_hud_walking_aimed_controller_v1';movement_session=$walkingSession.Name;run=$run;probe_run=$probe.Run;scenario=$Scenario;scenario_proof=$scenarioProof;result=$(if($passed){'passed'}else{'failed'});failure=$failure;target_pid=$context.GamePid;target_start_filetime=$context.GameStartedUtc.ToFileTimeUtc().ToString();source_sha256=$probe.SourceHash;compositor_armed=[bool]$arm;view_samples=$viewCount;camera_worker=$cameraEvidence;forwarded_frames=$forwarded.Count;delayed_readbacks=$applied.Count;trace_passed=$tracePassed;trace_sha256=$traceHash;restoration_verified=$restored;host_gpu_budget=$budgetEvidence;guest=$guest;visual_verified=$false;physical_input_exclusivity_verified=$false;full_world_movement_authority_verified=$false} |
-            ConvertTo-Json -Depth 16 | Set-Content -LiteralPath (Join-Path $probe.Directory 'verification.json') -Encoding utf8NoBOM
+        $verification=[ordered]@{schema=1;kind='minecome_hud_walking_aimed_controller_v1';movement_session=$walkingSession.Name;run=$run;probe_run=$probe.Run;scenario=$Scenario;scenario_proof=$scenarioProof;result=$(if($passed){'passed'}else{'failed'});failure=$failure;target_pid=$context.GamePid;target_start_filetime=$context.GameStartedUtc.ToFileTimeUtc().ToString();source_sha256=$probe.SourceHash;compositor_armed=[bool]$arm;view_samples=$viewCount;camera_worker=$cameraEvidence;forwarded_frames=$forwarded.Count;delayed_readbacks=$applied.Count;trace_passed=$tracePassed;trace_sha256=$traceHash;restoration_verified=$restored;host_gpu_budget=$budgetEvidence;guest=$guest;visual_verified=$false;physical_input_exclusivity_verified=$false;full_world_movement_authority_verified=$false}
+        if($WideWalking){$verification.walking_area='wide'}
+        $verification | ConvertTo-Json -Depth 16 | Set-Content -LiteralPath (Join-Path $probe.Directory 'verification.json') -Encoding utf8NoBOM
     }
     if($traceReader.Stream){$traceReader.Stream.Dispose()}
     if($helper){$helper.Dispose()}

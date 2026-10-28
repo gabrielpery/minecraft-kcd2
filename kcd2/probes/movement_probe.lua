@@ -360,9 +360,11 @@ local FOLLOWER_LOG_MAX_BYTES = 3798 -- Includes the tag, separating space and CR
 -- Select a closed profile once at Begin. Source callbacks cannot raise budgets,
 -- change profiles, or renew the deadline. Preserve the registry across a module
 -- reload so existing owned timers retain their original profile.
-local SCRIPTED_LIMITS = { hard_ms=FOLLOWER_MS,source_ms=SOURCE_LIMIT_MS,writes=199,receipts=128 }
-local PHYSICAL_LIMITS = { hard_ms=FOLLOWER_MS,source_ms=SOURCE_LIMIT_MS,writes=511,receipts=128 }
-local EXTENDED_LIMITS = { hard_ms=18000,source_ms=16000,writes=2047,receipts=256,session="extended" }
+local SCRIPTED_LIMITS = { hard_ms=FOLLOWER_MS,source_ms=SOURCE_LIMIT_MS,writes=199,receipts=128,radius=2 }
+local PHYSICAL_LIMITS = { hard_ms=FOLLOWER_MS,source_ms=SOURCE_LIMIT_MS,writes=511,receipts=128,radius=2 }
+local EXTENDED_LIMITS = { hard_ms=18000,source_ms=16000,writes=2047,receipts=256,session="extended",radius=2 }
+local WIDE_PHYSICAL_LIMITS = { hard_ms=FOLLOWER_MS,source_ms=SOURCE_LIMIT_MS,writes=511,receipts=128,radius=4,walking_area="wide" }
+local WIDE_EXTENDED_LIMITS = { hard_ms=18000,source_ms=16000,writes=2047,receipts=256,session="extended",radius=4,walking_area="wide" }
 state.follower_profiles = state.follower_profiles or setmetatable({}, { __mode="k" })
 local follower_profiles = state.follower_profiles
 -- A still-owned follower from the pre-profile module has only baseline limits.
@@ -371,6 +373,7 @@ if state.follower and not follower_profiles[state.follower] then
     follower_profiles[state.follower] = state.follower.physical_movement and PHYSICAL_LIMITS or SCRIPTED_LIMITS
 end
 local function follower_limits(p) return follower_profiles[p] end
+local function follower_radius(p) return follower_limits(p).radius or 2 end
 local function follower_tick_ms(p) return p.physical_movement and PHYSICAL_TICK_MS or TICK_MS end
 local function horizontal(v) return vector(v) and math.sqrt(v.x*v.x+v.y*v.y) or math.huge end
 local function source_sample_json(source)
@@ -437,6 +440,7 @@ local function follower_receipt(p,event,result,s,seq,target,readback,follow_erro
         .. ',"writes":' .. number(p.writes) .. ',"end_result":' .. quote(p.end_result or "none")
         .. ',"timers_cancelled":' .. tostring(p.timers_cancelled ~= false)
         .. (limits.session and ',"movement_session":' .. quote(limits.session) or "")
+        .. (limits.walking_area and ',"walking_area":' .. quote(limits.walking_area) or "")
     local function serialize(count)
         local observations=""
         if p.physical_movement then
@@ -499,15 +503,17 @@ local function follower_stop(p,reason)
     if not arm(p,"restored","MineCome_MovementFollowerRestored",TICK_MS) then return follower_finish(p,"restore_failed","post_restore_timer_failed",s,true) end
     return follower_receipt(p,"restoring","restored_position_pending_camera",s,nil,p.origin,true)
 end
-local function begin_follower(run,physical,buffered,extended)
+local function begin_follower(run,physical,buffered,extended,walking_area)
     if not token(run) then return false,"invalid_run" end
+    if walking_area ~= nil and (walking_area ~= "wide" or not physical) then return false,"invalid_walking_area" end
     if state.active or state.follower then return false,"busy" end
     local s,clock = snapshot(),now()
     local unsafe = guards(s,0.05,true,true)
     if not clock then unsafe = "clock_unavailable" end
     if type(field(s.entity,"SetWorldPos")) ~= "function" then unsafe = "position_writer_unavailable" end
     if not Script or type(Script.SetTimerForFunction) ~= "function" or type(Script.KillTimer) ~= "function" then unsafe = "timer_unavailable" end
-    local limits = extended and EXTENDED_LIMITS or physical and PHYSICAL_LIMITS or SCRIPTED_LIMITS
+    local limits = walking_area == "wide" and (extended and WIDE_EXTENDED_LIMITS or WIDE_PHYSICAL_LIMITS)
+        or extended and EXTENDED_LIMITS or physical and PHYSICAL_LIMITS or SCRIPTED_LIMITS
     local p = {run=run,entity=s.entity,id=s.id,created=clock,deadline=clock and clock+limits.hard_ms/1000,origin=copy(s.position.value),
         camera_origin=copy(s.camera.position.value),last_owned=copy(s.position.value),last_snapshot=s,timers={},data={},
         records=0,writes=0,last_queued_seq=0,last_applied_seq=0,last_heartbeat=clock,last_clock=clock,
@@ -525,17 +531,17 @@ local function begin_follower(run,physical,buffered,extended)
     end
     return true,"begun"
 end
-function MineCome.BeginMovementFollower(run)
-    return begin_follower(run,false)
+function MineCome.BeginMovementFollower(run,walking_area)
+    return begin_follower(run,false,nil,nil,walking_area)
 end
-function MineCome.BeginPhysicalMovementFollower(run)
-    return begin_follower(run,true)
+function MineCome.BeginPhysicalMovementFollower(run,walking_area)
+    return begin_follower(run,true,nil,nil,walking_area)
 end
-function MineCome.BeginBufferedPhysicalMovementFollower(run)
-    return begin_follower(run,true,true)
+function MineCome.BeginBufferedPhysicalMovementFollower(run,walking_area)
+    return begin_follower(run,true,true,nil,walking_area)
 end
-function MineCome.BeginExtendedBufferedPhysicalMovementFollower(run)
-    return begin_follower(run,true,true,true)
+function MineCome.BeginExtendedBufferedPhysicalMovementFollower(run,walking_area)
+    return begin_follower(run,true,true,true,walking_area)
 end
 local function reject_buffered_input(p,reason,seq,target)
     p.end_requested=reason
@@ -554,7 +560,7 @@ function MineCome.ApplyMovementFollower(run,seq,x,y,z)
     local invalid
     if not finite(seq) or seq < 1 or seq > 200 or seq ~= math.floor(seq) then invalid = "sequence_invalid"
     elseif seq <= p.last_queued_seq then invalid = "sequence_replayed"
-    elseif not vector(target) or distance(target,p.origin) > 2 or z-p.origin.z < (p.physical_movement and -1.5 or -0.2)
+    elseif not vector(target) or distance(target,p.origin) > follower_radius(p) or z-p.origin.z < (p.physical_movement and -1.5 or -0.2)
         or z-p.origin.z > 1.5 then invalid = "target_out_of_bounds" end
     local clock = now()
     if not clock or clock < p.last_clock or (p.physical_movement and p.latest and clock < p.latest.received) then invalid = "clock_unavailable_or_regressed"
@@ -580,7 +586,7 @@ function MineCome.ApplyBufferedMovementFollower(run,seq,x,y,z,source_ms)
     local invalid
     if not finite(seq) or seq<1 or seq>200 or seq~=math.floor(seq) then invalid="sequence_invalid"
     elseif seq<=p.last_queued_seq then invalid="sequence_replayed"
-    elseif not vector(target) or distance(target,p.origin)>2 or z-p.origin.z < -1.5 or z-p.origin.z>1.5 then invalid="target_out_of_bounds"
+    elseif not vector(target) or distance(target,p.origin)>follower_radius(p) or z-p.origin.z < -1.5 or z-p.origin.z>1.5 then invalid="target_out_of_bounds"
     elseif not finite(source_ms) or source_ms<0 or source_ms>follower_limits(p).source_ms then invalid="source_time_invalid"
     elseif not clock or clock<p.last_clock or (p.latest and clock<p.latest.received) then invalid="clock_unavailable_or_regressed"
     elseif clock>=p.deadline then invalid="hard_deadline"

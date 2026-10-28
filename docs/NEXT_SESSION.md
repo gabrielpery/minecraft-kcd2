@@ -7,15 +7,40 @@ testing. Apply the delivery workflow in AGENTS.md. Do not start this session wit
 another first-click countdown. The warm-up below is implemented; its live validation
 can be included in the next feature acceptance session.
 
-The repeat-session implementation is now integrated, compiled and staged (below).
-Next, validate its complete two-session lifecycle once, then develop longer playable
-sessions with explicit terrain/ownership handling. Keep the verified current profile
-available. Reserve human input for foreground/composition acceptance; use the existing
-actual-Minecraft fixtures and coupled-game checks for ordinary regression.
+The optional larger walking area is now implemented and automatically verified in
+Minecraft. The repeat-session addon is compiled and staged. Batch their remaining
+live acceptance into one session when the user is available; do not launch another
+small countdown test by default. Keep the verified current profile available and
+use existing actual-Minecraft fixtures and coupled-game checks for regression.
 
 ## Current result
 
-**Newest implementation: repeat sessions, offline verified; not installed/live verified.**
+**Newest implementation: larger fixed walking area; actual Minecraft PASS, KCD live pending.**
+`-WideWalking` flows through the walking and combined aimed launchers, capture,
+Java collision/input, trace admission and Lua follower. Explicit grid9/81 samples,
+8×8-metre footprint, four-metre radial limit; defaults remain unchanged. Strict
+`walking_area="wide"` markers cannot enable wide authority without the caller flag.
+Combined aiming keeps its support outside the expanded terrain at x4. No terrain
+streaming, longer duration, DLL installation or game settings change was made.
+
+Actual automatic fixture `997f5dd5373e46a1bccd7a0d954211d1` passed:
+`runtime/evidence/hud-physical-fixture-20261028-170749-997f5dd5373e46a1bccd7a0d954211d1/verification.json`.
+Client/server maximum excursion 3.234 m, 72 walking HUD frames, inventory stationary,
+five pulses including later movement, normal cleanup and exit 0. No user input or
+KCD process was used. Focused Java, Lua and PS tests pass; do not repeat this fixture
+without a relevant change. Reproduce with
+`scripts/Test-HudPhysicalMovementFixture.ps1 -ExtendedWalking -WideWalking`.
+The wide fixture deliberately excludes `-AimedBlocks`; wide live aiming is compiled,
+with region ownership checks tested, but not game-verified.
+
+Next useful acceptance: wide capture plus a complete repeat-session lifecycle,
+using `Start-HudWalkingAimed.ps1 -WideWalking -RepeatSession` and the previous arm
+receipt for session two. Install the staged repeat profile first as documented in
+MOVEMENT-LAB.md. KCD was closed throughout this implementation; no countdown is
+pending. Beyond that, rolling terrain requires explicit patch ownership and a
+stable coordinate anchor; current wide capture is one immutable patch.
+
+**Repeat sessions: offline verified; not installed/live verified.**
 Separate target `minecome_hud_walking_repeat_compositor`, profile
 `config/hud-walking-repeat-profile.json`, staged bundle `runtime/hud-compositor-walking-repeat`.
 The native policy is now wired into actual addon lifetime, render retirement and

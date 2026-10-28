@@ -23,7 +23,8 @@ public final class HudBuildRegion {
         if(patch==null || support==null)throw new IllegalArgumentException("Build region requires a patch and explicit bootstrap support");
         // The one-cell perimeter allows a fixture support immediately beside
         // the sampled footprint without granting a distant arbitrary region.
-        if(support.x()<-3 || support.x()>2 || support.z()<-3 || support.z()>2)
+        int half=(int)patch.halfExtent();
+        if(support.x()<-half-1 || support.x()>half || support.z()<-half-1 || support.z()>half)
             throw new IllegalArgumentException("Bootstrap support is outside sampled footprint/perimeter");
         double lowest=Double.POSITIVE_INFINITY,highest=Double.NEGATIVE_INFINITY;
         for(var slab:patch.slabs()){lowest=Math.min(lowest,slab.minY());highest=Math.max(highest,slab.maxY());}

@@ -3,19 +3,20 @@
 # Pure bounded receiver for terrain/MovementTraceSink.java. No game/process calls.
 # File provenance authentication remains the starter/controller's responsibility.
 . (Join-Path $PSScriptRoot 'HudWalkingSession.ps1')
+. (Join-Path $PSScriptRoot 'HudWalkingArea.ps1')
 
 function Assert-MineComeTraceJsonTree {
-    param([System.Text.Json.JsonElement]$Element,[int]$Depth,[ref]$Count)
+    param([System.Text.Json.JsonElement]$Element,[int]$Depth,[ref]$Count,[int]$MaximumMembers=1024)
     $Count.Value++
-    if($Depth -gt 12 -or $Count.Value -gt 1024) { throw 'JSON depth/member budget exceeded.' }
+    if($Depth -gt 12 -or $Count.Value -gt $MaximumMembers) { throw 'JSON depth/member budget exceeded.' }
     if($Element.ValueKind -eq [System.Text.Json.JsonValueKind]::Object) {
         $names=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
         foreach($property in $Element.EnumerateObject()) {
             if(-not $names.Add($property.Name)) { throw "Duplicate JSON field: $($property.Name)" }
-            Assert-MineComeTraceJsonTree $property.Value ($Depth+1) $Count
+            Assert-MineComeTraceJsonTree $property.Value ($Depth+1) $Count $MaximumMembers
         }
     } elseif($Element.ValueKind -eq [System.Text.Json.JsonValueKind]::Array) {
-        foreach($item in $Element.EnumerateArray()) { Assert-MineComeTraceJsonTree $item ($Depth+1) $Count }
+        foreach($item in $Element.EnumerateArray()) { Assert-MineComeTraceJsonTree $item ($Depth+1) $Count $MaximumMembers }
     } elseif($Element.ValueKind -eq [System.Text.Json.JsonValueKind]::Number) {
         $number=$Element.GetDouble()
         if([double]::IsNaN($number) -or [double]::IsInfinity($number)) { throw 'Nonfinite JSON number.' }
@@ -23,7 +24,7 @@ function Assert-MineComeTraceJsonTree {
 }
 
 function Read-MineComeTraceJson {
-    param([string]$Json,[int]$MaximumBytes)
+    param([string]$Json,[int]$MaximumBytes,[ValidateSet(1024,2048)][int]$MaximumMembers=1024)
     $encoding=[Text.UTF8Encoding]::new($false,$true)
     if([string]::IsNullOrEmpty($Json) -or $encoding.GetByteCount($Json) -gt $MaximumBytes) { throw 'JSON byte bound exceeded or empty JSON.' }
     $options=[System.Text.Json.JsonDocumentOptions]::new()
@@ -33,7 +34,7 @@ function Read-MineComeTraceJson {
     $document=[System.Text.Json.JsonDocument]::Parse($Json,$options)
     try {
         $count=0
-        Assert-MineComeTraceJsonTree $document.RootElement 0 ([ref]$count)
+        Assert-MineComeTraceJsonTree $document.RootElement 0 ([ref]$count) $MaximumMembers
         return $document
     } catch { $document.Dispose();throw }
 }
@@ -118,7 +119,9 @@ function Assert-MineComeTraceClock {
 
 function New-MineComeTraceReceiver {
     [CmdletBinding()]
-    param([Parameter(Mandatory)][string]$PatchFile,[Parameter(Mandatory)]$MinimumUtcMs,[string]$ExpectedHudSave,[switch]$PhysicalMovement,[switch]$BufferedPhysicalMovement,[switch]$ExtendedWalking)
+    param([Parameter(Mandatory)][string]$PatchFile,[Parameter(Mandatory)]$MinimumUtcMs,[string]$ExpectedHudSave,[switch]$PhysicalMovement,[switch]$BufferedPhysicalMovement,[switch]$ExtendedWalking,[switch]$WideWalking)
+    if($WideWalking -and -not $PhysicalMovement){throw 'Wide walking requires explicit physical movement.'}
+    $area=Get-HudWalkingArea -WideWalking:$WideWalking
     Assert-MineComeTraceClock $MinimumUtcMs
     if($BufferedPhysicalMovement -and -not $PhysicalMovement){throw 'Buffered playback requires the physical movement profile.'}
     if($ExtendedWalking -and -not $BufferedPhysicalMovement){throw 'Extended walking requires explicit buffered physical movement.'}
@@ -144,33 +147,34 @@ function New-MineComeTraceReceiver {
     $currentHash=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
     if($hash -cne $currentHash) { throw 'Ground patch changed while reading.' }
     $json=[Text.UTF8Encoding]::new($false,$true).GetString($bytes)
-    $document=Read-MineComeTraceJson $json 65536
+    $document=Read-MineComeTraceJson $json 65536 $area.JsonMembers
     try {
         $root=$document.RootElement
-        if((Get-MineComeTraceInteger $root 'schema' 1 1) -ne 1 -or (Get-MineComeTraceInteger $root 'grid_size' 5 5) -ne 5 -or (Get-MineComeTraceNumber $root 'spacing' 1 1) -ne 1) { throw 'Invalid patch grid.' }
+        if((Get-MineComeTraceInteger $root 'schema' 1 1) -ne 1 -or (Get-MineComeTraceInteger $root 'grid_size' $area.Grid $area.Grid) -ne $area.Grid -or (Get-MineComeTraceNumber $root 'spacing' 1 1) -ne 1) { throw 'Invalid patch grid.' }
+        Assert-HudWalkingArea (Convert-MineComeTraceValue $root) ([bool]$WideWalking)
         $run=Get-MineComeTraceString $root 'run'
         if($run -cnotmatch '^[A-Za-z0-9_-]{1,128}$') { throw 'Invalid patch run.' }
         $provenance=Get-MineComeTraceField $root 'provenance'
         if((Get-MineComeTraceString $provenance 'kind') -cne 'live_kcd_ground_patch') { throw 'Receiver requires a labelled live ground patch; authentication belongs to starter.' }
         if(-not (Get-MineComeTraceBoolean $root 'stable_player') -or -not (Get-MineComeTraceBoolean $root 'approximate_heightfield') -or (Get-MineComeTraceBoolean $root 'full_collision_export_verified')) { throw 'Unsupported patch verification flags.' }
-        [void](Get-MineComeTraceInteger $root 'point_count' 25 25)
-        [void](Get-MineComeTraceInteger $root 'valid_count' 25 25)
+        [void](Get-MineComeTraceInteger $root 'point_count' $area.Points $area.Points)
+        [void](Get-MineComeTraceInteger $root 'valid_count' $area.Points $area.Points)
         $centerElement=Get-MineComeTraceField $root 'center'
         Assert-MineComeTraceKeys $centerElement @('x','y','z')
         $center=[pscustomobject]@{x=(Get-MineComeTraceNumber $centerElement 'x' -10000000 10000000);y=(Get-MineComeTraceNumber $centerElement 'y' -10000000 10000000);z=(Get-MineComeTraceNumber $centerElement 'z' -10000000 10000000)}
         $points=Get-MineComeTraceField $root 'points'
-        if($points.ValueKind -ne [System.Text.Json.JsonValueKind]::Array -or $points.GetArrayLength() -ne 25) { throw 'Complete25-point patch required.' }
+        if($points.ValueKind -ne [System.Text.Json.JsonValueKind]::Array -or $points.GetArrayLength() -ne $area.Points) { throw 'Complete selected patch required.' }
         $indices=[Collections.Generic.HashSet[long]]::new()
         foreach($point in $points.EnumerateArray()) {
-            $index=Get-MineComeTraceInteger $point 'index' 1 25
+            $index=Get-MineComeTraceInteger $point 'index' 1 $area.Points
             if(-not $indices.Add($index)) { throw 'Duplicate patch point.' }
             $x=Get-MineComeTraceNumber $point 'x' -10000000 10000000
             $y=Get-MineComeTraceNumber $point 'y' -10000000 10000000
             [void](Get-MineComeTraceNumber $point 'z' ($center.z-6.05) ($center.z+2.05))
-            if([Math]::Abs($x-($center.x+(($index-1)%5)-2)) -gt 0.0001 -or [Math]::Abs($y-($center.y+[Math]::Floor(($index-1)/5)-2)) -gt 0.0001 -or -not (Get-MineComeTraceBoolean $point 'valid') -or (Get-MineComeTraceString $point 'result') -cne 'hit') { throw 'Invalid patch coverage.' }
+            if([Math]::Abs($x-($center.x+(($index-1)%$area.Grid)-$area.HalfWidth)) -gt 0.0001 -or [Math]::Abs($y-($center.y+[Math]::Floor(($index-1)/$area.Grid)-$area.HalfWidth)) -gt 0.0001 -or -not (Get-MineComeTraceBoolean $point 'valid') -or (Get-MineComeTraceString $point 'result') -cne 'hit') { throw 'Invalid patch coverage.' }
             foreach($axis in @('nx','ny','nz')) { [void](Get-MineComeTraceNumber $point $axis -1.01 1.01) }
         }
-        return [pscustomobject]@{ExpectedRun=$run;PatchHash=$hash;Center=$center;ExpectedHudSave=$ExpectedHudSave;PhysicalMovement=[bool]$PhysicalMovement;BufferedPhysicalMovement=[bool]$BufferedPhysicalMovement;ExtendedWalking=[bool]$ExtendedWalking;Anchor=[pscustomobject]@{x=0.0;y=64.0;z=0.0};AnchorVerified=$false;MinimumUtcMs=[long]$MinimumUtcMs;LastSeq=[long]0;LastServerSeq=[long]0;LastFreshPassedSeq=[long]0;LastPassedUtcMs=[long]0;LastPassedServerAgeMs=[double]0;World=$null;Save=$null;Begun=$false;Ended=$false;GroundProved=$false;Bytes=0;Records=0}
+        return [pscustomobject]@{ExpectedRun=$run;PatchHash=$hash;Center=$center;ExpectedHudSave=$ExpectedHudSave;PhysicalMovement=[bool]$PhysicalMovement;BufferedPhysicalMovement=[bool]$BufferedPhysicalMovement;ExtendedWalking=[bool]$ExtendedWalking;WideWalking=[bool]$WideWalking;Anchor=[pscustomobject]@{x=0.0;y=64.0;z=0.0};AnchorVerified=$false;MinimumUtcMs=[long]$MinimumUtcMs;LastSeq=[long]0;LastServerSeq=[long]0;LastFreshPassedSeq=[long]0;LastPassedUtcMs=[long]0;LastPassedServerAgeMs=[double]0;World=$null;Save=$null;Begun=$false;Ended=$false;GroundProved=$false;Bytes=0;Records=0}
     } finally { $document.Dispose() }
 }
 
@@ -179,6 +183,7 @@ function Receive-MineComeMovementTrace {
     param([Parameter(Mandatory)]$State,[Parameter(Mandatory)][string]$JsonLine,[Parameter(Mandatory)]$NowUtcMs)
     Assert-MineComeTraceClock $NowUtcMs
     if($State.Ended) { throw 'Trace already ended; appends/replay rejected.' }
+    $extent=if($State.WideWalking){4}else{2}
     if($JsonLine.IndexOfAny([char[]]@("`r","`n")) -ge 0) { throw 'Receiver accepts one complete NDJSON record without separators.' }
     $lineBytes=[Text.UTF8Encoding]::new($false,$true).GetByteCount($JsonLine)
     $session=Get-HudWalkingSession -ExtendedWalking:$State.ExtendedWalking
@@ -188,6 +193,10 @@ function Receive-MineComeMovementTrace {
         $root=$document.RootElement
         $kind=Get-MineComeTraceString $root 'kind'
         $base=@('schema','kind','run','patch_sha256','source_kind','save','world','seq','utc_ms','phase')
+        if($State.WideWalking){
+            $base+='walking_area'
+            if((Get-MineComeTraceString $root 'walking_area') -cne 'wide'){throw 'Wide walking trace marker mismatch.'}
+        }
         switch -CaseSensitive ($kind) {
             begin { $keys=$base+@('started_monotonic_ns','center','anchor_mc','approximate_heightfield','full_collision_export_verified') }
             sample { $keys=$base+@('monotonic_ns','server_seq','server_age_ns','client','server') }
@@ -237,7 +246,7 @@ function Receive-MineComeMovementTrace {
             foreach($name in @('client','server')) {
                 $motion=Get-MineComeTraceField $root $name
                 Assert-MineComeTraceKeys $motion @('x','y','z','vx','vy','vz','on_ground','proxy_support')
-                [void](Get-MineComeTraceNumber $motion 'x' -2 2);[void](Get-MineComeTraceNumber $motion 'z' -2 2)
+                [void](Get-MineComeTraceNumber $motion 'x' (-$extent) $extent);[void](Get-MineComeTraceNumber $motion 'z' (-$extent) $extent)
                 [void](Get-MineComeTraceNumber $motion 'y' 52 76)
                 foreach($axis in @('vx','vy','vz')) { [void](Get-MineComeTraceNumber $motion $axis -4 4) }
                 [void](Get-MineComeTraceBoolean $motion 'on_ground');[void](Get-MineComeTraceBoolean $motion 'proxy_support')
@@ -270,10 +279,10 @@ function Receive-MineComeMovementTrace {
             if($observationAgeMs -gt 300) { $returnKind='stale';$groundProved=$State.GroundProved }
             elseif(-not $active) { $returnKind='observe' }
             else {
-                $target=[pscustomobject]@{x=$State.Center.x+(Get-MineComeTraceNumber $server 'x' -2 2)-$State.Anchor.x;y=$State.Center.y-(Get-MineComeTraceNumber $server 'z' -2 2)+$State.Anchor.z;z=$State.Center.z+(Get-MineComeTraceNumber $server 'y' 52 76)-$State.Anchor.y}
+                $target=[pscustomobject]@{x=$State.Center.x+(Get-MineComeTraceNumber $server 'x' (-$extent) $extent)-$State.Anchor.x;y=$State.Center.y-(Get-MineComeTraceNumber $server 'z' (-$extent) $extent)+$State.Anchor.z;z=$State.Center.z+(Get-MineComeTraceNumber $server 'y' 52 76)-$State.Anchor.y}
                 # Physical walking follows sampled slopes in either direction;
-                # the two-metre sphere still bounds every submitted target.
-                if($State.PhysicalMovement -and (($target.x-$State.Center.x)*($target.x-$State.Center.x)+($target.y-$State.Center.y)*($target.y-$State.Center.y)+($target.z-$State.Center.z)*($target.z-$State.Center.z) -gt 4 -or $target.z-$State.Center.z -lt -1.5 -or $target.z-$State.Center.z -gt 1.5)){throw 'Physical movement target exceeds the physical follower bounds.'}
+                # the explicitly selected sphere bounds every submitted target.
+                if($State.PhysicalMovement -and (($target.x-$State.Center.x)*($target.x-$State.Center.x)+($target.y-$State.Center.y)*($target.y-$State.Center.y)+($target.z-$State.Center.z)*($target.z-$State.Center.z) -gt ($extent*$extent) -or $target.z-$State.Center.z -lt -1.5 -or $target.z-$State.Center.z -gt 1.5)){throw 'Physical movement target exceeds the physical follower bounds.'}
             }
             if($phase -ceq 'PASSED' -and $returnKind -cne 'stale' -and $groundProved -and $grounded) {
                 $freshPassedSeq=$seq;$passedUtc=$utc;$passedServerAgeMs=$serverAgeMs

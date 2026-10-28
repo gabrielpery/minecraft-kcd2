@@ -161,6 +161,7 @@ public final class HudStreamProducer implements AutoCloseable {
             r.addProperty("standalone",standalone);
         }
         if(physicalMovement){
+            if(HudPhysicalMovementMode.wide(System.getProperties()))r.addProperty("walking_area","wide");
             if(HudPhysicalMovementMode.walkingAimed(System.getProperties())){r.addProperty("ui_input_walking_aimed",true);r.addProperty("scripted_input",false);}
             if(movementSession.extended())r.addProperty("movement_session",movementSession.id());
             boolean scripted=HudPhysicalMovementMode.fixture(System.getProperties());

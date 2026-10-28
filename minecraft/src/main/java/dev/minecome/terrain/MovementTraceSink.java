@@ -24,17 +24,20 @@ final class MovementTraceSink implements AutoCloseable {
         }
     }
     record Context(String run,String patchSha256,String sourceKind,String save,String world,
-                   double centerX,double centerY,double centerZ,Profile profile,double anchorX,double anchorY,double anchorZ) {
+                   double centerX,double centerY,double centerZ,Profile profile,double anchorX,double anchorY,double anchorZ,boolean wide) {
         Context(String run,String patchSha256,String sourceKind,String save,String world,double centerX,double centerY,double centerZ) {
             this(run,patchSha256,sourceKind,save,world,centerX,centerY,centerZ,Profile.GROUND);
         }
         Context(String run,String patchSha256,String sourceKind,String save,String world,double centerX,double centerY,double centerZ,Profile profile){
             this(run,patchSha256,sourceKind,save,world,centerX,centerY,centerZ,profile,0,64,0);
         }
+        Context(String run,String patchSha256,String sourceKind,String save,String world,double centerX,double centerY,double centerZ,Profile profile,double anchorX,double anchorY,double anchorZ){
+            this(run,patchSha256,sourceKind,save,world,centerX,centerY,centerZ,profile,anchorX,anchorY,anchorZ,false);
+        }
         Context {
             if(!run.matches("[A-Za-z0-9_-]{1,128}") || !patchSha256.matches("[0-9a-f]{64}") ||
                     !sourceKind.matches("[A-Za-z0-9_-]{1,64}") || !world.equals(UUID.fromString(world).toString()) ||
-                    profile==null || !save.equals(profile.savePrefix+world) ||
+                    profile==null || (wide&&!profile.physical) || !save.equals(profile.savePrefix+world) ||
                     (profile!=Profile.GROUND && !sourceKind.equals(profile.fixture?"standalone_ground_fixture":"live_kcd_ground_patch")) || !finite(centerX,centerY,centerZ,anchorX,anchorY,anchorZ) ||
                     Math.abs(anchorX)>.01 || Math.abs(anchorZ)>.01 || anchorY<52 || anchorY>76 ||
                     (!profile.physical && (anchorX!=0 || anchorY!=64 || anchorZ!=0)) ||
@@ -42,9 +45,12 @@ final class MovementTraceSink implements AutoCloseable {
                 throw new IllegalArgumentException("Invalid movement trace context");
         }
     }
-    record Motion(double x,double y,double z,double vx,double vy,double vz,boolean onGround,boolean proxySupport) {
+    record Motion(double x,double y,double z,double vx,double vy,double vz,boolean onGround,boolean proxySupport,boolean wide) {
+        Motion(double x,double y,double z,double vx,double vy,double vz,boolean onGround,boolean proxySupport){
+            this(x,y,z,vx,vy,vz,onGround,proxySupport,false);
+        }
         Motion {
-            if(!finite(x,y,z,vx,vy,vz) || Math.abs(x)>2 || Math.abs(z)>2 || y<52 || y>76 ||
+            if(!finite(x,y,z,vx,vy,vz) || Math.abs(x)>(wide?4:2) || Math.abs(z)>(wide?4:2) || y<52 || y>76 ||
                     Math.abs(vx)>4 || Math.abs(vy)>4 || Math.abs(vz)>4)
                 throw new IllegalArgumentException("Invalid/beyond-probe trace motion");
         }
@@ -82,6 +88,7 @@ final class MovementTraceSink implements AutoCloseable {
     /** Returns false for throttled, stale or non-advancing observations; these cannot drive a follower. */
     boolean sample(long nowNs,long utcMs,String phase,Motion client,Motion server,long serverSequence,long receivedAtNs,boolean force) throws IOException {
         if(closed)return false;
+        if(client.wide()!=context.wide()||server.wide()!=context.wide())throw new IllegalArgumentException("Motion and trace walking-area profiles differ");
         validatePhase(phase);
         boolean phaseLocked=context.profile().physical;
         long age=nowNs-receivedAtNs;
@@ -123,7 +130,7 @@ final class MovementTraceSink implements AutoCloseable {
         return "{\"schema\":1,\"kind\":"+quote(kind)+",\"run\":"+quote(context.run())+
                 ",\"patch_sha256\":"+quote(context.patchSha256())+",\"source_kind\":"+quote(context.profile().physical?context.profile().session.traceSource(context.profile().fixture):context.sourceKind())+
                 ",\"save\":"+quote(context.save())+",\"world\":"+quote(context.world())+
-                ",\"seq\":"+(sequence+1)+",\"utc_ms\":"+utcMs;
+                ",\"seq\":"+(sequence+1)+",\"utc_ms\":"+utcMs+(context.wide()?",\"walking_area\":\"wide\"":"");
     }
     private void write(String record,boolean end) throws IOException {
         byte[] line=(record+"\n").getBytes(StandardCharsets.UTF_8);

@@ -50,7 +50,7 @@ final class HudMovementBoundary {
         double dz=Math.max(Math.abs(corridor.minZ()-anchor.z()),Math.abs(corridor.maxZ()-anchor.z()));
         double dy=Math.max(Math.abs(bottom-anchor.y()),Math.abs(top-anchor.y()));
         double reach=Math.sqrt(dx*dx+dy*dy+dz*dz);
-        if(reach>RADIUS)return reject("sphere_braking_clearance",flat,heights,reach);
+        if(reach>(patch.wide()?3.5:RADIUS))return reject("sphere_braking_clearance",flat,heights,reach);
         return new Decision(true,"clear",flat,heights.min(),heights.max(),reach);
     }
     private static Rect rectangle(MovementTraceSink.Motion m,double ax,double az,double kx,double kz,double factor){

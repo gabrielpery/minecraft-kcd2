@@ -131,10 +131,45 @@ KCD readbacks, player/camera restoration, 435 accepted HUD frames, the four-stat
 inventory sequence and frame-cap restoration. The earlier coupled test and
 standalone synthetic HUD fixture remain separate entry points.
 
+## Larger fixed walking area
+
+`-WideWalking` selects one 9×9 capture at one-metre spacing: an 8×8-metre terrain
+footprint with a four-metre maximum distance from the starting point. The default
+remains 5×5 samples and a two-metre distance limit. This extends the existing
+walking/HUD path; it does not stream terrain or change the session duration.
+Vertical, freshness, inventory, restoration and cleanup checks remain in force.
+The capture, producer, trace receiver and KCD follower must all explicitly select
+the same area. Wide data carries `walking_area="wide"`; it cannot widen a default
+session by itself. Combined aiming puts its owned build support outside the
+larger imported terrain.
+
+Developer entry points, from the project root with the appropriate HUD profile
+installed and a fresh KCD test world open:
+
+```powershell
+& './scripts/Start-HudWalkingLab.ps1' -ExtendedWalking -WideWalking
+# Or the combined walking/aimed-block profile:
+& './scripts/Start-HudWalkingAimed.ps1' -WideWalking
+```
+
+The existing standalone Minecraft fixture needs no KCD process or physical input:
+
+```powershell
+& './scripts/Test-HudPhysicalMovementFixture.ps1' -ExtendedWalking -WideWalking
+```
+
+It verifies that both client and server travel beyond the old two-metre limit,
+remain within four metres, show the HUD while walking, suppress inventory
+movement, resume walking and clean up. On 28 October, both reached 3.234 metres;
+the run passed with 72 walking HUD frames and zero inventory displacement.
+Lua and controller checks also passed. Live KCD composition/input for this larger
+area remains unverified. `-AimedBlocks` is not supported by the wide standalone
+fixture; the existing small-area combined fixture remains available.
+
 ## Physical walking with the HUD in KCD
 
 `Start-HudWalkingLab.ps1` is a separate opt-in lab that sends physical WASD/Space
-to the actual Minecraft world supplying KCD's HUD. It uses a fresh 25-point KCD
+to the actual Minecraft world supplying KCD's HUD. By default it uses a fresh 25-point KCD
 terrain capture, ordinary Minecraft movement/gravity/jumping on client and server,
 and fresh KCD camera direction for walking orientation. Only fresh server poses
 drive the KCD follower. Source compilation and automated contract/lifecycle checks

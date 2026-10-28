@@ -1,7 +1,7 @@
 # Actual Minecraft controller/physics/HUD exercise with explicitly scripted edges.
 # No KCD commands, renderer arm, reverse-input mapping, or physical-input claims.
 [CmdletBinding()]
-param([string]$JavaHome,[string]$GroundPatchFile,[ValidateRange(-180,180)][double]$YawDegrees=0,[switch]$PreflightOnly,[switch]$ExtendedWalking,[switch]$AimedBlocks)
+param([string]$JavaHome,[string]$GroundPatchFile,[ValidateRange(-180,180)][double]$YawDegrees=0,[switch]$PreflightOnly,[switch]$ExtendedWalking,[switch]$AimedBlocks,[switch]$WideWalking)
 . (Join-Path $PSScriptRoot 'powershell7.ps1')
 if($PSVersionTable.PSVersion.Major -lt 7){
     $bootstrapExit=Invoke-MineComePowerShell7 -ScriptPath $PSCommandPath -BoundParameters $PSBoundParameters
@@ -12,6 +12,7 @@ Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'HudGroundMovement.ps1')
 if($AimedBlocks -and -not $ExtendedWalking){throw 'Combined aimed blocks require the explicit extended standalone walking fixture.'}
 if($AimedBlocks -and $YawDegrees -ne 0){throw 'Combined aimed blocks require the tested zero-yaw fixture.'}
+if($WideWalking -and (-not $ExtendedWalking -or $AimedBlocks)){throw 'Wide walking fixture requires ExtendedWalking without AimedBlocks.'}
 function Assert-HudWalkingAimedFixtureProof($Aimed,$Fixture,$Guest,[string]$PatchHash) {
     function Flag($Object,[string]$Name,[bool]$Expected){if($Object.$Name -isnot [bool] -or $Object.$Name -ne $Expected){throw "Combined fixture boolean mismatch: $Name"}}
     function Text($Object,[string]$Name,[string]$Expected){if($Object.$Name -isnot [string] -or $Object.$Name -cne $Expected){throw "Combined fixture text mismatch: $Name"}}
@@ -75,8 +76,9 @@ function Assert-HudWalkingAimedFixtureProof($Aimed,$Fixture,$Guest,[string]$Patc
     $resumedMs=([decimal]$downs[3].received_monotonic_ns-[decimal]$downs[0].received_monotonic_ns)/1000000
     if($resumedMs -le $Aimed.confirmations[-1].elapsed_from_first_movement_ms){throw 'Combined fixture did not resume walking after block interactions.'}
 }
-function Assert-HudPhysicalFixtureResult($Guest,[string]$Run,[string]$PatchHash,[switch]$ExtendedWalking,[switch]$AimedBlocks) {
+function Assert-HudPhysicalFixtureResult($Guest,[string]$Run,[string]$PatchHash,[switch]$ExtendedWalking,[switch]$AimedBlocks,[switch]$WideWalking) {
     if($AimedBlocks -and -not $ExtendedWalking){throw 'Combined aimed blocks require the extended walking fixture.'}
+    if($WideWalking -and (-not $ExtendedWalking -or $AimedBlocks)){throw 'Wide walking fixture requires ExtendedWalking without AimedBlocks.'}
     if($Guest.schema -ne 1 -or $Guest.run -cne $Run -or $Guest.result -cne 'passed' -or $Guest.source_kind -cne 'minecraft_vanilla_ui_stream_v1' -or
         $Guest.ui_physical_controller_fixture -isnot [bool] -or -not $Guest.ui_physical_controller_fixture -or $Guest.ui_input_physical_movement -isnot [bool] -or $Guest.ui_input_physical_movement -or
         $Guest.scripted_input -isnot [bool] -or -not $Guest.scripted_input -or $Guest.physical_input_verified -isnot [bool] -or $Guest.physical_input_verified -or
@@ -101,12 +103,20 @@ function Assert-HudPhysicalFixtureResult($Guest,[string]$Run,[string]$PatchHash,
         $proof.inventory_client_max_displacement -gt .01 -or $proof.inventory_server_max_displacement -gt .01 -or $proof.inventory_frames -lt 2 -or $proof.walking_hud_frames -lt 2 -or $proof.synthetic_camera_samples -lt 10){throw 'Fixture did not verify actual inventory suppression, HUD frames and camera cleanup.'}
     $movement=$proof.physical_movement
     foreach($marker in @($Guest,$proof,$movement)){
+        Assert-HudWalkingArea $marker ([bool]$WideWalking)
         $field=$marker.PSObject.Properties['movement_session']
         if($ExtendedWalking){
             if($null -eq $field -or $field.Value -isnot [string] -or $field.Value -cne 'extended'){throw 'Extended fixture requires its exact session marker.'}
         }elseif($null -ne $field -and ($field.Value -isnot [string] -or $field.Value -cne 'short')){throw 'Short fixture cannot accept another movement session.'}
     }
-    $keys=if($ExtendedWalking){@('W','W','S','W','S')}else{@('W','W','S')}
+    if($WideWalking){
+        if($proof.wide_boundary_crossed -isnot [bool] -or -not $proof.wide_boundary_crossed){throw 'Wide fixture did not cross the original walking boundary.'}
+        foreach($name in @('client_max_horizontal_excursion','server_max_horizontal_excursion')){
+            $value=$proof.$name
+            if($value -isnot [ValueType] -or $value -is [bool] -or -not [double]::IsFinite([double]$value) -or $value -le 2 -or $value -gt 4){throw 'Wide fixture lacks bounded client/server travel beyond two metres.'}
+        }
+    }
+    $keys=if($WideWalking){@('W','S','W','W','S')}elseif($ExtendedWalking){@('W','W','S','W','S')}else{@('W','W','S')}
     if(@($proof.pulses).Count -ne $keys.Count){throw 'Fixture actual movement pulse count differs.'}
     $lastPulseMs=-1.0
     for($index=0;$index -lt $keys.Count;$index++){
@@ -194,9 +204,14 @@ if($GroundPatchFile){
     $patch=Get-Content -LiteralPath $GroundPatchFile -Raw | ConvertFrom-Json
     $sourceHash=(Get-FileHash -LiteralPath $GroundPatchFile -Algorithm SHA256).Hash.ToLowerInvariant()
 }else{
-    $points=@(for($row=0;$row -lt 5;$row++){for($column=0;$column -lt 5;$column++){[ordered]@{index=$row*5+$column+1;x=$column-2;y=$row-2;z=10;nx=0;ny=0;nz=1}}})
-    $patch=[pscustomobject]@{schema=1;run='pending';grid_size=5;spacing=1;center=[ordered]@{x=0;y=0;z=10};points=$points;provenance=[ordered]@{kind='standalone_ground_fixture'}}
+    $gridSize=if($WideWalking){9}else{5};$half=[int](($gridSize-1)/2)
+    $points=@(for($row=0;$row -lt $gridSize;$row++){for($column=0;$column -lt $gridSize;$column++){[ordered]@{index=$row*$gridSize+$column+1;x=$column-$half;y=$row-$half;z=10;nx=0;ny=0;nz=1}}})
+    $patch=[pscustomobject]@{schema=1;run='pending';grid_size=$gridSize;spacing=1;center=[ordered]@{x=0;y=0;z=10};points=$points;provenance=[ordered]@{kind='standalone_ground_fixture'}}
+    if($WideWalking){$patch | Add-Member NoteProperty walking_area 'wide'}
 }
+Assert-HudWalkingArea $patch ([bool]$WideWalking)
+$expectedGrid=if($WideWalking){9}else{5}
+if($patch.grid_size -ne $expectedGrid -or $patch.spacing -ne 1 -or @($patch.points).Count -ne $expectedGrid*$expectedGrid){throw 'Supplied terrain must already match the selected fixed walking area; captured terrain is never extended.'}
 $clients=@(Get-CimInstance Win32_Process -Filter "Name='java.exe' OR Name='javaw.exe'" | Where-Object {$_.CommandLine -match 'net\.fabricmc\.devlaunchinjector\.Main' -and $_.CommandLine -like ('*'+$minecraft+'*')})
 if($clients.Count){throw 'An existing MineCome Minecraft client is open; preserving it.'}
 if($PreflightOnly){Write-Output 'HUD_PHYSICAL_FIXTURE_PREFLIGHT_PASS no_process_started=true kcd_unchanged=true';return}
@@ -219,20 +234,23 @@ try{
         [ordered]@{schema=1;kind='standalone_hud_walking_aimed_source_manifest_v1';run=$run;ui_walking_aimed_fixture=$true;files=$sourceHashes} | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $directory 'source-hashes.json') -Encoding utf8NoBOM
     }
     Write-Output "HUD_PHYSICAL_FIXTURE_START run=$run evidence=$directory scripted_input=true kcd_unchanged=true"
-    & (Join-Path $PSScriptRoot 'Run-HudStreamClient.ps1') -EvidenceDirectory $directory -Run $run -TargetPid $PID -TargetStart $targetStart -ExpiresUtcMs $expires -JavaHome $JavaHome -Standalone -PhysicalMovementFixture -GroundPatchFile $patchPath -MovementTraceFile $tracePath -HostViewFile $viewPath -PhysicalFixtureYaw $YawDegrees -ExtendedWalking:$ExtendedWalking -AimedBlocks:$AimedBlocks
+    & (Join-Path $PSScriptRoot 'Run-HudStreamClient.ps1') -EvidenceDirectory $directory -Run $run -TargetPid $PID -TargetStart $targetStart -ExpiresUtcMs $expires -JavaHome $JavaHome -Standalone -PhysicalMovementFixture -GroundPatchFile $patchPath -MovementTraceFile $tracePath -HostViewFile $viewPath -PhysicalFixtureYaw $YawDegrees -ExtendedWalking:$ExtendedWalking -AimedBlocks:$AimedBlocks -WideWalking:$WideWalking
     if($LASTEXITCODE -ne 0){throw "Minecraft fixture child failed: $LASTEXITCODE"}
     $guest=Get-Content -LiteralPath (Join-Path $directory 'capture/stream-result.json') -Raw | ConvertFrom-Json
     if($guest.result -ceq 'failed'){
         $reason=if($guest.PSObject.Properties.Name -contains 'failure'){$guest.failure}elseif($guest.lab_evidence.PSObject.Properties.Name -contains 'failure'){$guest.lab_evidence.failure}else{'Producer reported failure without a diagnostic'}
         throw "Minecraft fixture failed: $reason"
     }
-    $proof=Assert-HudPhysicalFixtureResult $guest $run $patchHash -ExtendedWalking:$ExtendedWalking -AimedBlocks:$AimedBlocks
+    $proof=Assert-HudPhysicalFixtureResult $guest $run $patchHash -ExtendedWalking:$ExtendedWalking -AimedBlocks:$AimedBlocks -WideWalking:$WideWalking
     $traceLimit=if($ExtendedWalking){256KB}else{64KB}
     if((Get-Item -LiteralPath $tracePath).Length -gt $traceLimit){throw 'Fixture trace exceeded its selected byte budget.'}
     $records=@(Get-Content -LiteralPath $tracePath | ForEach-Object {$_ | ConvertFrom-Json})
     if($records.Count -lt 5 -or $records.Count -gt 200 -or $records[0].kind -cne 'begin' -or $records[-1].kind -cne 'end' -or $records[-1].result -cne 'passed'){throw 'Fixture actual controller trace did not complete.'}
     $traceKind=if($ExtendedWalking){'standalone_hud_physical_movement_extended_fixture'}else{'standalone_hud_physical_movement_fixture'}
-    foreach($record in $records){if($record.source_kind -cne $traceKind -or $record.run -cne $patchRun -or $record.patch_sha256 -cne $patchHash){throw 'Fixture trace provenance/session differs.'}}
+    foreach($record in $records){
+        Assert-HudWalkingArea $record ([bool]$WideWalking)
+        if($record.source_kind -cne $traceKind -or $record.run -cne $patchRun -or $record.patch_sha256 -cne $patchHash){throw 'Fixture trace provenance/session differs.'}
+    }
     foreach($state in @('fixture_inventory_blocked','fixture_scripted_walking')){
         $sample=@($guest.samples | Where-Object state -CEQ $state)
         if($sample.Count -ne 1 -or $sample[0].png_file -notmatch '^sample-[a-z0-9_]+\.png$'){throw 'Fixture real HUD/inventory PNG sample absent.'}
@@ -248,5 +266,7 @@ try{
     $passed=$true;Write-Output "HUD_PHYSICAL_FIXTURE_VERIFIED run=$run pulses=$(@($proof.pulses).Count) aimed_blocks=$([bool]$AimedBlocks) inventory_movement_suppressed=true actual_minecraft=true physical_input_verified=false kcd_compositing_verified=false"
 }catch{$failure=$_.Exception.Message;throw}
 finally{
-    [ordered]@{schema=1;kind='standalone_hud_physical_controller_fixture_verification_v1';run=$run;result=$(if($passed){'passed'}else{'failed'});failure=$failure;movement_session=$(if($ExtendedWalking){'extended'}else{'short'});ui_walking_aimed_fixture=[bool]$AimedBlocks;source_hashes_verified=$(if($AimedBlocks){$sourceHashesVerified}else{$null});scripted_input=$true;physical_input_verified=$false;kcd_compositing_verified=$false;kcd_commands_sent=0;renderer_armed=$false;reverse_input_mapping_created=$false;patch_sha256=$patchHash;original_capture_sha256=$sourceHash;yaw_degrees=$YawDegrees;proof=$proof} | ConvertTo-Json -Depth 16 | Set-Content -LiteralPath (Join-Path $directory 'verification.json') -Encoding utf8NoBOM
+    $verification=[ordered]@{schema=1;kind='standalone_hud_physical_controller_fixture_verification_v1';run=$run;result=$(if($passed){'passed'}else{'failed'});failure=$failure;movement_session=$(if($ExtendedWalking){'extended'}else{'short'});ui_walking_aimed_fixture=[bool]$AimedBlocks;source_hashes_verified=$(if($AimedBlocks){$sourceHashesVerified}else{$null});scripted_input=$true;physical_input_verified=$false;kcd_compositing_verified=$false;kcd_commands_sent=0;renderer_armed=$false;reverse_input_mapping_created=$false;patch_sha256=$patchHash;original_capture_sha256=$sourceHash;yaw_degrees=$YawDegrees;proof=$proof}
+    if($WideWalking){$verification.walking_area='wide'}
+    $verification | ConvertTo-Json -Depth 16 | Set-Content -LiteralPath (Join-Path $directory 'verification.json') -Encoding utf8NoBOM
 }

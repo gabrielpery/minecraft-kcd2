@@ -1,4 +1,5 @@
 # Pure configuration and evidence checks for the standalone HUD/ground fixture.
+. (Join-Path $PSScriptRoot 'HudWalkingArea.ps1')
 function Assert-HudGroundMovementMode([bool]$GroundMovementFixture,[bool]$Standalone,[bool]$Composite,[bool]$Coupled=$false) {
     if(($GroundMovementFixture -and $Coupled) -or (($GroundMovementFixture -or $Coupled) -and (-not $Standalone -or $Composite))) {
         throw 'HUD ground movement requires one explicit mode and a standalone receiver without KCD composition.'
@@ -39,7 +40,8 @@ function Read-HudMovementJson([string]$Path){
 # Pure provenance check. The caller supplies the independently measured file
 # hashes and the current, executable-pinned KCD process context.
 function Assert-HudLivePatchEvidence($Data,$Record,$Receipt,[string]$PatchPath,[string]$PatchHash,
-    [string]$SourceHash,[string]$SnapshotHash,$Context,[long]$NowUtcMs) {
+    [string]$SourceHash,[string]$SnapshotHash,$Context,[long]$NowUtcMs,[switch]$WideWalking) {
+    $area=Get-HudWalkingArea -WideWalking:$WideWalking
     foreach($hash in @($PatchHash,$SourceHash,$SnapshotHash)){if($hash -notmatch '^[0-9a-fA-F]{64}$'){throw 'Invalid captured terrain hash.'}}
     foreach($field in @('Patch','FunctionReloadVerified','EngineReceiptVerified')){
         if($Record.$field -isnot [bool] -or -not $Record.$field){throw 'Terrain capture verification must be explicit Boolean success.'}
@@ -56,18 +58,19 @@ function Assert-HudLivePatchEvidence($Data,$Record,$Receipt,[string]$PatchPath,[
         throw 'HUD ground patch does not match its immutable capture and current pinned KCD process.'
     }
     foreach($entry in @($Data,$Receipt)){
+        Assert-HudWalkingArea $entry ([bool]$WideWalking)
         if($entry.result -cne 'sampled' -or $entry.stable_player -isnot [bool] -or -not $entry.stable_player -or
-            $entry.grid_size -ne 5 -or $entry.spacing -ne 1 -or $entry.point_count -ne 25 -or $entry.valid_count -ne 25 -or
+            $entry.grid_size -ne $area.Grid -or $entry.spacing -ne 1 -or $entry.point_count -ne $area.Points -or $entry.valid_count -ne $area.Points -or
             $entry.approximate_heightfield -isnot [bool] -or -not $entry.approximate_heightfield -or
             $entry.full_collision_export_verified -isnot [bool] -or $entry.full_collision_export_verified){throw 'Incomplete terrain capture.'}
     }
     foreach($axis in @('x','y','z')){if($Data.center.$axis -ne $Receipt.center.$axis){throw 'Terrain capture centre changed.'}}
-    if(@($Data.points).Count -ne 25){throw 'Incomplete terrain capture points.'}
+    if(@($Data.points).Count -ne $area.Points){throw 'Incomplete terrain capture points.'}
     $captured=[DateTimeOffset]([datetime]$Data.provenance.captured_utc).ToUniversalTime()
     $age=$NowUtcMs-$captured.ToUnixTimeMilliseconds()
     if($age -lt -5000 -or $age -gt 180000){throw 'HUD coupled mode requires a newly captured terrain patch.'}
 }
-function Read-HudLiveGroundPatch([string]$Path,[string]$ProjectRoot,$Context) {
+function Read-HudLiveGroundPatch([string]$Path,[string]$ProjectRoot,$Context,[switch]$WideWalking) {
     $path=Resolve-HudMovementEvidencePath $Path $ProjectRoot
     $data=Read-HudMovementJson $path
     $captureDirectory=Split-Path -Parent $path
@@ -78,15 +81,18 @@ function Read-HudLiveGroundPatch([string]$Path,[string]$ProjectRoot,$Context) {
     $patchHash=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
     $sourceHash=(Get-FileHash -LiteralPath (Join-Path $ProjectRoot 'kcd2/probes/ground_patch.lua') -Algorithm SHA256).Hash.ToLowerInvariant()
     $snapshotHash=(Get-FileHash -LiteralPath $sourcePath -Algorithm SHA256).Hash.ToLowerInvariant()
-    Assert-HudLivePatchEvidence $data $record $receipt $path $patchHash $sourceHash $snapshotHash $Context ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())
+    Assert-HudLivePatchEvidence $data $record $receipt $path $patchHash $sourceHash $snapshotHash $Context ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()) -WideWalking:$WideWalking
     return [pscustomobject]@{Path=$path;Hash=$patchHash;Run=$data.run;Data=$data}
 }
-function New-HudGroundMovementPatch([string]$Run) {
+function New-HudGroundMovementPatch([string]$Run,[switch]$WideWalking) {
     if($Run -cnotmatch '^[0-9a-f]{32}$'){throw 'A fresh fixture run token is required.'}
-    $points=for($row=0;$row -lt 5;$row++){for($column=0;$column -lt 5;$column++){
-        [ordered]@{schema=1;run=$Run;index=1+$row*5+$column;x=120+$column-2;y=2040+$row-2;z=56;nx=0;ny=0;nz=1;valid=$true;result='hit';mask=256;approximate_heightfield=$true;full_collision_export_verified=$false}
+    $area=Get-HudWalkingArea -WideWalking:$WideWalking
+    $points=for($row=0;$row -lt $area.Grid;$row++){for($column=0;$column -lt $area.Grid;$column++){
+        [ordered]@{schema=1;run=$Run;index=1+$row*$area.Grid+$column;x=120+$column-$area.HalfWidth;y=2040+$row-$area.HalfWidth;z=56;nx=0;ny=0;nz=1;valid=$true;result='hit';mask=256;approximate_heightfield=$true;full_collision_export_verified=$false}
     }}
-    return [ordered]@{schema=1;run=$Run;result='sampled';center=@{x=120;y=2040;z=56};grid_size=5;spacing=1;point_count=25;valid_count=25;stable_player=$true;mask=256;approximate_heightfield=$true;full_collision_export_verified=$false;points=@($points);provenance=@{kind='standalone_fixture'}}
+    $patch=[ordered]@{schema=1;run=$Run;result='sampled';center=@{x=120;y=2040;z=56};grid_size=$area.Grid;spacing=1;point_count=$area.Points;valid_count=$area.Points;stable_player=$true;mask=256;approximate_heightfield=$true;full_collision_export_verified=$false;points=@($points);provenance=@{kind='standalone_fixture'}}
+    if($WideWalking){$patch.walking_area='wide'}
+    return $patch
 }
 function Assert-HudGroundMovementMarkers($Receipt,[bool]$Expected,[bool]$Coupled=$false) {
     if($Expected -and $Coupled){throw 'Conflicting HUD ground movement modes.'}

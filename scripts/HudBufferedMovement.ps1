@@ -1,5 +1,6 @@
 # Buffered source timing, observed-path proof and disposable warmup. No game calls.
 . (Join-Path $PSScriptRoot 'HudWalkingSession.ps1')
+. (Join-Path $PSScriptRoot 'HudWalkingArea.ps1')
 function Get-HudBufferedNumber($Value,[string]$Name,[double]$Minimum,[double]$Maximum) {
     if($Value -isnot [ValueType] -or $Value -is [bool] -or $Value -is [char] -or
         $Value -is [datetime] -or -not [double]::IsFinite([double]$Value) -or
@@ -22,10 +23,11 @@ function Get-HudBufferedField($Value,[string]$Name) {
     }
     return ,($Value.$Name)
 }
-function Assert-HudWalkingFollowerSession($Receipts,[switch]$ExtendedWalking) {
+function Assert-HudWalkingFollowerSession($Receipts,[switch]$ExtendedWalking,[switch]$WideWalking) {
     $session=Get-HudWalkingSession -ExtendedWalking:$ExtendedWalking
     if(@($Receipts).Count -lt 1 -or @($Receipts).Count -gt $session.Receipts){throw 'Follower receipt budget exceeded or absent.'}
     foreach($receipt in $Receipts){
+        Assert-HudWalkingArea $receipt ([bool]$WideWalking)
         Assert-HudWalkingSession $receipt -ExtendedWalking:$ExtendedWalking
         [void](Get-HudBufferedNumber (Get-HudBufferedField $receipt 'hard_deadline_ms') 'hard deadline' $session.DeadlineMs $session.DeadlineMs)
         [void](Get-HudBufferedInteger (Get-HudBufferedField $receipt 'writes') 'follower writes' 0 ($session.OrdinaryWrites+1))
@@ -92,7 +94,7 @@ function Initialize-HudBufferedMovementPipeline {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$PatchFile,
         [Parameter(Mandatory)][string]$ExpectedHudSave,
-        [Parameter(Mandatory)]$MinimumUtcMs,[switch]$ExtendedWalking)
+        [Parameter(Mandatory)]$MinimumUtcMs,[switch]$ExtendedWalking,[switch]$WideWalking)
     $ErrorActionPreference='Stop'
     $watch=[Diagnostics.Stopwatch]::StartNew()
     try {
@@ -100,13 +102,14 @@ function Initialize-HudBufferedMovementPipeline {
         # Validate the caller's inputs normally, then bind only this fresh state
         # to a separate synthetic world so these records cannot name the HUD save.
         $diagnosticReceiver=New-MineComeTraceReceiver -PatchFile $PatchFile -MinimumUtcMs $MinimumUtcMs `
-            -ExpectedHudSave $ExpectedHudSave -PhysicalMovement -BufferedPhysicalMovement -ExtendedWalking:$ExtendedWalking
+            -ExpectedHudSave $ExpectedHudSave -PhysicalMovement -BufferedPhysicalMovement -ExtendedWalking:$ExtendedWalking -WideWalking:$WideWalking
         $diagnosticWorld=[Guid]::NewGuid().ToString('D')
         $diagnosticSave='MineCome-HudStream-'+$diagnosticWorld
         $diagnosticReceiver.ExpectedHudSave=$diagnosticSave
         $diagnosticClock=New-HudBufferedSourceState -ExtendedWalking:$ExtendedWalking
         $diagnosticIdentity=[ordered]@{schema=1;run=$diagnosticReceiver.ExpectedRun;patch_sha256=$diagnosticReceiver.PatchHash;
             source_kind=(Get-HudWalkingSession -ExtendedWalking:$ExtendedWalking).SourceKind;save=$diagnosticSave;world=$diagnosticWorld;utc_ms=[long]$MinimumUtcMs}
+        if($WideWalking){$diagnosticIdentity.walking_area='wide'}
         $diagnosticBegin=[ordered]@{}
         foreach($entry in $diagnosticIdentity.GetEnumerator()){$diagnosticBegin[$entry.Key]=$entry.Value}
         $diagnosticBegin.kind='begin';$diagnosticBegin.seq=1L;$diagnosticBegin.phase='SETTLING'
@@ -175,7 +178,8 @@ function Get-HudBufferedCamera($Value,[string]$Name) {
     }
     return [pscustomobject]@{position=$position;forward=$forward;up=$up;fov=$fov}
 }
-function Assert-HudBufferedMovementReceipt($Receipt,$Forwarded,[switch]$ExtendedWalking) {
+function Assert-HudBufferedMovementReceipt($Receipt,$Forwarded,[switch]$ExtendedWalking,[switch]$WideWalking) {
+    Assert-HudWalkingArea $Receipt ([bool]$WideWalking)
     $session=Get-HudWalkingSession -ExtendedWalking:$ExtendedWalking
     Assert-HudWalkingSession $Receipt -ExtendedWalking:$ExtendedWalking
     # This proves retained observed path samples, not unrecorded frames or visual
