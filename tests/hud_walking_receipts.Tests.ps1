@@ -10,7 +10,7 @@ function Reject([scriptblock]$Action,[string]$Message){$threw=$false;try{& $Acti
 $encoding=[Text.UTF8Encoding]::new($false,$true)
 $run='abcdef0123456789abcdef0123456789'
 $other='0123456789abcdef0123456789abcdef'
-$tags=@('MineComeMovementCapabilities','MineComeMovementContract','MineComeHudPhysicalView','MineComeMovementFollower')
+$tags=@('MineComeMovementCapabilities','MineComeMovementContract','MineComeHudPhysicalView','MineComeMovementFollower','MineComeHudPhysicalViewRejected')
 $dir=Join-Path $root ('runtime/evidence/walking-receipts-pure-'+[Guid]::NewGuid().ToString('N'))
 [void][IO.Directory]::CreateDirectory($dir)
 'SYNTHETIC ONLY; receipt parser fixtures, no game interactions.' | Set-Content (Join-Path $dir 'FIXTURE.txt')
@@ -40,7 +40,7 @@ Append $p $encoding.GetBytes((Record $tags[2] 2 $other)+"`n"+(Record $tags[2] 3 
 Append $p $encoding.GetBytes("[UnrelatedTag] {bad json ignored}`nengine status only`n")
 $first=@(Read-HudWalkingReceipts $c $tags[2])
 Check ($first.Count -eq 1 -and $first[0].seq -eq 1) 'Tag/schema/exact run identity filtering'
-Check ($c.Parsed -eq 7 -and $c.Position -eq (Get-Item -LiteralPath $p).Length) 'All complete known-tag records parsed exactly once'
+Check ($c.Parsed -eq 8 -and $c.Position -eq (Get-Item -LiteralPath $p).Length) 'All complete known-tag records parsed exactly once'
 foreach($tag in $tags){
     $values=@(Read-HudWalkingReceipts $c $tag)
     Check ($values.Count -eq 1 -and $values[0].run -ceq $run) 'Other tags remain independently cached'

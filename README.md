@@ -30,24 +30,24 @@ The public repository contains source, build scripts and development procedures.
 
 The [physical HUD walking lab](kcd2/MOVEMENT-LAB.md#physical-walking-with-the-hud-in-kcd)
 now passes repeated movement with Minecraft's real HUD, normal return to the
-starting position and cleanup. The latest live run passes all **56 source points
-and delayed KCD readbacks**. The user reports **"still delay, but smooth"**.
+starting position and cleanup. The latest live run passes all **57 source points
+and delayed KCD readbacks**. The user confirms it works, with a little delay remaining.
 Camera delivery stays fresh and the native finish restores the exact origin.
 
 The source-time buffer preserves Minecraft's actual server motion timing and
 intentionally adds 200 ms of playback delay. Parser warmup and fixed-schedule
 sampling are now exercised together in the passed live run. The first source
-capture reaches dispatch in 50 ms; further responsiveness work remains, and the
+capture reaches dispatch in 56 ms in the latest run; further responsiveness work remains, and the
 combined changes do not establish a single cause for the timing improvement.
 Boundary pauses require releasing controls before pressing again in an allowed
 direction. The lab permits five seconds of input plus one second of settling
 inside a 30-second HUD session. Longer walking and integration with aimed-block
 controls remain next development work; this is not yet a final playable build.
 
-A subsequent input-phase repair removes a mandatory extra Minecraft tick before
-movement controls are applied. Compilation, 299 input/controller checks and an
-actual Minecraft walking/inventory fixture pass. Its effect on physical KCD2
-responsiveness still needs a live comparison; the 200 ms smoothing buffer remains.
+The input-phase repair and a first-step downhill transition fix now pass together
+in KCD2. Accepted keys reach Minecraft's movement bindings a median 0.11 ms after
+receipt in that run; producer capture-to-receipt is median 16 ms. These are input
+stage measurements, not display latency. The 200 ms smoothing buffer remains.
 
 Live checks above use the **official KCD2 1.5.5 development build**. The native
 **retail 1.5.6 route remains blocked** by its verified address-library/loader

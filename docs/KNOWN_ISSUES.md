@@ -110,13 +110,16 @@ Never load newer retail1.5.6 saves into this older1.5.5 development game. Backup
 
 ## Gameplay scope
 
-- A new physical-input phase repair is compiled and standalone verified, but not
-  yet live verified in KCD2. Input now runs before vanilla polling instead of
-  waiting from END to the next START tick. Actual Minecraft passes three scripted
-  walking pulses, inventory suppression, real HUD frames and cleanup. New bounded
-  per-edge/binding diagnostics support the next comparison without implying
-  native application or display latency. The 200 ms buffer remains unchanged.
-- Physical HUD walking now passes normal completion and cleanup in live run
+- The earlier-input repair and first-step descent fix now pass live in `b850ba...`:
+  57/57 source readbacks, exact restoration and normal cleanup. The user confirms
+  walking/HUD work with a little delay remaining. Accepted keys reach pre-vanilla
+  bindings at median 0.1114 ms after receipt; producer capture-to-receipt is median
+  16 ms. This is not native application/display latency. The 200 ms buffer remains.
+  A freshly validated buffered anchor now supplies ground provenance for an
+  immediate airborne descent, while stale/invalid anchors and legacy modes keep
+  their guards. Earlier attempt `6cd20f...` rejected that transition; `4a7fb2...`
+  never activated at all. Neither is a successful responsiveness measurement.
+- The prior 27 October physical HUD run passes normal completion and cleanup:
   `650a8e00939c4831981f75828b79ff62`: 56/56 source readbacks, native `explicit_end`,
   exact origin restoration, cancelled timers, FPS restoration and normal Minecraft
   cleanup. All 588 camera publications are fresh. The user says "still delay,

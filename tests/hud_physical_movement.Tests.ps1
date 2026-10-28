@@ -202,10 +202,12 @@ Check ($legacy.Begun -and $legacy.Anchor.y -eq 64) 'Legacy receiver retains exac
 Reject {New-MineComeTraceReceiver $patchPath 1000 -ExpectedHudSave $save -BufferedPhysicalMovement} 'Buffered playback accepted a nonphysical profile'
 $s=State;$null=Receive $s (Begin);$r=Receive $s (Sample 2 'SETTLING')
 Check ($r.Kind -ceq 'observe') 'Existing physical follower still observes its initial anchor without dispatching it'
+$r=Receive $s (Sample 3 'JUMPING' .1 63.55 0 $false)
+Check ($r.Kind -ceq 'observe' -and -not $s.GroundProved) 'Legacy physical profile still requires its existing grounded motion proof before airborne dispatch'
 function BufferedState {New-MineComeTraceReceiver $patchPath 1000 -ExpectedHudSave $save -PhysicalMovement -BufferedPhysicalMovement}
 $s=BufferedState;$null=Receive $s (Begin);$r=Receive $s (Sample 2 'SETTLING')
 Check ($r.Kind -ceq 'sample' -and $r.Target.x -eq 120 -and $r.Target.y -eq 2040 -and $r.Target.z -eq 56) 'Buffered timeline includes the genuine initial source anchor'
-Check (-not $s.GroundProved) 'Source anchor alone does not establish walking proof'
+Check $s.GroundProved 'Fresh verified buffered anchor establishes ground provenance without claiming walking occurred'
 $r=Receive $s (Sample 3 'SETTLING')
 Check ($r.Kind -ceq 'observe') 'A later settling record cannot restart the playback anchor'
 $null=Receive $s (Sample 4 'WALKING' 0.5)
@@ -213,6 +215,9 @@ $r=Receive $s (Sample 5 'PASSED' 0.5)
 Check ($r.Kind -ceq 'sample' -and $r.Target.x -eq 120.5 -and $s.LastFreshPassedSeq -eq 5) 'Buffered playback includes the final grounded source point'
 $s=BufferedState;$null=Receive $s (Begin);$r=Receive $s (Sample 2 'SETTLING') 1301
 Check ($r.Kind -ceq 'stale' -and -not $r.PSObject.Properties['Target']) 'Stale initial anchor cannot drive playback'
+Check (-not $s.GroundProved) 'Stale anchor must not establish ground provenance'
+$r=Receive $s (Sample 3 'JUMPING' .1 63.55 0 $false)
+Check ($r.Kind -ceq 'observe' -and -not $s.GroundProved) 'Airborne observation after a stale anchor remains nondriving'
 $s=BufferedState;$null=Receive $s (Begin);$null=Receive $s (Sample 2 'SETTLING');$null=Receive $s (Sample 3 'WALKING')
 $r=Receive $s (Sample 4 'PASSED' 0.5) 1301
 Check ($r.Kind -ceq 'stale' -and $s.LastFreshPassedSeq -eq 0) 'Stale terminal point is excluded from playback'
@@ -227,5 +232,27 @@ Check ($r.Kind -ceq 'sample' -and [Math]::Abs($r.Target.z-55.9215999984741) -lt 
 $s=BufferedState;$null=Receive $s (Begin);$null=Receive $s (Sample 2 'SETTLING')
 $transition=Sample 3 'LANDING' 0 63.5466 0 $false
 $r=Receive $s $transition
-Check ($r.Kind -ceq 'observe') 'First airborne transition still requires the existing grounded motion proof'
+Check ($r.Kind -ceq 'sample') 'First airborne transition follows the fresh verified buffered anchor'
+
+# A genuine grounded anchor may be followed immediately by a small descent.
+# Every ordered source point must survive, without requiring an intermediate
+# WALKING/RESTING point or changing the original clocks and phase labels.
+$s=BufferedState;$null=Receive $s (Begin)
+Check (-not $s.GroundProved -and -not $s.AnchorVerified) 'Begin metadata alone establishes no grounded observation'
+foreach($record in @((Sample 2 'SETTLING'),(Sample 3 'JUMPING' .06 63.625 -.32 $false),
+    (Sample 4 'LANDING' .07 63.5466 -.39 $false),(Sample 5 'RESTING' .075 63.47 -.43),(Sample 6 'PASSED' .075 63.47 -.43))){
+    $r=Receive $s $record
+    Check ($r.Kind -ceq 'sample' -and $r.Record.seq -eq $record.seq -and $r.Record.phase -ceq $record.phase -and $r.Record.monotonic_ns -eq $record.monotonic_ns) 'First-step descent lost or rewrote an immutable source point'
+}
+$end=Base 'end' 7 'PASSED';$end.result='passed';$end.reason='synthetic descent complete';$end.last_server_seq=5
+$r=Receive $s ([pscustomobject]$end)
+Check ($r.Kind -ceq 'end' -and $s.Ended) 'Buffered descent can complete with the unchanged fresh grounded PASSED/end handshake'
+foreach($bad in @((Sample 2 'JUMPING'),(Sample 2 'SETTLING' 0 63.625 0 $false),(Sample 2 'SETTLING' .02))){
+    $s=BufferedState;$null=Receive $s (Begin)
+    Reject {Receive $s $bad} 'Invalid buffered anchor gained ground provenance'
+    Check (-not $s.GroundProved -and -not $s.AnchorVerified -and $s.LastSeq -eq 1) 'Rejected buffered anchor mutated provenance or sequence'
+}
+$s=BufferedState;$null=Receive $s (Begin);$bad=Sample 2 'SETTLING';$bad.server.proxy_support='true'
+Reject {Receive $s $bad} 'Malformed buffered support flag gained ground provenance'
+Check (-not $s.GroundProved -and -not $s.AnchorVerified -and $s.LastSeq -eq 1) 'Malformed buffered anchor mutated receiver state'
 Write-Output "HUD_PHYSICAL_MOVEMENT_TESTS checks=$script:checks PASS"

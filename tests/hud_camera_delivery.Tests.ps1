@@ -21,6 +21,9 @@ function Invoke-MineComeToolsRequest {
     $command=[Uri]::UnescapeDataString($PathAndQuery)
     if($command -notmatch "SamplePhysicalHudView\('([0-9a-f]{32})'\)" -or $TimeoutMilliseconds -gt 1000 -or $TimeoutMilliseconds -lt 1){throw 'Unexpected simulated request'}
     $run=$Matches[1];$script:fakeSequence++
+    if($command -notmatch 'MineComeHudPhysicalViewRejected' -or $command -notmatch ('"seq":'+$script:fakeSequence+',') -or
+        $command -notmatch 'accepted==false' -or $command -notmatch 'invalid_rejection_reason'){throw 'Sampler rejection wrapper/correlation missing'}
+    if($script:fakeSequence -eq 1){[IO.File]::WriteAllText((Join-Path $Context.GameRoot 'request.lua'),$command.Substring($command.IndexOf('#')+1))}
     [IO.File]::AppendAllText((Join-Path $Context.GameRoot 'requests.log'),([string]$pending.Mono+"`n"))
     if($script:fakeMode -eq 'rotated_log' -and $script:fakeSequence -eq 2){[IO.File]::Move($Context.GameLog,($Context.GameLog+'.rotated'));[IO.File]::WriteAllText($Context.GameLog,'')}
     if($script:fakeMode -eq 'no_ack'){return}
@@ -28,6 +31,16 @@ function Invoke-MineComeToolsRequest {
     if($script:fakeMode -eq 'slow_stop'){Start-Sleep -Milliseconds 500}
     if($script:fakeMode -eq 'late_ack'){Start-Sleep -Milliseconds 1100}
     if($script:fakeMode -eq 'blocked_stop' -and $script:fakeSequence -eq 2){[Threading.Thread]::Sleep(2300)}
+    if($script:fakeMode -like '*rejection*'){
+        $rejected=[ordered]@{schema=1;run=$run;seq=$script:fakeSequence;result='rejected';reason='velocity_unavailable_or_moving'}
+        if($script:fakeMode -eq 'wrong_rejection_sequence'){$rejected.seq++}
+        if($script:fakeMode -eq 'wrong_rejection_run'){$rejected.run='9'*32}
+        if($script:fakeMode -eq 'bad_rejection_reason'){$rejected.reason='unsafe"reason'}
+        $line='[MineComeHudPhysicalViewRejected] '+($rejected | ConvertTo-Json -Compress)+"`n"
+        [IO.File]::AppendAllText($Context.GameLog,$line)
+        if($script:fakeMode -eq 'duplicate_rejection'){[IO.File]::AppendAllText($Context.GameLog,$line)}
+        return
+    }
     if($script:fakeMode -eq 'malformed'){
         [IO.File]::AppendAllText($Context.GameLog,"[MineComeHudPhysicalView] {broken`n");return
     }
@@ -121,6 +134,18 @@ foreach($mode in @('wrong_sequence','malformed','bad_basis','untyped_physical','
         Check (@(Get-Content -LiteralPath (Join-Path $case.Directory 'requests.log')).Count -eq 1) 'Outstanding unacknowledged request was redispatched'
         Check ($final.Failure -match 'one[- ]second') 'Unacknowledged request missed its one-second deadline'
     }
+}
+
+foreach($mode in @('sampler_rejection','wrong_rejection_sequence','wrong_rejection_run','bad_rejection_reason','duplicate_rejection')){
+    $case=New-Case $mode;$session=Start-Case $case
+    try{$failed=Wait-State $session {param($s)$s.Stopped}}finally{$final=Stop-HudCameraDelivery $session}
+    Check ($final.Stopped -and $final.ResourcesClosed -and $final.ViewCount -eq 0 -and -not [IO.File]::Exists($case.View)) "Rejected $mode published a view or leaked resources"
+    Check (@(Get-Content -LiteralPath (Join-Path $case.Directory 'requests.log')).Count -eq 1) "Rejected $mode was retried"
+    if($mode -eq 'sampler_rejection'){
+        Check ($final.Failure -ceq 'Physical camera sampler rejected request 1: velocity_unavailable_or_moving.') 'Actual sampler reason was replaced by a generic timeout'
+    }elseif($mode -eq 'wrong_rejection_run'){
+        Check ($final.Failure -match 'one[- ]second') 'Foreign rejection affected this request'
+    }else{Check ($final.Failure -match 'rejection receipt') "Invalid $mode was trusted as a sampler reason"}
 }
 
 $case=New-Case 'rotated_log';$session=Start-Case $case

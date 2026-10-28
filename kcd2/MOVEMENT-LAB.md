@@ -109,7 +109,7 @@ terrain capture, ordinary Minecraft movement/gravity/jumping on client and serve
 and fresh KCD camera direction for walking orientation. Only fresh server poses
 drive the KCD follower. Source compilation and automated contract/lifecycle checks
 pass. Camera delivery now uses a separate bounded worker and retained log handle.
-The latest source-time buffered combined run passes all 56 source transfers,
+The 27 October source-time buffered combined run passes all 56 source transfers,
 delayed native readbacks, normal `explicit_end` restoration and cleanup. The user
 reports "still delay, but smooth". The actor returns to its exact starting
 position, timers cancel, FPS restores and Minecraft exits normally. All 588
@@ -234,13 +234,20 @@ before vanilla polls movement KeyBindings. It removes the previous mandatory
 END-to-next-START wait without changing source timing, native interpolation or
 leases. The same phase passes an actual Minecraft scripted fixture with repeated
 W/W/S, zero inventory displacement, HUD frames and normal cleanup. It does not
-exercise the native physical input mapping; a live comparison is still pending.
+exercise the native physical input mapping. A later full live run `b850ba...`
+now passes 57/57 transfers/readbacks with exact normal restoration and cleanup.
+It also repairs the receiver's first-step descent: the fresh, exact supported
+SETTLING anchor now supplies ground provenance before an immediate airborne
+sample. No waypoint is omitted; stale/invalid anchors retain their guards.
 Final evidence now includes `physical_movement.input_timing` with original capture
 UTC, receipt timestamps and actual binding snapshots (32 retained rows per
 series, explicit counts/truncation). The watermark is the latest movement-edge
 sequence, not a guarantee that a batched edge reached vanilla. Use these clocks
 to distinguish queue/application delay from the unchanged 200 ms native buffer;
-they do not measure physical input-to-display latency. See PROGRESS for evidence.
+they do not measure physical input-to-display latency. The live run records median
+producer capture-to-receipt 16 ms and receipt-to-binding 0.1114 ms, with five paired
+presses and no truncated histories. The user confirms it works with a little
+delay; keep this baseline while extending bounded gameplay. See PROGRESS for evidence.
 
 The KCD follower retains its independent eight-second deadline and actor/position
 guards. Normal completion requires delayed readbacks

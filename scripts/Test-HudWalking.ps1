@@ -167,7 +167,7 @@ try{
                 # especially its initial stationary anchor. Do not coalesce it.
                 if($received.Kind -ceq 'sample'){Send-Pose $received $receivedUtc $validationMs}
                 elseif($received.Kind -ceq 'stale' -or ($received.Kind -ceq 'observe' -and $received.Record.kind -ceq 'sample')){
-                    throw 'Buffered playback cannot omit an expired or unsupported source waypoint.'
+                    throw "Buffered playback refused source waypoint seq=$($received.Record.seq) phase=$($received.Record.phase) kind=$($received.Kind); no waypoint may be omitted."
                 }
                 elseif($received.Kind -ceq 'end'){$traceEnded=$true;$tracePassed=$received.Record.result -ceq 'passed'}
             }

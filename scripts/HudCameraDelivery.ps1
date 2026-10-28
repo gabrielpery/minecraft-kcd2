@@ -36,7 +36,13 @@ function Get-HudCameraDeliveryWorkerScript {
                     $tick=[Diagnostics.Stopwatch]::GetTimestamp();Assert-MineComeProbeContext $Context;$pending.GuardMs=Milliseconds $tick
                     if(Expired){break}
                     $stage='requesting';Publish-State
-                    $code="#MineCome.SamplePhysicalHudView('$($Probe.Run)'); System.LogAlways('[MineComeHudWalkingFlush] $($Probe.Run)')"
+                    # Only validated run/sequence literals enter the command.
+                    # A rejected sampler never supplies a view or renews a lease.
+                    # Restrict its diagnostic to a bounded JSON-safe reason token.
+                    $code=@'
+#local accepted,reason=MineCome.SamplePhysicalHudView('@RUN@'); if accepted==false then if type(reason)~='string' or #reason>64 or not reason:match('^[a-z_]+$') then reason='invalid_rejection_reason' end; System.LogAlways('[MineComeHudPhysicalViewRejected] {"schema":1,"run":"@RUN@","seq":@SEQ@,"result":"rejected","reason":"'..reason..'"}') end; System.LogAlways('[MineComeHudWalkingFlush] @RUN@')
+'@
+                    $code=$code.Replace('@RUN@',[string]$Probe.Run).Replace('@SEQ@',$pending.Sequence.ToString([Globalization.CultureInfo]::InvariantCulture))
                     $remaining=$DeadlineUtcMs-[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
                     if($remaining -le 0){break}
                     $tick=[Diagnostics.Stopwatch]::GetTimestamp()
@@ -48,6 +54,18 @@ function Get-HudCameraDeliveryWorkerScript {
                 $tick=[Diagnostics.Stopwatch]::GetTimestamp()
                 $values=@(Read-HudWalkingReceipts $cursor 'MineComeHudPhysicalView')
                 $pending.LookupMs+=Milliseconds $tick;$pending.Polls++
+                # The cursor parsed both tags atomically from the same fresh bytes.
+                # Any rejection ends this request; do not redispatch or rebase it.
+                $rejections=$cursor.Receipts['MineComeHudPhysicalViewRejected']
+                if($rejections.Count){
+                    if($rejections.Count -ne 1){throw 'Physical camera request has multiple rejection receipts.'}
+                    $rejection=$rejections[0]
+                    if($rejection.seq -isnot [ValueType] -or $rejection.seq -is [bool] -or $rejection.seq -ne $pending.Sequence -or
+                        $rejection.result -cne 'rejected' -or $rejection.reason -isnot [string] -or $rejection.reason -cnotmatch '^[a-z_]{1,64}$'){
+                        throw 'Physical camera rejection receipt does not match its request.'
+                    }
+                    throw "Physical camera sampler rejected request $($pending.Sequence): $($rejection.reason)."
+                }
                 $newCount=$values.Count-$seenViews
                 if($newCount -lt 0){throw 'Camera receipt history regressed.'}
                 if($newCount -eq 0){

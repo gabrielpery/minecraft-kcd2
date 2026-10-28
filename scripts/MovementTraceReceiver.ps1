@@ -256,6 +256,12 @@ function Receive-MineComeMovementTrace {
                 # Playback needs the actual initial anchor and terminal source
                 # point. Legacy followers continue to observe these phases only.
                 $active=$true
+                # The already-verified grounded anchor is ground provenance,
+                # even when the first real step immediately leaves a slab edge.
+                # Waiting for a later WALKING/RESTING point would drop that
+                # legitimate airborne waypoint from the immutable timeline.
+                # The freshness check below still rolls this proof back on stale data.
+                if($phase -ceq 'SETTLING'){$groundProved=$true}
             }
             $observationAgeMs=[Math]::Max([long]0,[long]$NowUtcMs-$utc)+$serverAgeMs
             if($observationAgeMs -gt 300) { $returnKind='stale';$groundProved=$State.GroundProved }

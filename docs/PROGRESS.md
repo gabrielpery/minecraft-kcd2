@@ -1,5 +1,56 @@
 # MineCome progress — 2026-10-28
 
+## Latest live PASS: earlier input and first-step descent
+
+The user confirms **"it worked this time, but there is still a little delay."**
+HUD `477d2e51c02a4c4fbd61815bcb45a7c2`, probe
+`b850ba28250a4a0f8e90edb611996d89`, passes 57/57 source transfers and delayed KCD
+readbacks in `runtime/evidence/hud-walking-20261028-124409-b850ba28250a4a0f8e90edb611996d89/`.
+Normal `explicit_end` restores the exact origin with zero error after 167 writes
+including restoration and 5,865.31 ms. All 467 camera publications are fresh;
+timers, camera resources, FPS and Minecraft clean up normally. Maximum client/server
+walk is 0.594361 m with zero corrections and four boundary pauses/resumptions.
+The user verified slot 2 selection before moving. No inventory opening was tested.
+
+New timing evidence pairs five accepted W/S/A/D/W presses to actual pre-vanilla
+bindings: producer capture-to-receipt UTC delays 56/3/17/7/16 ms (median 16),
+receipt-to-binding JVM delays 8.8987/0.1413/0.0837/0.1114/0.0865 ms (median 0.1114).
+All five pair without cancellation or ambiguity; 16 edges/25 binding states are
+untruncated. Three later presses are correctly blocked after five seconds.
+First source capture-to-dispatch is 56 ms, subsequent median 17.5 ms.
+`timing-analysis.json` includes original rows, six source hashes and methods.
+Capture is the input producer's observation, not physical key actuation. These
+are not native application/display latency or a measured before/after comparison.
+The deliberate 200 ms playback buffer remains the largest known fixed delay;
+keep this stable baseline while extending walking and integrating interactions.
+
+Two earlier attempts this round remain failed historical evidence. `4a7fb2...`
+never activated: native/guest both recorded zero input events, no movement trace
+or forwarded positions, and normal guest timeout. The user's "almost no delay"
+report from that attempt cannot establish integration performance. Its camera
+request executed but returned no sample; the rejection reason was not recorded.
+The request now emits a separate bounded, JSON-safe rejection receipt with exact
+run/sequence, and the worker reports the reason promptly. Rejections never publish
+views, retry or renew leases. Tests: camera delivery 72, receipt cursor 75, exact
+generated Lua wrapper 33, all passing.
+
+`6cd20f...` activated and received W, but its first motion sample was airborne on
+a small descent. The validated grounded SETTLING anchor had not established
+receiver ground provenance, so seq 3 became `observe`; the controller stopped
+camera delivery and the guest's camera lease then expired. Native writes were
+zero and the actor remained at the origin. Buffered physical mode now establishes
+ground provenance from its fresh exact supported anchor; stale/invalid anchors
+and legacy profiles retain previous behavior. Tests: physical receiver 137,
+warmup 86, buffered proof 79. Read-only replay at the original recorded validation
+times accepts seq 1–3 as begin/sample/sample. Original failed receipts are unchanged.
+The controller also reports refused sequence/phase/kind instead of an ambiguous
+expired-or-unsupported error. This repair and the earlier START phase are exercised
+by the latest full live PASS above.
+
+Current state: KCD PID 9224 remains open, Minecraft closed normally, `b850ba...`
+arm consumed. Both failed arms and the prior `38d11...` arm are archived. Escape
+stopped Computer Use this turn. The handoff has exact future cleanup/start commands.
+
 ## New input-phase repair: compiled and standalone verified
 
 Physical input used to be consumed at the end of Minecraft's client tick, while
@@ -8,7 +59,8 @@ consumes the complete ordered physical/UI queue at START before vanilla polling.
 The standalone physical fixture uses the same phase; other HUD profiles retain
 their original END path. Ownership, freshness, deadlines, inventory suspension,
 post-tick server observations and cleanup remain enforced. This removes the
-mandatory extra client tick in source; the live responsiveness effect is pending.
+mandatory extra client tick in source. This was first verified standalone below;
+the subsequent live result is recorded above.
 
 Actual Minecraft run `cf2fbd1c64b347d8951a27545f9e146b` passes the updated verifier:
 `runtime/evidence/hud-physical-fixture-20261028-121745-cf2fbd1c64b347d8951a27545f9e146b/`.

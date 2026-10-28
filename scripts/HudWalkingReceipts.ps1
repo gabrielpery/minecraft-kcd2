@@ -3,7 +3,7 @@
 function New-HudWalkingReceiptCursor([string]$Path,[long]$Offset,[string]$Run,[switch]$KeepOpen){
     if($Offset -lt 0 -or $Run -cnotmatch '^[0-9a-f]{32}$'){throw 'Invalid walking receipt cursor.'}
     $receipts=@{}
-    foreach($tag in @('MineComeMovementCapabilities','MineComeMovementContract','MineComeHudPhysicalView','MineComeMovementFollower')){
+    foreach($tag in @('MineComeMovementCapabilities','MineComeMovementContract','MineComeHudPhysicalView','MineComeHudPhysicalViewRejected','MineComeMovementFollower')){
         $receipts[$tag]=[Collections.Generic.List[object]]::new()
     }
     [pscustomobject]@{Path=$Path;Start=$Offset;Position=$Offset;ObservedLength=$Offset;Run=$Run;Receipts=$receipts;Parsed=0L;KeepOpen=[bool]$KeepOpen;Stream=$null;Closed=$false}
@@ -42,7 +42,7 @@ function Read-HudWalkingReceipts($Cursor,[string]$Tag){
             # Decode only complete lines, including complete UTF-8 codepoints.
             $text=[Text.UTF8Encoding]::new($false,$true).GetString($bytes,0,$lastLf+1)
             $staged=[Collections.Generic.List[object]]::new();$parsed=0L
-            foreach($match in [regex]::Matches($text,'\[(MineComeMovementCapabilities|MineComeMovementContract|MineComeHudPhysicalView|MineComeMovementFollower)\] ([^\r\n]*)\r?\n')){
+            foreach($match in [regex]::Matches($text,'\[(MineComeMovementCapabilities|MineComeMovementContract|MineComeHudPhysicalView|MineComeHudPhysicalViewRejected|MineComeMovementFollower)\] ([^\r\n]*)\r?\n')){
                 $receipt=$match.Groups[2].Value | ConvertFrom-Json
                 if($receipt -isnot [pscustomobject] -or -not $receipt.PSObject.Properties['schema'] -or -not $receipt.PSObject.Properties['run']){
                     throw 'Invalid walking receipt object.'
