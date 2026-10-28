@@ -4,7 +4,12 @@
 
 The compiled repeat-session add-on is now **installed and unarmed** in the official
 development build. Both games are closed. The guarded update and installed-file
-verification passed; no live session was started. Do not repeat installation.
+verification passed. A fresh startup check also passed: exact repeat module hash,
+add-on registration, compatibility, shader compilation, world load and an 81-point
+terrain readback. It stayed unarmed and closed normally; no input session started.
+Do not repeat installation or this startup check without a relevant change.
+Startup evidence:
+`runtime/evidence/hud-repeat-startup-20261028-25139366d6ed4d678c606c774269f31b/verification.json`.
 Update receipt:
 `runtime/evidence/hud-update-20261028-182335-a328f8eca0994dd0927935076feb99e2/update.json`.
 

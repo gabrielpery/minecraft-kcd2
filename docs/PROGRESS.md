@@ -1,5 +1,17 @@
 # MineCome progress — 2026-10-28
 
+## Repeat build startup — AUTOMATIC PASS
+
+The installed repeat add-on loaded into a fresh pinned KCD2 process with its exact
+module hash, successful registration, executable compatibility and HUD shader
+compilation. The world reached RUNNING and a read-only 81-point terrain capture
+passed. No arm file or accepted input/frame session appeared. The owned test world
+closed normally. Evidence:
+`runtime/evidence/hud-repeat-startup-20261028-25139366d6ed4d678c606c774269f31b/verification.json`.
+The initial tail-only readiness observer missed the load marker amid log output;
+the full fresh log plus terrain readback verified readiness instead. This confirms
+startup only; live controls, composition and two-session retirement remain pending.
+
 ## Repeat-session installation — VERIFIED, LIVE ACCEPTANCE PENDING
 
 With both games closed and no leftover arm files, the guarded updater verified
