@@ -9,6 +9,10 @@ public final class HudPhysicalMovementMode {
     public static boolean fixture(Properties p){return Boolean.parseBoolean(p.getProperty("minecome.hudPhysicalMovementFixture"));}
     public static boolean require(Properties p){
         boolean live=Boolean.parseBoolean(p.getProperty("minecome.hudPhysicalMovement")),fixture=fixture(p);
+        String aimed=p.getProperty("minecome.hudWalkingAimedFixture","false");
+        if(!aimed.equals("true") && !aimed.equals("false"))throw new IllegalArgumentException("Walking aimed fixture option must be true or false");
+        if(aimed.equals("true") && (!fixture || live || !HudMovementSession.selected(p).extended()))
+            throw new IllegalArgumentException("Walking aimed blocks require the standalone extended physical fixture");
         if(HudMovementSession.selected(p).extended() && !live && !fixture)
             throw new IllegalArgumentException("Extended movement requires its physical live or fixture profile");
         if(!live && !fixture)return false;

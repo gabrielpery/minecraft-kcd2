@@ -153,6 +153,7 @@ public final class HudStreamProducer implements AutoCloseable {
         if(physicalMovement){
             if(movementSession.extended())r.addProperty("movement_session",movementSession.id());
             boolean scripted=HudPhysicalMovementMode.fixture(System.getProperties());
+            if(Boolean.getBoolean("minecome.hudWalkingAimedFixture"))r.addProperty("ui_walking_aimed_fixture",true);
             r.addProperty("ui_input_physical_movement",!scripted);
             if(scripted){r.addProperty("ui_physical_controller_fixture",true);r.addProperty("standalone",true);r.addProperty("scripted_input",true);r.addProperty("physical_input_verified",false);}
         }
@@ -309,7 +310,12 @@ public final class HudStreamProducer implements AutoCloseable {
     }
     private static void unlock(Kernel32 api,WinNT.HANDLE mutex)throws IOException {if(!api.ReleaseMutex(mutex))throw nativeFailure(api,"ReleaseMutex");}
     static void writeJson(Path path,JsonObject object)throws IOException {
-        var serializer=new GsonBuilder().setPrettyPrinting();
+        var serializer=new GsonBuilder();
+        // Combined evidence retains both vanilla action receipts and movement
+        // timing. Compact formatting preserves that proof within the same 64KiB
+        // limit; it does not grant a larger transport or evidence budget.
+        if(object.has("ui_walking_aimed_fixture") && object.get("ui_walking_aimed_fixture").getAsBoolean())serializer.serializeNulls();
+        else serializer.setPrettyPrinting();
         // Closed pointer phases explicitly carry scroll_position:null; absence
         // means a malformed proof. Preserve that distinction in stage/final files.
         if(object.has("ui_input_pointer_fixture") && object.get("ui_input_pointer_fixture").getAsBoolean())serializer.serializeNulls();

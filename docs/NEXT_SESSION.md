@@ -2,12 +2,51 @@
 
 ## Current result and user preference
 
-Optional **15-second physical walking + real Minecraft HUD now passes live in KCD2**.
-User feedback: **"worked. still delay, but worked."** Keep the intentional 200 ms
-buffer and the verified short mode. Latest instruction: the user is AFK; continue
-automated work only until they return. Do not start another F8 countdown or ask for
-manual actions while they are away. The next feature is walking with aimed block
-interactions; it is not yet implemented as a combined mode.
+The user has returned and asked to continue. The combined walking/aimed-block
+Minecraft fixture is now implemented and passes automatically on flat ground and
+captured KCD terrain. **Combined physical controls in KCD2 are the next phase**;
+do not repeat the completed guest work or enable the existing incompatible live
+flags together. The prior 15-second walking/HUD live baseline remains verified,
+with user feedback **"worked. still delay, but worked."** Keep its 200 ms buffer.
+
+## New combined guest checkpoint
+
+Command: `scripts/Test-HudPhysicalMovementFixture.ps1 -ExtendedWalking -AimedBlocks`.
+This is explicitly standalone, scripted and yaw zero. It bootstraps a stone,
+walks W/W/S, places/breaks top and west-side blocks, breaks the seed, reopens
+inventory, verifies suppressed movement, then walks W/S again in the same session.
+
+- Flat PASS `b5f250088e4841088fffebef1ea8cdb0`:
+  `runtime/evidence/hud-physical-fixture-20261028-135417-b5f250088e4841088fffebef1ea8cdb0/`.
+  15,504 ms, 158 trace records, 259 UI frames, six confirmed block actions,
+  five walking pulses, 1.498988 m max walk, zero corrections. Receipt 36,537 bytes.
+- Captured-terrain PASS `61868402650549db9387657daf1b8065`:
+  `runtime/evidence/hud-physical-fixture-20261028-135545-61868402650549db9387657daf1b8065/`.
+  15,508 ms, 158 records, 258 UI frames, six actions/five pulses, .637031 m max
+  walk, zero corrections. Receipt 37,435 bytes. Same original terrain capture/hash
+  as the prior captured-terrain fixture below. Both source manifests match all92
+  files, both prove inventory suppression, resumed walking and exact support cleanup.
+- Existing actual aiming regression PASS all28 scenarios:
+  `runtime/evidence/aimed-stone-20261028-133833-c360373cce28416593baaaae60138c25/`.
+- Compile/assemble PASS;96 build-region checks;336 physical-mode/input checks;
+  196 PS fixture/profile checks;26 evidence-writer checks. No new native install.
+
+New pure `HudBuildRegion` forbids edits to any imported collision cell or the
+fixture's immutable support, caps confirmed ownership at16 and fixes seed±2 bounds.
+Optional `AimedStoneArena(alignment,save,region)` keeps the existing confirmed
+ledger/vanilla proof and applies this policy before dispatch and in server preproof.
+`GroundCollision.matches` validates actual installed world/run/hash. The combined
+helper requires fresh settled grounded client/server agreement and neutral keys.
+It separately accounts for one fixture BEDROCK support setup/removal beside the
+sampled footprint, with unchanged support and all AIR checks before cleanup.
+
+Preserve two failed trials: `9e80ade...` confirmed six actions but hit the existing
+100 ms camera-file atomic replacement retry limit before resumed walking; lock
+holder unknown and no speculative camera change. `603803...` completed movement
+but could not emit its oversized pretty JSON receipt. Combined-only compact JSON
+with explicit nulls now retains all evidence within the unchanged64 KiB limit.
+Neither trial is promoted to a full PASS. Their full paths/diagnostics are in
+PROGRESS.md. All Minecraft clients have exited; KCD remains the earlier session.
 
 ## Latest full live PASS
 
@@ -87,21 +126,33 @@ Earlier short baseline `b850ba...` passed 57/57. Full historical evidence is in
 
 ## Next implementation: walking and aimed blocks together
 
-Do not just enable both existing profiles. Walking uses collision-only sampled
-terrain with AIR-cell invariants; `AimedStoneArena` bootstrap expects real solid
-Minecraft support. The walking compositor currently excludes world-click capture.
+The ownership policy and combined guest fixture above are complete. Keep them;
+do not weaken walking's AIR-cell invariants or repeat their implementation.
 
-1. Define explicit ownership for placed blocks versus imported terrain, so
-   movement collision checks tolerate only confirmed owned edits and clean them
-   up without touching unrelated content.
-2. Build a separate combined fixture/profile that starts from real sampled-ground
-   walking and the actual vanilla interaction path. Keep existing modes intact.
-3. Initially admit aimed clicks only after motion is settled and host/guest eye
-   alignment is fresh. The200ms host lag can exceed the current0.25m eye-origin
-   tolerance while walking; do not solve this by weakening reach/eye checks.
-4. Add the combined compositor input capability and exact bundle/profile hashes
-   only after guest terrain/interaction tests pass. Retail1.5.6 remains blocked
-   by loader/address-library prerequisites; official tools1.5.5 only.
+1. Add a distinct live walking/aimed controller derived from Test-HudWalking,
+   integrating the existing HudWorldClicks/AimedWorldClicks/HudAimedRelay ledgers.
+   Do not run Start-HudInputLab beside it. A separate compositor profile must
+   combine physical movement (input protocol2) with selective world-click capture,
+   keeping exact executable/config/bundle hashes and the old profiles strict.
+2. Bind HudAimedStoneBridge's initial support/baseline and optional region to the
+   active patch/save. Keep initial alignment immutable. Fixture support is not
+   yet general placement directly onto imported KCD terrain.
+3. Require released movement, fresh grounded guest client/server agreement and
+   fresh native player/camera agreement after buffered playback settles before
+   issuing a NEW aim permit. Recheck before dispatch; reject moving/stale clicks,
+   rather than queueing them until later. Never widen .25m eye tolerance or rebase
+   ray origins. Native bridge and arena both enforce this tolerance.
+4. Reuse the walking camera sampler. The old aimed relay polls SamplePose every
+   50ms, which would add redundant HTTP traffic beside movement and camera updates
+   and could bring back delay. Add an explicit combined sampler mode instead.
+5. Revoke aimed permits and resolve pending actions BEFORE native follower finish
+   restores KCD's origin (the guest remains at its final position). Reserve action
+   completion/cleanup time inside the bounded session; no clicks in the remaining
+   HUD tail until a separate resynchronization contract is tested.
+
+Only then run a combined KCD live check. Retail1.5.6 remains blocked by loader/
+address-library prerequisites; official tools1.5.5 only. No user action is needed
+to repeat guest fixtures, and the user is available when a new live check is ready.
 
 ## Current processes and later live restart
 

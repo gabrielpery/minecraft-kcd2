@@ -32,6 +32,7 @@ param(
     [switch]$PhysicalMovement,
     [switch]$PhysicalMovementFixture,
     [switch]$ExtendedWalking,
+    [switch]$AimedBlocks,
     [ValidateRange(-180,180)][double]$PhysicalFixtureYaw=0,
     [string]$HostViewFile
 )
@@ -40,6 +41,11 @@ function Assert-HudGroundChildMode([bool]$Fixture,[bool]$Standalone,[string]$Pat
     if(($Fixture -and $Coupled) -or (($Fixture -or $Coupled) -and (-not $Standalone -or -not $Patch -or $OtherMode))){throw 'Ground movement requires exactly one standalone HUD movement mode and its patch.'}
     if(-not ($Fixture -or $Coupled) -and $Patch){throw 'Ground patch requires explicit HUD ground movement.'}
     if(($Coupled -and -not $Trace) -or (-not $Coupled -and $Trace)){throw 'Movement trace requires explicit coupled HUD mode.'}
+}
+function Assert-HudWalkingAimedChildMode([bool]$AimedBlocks,[bool]$Standalone,[bool]$PhysicalFixture,[bool]$ExtendedWalking,[bool]$OtherMode,[double]$Yaw=0) {
+    if($AimedBlocks -and (-not $Standalone -or -not $PhysicalFixture -or -not $ExtendedWalking -or $OtherMode -or -not [double]::IsFinite($Yaw) -or $Yaw -ne 0)){
+        throw 'Combined aimed blocks require only the standalone extended physical controller fixture at zero yaw.'
+    }
 }
 $root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $minecraft=Join-Path $root 'minecraft'
@@ -51,6 +57,7 @@ $env:GRADLE_USER_HOME=Join-Path $minecraft '.gradle-user-home'
 $producerDirectory=Join-Path $EvidenceDirectory 'capture'
 $exitCode=1
 try {
+    Assert-HudWalkingAimedChildMode ([bool]$AimedBlocks) ([bool]$Standalone) ([bool]$PhysicalMovementFixture) ([bool]$ExtendedWalking) ([bool]($PhysicalMovement -or $InputMode -or $LiveMouse -or $OffscreenPresentation -or $GroundMovementFixture -or $GroundMovementCoupled -or $InputFixture -or $InputPointerFixture -or $StoneFixture -or $StoneLive -or $AimedStone -or $InputDelayFixture -or $InputBackgroundTrial -or $InputOffscreenTrial)) $PhysicalFixtureYaw
     if($ExtendedWalking -and -not ($PhysicalMovement -or $PhysicalMovementFixture)){throw 'Extended walking requires an explicit physical movement profile.'}
     if($AimedStone -and (-not $StoneLive -or $StoneFixture)){throw 'Aimed stone requires the explicit live stone profile.'}
     if($StoneFixture -and ($StoneLive -or -not $InputFixture -or -not $InputOffscreenTrial -or $LiveMouse -or $InputPointerFixture -or $InputDelayFixture -or $InputBackgroundTrial -or -not $StoneTokenFile)){throw 'Stone fixture requires separate offscreen input fixture and explicit token.'}
@@ -83,6 +90,7 @@ try {
     if($GroundMovementCoupled){$arguments+=@('-PminecomeHudGroundMovementCoupled',"-PminecomeGroundPatchFile=$GroundPatchFile","-PminecomeMovementTraceFile=$MovementTraceFile")}
     if($PhysicalMovement){$arguments+=@('-PminecomeHudPhysicalMovement',"-PminecomeGroundPatchFile=$GroundPatchFile","-PminecomeMovementTraceFile=$MovementTraceFile","-PminecomeHudHostViewFile=$HostViewFile")}
     if($ExtendedWalking){$arguments+='-PminecomeHudPhysicalMovementExtended'}
+    if($AimedBlocks){$arguments+='-PminecomeHudWalkingAimedFixture'}
     if($PhysicalMovementFixture){$arguments+=@('-PminecomeHudPhysicalMovementFixture',"-PminecomeGroundPatchFile=$GroundPatchFile","-PminecomeMovementTraceFile=$MovementTraceFile","-PminecomeHudHostViewFile=$HostViewFile",('-PminecomeHudPhysicalFixtureYaw='+$PhysicalFixtureYaw.ToString([Globalization.CultureInfo]::InvariantCulture)))}
     if($InputMode){$arguments+='-PminecomeHudStreamInput'}
     if($LiveMouse){$arguments+='-PminecomeHudStreamLiveMouse'}

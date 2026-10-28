@@ -402,3 +402,38 @@ movement after the old cutoff and inventory reopened after walking. Its 15,593 m
 run records 159 trace records, 255 real UI frames, zero inventory displacement and
 zero client/server corrections. This is actual Minecraft proof, not KCD proof.
 See [progress](../docs/PROGRESS.md) for live outcomes and current evidence.
+
+## Combined walking and aimed blocks in Minecraft
+
+The standalone fixture now exercises walking, aimed blocks and the actual HUD in
+one owned Minecraft world:
+
+```powershell
+& './scripts/Test-HudPhysicalMovementFixture.ps1' -ExtendedWalking -AimedBlocks
+```
+
+The script automatically uses the installed PowerShell 7. It requires zero yaw
+for this fixed fixture layout. An optional `-GroundPatchFile` accepts a captured
+terrain file; its numeric samples are copied with explicit standalone provenance
+and the original hash. This command does not launch or control KCD2.
+
+The fixture prepares one BEDROCK support beside the sampled footprint, then
+bootstraps a stone through vanilla placement. With the HUD active it walks W/W/S,
+places and breaks a top block, places and breaks a west-side block, and breaks
+the seed. It then reopens inventory, verifies that W causes no movement, and
+walks W/S again before completing the existing 15-second session.
+
+`HudBuildRegion` protects every imported collision cell and the immutable support.
+`AimedStoneArena` remains the sole ledger of client/server-confirmed stones; all
+six actions use vanilla interaction methods. Actions require fresh, grounded,
+stationary client/server agreement and released movement controls. The alignment
+is fixed before walking. Normal cleanup verifies all edited cells are AIR,
+removes only the unchanged fixture support, and releases the terrain proxies.
+The two support writes are recorded separately from vanilla actions.
+
+Combined receipts retain the unchanged 64 KiB limit using compact JSON, including
+explicit null states. The controller checks six correlated actions, real movement
+before and after them, UI frames, cleanup, and an unchanged source manifest.
+This establishes the Minecraft integration with scripted rays. A combined live
+KCD2 controller still needs host playback settling, click capture and coordinated
+shutdown before the movement follower restores the host position.

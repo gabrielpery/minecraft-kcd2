@@ -4,6 +4,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import dev.minecome.protocol.AimGeometry;
 import dev.minecome.protocol.Protocol;
+import dev.minecome.terrain.HudBuildRegion;
 import net.minecraft.block.Blocks;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.entity.player.PlayerEntity;
@@ -73,6 +74,7 @@ public final class AimedStoneArena implements AutoCloseable {
 
     private final AimGeometry.Alignment alignment;
     private final String ownedHudSave;
+    private HudBuildRegion buildRegion;
     private final Set<BlockPos> owned = new LinkedHashSet<>();
     private final AtomicReference<Observation> observation = new AtomicReference<>();
     private final AtomicBoolean reading = new AtomicBoolean();
@@ -98,6 +100,12 @@ public final class AimedStoneArena implements AutoCloseable {
         if (ownedHudSave == null || !ownedHudSave.matches("MineCome-HudStream-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"))
             throw new IllegalArgumentException("Exact owned HUD save required");
         this.ownedHudSave = ownedHudSave;
+    }
+
+    /** Imported collision cells and the fixture support are never editable arena targets. */
+    public AimedStoneArena(AimGeometry.Alignment alignment, String ownedHudSave, HudBuildRegion buildRegion) {
+        this(alignment, ownedHudSave);
+        this.buildRegion = Objects.requireNonNull(buildRegion);
     }
 
     /** Only the Minecraft client tick calls this method. Authoritative reads use server.execute. */
@@ -167,7 +175,8 @@ public final class AimedStoneArena implements AutoCloseable {
         if (ownedHudSave == null ? !save.startsWith("MineCome-AimedStone-") : !ownedHudSave.equals(save))
             throw new IllegalStateException("Owned aimed save required");
         world = client.world; player = client.player; server = client.getServer(); playerId = client.player.getUuid();
-        seed = client.player.getBlockPos().add(2, 0, 0).toImmutable(); support = seed.down();
+        seed = buildRegion == null ? client.player.getBlockPos().add(2, 0, 0).toImmutable() : blockPos(buildRegion.seed());
+        support = buildRegion == null ? seed.down() : blockPos(buildRegion.support());
         if (!loaded(client.world, Set.of(seed, support)) || !client.world.getBlockState(seed).isAir()
                 || !client.world.getBlockState(support).isSideSolidFullSquare(client.world, support, Direction.UP))
             throw new IllegalStateException("Seed lacks fresh air and solid UP support");
@@ -207,6 +216,7 @@ public final class AimedStoneArena implements AutoCloseable {
         if (hit.inside) reject = "ray_started_inside_block";
         else if (!owned.contains(hit.block) || !client.world.getBlockState(hit.block).isOf(Blocks.STONE)) reject = "unowned_hit";
         else if (hostBlocked(ray, mapped, hit)) reject = "host_obstructed";
+        else if (buildRegion != null && regionRejection(action, target) != null) reject = regionRejection(action, target);
         else if (!bounded(target)) reject = "outside_arena";
         else if (!client.player.canInteractWithBlockAt(hit.block, 0) || !client.player.canInteractWithBlockAt(target, 0)
                 || vec(mapped.origin()).distanceTo(hit.point) > client.player.getBlockInteractionRange()) reject = "out_of_reach";
@@ -226,6 +236,8 @@ public final class AimedStoneArena implements AutoCloseable {
 
     private Decision queue(MinecraftClient client, long id, int action, boolean bootstrap,
                            HostRay ray, BlockPos target, Hit hit) {
+        String regionReject = regionRejection(action, target);
+        if (regionReject != null) return rejected(id, action, regionReject, target, hit);
         Set<BlockPos> cells = new LinkedHashSet<>(owned); cells.add(target); cells.add(hit.block);
         if (!loaded(client.world, cells)) return rejected(id, action, "chunk_unavailable", target, hit);
         pending = new Plan(id, action, System.nanoTime(), bootstrap, ray, target.toImmutable(), hit,
@@ -240,6 +252,9 @@ public final class AimedStoneArena implements AutoCloseable {
         if (!client.isOnThread()) return "client_thread_required";
         if (!ready() || !owner(client)) return "arena_unavailable";
         if (pending != null) return "action_pending";
+        if (buildRegion != null && buildRegion.ownedRejection(regionOwned()) != null) {
+            fail("build_region_ownership_changed"); return "build_region_ownership_changed";
+        }
         if (client.currentScreen != null || client.getOverlay() != null) return "inventory_or_screen_open";
         if (!client.player.isCreative() || client.interactionManager.getCurrentGameMode() != GameMode.CREATIVE) return "creative_required";
         for (BlockPos cell : owned) {
@@ -272,7 +287,8 @@ public final class AimedStoneArena implements AutoCloseable {
     private void dispatchProved(MinecraftClient client, Observation proof, long now) {
         Plan plan = pending;
         String reason = null;
-        if (now - proof.at < 0 || now - proof.at > MAX_RAY_AGE_NS) reason = "server_preproof_stale";
+        if (regionRejection(plan.action, plan.target) != null) reason = regionRejection(plan.action, plan.target);
+        else if (now - proof.at < 0 || now - proof.at > MAX_RAY_AGE_NS) reason = "server_preproof_stale";
         else if (!loaded(client.world, plan.before.keySet())) reason = "chunk_unavailable";
         else if (!plan.before.equals(proof.cells) || !plan.before.equals(states(client, plan.before.keySet()))) reason = "client_server_prestate_disagrees";
         else if (!plan.selected.equals(proof.selected) || !plan.selected.equals(selected(client.player))) reason = "selected_stack_changed";
@@ -344,6 +360,8 @@ public final class AimedStoneArena implements AutoCloseable {
                 if (serverWorld != authoritative || serverPlayer != entity) throw new IllegalStateException("authoritative_identity_changed");
                 Hit hit = null;
                 if (plan != null && phase.equals("pre")) {
+                    if (buildRegion != null && buildRegion.targetRejection(cell(plan.target)) != null)
+                        throw new IllegalStateException("authoritative_build_region_target_refused");
                     if (!entity.canInteractWithBlockAt(plan.target, 0) || !entity.canInteractWithBlockAt(plan.hit.block, 0))
                         throw new IllegalStateException("authoritative_out_of_reach");
                     if (!plan.bootstrap) {
@@ -376,6 +394,16 @@ public final class AimedStoneArena implements AutoCloseable {
     private boolean bounded(BlockPos target) {
         return Math.abs(target.getX() - seed.getX()) <= 2 && Math.abs(target.getY() - seed.getY()) <= 2
                 && Math.abs(target.getZ() - seed.getZ()) <= 2;
+    }
+    private static AimGeometry.Cell cell(BlockPos pos) { return new AimGeometry.Cell(pos.getX(), pos.getY(), pos.getZ()); }
+    private static BlockPos blockPos(AimGeometry.Cell cell) { return new BlockPos(cell.x(), cell.y(), cell.z()); }
+    private Set<AimGeometry.Cell> regionOwned() {
+        var cells = new HashSet<AimGeometry.Cell>(); owned.forEach(pos -> cells.add(cell(pos))); return Set.copyOf(cells);
+    }
+    private String regionRejection(int action, BlockPos target) {
+        if (buildRegion == null) return null;
+        return action == Protocol.PLACE_STONE ? buildRegion.placementRejection(cell(target), regionOwned())
+                : buildRegion.breakRejection(cell(target), regionOwned());
     }
     private static Vec3d vec(Protocol.Vec3 value) { return new Vec3d(value.x(), value.y(), value.z()); }
     private static boolean loaded(World world, Set<BlockPos> cells) {
@@ -466,6 +494,13 @@ public final class AimedStoneArena implements AutoCloseable {
         value.addProperty("vanilla_outline_raycast", true); value.addProperty("fluid_raycast", "NONE");
         value.addProperty("block_writes", 0); value.addProperty("inventory_writes", 0); value.addProperty("camera_writes", 0);
         value.addProperty("live_transport_enabled", false); value.add("requests", requests.deepCopy()); value.add("confirmations", confirmations.deepCopy());
+        if (buildRegion != null) {
+            var region = new JsonObject(); region.addProperty("patch_run", buildRegion.patchRun());
+            region.addProperty("patch_sha256", buildRegion.patchSha256());
+            region.addProperty("protected_imported_cells", buildRegion.importedCells().size());
+            region.add("support", pos(blockPos(buildRegion.support()))); region.addProperty("support_editable", false);
+            value.add("build_region", region);
+        }
         if (seed != null) {
             value.add("seed", pos(seed)); value.add("arena_minimum", pos(seed.add(-2, -2, -2)));
             value.add("arena_maximum_inclusive", pos(seed.add(2, 2, 2)));

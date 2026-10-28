@@ -23,9 +23,12 @@ final class HudPhysicalMovementFixture implements AutoCloseable {
     private final JsonArray pulses=new JsonArray();
     private final int[] codes;
     private final boolean extended;
+    private final boolean aimedMode=Boolean.getBoolean("minecome.hudWalkingAimedFixture");
+    private final GroundPatch patch;
+    private volatile HudWalkingAimedFixture aimed;
     private volatile boolean closing,cameraStopped;
     private volatile long views;
-    private long at,started,firstMovementAt,sequence,inventoryFrames,walkingFrames,closingAt,postWalkInventoryFrames;
+    private long at,started,firstMovementAt,sequence,inventoryFrames,walkingFrames,closingAt,postWalkInventoryFrames,aimedFrames;
     private int stage,pulse;
     private Vec3d origin,serverOrigin,previous,serverPrevious,postWalkOrigin,postWalkServerOrigin;
     private double inventoryClientMax,inventoryServerMax,postWalkInventoryClientMax,postWalkInventoryServerMax;
@@ -37,10 +40,11 @@ final class HudPhysicalMovementFixture implements AutoCloseable {
             throw new IllegalArgumentException("Scripted physical controller fixture requires its separate standalone mode");
         this.movement=movement;extended=movement.session().extended();codes=extended?new int[]{0x57,0x57,0x53,0x57,0x53}:new int[]{0x57,0x57,0x53};
         ui=new HudVanillaUiAdapter(client,false);server=client.getServer();player=client.player.getUuid();
-        var patch=GroundPatch.read(patchFile);
+        patch=GroundPatch.read(patchFile);
         if(!patch.sourceKind().equals("standalone_ground_fixture"))throw new IOException("Fixture patch provenance differs");
         double yaw=Double.parseDouble(System.getProperty("minecome.hudPhysicalFixtureYaw","0"));
         if(!Double.isFinite(yaw) || yaw < -180 || yaw > 180)throw new IllegalArgumentException("Fixture yaw outside finite180 degrees");
+        if(aimedMode && (!extended || yaw!=0))throw new IllegalArgumentException("Walking/aimed fixture requires extended yaw-zero movement");
         Path parent=viewFile.toAbsolutePath().normalize().getParent().toRealPath();
         Path evidence=client.runDirectory.toPath().toAbsolutePath().normalize().getParent().getParent().resolve("runtime/evidence").toRealPath();
         if(!viewFile.isAbsolute() || !parent.startsWith(evidence) || Files.exists(viewFile,LinkOption.NOFOLLOW_LINKS))
@@ -51,9 +55,10 @@ final class HudPhysicalMovementFixture implements AutoCloseable {
         if(source!=server || closing)return;
         var entity=source.getPlayerManager().getPlayer(player);
         if(entity!=null)observed.set(new Observation(entity.getPos(),System.nanoTime()));
+        var helper=aimed;if(helper!=null)helper.observe(source);
     }
-    String phase(){return switch(stage){case 0->"settling";case 1->"inventory_blocked";case 2->"hotbar_ready";case 3,4->"scripted_walking";case 5->"final_settling";case 7->"extended_wait";case 8->"post_walk_inventory_blocked";default->"cleanup";};}
-    void captured(String phase){if(phase.equals("inventory_blocked"))inventoryFrames++;if(phase.equals("scripted_walking"))walkingFrames++;if(phase.equals("post_walk_inventory_blocked"))postWalkInventoryFrames++;}
+    String phase(){return switch(stage){case 0->"settling";case 1->"inventory_blocked";case 2->"hotbar_ready";case 3,4->"scripted_walking";case 5->"final_settling";case 7->aimed!=null&&!aimed.interactionsComplete()?"aimed_interactions":"extended_wait";case 8->"post_walk_inventory_blocked";default->"cleanup";};}
+    void captured(String phase){if(phase.equals("inventory_blocked"))inventoryFrames++;if(phase.equals("scripted_walking"))walkingFrames++;if(phase.equals("post_walk_inventory_blocked"))postWalkInventoryFrames++;if(phase.equals("aimed_interactions"))aimedFrames++;}
     boolean finished(){return finished;}
     boolean inventoryCaptured(){return inventoryFrames>=2;}
     private Observation observation(long now){
@@ -68,6 +73,10 @@ final class HudPhysicalMovementFixture implements AutoCloseable {
             throw new IllegalStateException("Fixture game-thread/world identity changed");
         if(stage==0){
             if(!movement.inputReady(now))return;
+            if(aimedMode){
+                if(aimed==null)aimed=new HudWalkingAimedFixture(client,patch,client.getServer().getSaveProperties().getLevelName());
+                if(!aimed.prepare(client,now))return;
+            }
             origin=client.player.getPos();serverOrigin=observation(now).position();previous=origin;serverPrevious=serverOrigin;started=now;
             movement.activate(now);
             movement.suspend(client);key(client,0x45,true,now);key(client,0x45,false,now);
@@ -89,7 +98,9 @@ final class HudPhysicalMovementFixture implements AutoCloseable {
         if(stage==2){
             movement.authority(client,now,true);
             if(now-at<300_000_000L)return;
-            key(client,codes[pulse],true,now);if(firstMovementAt==0)firstMovementAt=now;stage=3;at=now;return;
+            key(client,codes[pulse],true,now);
+            if(firstMovementAt==0){firstMovementAt=now;if(aimed!=null)aimed.walkingStarted(now);}
+            stage=3;at=now;return;
         }
         if(stage==3){
             movement.authority(client,now,true);
@@ -109,12 +120,14 @@ final class HudPhysicalMovementFixture implements AutoCloseable {
             proof.addProperty("server_x",serverPosition.x);proof.addProperty("server_y",serverPosition.y);proof.addProperty("server_z",serverPosition.z);
             proof.addProperty("client_server_distance",position.distanceTo(serverPosition));pulses.add(proof);previous=position;serverPrevious=serverPosition;
             ++pulse;
+            if(aimed!=null && pulse>3)aimed.resumed(client);
             if(extended && pulse==3){stage=7;return;}
             if(pulse<codes.length){key(client,codes[pulse],true,now);stage=3;at=now;return;}
             stage=5;return;
         }
         if(stage==7){
             movement.authority(client,now,true);
+            if(aimed!=null && !aimed.tickInteractions(client,now))return;
             if(now-firstMovementAt<6_000_000_000L)return;
             postWalkOrigin=client.player.getPos();postWalkServerOrigin=observation(now).position();
             movement.suspend(client);key(client,0x45,true,now);key(client,0x45,false,now);
@@ -138,6 +151,10 @@ final class HudPhysicalMovementFixture implements AutoCloseable {
             if(inventoryFrames<2 || walkingFrames<2)throw new IllegalStateException("Fixture lacks captured inventory/walking HUD frames");
             if(extended && (!postWalkInventoryOpened || !postWalkInventoryClosed || postWalkInventoryFrames<2))
                 throw new IllegalStateException("Extended fixture lacks post-walk inventory capture proof");
+            if(aimed!=null){
+                if(aimedFrames<2)throw new IllegalStateException("Walking/aimed fixture lacks real HUD frames during interactions");
+                if(!aimed.cleanup(client,now))return;
+            }
             movement.close(client);ui.releaseAndClose(client);close();stage=6;closingAt=now;return;
         }
         if(stage==6){
@@ -153,6 +170,7 @@ final class HudPhysicalMovementFixture implements AutoCloseable {
     }
     JsonObject evidence(MinecraftClient client){
         var e=new JsonObject();e.addProperty("kind","standalone_hud_physical_controller_fixture_v1");e.addProperty("scripted_input",true);
+        if(aimedMode){e.addProperty("ui_walking_aimed_fixture",true);e.addProperty("aimed_hud_frames",aimedFrames);e.add("aimed_blocks",aimed==null?JsonNull.INSTANCE:aimed.evidence());}
         if(extended){
             e.addProperty("movement_session","extended");e.addProperty("post_walk_inventory_opened",postWalkInventoryOpened);e.addProperty("post_walk_inventory_closed",postWalkInventoryClosed);
             e.addProperty("post_walk_inventory_frames",postWalkInventoryFrames);e.addProperty("post_walk_inventory_client_max_displacement",postWalkInventoryClientMax);
@@ -181,5 +199,5 @@ final class HudPhysicalMovementFixture implements AutoCloseable {
         catch(Exception e){failure.compareAndSet(null,"Fixture camera: "+e);}
         finally{try{Files.deleteIfExists(temp);}catch(IOException e){failure.compareAndSet(null,e.toString());}cameraStopped=true;}
     }
-    @Override public void close(){closing=true;camera.interrupt();}
+    @Override public void close(){closing=true;camera.interrupt();if(aimed!=null)aimed.close();}
 }

@@ -61,6 +61,16 @@ public final class HudPhysicalMovementTests {
         check(HudPhysicalMovementMode.require(fixture) && HudPhysicalMovementMode.fixture(fixture),"Separate labelled scripted physical controller mode");
         var extendedFixture=new Properties();extendedFixture.putAll(fixture);extendedFixture.setProperty("minecome.hudPhysicalMovementExtended","true");
         check(HudPhysicalMovementMode.require(extendedFixture) && HudMovementSession.selected(extendedFixture)==HudMovementSession.EXTENDED,"Fixture opts into the same extended controller policy explicitly");
+        var combined=new Properties();combined.putAll(extendedFixture);combined.setProperty("minecome.hudWalkingAimedFixture","true");
+        check(HudPhysicalMovementMode.require(combined),"Combined aimed walking requires explicit standalone extended fixture");
+        for(Properties source:List.of(new Properties(),mode(),extended,fixture)){
+            var p=new Properties();p.putAll(source);p.setProperty("minecome.hudWalkingAimedFixture","true");
+            reject(()->HudPhysicalMovementMode.require(p),"Combined fixture cannot acquire incomplete or live profile");
+        }
+        for(String invalid:List.of("TRUE","1","","aimed")){
+            var p=new Properties();p.putAll(extendedFixture);p.setProperty("minecome.hudWalkingAimedFixture",invalid);
+            reject(()->HudPhysicalMovementMode.require(p),"Malformed combined fixture flag");
+        }
         for(String key:List.of("hudPhysicalMovement","hudStreamInput","hudStreamLiveMouse","hudStreamOffscreenPresentation","hudGroundMovementFixture","hudGroundMovementCoupled","hudStreamInputFixture")){
             var p=new Properties();p.putAll(fixture);p.setProperty("minecome."+key,"true");reject(()->HudPhysicalMovementMode.require(p),"fixture cannot acquire "+key);
         }

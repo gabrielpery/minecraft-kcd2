@@ -38,6 +38,7 @@ public final class HudEvidenceWriterTests {
         check(failed.failure()!=null && failed.failure().contains("controlled evidence failure"),"I/O failure observable to publisher");
         rejected(()->failed.submit(Path.of("after-failure.json"),new JsonObject()));
         pointerNullReceipts();
+        combinedReceiptBudget();
         System.out.println("HudEvidenceWriterTests: "+checks+" checks passed; blocked I/O isolation and bounded lifecycle; no games launched.");
     }
     private static void pointerNullReceipts()throws Exception{
@@ -58,5 +59,28 @@ public final class HudEvidenceWriterTests {
             check(JsonParser.parseString(Files.readString(open)).getAsJsonObject().getAsJsonObject("pointer_fixture").get("scroll_position").getAsDouble()==0.25,"open pointer receipt keeps numeric scroll position");
             check(!JsonParser.parseString(Files.readString(ordinary)).getAsJsonObject().getAsJsonObject("pointer_fixture").has("scroll_position"),"ordinary mode serialization is unchanged");
         }finally{actual.finish(2000);try(var files=Files.list(directory)){for(Path path:files.toList())Files.delete(path);}Files.delete(directory);}
+    }
+    private static void combinedReceiptBudget()throws Exception{
+        Path directory=Files.createTempDirectory("minecome-combined-receipt-");
+        try{
+            var proof=new JsonObject();proof.addProperty("ui_walking_aimed_fixture",true);proof.add("failure",JsonNull.INSTANCE);
+            var rows=new JsonArray();
+            for(int i=0;i<2000;i++){var row=new JsonObject();row.addProperty("id",i);row.addProperty("confirmed",true);rows.add(row);}
+            proof.add("records",rows);
+            check(new GsonBuilder().setPrettyPrinting().create().toJson(proof).getBytes(java.nio.charset.StandardCharsets.UTF_8).length>65536,
+                    "Fixture reproduces oversized pretty-formatted evidence");
+            Path path=directory.resolve("combined.json");HudStreamProducer.writeJson(path,proof);
+            check(Files.size(path)<=65536,"Combined receipt stays within unchanged 64KiB budget");
+            var saved=JsonParser.parseString(Files.readString(path)).getAsJsonObject();
+            check(saved.equals(proof) && saved.getAsJsonArray("records").size()==2000 && saved.get("failure").isJsonNull(),
+                    "Compaction retains all nested evidence and explicit null state");
+            var legacy=proof.deepCopy();legacy.remove("ui_walking_aimed_fixture");
+            try{HudStreamProducer.writeJson(directory.resolve("legacy.json"),legacy);throw new AssertionError("Legacy evidence budget changed");}
+            catch(IOException expected){checks++;}
+            var oversized=new JsonObject();oversized.addProperty("ui_walking_aimed_fixture",true);oversized.addProperty("payload","x".repeat(65536));
+            try{HudStreamProducer.writeJson(directory.resolve("oversized.json"),oversized);throw new AssertionError("Combined evidence exceeded 64KiB");}
+            catch(IOException expected){checks++;}
+            try(var files=Files.list(directory)){check(files.count()==1,"Rejected receipts leave no destination or temporary partial files");}
+        }finally{try(var files=Files.list(directory)){for(Path path:files.toList())Files.delete(path);}Files.delete(directory);}
     }
 }

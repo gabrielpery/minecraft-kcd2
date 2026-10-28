@@ -8,8 +8,24 @@ function Reject([scriptblock]$work,[string]$why){$failed=$false;try{& $work | Ou
 function Clone($value){ConvertFrom-Json -InputObject (ConvertTo-Json -InputObject $value -Depth 16)}
 $parseErrors=$null;$ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $root 'scripts/Test-HudPhysicalMovementFixture.ps1'),[ref]$null,[ref]$parseErrors)
 Check ($parseErrors.Count -eq 0) 'Fixture runner syntax'
-$function=$ast.Find({param($node)$node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Assert-HudPhysicalFixtureResult'},$true)
-. ([scriptblock]::Create($function.Extent.Text))
+foreach($functionName in @('Assert-HudWalkingAimedFixtureProof','Assert-HudPhysicalFixtureResult')){
+    $function=$ast.Find({param($node)$node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq $functionName},$true)
+    . ([scriptblock]::Create($function.Extent.Text))
+}
+$childErrors=$null;$childAst=[Management.Automation.Language.Parser]::ParseFile((Join-Path $root 'scripts/Run-HudStreamClient.ps1'),[ref]$null,[ref]$childErrors)
+Check ($childErrors.Count -eq 0) 'HUD child runner syntax'
+$childMode=$childAst.Find({param($node)$node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Assert-HudWalkingAimedChildMode'},$true)
+. ([scriptblock]::Create($childMode.Extent.Text))
+Assert-HudWalkingAimedChildMode $true $true $true $true $false;Check $true 'Explicit standalone extended combined profile accepted'
+foreach($missing in 0..2){
+    $flags=@($true,$true,$true);$flags[$missing]=$false
+    Reject {Assert-HudWalkingAimedChildMode $true $flags[0] $flags[1] $flags[2] $false} 'Combined child requires every standalone extended fixture flag'
+}
+Reject {Assert-HudWalkingAimedChildMode $true $true $true $true $true} 'Combined fixture cannot mix with another live or scripted profile'
+foreach($yaw in @(-1,1,[double]::NaN,[double]::PositiveInfinity)){
+    Reject {Assert-HudWalkingAimedChildMode $true $true $true $true $false $yaw} 'Combined fixture requires tested zero yaw'
+}
+Assert-HudWalkingAimedChildMode $false $false $false $false $true 90;Check $true 'Ordinary child profile constraints remain in its existing validator'
 $run='a'*32;$hash='b'*64
 $movement=@{run=$run;patch_sha256=$hash;ground_source_kind='standalone_ground_fixture';input_source='scripted_hud_physical_controller_fixture';scripted_input=$true;physical_input_verified=$false;trace_result='passed';post_settle_corrections=0;client_walk=.6;server_walk=.6;held_ticks=9;started=$true;completed=$true;trace_closed=$true;client_proxy_released=$true;server_proxy_released=$true;controls_released=$true}
 $proof=@{kind='standalone_hud_physical_controller_fixture_v1';scripted_input=$true;physical_input_verified=$false;kcd_compositing_verified=$false;completed=$true;camera_worker_stopped=$true;inventory_client_max_displacement=0;inventory_server_max_displacement=0;inventory_frames=8;walking_hud_frames=40;synthetic_camera_samples=160;physical_movement=$movement;pulses=@(@{key='W';step_m=.3;client_server_distance=.001},@{key='W';step_m=.3;client_server_distance=.001},@{key='S';step_m=.3;client_server_distance=.001})}
@@ -110,4 +126,100 @@ $bad=Clone $extended;$bad.lab_evidence.physical_controller_fixture.pulses[3].ser
 $bad=Clone $extended;$bad.lab_evidence.physical_controller_fixture.physical_movement.input_timing.events[3].accepted_down=$false;Reject {Assert-HudPhysicalFixtureResult $bad $run $hash -ExtendedWalking} 'Late key cannot merely be consumed'
 $bad=Clone $extended;$bad.lab_evidence.physical_controller_fixture.physical_movement.input_timing.events[4].key=0x57;Reject {Assert-HudPhysicalFixtureResult $bad $run $hash -ExtendedWalking} 'Accepted key direction must match actual pulse proof'
 $null=Assert-HudPhysicalFixtureResult (Clone $extended) $run $hash -ExtendedWalking;Check $true 'Repeated verification of valid copied evidence remains valid'
+
+$combined=Clone $extended;$combinedProof=$combined.lab_evidence.physical_controller_fixture
+$combined | Add-Member -NotePropertyName ui_walking_aimed_fixture -NotePropertyValue $true
+$combined | Add-Member -NotePropertyName save -NotePropertyValue 'MineCome-HudStream-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+$combinedProof | Add-Member -NotePropertyName ui_walking_aimed_fixture -NotePropertyValue $true
+$combinedProof | Add-Member -NotePropertyName aimed_hud_frames -NotePropertyValue 3
+$combinedProof.physical_movement | Add-Member -NotePropertyName patch_run -NotePropertyValue ('c'*32)
+$seed=@{x=2;y=64;z=0};$support=@{x=2;y=63;z=0};$top=@{x=2;y=65;z=0};$west=@{x=1;y=64;z=0}
+$aimed=Clone @{kind='standalone_hud_walking_aimed_fixture_v1';scripted_input=$true;synthetic_host_rays=$true;physical_input_verified=$false;kcd_connected=$false;
+    completed=$true;alignment_before_movement=$true;bootstrap_before_movement=$true;movement_before_interactions=$true;movement_resumed_after_interactions=$true;
+    patch_run=('c'*32);patch_sha256=$hash;support=$support;seed=$seed;support_fixture_setup_writes=1;support_fixture_cleanup_writes=1;arena_direct_block_writes=0;
+    support_client_server_prepared=$true;support_client_server_restored_air=$true;imported_cells_unchanged=$true;final_client_server_air=$true;walk_before_m=.3;walk_after_m=.3;confirmations=@();
+    arena=@{schema=1;kind='minecome_aimed_stone_arena_v1';save=$combined.save;seed=$seed;block_writes=0;inventory_writes=0;camera_writes=0;owned_count=0;omitted_receipts=0;owned_cells=@();pending=$false;failure=$null;requests=@();confirmations=@();max_owned_count=16;arena_minimum=@{x=0;y=62;z=-2};arena_maximum_inclusive=@{x=4;y=66;z=2};vanilla_outline_raycast=$true;fluid_raycast='NONE';live_transport_enabled=$false;build_region=@{patch_run=('c'*32);patch_sha256=$hash;support=$support;support_editable=$false;protected_imported_cells=16}}}
+$labels=@('bootstrap','top_place','upper_break','west_place','west_break','seed_break');$actions=@(1,1,2,1,2,2);$targets=@($seed,$top,$top,$west,$west,$seed);$hits=@($support,$seed,$top,$seed,$west,$seed)
+for($index=0;$index -lt 6;$index++){
+    $face=if($index -eq 3){'WEST'}else{'UP'};$elapsed=if($index -eq 0){-2000}else{2700+$index*300}
+    $aimed.confirmations+=Clone @{label=$labels[$index];id=$index+1;action=$actions[$index];target=$targets[$index];hit_block=$hits[$index];face=$face;client_and_server=$true;confirmed=$true;elapsed_from_first_movement_ms=$elapsed;client_server_distance=0.0;speed_metric='horizontal_xz';client_speed=0.0;server_speed=0.0;client_vertical_velocity=-.0784;server_vertical_velocity=-.0784;client_on_ground=$true;server_on_ground=$true}
+    $row=Clone @{id=$index+1;action=$actions[$index];target=$targets[$index];hit_block=$hits[$index];face=$face;client_and_server=$true;status='confirmed'}
+    $aimed.arena.confirmations+=$row;$aimed.arena.requests+=Clone $row
+}
+$combinedProof | Add-Member -NotePropertyName aimed_blocks -NotePropertyValue $aimed
+$null=Assert-HudPhysicalFixtureResult $combined $run $hash -ExtendedWalking -AimedBlocks;Check $true 'Combined fixture proves walked, placed/broke exact faces, and resumed walking'
+Reject {Assert-HudPhysicalFixtureResult $combined $run $hash -ExtendedWalking} 'Ordinary extended fixture cannot accept combined proof'
+Reject {Assert-HudPhysicalFixtureResult $extended $run $hash -ExtendedWalking -AimedBlocks} 'Combined mode cannot accept ordinary extended proof'
+Reject {Assert-HudPhysicalFixtureResult $combined $run $hash -AimedBlocks} 'Combined mode requires explicit extended selection'
+foreach($where in @('stream','fixture')){
+    foreach($value in @($false,'true',1,$null)){
+        $bad=Clone $combined;$marker=if($where -ceq 'stream'){$bad}else{$bad.lab_evidence.physical_controller_fixture};$marker.ui_walking_aimed_fixture=$value
+        Reject {Assert-HudPhysicalFixtureResult $bad $run $hash -ExtendedWalking -AimedBlocks} 'Exact combined fixture markers required'
+    }
+}
+foreach($name in @('scripted_input','synthetic_host_rays','completed','alignment_before_movement','bootstrap_before_movement','movement_before_interactions','movement_resumed_after_interactions','support_client_server_prepared','support_client_server_restored_air','imported_cells_unchanged','final_client_server_air')){
+    $bad=Clone $combined;$bad.lab_evidence.physical_controller_fixture.aimed_blocks.$name=$false;Reject {Assert-HudPhysicalFixtureResult $bad $run $hash -ExtendedWalking -AimedBlocks} "Combined proof missing required $name"
+}
+foreach($name in @('physical_input_verified','kcd_connected')){
+    $bad=Clone $combined;$bad.lab_evidence.physical_controller_fixture.aimed_blocks.$name=$true;Reject {Assert-HudPhysicalFixtureResult $bad $run $hash -ExtendedWalking -AimedBlocks} 'Combined fixture cannot claim native or physical proof'
+}
+foreach($name in @('support_fixture_setup_writes','support_fixture_cleanup_writes')){
+    $bad=Clone $combined;$bad.lab_evidence.physical_controller_fixture.aimed_blocks.$name=0;Reject {Assert-HudPhysicalFixtureResult $bad $run $hash -ExtendedWalking -AimedBlocks} 'Fixture support setup and cleanup writes must be accounted separately'
+}
+$bad=Clone $combined;$bad.lab_evidence.physical_controller_fixture.aimed_blocks.arena_direct_block_writes=1;Reject {Assert-HudPhysicalFixtureResult $bad $run $hash -ExtendedWalking -AimedBlocks} 'Direct world writes cannot masquerade as vanilla actions'
+foreach($name in @('walk_before_m','walk_after_m')){
+    foreach($value in @(0,'0.3',[double]::NaN)){$bad=Clone $combined;$bad.lab_evidence.physical_controller_fixture.aimed_blocks.$name=$value;Reject {Assert-HudPhysicalFixtureResult $bad $run $hash -ExtendedWalking -AimedBlocks} 'Combined actions require actual walking before and after'}
+}
+foreach($name in @('patch_run','patch_sha256')){
+    $bad=Clone $combined;$bad.lab_evidence.physical_controller_fixture.aimed_blocks.$name='wrong';Reject {Assert-HudPhysicalFixtureResult $bad $run $hash -ExtendedWalking -AimedBlocks} 'Combined arena must bind exact terrain session'
+}
+$bad=Clone $combined;$bad.lab_evidence.physical_controller_fixture.aimed_blocks.support.x++;Reject {Assert-HudPhysicalFixtureResult $bad $run $hash -ExtendedWalking -AimedBlocks} 'Fixture support must be directly below seed'
+foreach($name in @('block_writes','inventory_writes','camera_writes','owned_count','omitted_receipts')){
+    $bad=Clone $combined;$bad.lab_evidence.physical_controller_fixture.aimed_blocks.arena.$name=1;Reject {Assert-HudPhysicalFixtureResult $bad $run $hash -ExtendedWalking -AimedBlocks} 'Aimed arena must preserve direct-write and complete receipt contract'
+}
+$bad=Clone $combined;$bad.lab_evidence.physical_controller_fixture.aimed_blocks.arena.pending=$true;Reject {Assert-HudPhysicalFixtureResult $bad $run $hash -ExtendedWalking -AimedBlocks} 'Pending aimed action cannot pass fixture'
+$bad=Clone $combined;$bad.lab_evidence.physical_controller_fixture.aimed_blocks.arena.failure='failed';Reject {Assert-HudPhysicalFixtureResult $bad $run $hash -ExtendedWalking -AimedBlocks} 'Failed aimed arena cannot pass fixture'
+$bad=Clone $combined;$bad.lab_evidence.physical_controller_fixture.aimed_blocks.arena.owned_cells=@($seed);Reject {Assert-HudPhysicalFixtureResult $bad $run $hash -ExtendedWalking -AimedBlocks} 'Owned block remains after fixture'
+foreach($name in @('confirmations','requests')){
+    $bad=Clone $combined;$bad.lab_evidence.physical_controller_fixture.aimed_blocks.arena.$name=@($bad.lab_evidence.physical_controller_fixture.aimed_blocks.arena.$name | Select-Object -First 5);Reject {Assert-HudPhysicalFixtureResult $bad $run $hash -ExtendedWalking -AimedBlocks} 'Every action needs request and client/server confirmation'
+}
+foreach($name in @('id','action')){
+    $bad=Clone $combined;$bad.lab_evidence.physical_controller_fixture.aimed_blocks.confirmations[3].$name=0;Reject {Assert-HudPhysicalFixtureResult $bad $run $hash -ExtendedWalking -AimedBlocks} 'Combined action identity/order must match exact sequence'
+}
+$bad=Clone $combined;$bad.lab_evidence.physical_controller_fixture.aimed_blocks.confirmations[3].face='EAST';Reject {Assert-HudPhysicalFixtureResult $bad $run $hash -ExtendedWalking -AimedBlocks} 'West placement requires actual west face'
+$bad=Clone $combined;$bad.lab_evidence.physical_controller_fixture.aimed_blocks.confirmations[1].target.y=64;Reject {Assert-HudPhysicalFixtureResult $bad $run $hash -ExtendedWalking -AimedBlocks} 'Top placement target must be above seed'
+$bad=Clone $combined;$bad.lab_evidence.physical_controller_fixture.aimed_blocks.confirmations[4].hit_block.x=2;Reject {Assert-HudPhysicalFixtureResult $bad $run $hash -ExtendedWalking -AimedBlocks} 'Break hit must match the exact owned target'
+foreach($name in @('client_and_server','confirmed')){
+    $bad=Clone $combined;$bad.lab_evidence.physical_controller_fixture.aimed_blocks.confirmations[5].$name=$false;Reject {Assert-HudPhysicalFixtureResult $bad $run $hash -ExtendedWalking -AimedBlocks} 'Actions require authoritative and client confirmation'
+}
+foreach($name in @('client_speed','server_speed')){
+    $bad=Clone $combined;$bad.lab_evidence.physical_controller_fixture.aimed_blocks.confirmations[1].$name=.03;Reject {Assert-HudPhysicalFixtureResult $bad $run $hash -ExtendedWalking -AimedBlocks} 'Action attempted before player settled'
+}
+$bad=Clone $combined;$bad.lab_evidence.physical_controller_fixture.aimed_blocks.confirmations[1].client_server_distance=.011;Reject {Assert-HudPhysicalFixtureResult $bad $run $hash -ExtendedWalking -AimedBlocks} 'Settled action requires agreeing client/server position'
+foreach($name in @('client_vertical_velocity','server_vertical_velocity')){
+    foreach($value in @(-.1,.1,[double]::NaN,'0')){$bad=Clone $combined;$bad.lab_evidence.physical_controller_fixture.aimed_blocks.confirmations[1].$name=$value;Reject {Assert-HudPhysicalFixtureResult $bad $run $hash -ExtendedWalking -AimedBlocks} 'Airborne action cannot claim a settled barrier'}
+}
+foreach($name in @('client_on_ground','server_on_ground')){
+    $bad=Clone $combined;$bad.lab_evidence.physical_controller_fixture.aimed_blocks.confirmations[1].$name=$false;Reject {Assert-HudPhysicalFixtureResult $bad $run $hash -ExtendedWalking -AimedBlocks} 'Both client and server must be grounded for action'
+}
+$bad=Clone $combined;$bad.lab_evidence.physical_controller_fixture.aimed_blocks.confirmations[1].speed_metric='total_speed';Reject {Assert-HudPhysicalFixtureResult $bad $run $hash -ExtendedWalking -AimedBlocks} 'Horizontal velocity metric must be explicit'
+$bad=Clone $combined;$bad.lab_evidence.physical_controller_fixture.aimed_hud_frames=1;Reject {Assert-HudPhysicalFixtureResult $bad $run $hash -ExtendedWalking -AimedBlocks} 'Aimed interactions need actual HUD frame evidence'
+foreach($time in @(-1,15000,2650)){
+    $bad=Clone $combined;$bad.lab_evidence.physical_controller_fixture.aimed_blocks.confirmations[1].elapsed_from_first_movement_ms=$time;Reject {Assert-HudPhysicalFixtureResult $bad $run $hash -ExtendedWalking -AimedBlocks} 'Interactions must follow walking and remain inside the input window'
+}
+$bad=Clone $combined;$bad.lab_evidence.physical_controller_fixture.aimed_blocks.confirmations[0].elapsed_from_first_movement_ms=0;Reject {Assert-HudPhysicalFixtureResult $bad $run $hash -ExtendedWalking -AimedBlocks} 'Bootstrap must precede initial movement'
+$bad=Clone $combined;$bad.lab_evidence.physical_controller_fixture.aimed_blocks.confirmations[-1].elapsed_from_first_movement_ms=7000;Reject {Assert-HudPhysicalFixtureResult $bad $run $hash -ExtendedWalking -AimedBlocks} 'Subsequent accepted walking key must follow final block confirmation'
+$bad=Clone $combined;$bad.lab_evidence.physical_controller_fixture.aimed_blocks.arena.confirmations[2].target.x=9;Reject {Assert-HudPhysicalFixtureResult $bad $run $hash -ExtendedWalking -AimedBlocks} 'Helper summary must correlate with actual arena receipt'
+$bad=Clone $combined;$bad.lab_evidence.physical_controller_fixture.aimed_blocks.arena.max_owned_count=17;Reject {Assert-HudPhysicalFixtureResult $bad $run $hash -ExtendedWalking -AimedBlocks} 'Combined arena cannot expand sixteen-cell ownership budget'
+foreach($name in @('patch_run','patch_sha256')){
+    $bad=Clone $combined;$bad.lab_evidence.physical_controller_fixture.aimed_blocks.arena.build_region.$name='wrong';Reject {Assert-HudPhysicalFixtureResult $bad $run $hash -ExtendedWalking -AimedBlocks} 'Actual arena build policy must bind exact imported patch'
+}
+$bad=Clone $combined;$bad.lab_evidence.physical_controller_fixture.aimed_blocks.arena.build_region.support.x++;Reject {Assert-HudPhysicalFixtureResult $bad $run $hash -ExtendedWalking -AimedBlocks} 'Actual arena build support must match fixture support'
+$bad=Clone $combined;$bad.lab_evidence.physical_controller_fixture.aimed_blocks.arena.build_region.support_editable=$true;Reject {Assert-HudPhysicalFixtureResult $bad $run $hash -ExtendedWalking -AimedBlocks} 'Fixture support must not become an editable gameplay block'
+foreach($value in @(0,15,33,16.5,'16')){
+    $bad=Clone $combined;$bad.lab_evidence.physical_controller_fixture.aimed_blocks.arena.build_region.protected_imported_cells=$value;Reject {Assert-HudPhysicalFixtureResult $bad $run $hash -ExtendedWalking -AimedBlocks} 'Protected imported cells must retain full bounded terrain coverage'
+}
+$bad=Clone $combined;$bad.lab_evidence.physical_controller_fixture.aimed_blocks.arena.arena_maximum_inclusive.x++;Reject {Assert-HudPhysicalFixtureResult $bad $run $hash -ExtendedWalking -AimedBlocks} 'Actual arena cannot expand its bounded cube'
+$bad=Clone $combined;$bad.lab_evidence.physical_controller_fixture.aimed_blocks.arena.live_transport_enabled=$true;Reject {Assert-HudPhysicalFixtureResult $bad $run $hash -ExtendedWalking -AimedBlocks} 'Standalone proof cannot activate live transport'
+$null=Assert-HudPhysicalFixtureResult (Clone $combined) $run $hash -ExtendedWalking -AimedBlocks;Check $true 'Valid combined proof remains idempotently verifiable'
 Write-Output "HUD_PHYSICAL_FIXTURE_TESTS_PASS checks=$script:checks no_game_started=true"

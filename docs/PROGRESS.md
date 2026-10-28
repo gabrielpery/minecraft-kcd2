@@ -1,5 +1,61 @@
 # MineCome progress — 2026-10-28
 
+## Walking, aimed blocks and HUD together in actual Minecraft
+
+**Source implemented, compiled and standalone verified; combined live KCD2 input
+is not yet enabled.** `Test-HudPhysicalMovementFixture.ps1 -ExtendedWalking
+-AimedBlocks` runs one owned world with fixed initial alignment: vanilla bootstrap,
+W/W/S walking, top placement/upper break, west placement/west break, seed break,
+inventory suppression, then resumed W/S movement. All six block actions have real
+client and integrated-server confirmation; movement uses vanilla controls.
+
+`HudBuildRegion` keeps imported collision cells and the fixture support out of
+mutable ownership. `AimedStoneArena` applies the optional policy at selection,
+queue, dispatch and server precheck while retaining its confirmed-stone ledger
+and eye/reach checks. `GroundCollision.matches` binds the helper to the installed
+world, patch run and hash. One BEDROCK support setup and cleanup write are recorded
+separately from the arena's zero direct block writes. Actions require fresh,
+grounded client/server agreement within .01m, neutral controls, horizontal speed
+below .03 and bounded vertical residual velocity. Normal cleanup verifies edited
+cells AIR, unchanged imported cells, support restoration, proxy/control release
+and normal Minecraft exit.
+
+Actual flat run **PASS**: `b5f250088e4841088fffebef1ea8cdb0`, evidence
+`runtime/evidence/hud-physical-fixture-20261028-135417-b5f250088e4841088fffebef1ea8cdb0/`.
+Duration15,504ms,158 trace records,259 UI frames including14 during aimed actions,
+five pulses/six confirmed actions,1.498988m maximum walk and zero corrections.
+Movement before and after interactions is .641819m each. Complete receipt36,537bytes.
+
+Actual captured-terrain run **PASS**: `61868402650549db9387657daf1b8065`, evidence
+`runtime/evidence/hud-physical-fixture-20261028-135545-61868402650549db9387657daf1b8065/`.
+Duration15,508ms,158 records,258 UI frames including15 during aimed actions,
+five pulses/six actions, .637031m maximum walk and zero corrections. Movement before
+interactions .220139m, after .641819m. Complete receipt37,435bytes. The original
+`ground-patch-20261028-131456-9f4aeb95285b4f3bbff56bc8c8f345e8/ground-patch.json`
+hash remains `93e1ced12e3f5340b2337fabeee885513055e42a76b9eb188485125967a4c23c`.
+Both runs verify zero inventory displacement, full cleanup and all92 source hashes.
+Both use synthetic host rays; neither claims KCD compositing or physical input.
+
+Validation: compilation/assembly;96 build-region checks;336 physical-mode/input
+checks;196 fixture receipt/profile checks;26 evidence-writer checks. Existing
+actual Minecraft aiming also passes all28 scenarios after the arena change:
+`runtime/evidence/aimed-stone-20261028-133833-c360373cce28416593baaaae60138c25/`.
+
+Two failed trials are preserved. `9e80ade840a24a25ab9b5732cf797c77` confirms six
+block actions but stops before resumed walking when camera-file replacement is
+denied for100ms. The lock holder is unknown; a scratch concurrent-reader test saw
+transient denials but no exhausted retry budget. The unchanged retry
+`6038039bc41144e4ace15a2ca72611a8` completes movement but exceeds the64KiB pretty
+JSON result limit. Combined-only compact JSON now preserves all fields and explicit
+nulls within the unchanged64KiB limit. Legacy formatting remains unchanged. Neither
+failed trial counts as a full PASS; camera code has not been changed speculatively.
+
+Next live integration needs a dedicated controller/compositor capability, settled
+host playback before issuing an aim permit, and revocation before native movement
+restoration. Do not widen the .25m eye tolerance, rebase rays, or add another
+high-rate pose sampler beside the existing walking camera requests. The verified
+live walking profile and200ms buffer remain unchanged.
+
 ## Optional 15-second walking mode
 
 **Live PASS:** HUD `a673494c0d084564ac3c83e3fdcdd47d`, probe

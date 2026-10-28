@@ -42,8 +42,11 @@ Boundary pauses require releasing controls before pressing again in an allowed
 direction. The default lab permits five seconds of input plus one second of settling.
 The new optional `-ExtendedWalking` mode passes **15 seconds of input** plus settling
 inside the same 30-second HUD session, including repeated steps after the old cutoff.
-Walking with aimed-block controls remains next development work; this is not yet
-a final playable build.
+Walking and aimed blocks now also pass in one automated Minecraft fixture on flat
+ground and captured KCD terrain: walk, place/break on top and side faces, reopen
+inventory, then walk again. This uses scripted rays and an explicit protected
+terrain/build region. Connecting those controls together in KCD2 remains next;
+this is not yet a final playable build.
 
 The input-phase repair and a first-step downhill transition fix now pass together
 in KCD2. In the earlier short run, accepted keys reached Minecraft's movement

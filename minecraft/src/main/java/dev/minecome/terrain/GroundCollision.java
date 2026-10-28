@@ -9,7 +9,7 @@ import net.minecraft.world.BlockView;
 
 /** Shapes are built on each owning game thread, then published as immutable world-scoped maps. */
 public final class GroundCollision {
-    private record Installation(BlockView world,String run,Map<Long,VoxelShape> shapes,AtomicLong queries) {}
+    private record Installation(BlockView world,String run,String sha256,Map<Long,VoxelShape> shapes,AtomicLong queries) {}
     private static volatile Installation client,server;
     private GroundCollision() {}
     public static void install(BlockView world,GroundPatch patch,boolean serverSide) {
@@ -19,7 +19,7 @@ public final class GroundCollision {
             var slab=VoxelShapes.cuboid(0,cell.minY(),0,1,cell.maxY(),1);
             shapes.merge(key,slab,VoxelShapes::union);
         }
-        var installation=new Installation(world,patch.run(),Map.copyOf(shapes),new AtomicLong());
+        var installation=new Installation(world,patch.run(),patch.sha256(),Map.copyOf(shapes),new AtomicLong());
         if(serverSide)server=installation;else client=installation;
     }
     public static VoxelShape merge(BlockView world,BlockPos pos,VoxelShape original) {
@@ -33,6 +33,10 @@ public final class GroundCollision {
     }
     public static boolean installed(BlockView world,boolean serverSide) {
         var own=serverSide?server:client;return own!=null && own.world()==world;
+    }
+    public static boolean matches(BlockView world,GroundPatch patch,boolean serverSide) {
+        var own=serverSide?server:client;
+        return own!=null && own.world()==world && own.run().equals(patch.run()) && own.sha256().equals(patch.sha256());
     }
     public static long queries(boolean serverSide){var own=serverSide?server:client;return own==null?0:own.queries().get();}
     public static boolean available(boolean serverSide){return (serverSide?server:client)==null;}

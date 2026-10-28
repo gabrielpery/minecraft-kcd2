@@ -47,6 +47,19 @@ Earlier failures below are retained for diagnosis. The latest verification statu
 is in [progress and evidence](PROGRESS.md); successful bounded tests do not remove
 the remaining gameplay limits.
 
+The combined walking/aimed fixture passes in actual Minecraft on flat and captured
+KCD terrain, including top/side placement, breaking, inventory and resumed walking.
+It remains standalone with scripted rays. Live combination needs a dedicated
+click-capable walking profile and fresh host/guest agreement after the200ms playback
+buffer settles. Aiming must stop before KCD's automatic restoration, since the
+guest remains at its final position. The fixture uses one explicit support beside
+the imported terrain; general placement directly against KCD terrain is unverified.
+
+One combined trial stopped when Windows denied camera-file replacement for the
+existing100ms retry budget. The lock holder is unknown; later unchanged camera
+code passes flat and captured-terrain runs. Retain the original failure evidence
+rather than treating this intermittent file-sharing issue as resolved.
+
 ## Stone texture blur resolved in the verified close view
 
 The user's screenshot now verifies actual Minecraft stone in the loaded official
