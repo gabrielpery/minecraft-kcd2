@@ -19,6 +19,12 @@
 #include "stream_channel.hpp"
 #include "input_channel.hpp"
 #include "input_diagnostics.hpp"
+#if defined(MINECOME_HUD_WALKING_AIMED) && (!defined(MINECOME_HUD_PHYSICAL_MOVEMENT) || !defined(MINECOME_HUD_WORLD_CLICKS) || !defined(MINECOME_HUD_SELECTIVE_MOUSE))
+#error Walking aimed input requires its explicit movement, world-click and selective capture definitions.
+#endif
+#if defined(MINECOME_HUD_PHYSICAL_MOVEMENT) && defined(MINECOME_HUD_WORLD_CLICKS) && !defined(MINECOME_HUD_WALKING_AIMED)
+#error Movement and world-click profiles may only be combined by the explicit walking aimed target.
+#endif
 #ifdef MINECOME_HUD_PHYSICAL_MOVEMENT
 #include "movement_forwarding.hpp"
 #endif
@@ -215,7 +221,9 @@ struct Service {
     explicit Service(HMODULE module) {
         const auto path = st::module_path(module); const auto slash = path.find_last_of(L"/\\");
         if (slash != path.npos) config = path.substr(0,slash+1)+
-#ifdef MINECOME_HUD_PHYSICAL_MOVEMENT
+#ifdef MINECOME_HUD_WALKING_AIMED
+            L"MineComeHudWalkingAimed.ini";
+#elif defined(MINECOME_HUD_PHYSICAL_MOVEMENT)
             L"MineComeHudMovement.ini";
 #elif defined(MINECOME_HUD_SELECTIVE_MOUSE)
             L"MineComeHudSelective.ini";
@@ -1014,7 +1022,10 @@ void on_begin(api::effect_runtime *runtime, api::command_list *commands, api::re
     } catch (...) { fail(state,5); hide(runtime,state); }
 }
 } // namespace
-#ifdef MINECOME_HUD_PHYSICAL_MOVEMENT
+#ifdef MINECOME_HUD_WALKING_AIMED
+extern "C" __declspec(dllexport) const char *NAME="MineCome bounded walking aimed lab";
+extern "C" __declspec(dllexport) const char *DESCRIPTION="Exact KCD2 tools/D3D12 genuine HUD; explicit input v2 walking and UI keys, selective inventory capture and original physical world-click edges; one F8 activation at most30 seconds and sixteen clicks. Guest/controller settled proof is required for aimed actions.";
+#elif defined(MINECOME_HUD_PHYSICAL_MOVEMENT)
 extern "C" __declspec(dllexport) const char *NAME="MineCome bounded physical movement lab";
 extern "C" __declspec(dllexport) const char *DESCRIPTION="Exact KCD2 tools/D3D12 genuine HUD; explicit input v2 WASD/Space and UI keys, host camera look, full inventory capture; one F8 activation at most30 seconds, no stone click publication.";
 #elif defined(MINECOME_HUD_RAW_OWNER_FILTER)

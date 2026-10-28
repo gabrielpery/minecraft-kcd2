@@ -39,10 +39,11 @@ foreach($revision in @(1,2)){$config=Config;$config.SelectiveRevision=$revision;
 $config=Config;$config.Mode='Fixture';Reject {Assert-HudStoneConfiguration @config} 'Aimed mode accepted standalone fixture target'
 $armGuardText=@();foreach($statement in $arm.EndBlock.Statements){
     if($statement -is [Management.Automation.Language.IfStatementAst]){$armGuardText+=$statement.Extent.Text}
+    elseif($statement -is [Management.Automation.Language.AssignmentStatementAst] -and $statement.Left.Extent.Text -ceq '$inputProtocol'){continue}
     elseif($armGuardText.Count){break}
 }
 $armGuards=[scriptblock]::Create($armGuardText -join "`n")
-function Check-Arm($Config){$InputMode=$true;foreach($key in $Config.Keys){Set-Variable $key $Config[$key]};& $armGuards}
+function Check-Arm($Config){$InputMode=$true;$PhysicalMovement=$false;$WalkingAimed=$false;foreach($key in $Config.Keys){Set-Variable $key $Config[$key]};& $armGuards}
 $config=Config;Check-Arm $config;Check $true 'Direct arming accepts explicit aimed revision3 mode'
 foreach($flag in @('StoneLive','WorldClicks','SelectiveMouse','LiveMouse','OffscreenPresentation')){$config=Config;$config[$flag]=$false;Reject {Check-Arm $config} "Direct aimed arm accepted missing $flag"}
 foreach($revision in @(1,2)){$config=Config;$config.SelectiveRevision=$revision;Reject {Check-Arm $config} 'Direct aimed arm accepted earlier capture revision'}
@@ -65,17 +66,24 @@ Assert-HudStoneMode $ready $false $true;Assert-HudAimedArmMode $ready $false;Che
 
 # Execute the child profile guards independently from its Gradle launch.
 $try=$child.EndBlock.Statements | Where-Object {$_ -is [Management.Automation.Language.TryStatementAst]} | Select-Object -First 1
-$guards=@();foreach($statement in $try.Body.Statements){if($statement -isnot [Management.Automation.Language.IfStatementAst]){break};$guards+=$statement.Extent.Text}
+$guards=@();foreach($statement in $try.Body.Statements){
+    if($statement -is [Management.Automation.Language.IfStatementAst]){$guards+=$statement.Extent.Text}
+    elseif($guards.Count){break}
+}
+Check ($guards.Count -ge 10) 'Actual child guards were isolated after the profile helper calls'
+. (Import-Function $child 'Assert-HudGroundChildMode')
 $childGuards=[scriptblock]::Create($guards -join "`n")
 function Child-Config {
-    @{AimedStone=$true;StoneLive=$true;StoneFixture=$false;InputMode=$true;LiveMouse=$true;OffscreenPresentation=$true;InputFixture=$false;InputOffscreenTrial=$false;InputPointerFixture=$false;InputDelayFixture=$false;InputBackgroundTrial=$false;StoneTokenFile='owned-token'}
+    @{AimedStone=$true;StoneLive=$true;StoneFixture=$false;InputMode=$true;LiveMouse=$true;OffscreenPresentation=$true;InputFixture=$false;InputOffscreenTrial=$false;InputPointerFixture=$false;InputDelayFixture=$false;InputBackgroundTrial=$false;StoneTokenFile='owned-token'
+        WalkingAimed=$false;ExtendedWalking=$false;PhysicalMovement=$false;PhysicalMovementFixture=$false;Standalone=$false;GroundMovementFixture=$false;GroundMovementCoupled=$false;HostViewFile='';GroundPatchFile='';MovementTraceFile=''}
 }
 function Check-Child($Config){foreach($key in $Config.Keys){Set-Variable $key $Config[$key]};$PSBoundParameters=@{};& $childGuards}
 $config=Child-Config;Check-Child $config;Check $true 'Child accepts aimed live profile'
 foreach($flag in @('StoneLive','InputMode','LiveMouse','OffscreenPresentation')){$config=Child-Config;$config[$flag]=$false;Reject {Check-Child $config} "Aimed child accepted missing $flag"}
 foreach($flag in @('StoneFixture','InputFixture','InputOffscreenTrial','InputPointerFixture','InputDelayFixture','InputBackgroundTrial')){$config=Child-Config;$config[$flag]=$true;Reject {Check-Child $config} "Aimed child accepted $flag"}
-$childFlag=$child.Find({param($n)$n -is [Management.Automation.Language.IfStatementAst] -and $n.Extent.Text.Contains("'-PminecomeHudAimedStoneBridge'")},$true)
+$childFlag=$child.Find({param($n)$n -is [Management.Automation.Language.IfStatementAst] -and $n.Extent.Text -match '^if\(\$AimedStone\)' -and $n.Extent.Text.Contains("'-PminecomeHudAimedStoneBridge'")},$true)
 Check ($null -ne $childFlag) 'Explicit guest argument found'
+$WalkingAimed=$false
 foreach($AimedStone in @($false,$true)){$arguments=@();. ([scriptblock]::Create($childFlag.Extent.Text));Check ($arguments.Count -eq [int]$AimedStone) 'Guest aiming property requires explicit opt-in'}
 
 # Model native journal and physical log reads, while running the actual selector,

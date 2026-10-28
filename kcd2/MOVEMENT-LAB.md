@@ -434,6 +434,35 @@ The two support writes are recorded separately from vanilla actions.
 Combined receipts retain the unchanged 64 KiB limit using compact JSON, including
 explicit null states. The controller checks six correlated actions, real movement
 before and after them, UI frames, cleanup, and an unchanged source manifest.
-This establishes the Minecraft integration with scripted rays. A combined live
-KCD2 controller still needs host playback settling, click capture and coordinated
-shutdown before the movement follower restores the host position.
+This establishes the Minecraft integration with scripted rays. The separate live
+profile below now verifies physical walking and an aimed break in KCD2 too.
+
+## Combined live walking, aiming and HUD
+
+Use `scripts/Start-HudWalkingAimed.ps1` only after installing its separate
+`runtime/hud-compositor-walking-aimed` bundle through the owned update procedure.
+It automatically selects PowerShell 7 and the extended 15-second movement session.
+Do not enable the old walking and stone profile flags together or run two controllers.
+
+Wait for `HUD_WALKING_AIMED_READY`, then press F8. Wait for the stone, take a short
+step, release movement for at least half a second, aim at the stone and break it.
+Walk again afterward. Stay in KCD until the HUD closes 30s after F8; the return near
+16s after first movement is expected. Start movement within 12s of F8. All owned
+stones must be removed before 12s of movement: the remaining time drains actions,
+removes the unchanged support, revokes native aiming and verifies cleanup before
+requesting follower restoration. Clicks during movement or the completion tail are
+consumed and declined, never retried later. No movement is a failed/incomplete trial.
+
+The fixed alignment and .25m eye allowance are unchanged. Admission additionally
+requires 200ms of fresh grounded, stationary guest samples, .05m host-player agreement
+and a matching original native camera receipt. The relay consumes the walking
+sampler with `--external-physical-pose-run`; it sends no additional `SamplePose`
+requests. Combined intent dispatch is bounded to 150ms and relay shutdown is polled
+without blocking the movement forwarder. Older profiles retain their behavior.
+
+First live PASS: HUD `179b92e699de495880dec7d6f6ac7449`, controller evidence
+`runtime/evidence/hud-walking-aimed-20261028-142552-8cdbdbd02281412a86fb584a0dd9eab1/`.
+156/156 native movement readbacks, one confirmed physical aimed break, resumed
+walking, exact restoration, support/input cleanup and normal Minecraft exit.
+The user reports “Done, worked perfectly.” Combined live top/side placement and
+inventory transitions remain next; continuous free roaming is still unfinished.

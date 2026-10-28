@@ -1,6 +1,7 @@
 package dev.minecome.hud;
 
 import com.google.gson.*;
+import dev.minecome.terrain.GroundPatch;
 import com.mojang.blaze3d.systems.RenderSystem;
 import dev.minecome.hud.mixin.HudWindowVsyncAccessor;
 import dev.minecome.terrain.HudGroundMovementFixture;
@@ -47,6 +48,8 @@ public final class HudStreamLab {
     private final boolean inputPointerFixture=Boolean.getBoolean("minecome.hudStreamInputPointerFixture");
     private final boolean stoneMode=Boolean.getBoolean("minecome.hudStoneBridge"),stoneFixture=Boolean.getBoolean("minecome.hudStoneFixture"),stoneLive=Boolean.getBoolean("minecome.hudStoneLive");
     private final boolean aimedStone=Boolean.getBoolean("minecome.hudAimedStoneBridge");
+    private final boolean walkingAimedMode=HudPhysicalMovementMode.walkingAimed(System.getProperties());
+    private volatile HudWalkingBuildSupport walkingSupport;
     private final HudGroundMovementMode.Mode groundMovementMode=HudGroundMovementMode.mode(System.getProperties());
     private HudGroundMovementFixture groundMovement;
     private final boolean physicalMovementMode=HudPhysicalMovementMode.require(System.getProperties());
@@ -338,7 +341,7 @@ public final class HudStreamLab {
             output=new HudStreamProducer(project,outputDirectory,identity,save,true,inputMode?(inputFixture?2:1):0);output.start();
             if(inputMode)ui=new HudVanillaUiAdapter(client,mouseInputEnabled);
             if(inputPointerFixture)pointerFixture=new HudPointerFixture();
-            if(stoneMode)stoneBridge=aimedStone?new HudAimedStoneBridge(Path.of(required("minecome.tokenFile")),save):new HudStoneBridge(Path.of(required("minecome.tokenFile")));
+            if(stoneMode && !walkingAimedMode)stoneBridge=aimedStone?new HudAimedStoneBridge(Path.of(required("minecome.tokenFile")),save):new HudStoneBridge(Path.of(required("minecome.tokenFile")));
             if(backgroundTrial || offscreenPresentation)timing=new HudRenderTiming(Thread.currentThread(),RenderSystem::isFrozenAtPollEvents);
         }
         if(output.failure()!=null){fail(client,"HUD stream worker: "+output.failure());return;}
@@ -351,6 +354,10 @@ public final class HudStreamLab {
                     if(physicalFixtureMode)physicalFixture=new HudPhysicalMovementFixture(client,physicalMovement,Path.of(required("minecome.groundPatchFile")),Path.of(required("minecome.hudHostViewFile")),wire);
                 }
                 physicalMovement.afterTick(client,System.nanoTime());
+                if(walkingAimedMode && physicalMovement.inputReady(System.nanoTime()) && stoneBridge==null){
+                    if(walkingSupport==null)walkingSupport=new HudWalkingBuildSupport(client,GroundPatch.read(Path.of(required("minecome.groundPatchFile"))),save);
+                    if(walkingSupport.prepare(client))stoneBridge=new HudAimedStoneBridge(Path.of(required("minecome.tokenFile")),save,walkingSupport,physicalMovement,output);
+                }
             }catch(Exception e){fail(client,"HUD physical movement: "+e.getMessage());return;}
         }
         if(groundMovement!=null && !terminal){
@@ -480,7 +487,8 @@ public final class HudStreamLab {
         long imageAgeMs=(now-output.lastPublishedAt())/1_000_000;maxImageAgeMs=Math.max(maxImageAgeMs,imageAgeMs);
         boolean imageFresh=imageAgeMs<=250;
         boolean offscreenFocusReady=!offscreenPresentation || hiddenClientUnfocused(client);
-        if(physicalMovement!=null)physicalMovement.authority(client,now,hostState==1 && hostFresh && imageFresh && offscreenFocusReady);
+        boolean walkingBootstrapReady=!walkingAimedMode || (stoneBridge instanceof HudAimedStoneBridge aimed && aimed.walkingBootstrapped());
+        if(physicalMovement!=null)physicalMovement.authority(client,now,hostState==1 && hostFresh && imageFresh && offscreenFocusReady && walkingBootstrapReady);
         if(hostState==1 && !offscreenFocusReady)throw new IllegalStateException("Owned offscreen window is not actually unfocused");
         if(hostState==1 && !hostFresh)throw new IllegalStateException("Input host observation stale");
         if(hostState==1 && !imageFresh)throw new IllegalStateException("Own image publication stale");
@@ -521,6 +529,7 @@ public final class HudStreamLab {
         // While waiting we own no controls. Old image/heartbeat/ticks make us
         // ineligible; only a later real fresh client tick can restore readiness.
         if(!hostFresh || !imageFresh || !offscreenFocusReady ||
+                (walkingAimedMode && (walkingSupport==null || stoneBridge==null)) ||
                 (physicalMovementMode && (physicalMovement==null || !physicalMovement.inputReady(System.nanoTime())))){prearmIneligibleTicks++;return;}
         if(inputDelayFixture && hostState==0 && firstReadyAckAt!=0){
             long elapsed=now-firstReadyAckAt;
@@ -604,6 +613,7 @@ public final class HudStreamLab {
             if(groundMovement!=null)groundMovement.observe(source);
             if(physicalMovement!=null)physicalMovement.observe(source);
             if(physicalFixture!=null)physicalFixture.observe(source);
+            var buildSupport=walkingSupport;if(buildSupport!=null)buildSupport.observe(source);
         }catch(Exception e){serverFailure.set(e.getMessage());}
     }
     private void restoreLayout(MinecraftClient client){

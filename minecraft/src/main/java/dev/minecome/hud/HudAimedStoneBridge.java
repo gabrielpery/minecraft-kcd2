@@ -3,6 +3,7 @@ package dev.minecome.hud;
 import com.google.gson.*;
 import dev.minecome.aim.AimedStoneArena;
 import dev.minecome.protocol.*;
+import dev.minecome.terrain.HudPhysicalMovement;
 import net.minecraft.block.Blocks;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.registry.Registries;
@@ -36,6 +37,12 @@ final class HudAimedStoneBridge implements HudBlockBridge {
     private int places,breaks,events,networkConfirmed,cancelledPending;
     private boolean started,acknowledged,bootstrapQueued,bootstrapConfirmed,closed;
     private String failure;
+    private HudWalkingBuildSupport walkingSupport;
+    private HudPhysicalMovement walkingMovement;
+    private HudStreamProducer walkingOutput;
+    private Protocol.Vec3 initialGuestFeet,initialHostPlayer;
+    private boolean walkingReadyPublished,walkingClosing,walkingLogicallyClosed;
+    private long walkingCloseStarted;
 
     HudAimedStoneBridge(Path token,String ownedSave) {
         if(ownedSave==null || !ownedSave.matches("MineCome-HudStream-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"))
@@ -44,6 +51,12 @@ final class HudAimedStoneBridge implements HudBlockBridge {
         bridge=new BridgeClient(token,"minecraft-hud-aimed-stone",Protocol.ROLE_MC,
                 message->org.slf4j.LoggerFactory.getLogger("MineComeHudAimedStone").info("{}",message),BridgeClient.Mode.AIMED_STONE);
     }
+    HudAimedStoneBridge(Path token,String ownedSave,HudWalkingBuildSupport support,HudPhysicalMovement movement,HudStreamProducer output){
+        this(token,ownedSave);
+        require(HudPhysicalMovementMode.walkingAimed(System.getProperties()) && support.ready(),"Prepared live walking build region required");
+        walkingSupport=support;walkingMovement=movement;walkingOutput=output;
+    }
+    boolean walkingBootstrapped(){return bootstrapConfirmed;}
 
     @Override public void tick(MinecraftClient client,boolean actionsEnabled) {
         if(closed || failure!=null)return;
@@ -60,6 +73,7 @@ final class HudAimedStoneBridge implements HudBlockBridge {
         require(world==client.world && player==client.player && server==client.getServer(),"HUD world/player/server changed");
         require(serverFailure.get()==null,"Authoritative observation failed: "+serverFailure.get());
         long now=System.nanoTime();
+        if(walkingLogicallyClosed){publish(client);return;}
         boolean allowed=actionsEnabled && client.currentScreen==null && client.getOverlay()==null;
         if(!bootstrapQueued && !bootstrapConfirmed && now-lastRead>=50_000_000L){readBaseline(client);lastRead=now;}
         if(!started){
@@ -79,7 +93,14 @@ final class HudAimedStoneBridge implements HudBlockBridge {
             var host=bridge.latestAimedHostPose();
             if(host==null || !matches(client,baseline.get(),now))return;
             alignment=new AimGeometry.Alignment(vector(client.player.getEyePos()),host.camera(),1);
-            initialBaseline=baselineEvidence(client,baseline.get());arena=new AimedStoneArena(alignment,save);
+            initialBaseline=baselineEvidence(client,baseline.get());
+            initialGuestFeet=vector(client.player.getPos());initialHostPlayer=host.player();
+            arena=walkingSupport==null?new AimedStoneArena(alignment,save):new AimedStoneArena(alignment,save,walkingSupport.region());
+        }
+        if(walkingMovement!=null){
+            long began=walkingMovement.startedAtNanos();
+            if(HudWalkingAimGate.cutoff(began,now)){walkingClosing=true;if(walkingCloseStarted==0)walkingCloseStarted=now;}
+            allowed=allowed && !walkingClosing && walkingMovement.interactionSettled(client,now) && walkingHostAligned(client);
         }
         // Revocation is processed before a queued vanilla preproof can dispatch.
         arena.tick(client,allowed);
@@ -106,6 +127,12 @@ final class HudAimedStoneBridge implements HudBlockBridge {
             var result=arena.lastResult();require(result!=null && result.id()==activeId,"Missing bootstrap outcome");
             if(result.reason().equals("actions_disabled_before_dispatch")){bootstrapQueued=false;return;}
             confirm(result,true,0);bootstrapConfirmed=true;
+            if(walkingSupport!=null && !walkingReadyPublished){
+                var receipt=walkingReceipt("ready");receipt.addProperty("bootstrap_confirmed",true);
+                receipt.add("initial_guest_feet",JSON.toJsonTree(initialGuestFeet));receipt.add("initial_guest_eye",JSON.toJsonTree(alignment.minecraftAnchor()));
+                receipt.add("host_anchor",JSON.toJsonTree(alignment.kcdAnchor()));receipt.add("host_player_anchor",JSON.toJsonTree(initialHostPlayer));
+                receipt.add("arena_offer",JSON.toJsonTree(offer));walkingOutput.offerWalkingAimState("ready",receipt);walkingReadyPublished=true;
+            }
         }
         if(pending!=null && !arena.pending()){
             var result=arena.lastResult();require(result!=null && result.id()==activeId,"Missing aimed action outcome");
@@ -145,6 +172,27 @@ final class HudAimedStoneBridge implements HudBlockBridge {
         if(allowed && pending==null && !arena.pending() && now-lastPermit>=100_000_000L){
             lastPermit=now;if(bridge.issueAimPermit()!=null)permitCount++;
         }
+        if(walkingClosing){
+            require(now-walkingCloseStarted<HudWalkingAimGate.DRAIN_NS,"Walking aimed pending/cleanup deadline");
+            if(pending==null && !arena.pending()){
+                boolean clean=arena.ownedCells().isEmpty();
+                if(clean && !walkingSupport.cleanup(client))return;
+                walkingLogicallyClosed=true;
+                var receipt=walkingReceipt("closed");receipt.addProperty("logical_closed",true);receipt.addProperty("pending",false);
+                receipt.addProperty("owned_count",arena.ownedCells().size());receipt.addProperty("guest_world_cleanup_complete",clean);
+                receipt.addProperty("support_cleanup_complete",walkingSupport.cleaned());walkingOutput.offerWalkingAimState("closed",receipt);
+            }
+        }
+    }
+
+    private boolean walkingHostAligned(MinecraftClient client){
+        var host=bridge.latestAimedHostPose();if(host==null || alignment==null || initialHostPlayer==null)return false;
+        return HudWalkingAimGate.aligned(alignment,initialGuestFeet,initialHostPlayer,host.player(),host.camera(),vector(client.player.getPos()),vector(client.player.getEyePos()));
+    }
+    private JsonObject walkingReceipt(String stage){
+        var receipt=new JsonObject();receipt.addProperty("schema",1);receipt.addProperty("kind","minecome_hud_walking_aim_"+stage+"_v1");
+        receipt.addProperty("utc_ms",System.currentTimeMillis());receipt.addProperty("patch_run",walkingSupport.patch().run());
+        receipt.addProperty("patch_sha256",walkingSupport.patch().sha256());return receipt;
     }
 
     private void confirm(AimedStoneArena.Result result,boolean bootstrap,long wireId){
@@ -179,7 +227,7 @@ final class HudAimedStoneBridge implements HudBlockBridge {
     }
     private void readBaseline(MinecraftClient client){
         if(!reading.compareAndSet(false,true))return;
-        var owner=client.getServer();var seed=client.player.getBlockPos().add(2,0,0).toImmutable();
+        var owner=client.getServer();var seed=walkingSupport==null?client.player.getBlockPos().add(2,0,0).toImmutable():new BlockPos(walkingSupport.region().seed().x(),walkingSupport.region().seed().y(),walkingSupport.region().seed().z());
         owner.execute(()->{
             try{
                 var w=owner.getOverworld();var p=owner.getPlayerManager().getPlayer(playerId);
@@ -196,7 +244,7 @@ final class HudAimedStoneBridge implements HudBlockBridge {
     private boolean matches(MinecraftClient client,Baseline proof,long now){
         if(proof==null || now-proof.at()<0 || now-proof.at()>FRESH_NS || !proof.air() || !proof.support()
                 || !client.player.isOnGround() || client.player.getEyePos().squaredDistanceTo(proof.eye())>.0025
-                || !proof.seed().equals(client.player.getBlockPos().add(2,0,0)) || !client.world.isChunkLoaded(proof.seed())
+                || (walkingSupport==null && !proof.seed().equals(client.player.getBlockPos().add(2,0,0))) || !client.world.isChunkLoaded(proof.seed())
                 || !client.world.getBlockState(proof.seed()).isAir()
                 || !client.world.getBlockState(proof.seed().down()).isSideSolidFullSquare(client.world,proof.seed().down(),Direction.UP))return false;
         int slot=client.player.getInventory().selectedSlot;var stack=client.player.getInventory().getStack(slot);
@@ -230,6 +278,10 @@ final class HudAimedStoneBridge implements HudBlockBridge {
         value.addProperty("block_events_queued",events);value.addProperty("permits_issued",permitCount);
         value.addProperty("owned_count",arena==null?0:arena.ownedCells().size());
         value.addProperty("guest_world_cleanup_complete",arena!=null && arena.ownedCells().isEmpty() && !arena.pending() && cancelledPending==0);
+        if(walkingSupport!=null){
+            value.addProperty("walking_aimed",true);value.addProperty("logical_closed_before_restore",walkingLogicallyClosed);
+            value.addProperty("aim_cutoff_ms",12000);value.add("build_support",walkingSupport.evidence());
+        }
         for(String key:new String[]{"inventory_mutated","camera_mutated","engine_mirroring_verified","visual_verified"})value.addProperty(key,false);
         value.add("initial_baseline",initialBaseline);value.add("pre_bootstrap_baseline",preBootstrapBaseline);
         value.add("arena_offer",JSON.toJsonTree(offer));value.add("requests",requests.deepCopy());value.add("confirmations",confirmations.deepCopy());

@@ -1,9 +1,53 @@
 # MineCome progress — 2026-10-28
 
+## First combined physical walking, aimed break and HUD in KCD2 — PASS
+
+HUD `179b92e699de495880dec7d6f6ac7449`, probe `8cdbdbd02281412a86fb584a0dd9eab1`:
+`runtime/evidence/hud-walking-aimed-20261028-142552-8cdbdbd02281412a86fb584a0dd9eab1/`.
+User confirmation: **“Done, worked perfectly.”** The session performs a real W step,
+settled aimed left-click removal, then an S step with the hotbar visible. Minecraft
+and native KCD records confirm all 156 movement waypoints/readbacks and the one
+network break; the bootstrap placement and break leave zero owned stones.
+
+Guest movement 15,505ms, 158 trace records, maximum walk .847736m, zero post-settle
+corrections. Two boundary pauses/one resumption retain the sampled-ground limits.
+The stream published 909 HUD frames; 806 camera samples were fresh. Owned support
+cleanup performs exactly two separate writes (BEDROCK setup/AIR removal). Aiming
+closes before follower restoration, with both independent native input and engine
+cleanup acknowledged; the follower restores, GPU cap restores, proxies/input/mappings
+release, and Minecraft exits 0. Primary machine receipts retain visual_verified=false;
+the separate user-feedback receipt records the human observation without rewriting them.
+
+The new frozen compositor profile combines protocol 2 physical input and selective
+world clicks in `MineComeHudWalkingAimed.ini`. Java pins the build support/patch/save,
+withholds walking until vanilla bootstrap confirmation, requires fresh neutral
+grounded client/server and mapped host agreement, stops new aiming 12s after first
+movement, drains pending vanilla work, and emits identity-bound readiness/closure
+through the evidence writer. The controller requires 200ms settled samples and exact
+camera sequence correlation, consumes declined edges once, uses 150ms intent dispatch,
+and stops the relay asynchronously before follower finish. Failure cleanup revokes
+known aimed authority before ending movement. Older profiles stay separate.
+
+The optional native external-pose mode reuses original walking camera receipts,
+validates run/sequence/engine time/freshness and sends zero additional SamplePose
+calls. It does not rebase rays, widen .25m eye tolerance, modify Lua or change the
+200ms playback buffer. Five related native tests pass, including old relay modes
+and an external-pose synthetic real-wire test. Java build/assemble, 24 new gate checks,
+336 physical checks, 26 writer checks pass. New combined controller 77/profile 147
+checks plus existing fixture 196/relay 165 and renderer/profile regressions pass.
+
+Lifecycle review caught and fixed the unstarted `-1` movement timestamp being
+mistaken for a cutoff; regression coverage includes that case. Stream metadata
+explicitly marks scripted_input=false only for the new combined live mode. The
+owned bundle update completed at
+`runtime/evidence/hud-update-20261028-142142-ac73673d4aad41d4a94522d1bd2829e4/`.
+Remaining: combined live placement/inventory, longer/persistent sessions and real
+terrain placement. This is a verified bounded milestone, not a final retail build.
+
 ## Walking, aimed blocks and HUD together in actual Minecraft
 
-**Source implemented, compiled and standalone verified; combined live KCD2 input
-is not yet enabled.** `Test-HudPhysicalMovementFixture.ps1 -ExtendedWalking
+**Earlier guest milestone: source implemented, compiled and standalone verified.**
+`Test-HudPhysicalMovementFixture.ps1 -ExtendedWalking
 -AimedBlocks` runs one owned world with fixed initial alignment: vanilla bootstrap,
 W/W/S walking, top placement/upper break, west placement/west break, seed break,
 inventory suppression, then resumed W/S movement. All six block actions have real

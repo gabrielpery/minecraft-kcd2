@@ -49,11 +49,16 @@ the remaining gameplay limits.
 
 The combined walking/aimed fixture passes in actual Minecraft on flat and captured
 KCD terrain, including top/side placement, breaking, inventory and resumed walking.
-It remains standalone with scripted rays. Live combination needs a dedicated
-click-capable walking profile and fresh host/guest agreement after the200ms playback
-buffer settles. Aiming must stop before KCD's automatic restoration, since the
-guest remains at its final position. The fixture uses one explicit support beside
-the imported terrain; general placement directly against KCD terrain is unverified.
+The separate combined live profile now passes walking, a settled aimed break and
+resumed walking with the HUD: 156/156 movement readbacks, confirmed native removal,
+cleanup before restoration and normal exit. The user reports “worked perfectly.”
+Clicks require fresh host/guest agreement after the 200 ms playback buffer settles.
+Aiming closes 12s after first movement and drains before KCD's automatic restoration,
+since the guest remains at its final position. All stones must be removed before
+that cutoff. The dedicated support is beside the imported terrain; general placement
+directly against KCD terrain remains unverified. Top/side placement and inventory
+already pass separately and in the combined scripted fixture, but have not yet been
+repeated within this new combined live walking profile.
 
 One combined trial stopped when Windows denied camera-file replacement for the
 existing100ms retry budget. The lock holder is unknown; later unchanged camera
@@ -128,9 +133,9 @@ Never load newer retail1.5.6 saves into this older1.5.5 development game. Backup
   The user reports "worked. still delay, but worked." Default short mode remains
   available. Start movement within 12 seconds of F8 and keep KCD foreground until
   the 30-second HUD ends; an early focus loss correctly aborts incomplete movement.
-  Spatial/sampled-terrain limits and the 200 ms buffer remain. Combining walking
-  with aimed blocks still needs a shared owned-block/terrain contract and settled
-  click handling; simply enabling both existing modes would break their invariants.
+  Spatial/sampled-terrain limits and the 200 ms buffer remain. The distinct
+  `Start-HudWalkingAimed.ps1` profile now verifies walking/aimed breaking together;
+  simply enabling both older modes remains prohibited.
 - The earlier-input repair and first-step descent fix now pass live in `b850ba...`:
   57/57 source readbacks, exact restoration and normal cleanup. The user confirms
   walking/HUD work with a little delay remaining. Accepted keys reach pre-vanilla

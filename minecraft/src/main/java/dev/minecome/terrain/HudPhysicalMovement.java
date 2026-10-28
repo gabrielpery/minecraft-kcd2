@@ -68,6 +68,19 @@ public final class HudPhysicalMovement {
     public void positionCorrection(){corrections.incrementAndGet();}
     public boolean completed(){return completed;}
     public HudMovementSession session(){return session;}
+    public long startedAtNanos(){return keys.startedAt();}
+    /** Fresh guest agreement only; a live aim adapter must also check the host pose. */
+    public boolean interactionSettled(MinecraftClient client,long now){
+        var sample=freshObservation(now);
+        if(!ready || closing || completed || sample==null || clientMotion==null || !keys.neutral(now)
+                || client.currentScreen!=null || client.getOverlay()!=null || client.isPaused())return false;
+        var actual=motion(client.player,hasGround(client.world,client.player));var remote=sample.motion();
+        return grounded(actual) && grounded(remote) && distance(actual,remote)<=.01
+                && Math.hypot(actual.vx(),actual.vz())<.03 && Math.hypot(remote.vx(),remote.vz())<.03
+                && Math.abs(actual.vy())<.1 && Math.abs(remote.vy())<.1
+                && !client.options.forwardKey.isPressed() && !client.options.backKey.isPressed()
+                && !client.options.leftKey.isPressed() && !client.options.rightKey.isPressed() && !client.options.jumpKey.isPressed();
+    }
     public void activate(long now){keys.activate(now);}
     public boolean inputReady(long now){return ready && !closing && (completed || (views!=null && views.current(System.currentTimeMillis(),now)!=null));}
     public void authority(MinecraftClient client,long now,boolean fresh){
@@ -86,6 +99,7 @@ public final class HudPhysicalMovement {
         if(!parent.startsWith(evidenceRoot.toRealPath()))throw new IOException("Physical readiness outside evidence");
         var e=new JsonObject();e.addProperty("schema",1);e.addProperty("kind",fixture?"minecome_hud_physical_fixture_ready_v1":"minecome_hud_physical_ready_v1");e.addProperty("ready",true);
         e.addProperty("scripted_input",fixture);
+        if(HudPhysicalMovementMode.walkingAimed(System.getProperties()))e.addProperty("ui_input_walking_aimed",true);
         if(session.extended())e.addProperty("movement_session",session.id());
         e.addProperty("run",identity.run());e.addProperty("save",save);e.addProperty("patch_run",patch.run());e.addProperty("patch_sha256",patch.sha256());
         e.addProperty("target_pid",identity.targetPid());e.addProperty("target_start_filetime",Long.toUnsignedString(identity.targetStart()));

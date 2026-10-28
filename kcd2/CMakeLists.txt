@@ -58,6 +58,10 @@ if(BUILD_TESTING)
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools_aimed_integration.mjs"
             "$<TARGET_FILE:minecome_tools_host>" "${PROJECT_SOURCE_DIR}")
         set_tests_properties(tools_aimed_input_integration PROPERTIES TIMEOUT 30)
+        add_test(NAME tools_aimed_external_physical_pose_integration COMMAND "${MINECOME_NODE_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/tools_aimed_integration.mjs"
+            "$<TARGET_FILE:minecome_tools_host>" "${PROJECT_SOURCE_DIR}" --external-physical-pose)
+        set_tests_properties(tools_aimed_external_physical_pose_integration PROPERTIES TIMEOUT 30)
     endif()
     add_executable(tools_pose_tests tests/tools_pose_tests.cpp)
     target_link_libraries(tools_pose_tests PRIVATE minecome_tools_pose)

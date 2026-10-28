@@ -106,7 +106,7 @@ $prepare=Parse-Script 'scripts/Prepare-HudCompositor.ps1'
 $archive=Parse-Script 'scripts/Archive-HudArm.ps1'
 $null=Parse-Script 'scripts/Build-SelectiveReShade.ps1'
 $null=Parse-Script 'scripts/HudMouseProfile.ps1'
-$PhysicalMovement=$false
+$WalkingAimed=$false;$PhysicalMovement=$false
 foreach($ast in @($arm,$update,$disable)){
     Check (@($ast.ParamBlock.Parameters|Where-Object{$_.Name.VariablePath.UserPath -eq 'SelectiveMouse'}).Count -eq 1) 'Explicit selective option present'
     $guards=@()
@@ -115,7 +115,7 @@ foreach($ast in @($arm,$update,$disable)){
         elseif($statement -is [Management.Automation.Language.AssignmentStatementAst] -and $statement.Left.Extent.Text -ceq '$inputProtocol'){continue}
         elseif($guards.Count){break}
     }
-    Check ($guards.Count -eq $(if($ast -eq $arm){8}else{4})) 'Initial pure configuration guards found'
+    Check ($guards.Count -eq $(if($ast -eq $arm){9}else{5})) 'Initial pure configuration guards found'
     $guard=[scriptblock]::Create($guards -join "`n")
     foreach($world in @($false,$true)){
         foreach($mouse in @($false,$true)){

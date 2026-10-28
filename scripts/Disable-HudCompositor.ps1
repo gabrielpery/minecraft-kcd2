@@ -2,9 +2,10 @@
 # Original reversible tools-only rollback. Never starts/stops a game or deletes a file.
 # Keeps the pinned proxy as dxgi.dll.minecome-disabled; configs, addon, shaders and logs remain.
 [CmdletBinding()]
-param([string]$BundleDirectory, [switch]$Preview, [switch]$LiveMouse, [switch]$WorldClicks, [switch]$SelectiveMouse, [ValidateSet(1,2,3,4)][int]$SelectiveRevision=1, [switch]$PhysicalMovement)
+param([string]$BundleDirectory, [switch]$Preview, [switch]$LiveMouse, [switch]$WorldClicks, [switch]$SelectiveMouse, [ValidateSet(1,2,3,4)][int]$SelectiveRevision=1, [switch]$PhysicalMovement, [switch]$WalkingAimed)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+if($WalkingAimed -and ($PhysicalMovement -or $LiveMouse -or $WorldClicks -or $SelectiveMouse -or $SelectiveRevision -ne 1)){throw 'WalkingAimed is a separate rollback profile.'}
 if($PhysicalMovement -and ($LiveMouse -or $WorldClicks -or $SelectiveMouse -or $SelectiveRevision -ne 1)){throw 'PhysicalMovement is a separate rollback profile.'}
 if($WorldClicks -and -not $LiveMouse){throw 'World rollback requires explicit LiveMouse and WorldClicks.'}
 if($SelectiveMouse -and (-not $WorldClicks -or -not $LiveMouse)){throw 'Selective rollback requires explicit LiveMouse and WorldClicks modes.'}
@@ -15,7 +16,11 @@ if (-not $BundleDirectory) { $BundleDirectory = Join-Path $runtimeRoot $(if($Phy
 $BundleDirectory = [IO.Path]::GetFullPath($BundleDirectory)
 $exeHash = 'a32d077e6b54e5cd0c5a5f3194f473779706ff266a711e4745ccdb598843340a'
 $proxyHash = '0cee63f9c9f13f3ac909c5b4903f4dbb4b719a7ab3b4f13b0deaf83c814b94f7'
-if($PhysicalMovement){
+if($WalkingAimed){
+    . (Join-Path $PSScriptRoot 'HudWalkingAimedProfile.ps1')
+    $mouseProfile=Get-MineComeWalkingAimedProfile;$proxyHash=$mouseProfile.runtime_sha256
+    if(-not $PSBoundParameters.ContainsKey('BundleDirectory')){$BundleDirectory=Join-Path $runtimeRoot 'hud-compositor-walking-aimed'}
+}elseif($PhysicalMovement){
     . (Join-Path $PSScriptRoot 'HudPhysicalMovement.ps1')
     $mouseProfile=Get-MineComePhysicalMovementProfile;$proxyHash=$mouseProfile.runtime_sha256
 }elseif($LiveMouse){. (Join-Path $PSScriptRoot 'HudMouseProfile.ps1');$mouseProfile=Get-MineComeMouseProfile -WorldClicks:$WorldClicks -SelectiveMouse:$SelectiveMouse -SelectiveRevision $SelectiveRevision;$proxyHash=$mouseProfile.runtime_sha256}
@@ -103,7 +108,9 @@ Assert-GameClosed
 Assert-ExactToolsExe
 $installedReceiptPath = Join-Path $BundleDirectory 'installed.json'
 $installed = Read-BoundedJson $installedReceiptPath
-if($PhysicalMovement){
+if($WalkingAimed){
+    Assert-MineComeWalkingAimedInstalledBundle (Read-BoundedJson (Join-Path $BundleDirectory 'bundle.json')) $installed $mouseProfile
+}elseif($PhysicalMovement){
     Assert-MineComePhysicalMovementRollbackReceipt (Read-BoundedJson (Join-Path $BundleDirectory 'bundle.json')) $installed $mouseProfile
 }elseif($LiveMouse){Assert-MineComeMouseBundle (Read-BoundedJson (Join-Path $BundleDirectory 'bundle.json')) $mouseProfile -WorldClicks:$WorldClicks -SelectiveMouse:$SelectiveMouse -SelectiveRevision $SelectiveRevision}
 if ($installed.schema -ne 1 -or $installed.kind -cne 'minecome_hud_install_v1' -or
@@ -129,6 +136,7 @@ else { Assert-OwnedProxy $destination; $status = 'already_disabled' }
 if ($Preview) {
     $previewReceipt=[ordered]@{schema=1;kind='minecome_hud_rollback_preview_v1';status=$status;source=$source;disabled_path=$destination;sha256=$proxyHash;game_closed=$true;files_changed=$false}
     if($PhysicalMovement){$previewReceipt.physical_movement=$true}
+    if($WalkingAimed){$previewReceipt.walking_aimed=$true;$previewReceipt.physical_movement=$true}
     $previewReceipt | ConvertTo-Json -Depth 4
     Write-Output 'HUD_DISABLE_PREVIEW_PASS files_changed=false receipt_written=false'
     return
@@ -164,6 +172,7 @@ try {
         game_launched=$false;game_stopped=$false;configs_deleted=$false;addon_deleted=$false;evidence_preserved=$true;default_startup_verified=$false
     }
     if($PhysicalMovement){$receipt.physical_movement=$true}
+    if($WalkingAimed){$receipt.walking_aimed=$true;$receipt.physical_movement=$true}
     $bytes = $utf8.GetBytes(($receipt | ConvertTo-Json -Depth 5)+"`n")
     $receiptFile = Join-Path $receiptDirectory 'rollback.json'
     $file = [IO.FileStream]::new($receiptFile,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)

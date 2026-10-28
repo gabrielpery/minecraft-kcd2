@@ -2,11 +2,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Explicit tools-only deployment. Does not start/stop games or replace existing files.
 [CmdletBinding()]
-param([string]$BundleDirectory,[switch]$PreflightOnly)
+param([string]$BundleDirectory,[switch]$PreflightOnly,[switch]$WalkingAimed)
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 $root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-if(-not $BundleDirectory){$BundleDirectory=Join-Path $root 'runtime/hud-compositor'}
+if(-not $BundleDirectory){$BundleDirectory=Join-Path $root $(if($WalkingAimed){'runtime/hud-compositor-walking-aimed'}else{'runtime/hud-compositor'})}
 $BundleDirectory=(Resolve-Path -LiteralPath $BundleDirectory).Path
 $inventory=Get-Content -LiteralPath (Join-Path $root 'runtime/environment.json') -Raw|ConvertFrom-Json
 $tools=@($inventory.steam.relevant_apps|Where-Object {$_.role -eq 'official_tools' -and $_.installed -and $_.app_id -eq '2429020' -and $_.distribution -eq 'Steam'})
@@ -28,10 +28,16 @@ Assert-Unlinked $bin
 $manifestPath=Join-Path $BundleDirectory 'bundle.json'
 if((Get-Item -LiteralPath $manifestPath).Length -gt 1MB){throw 'Oversized bundle manifest.'}
 $manifest=Get-Content -LiteralPath $manifestPath -Raw|ConvertFrom-Json
+$expectedRuntime='0cee63f9c9f13f3ac909c5b4903f4dbb4b719a7ab3b4f13b0deaf83c814b94f7'
+if($WalkingAimed){
+    . (Join-Path $PSScriptRoot 'HudWalkingAimedProfile.ps1')
+    $profile=Get-MineComeWalkingAimedProfile;Assert-MineComeWalkingAimedBundle $manifest $profile
+    $expectedRuntime=$profile.runtime_sha256
+}
 $expected=@('dxgi.dll','ReShade.ini','MineComeHudPreset.ini','ReShade-LICENSE.txt','minecome-hud/addons/MineComeHudCompositor.addon64','minecome-hud/shaders/MineComeHud.fx')
 if($manifest.schema -ne 1 -or $manifest.kind -cne 'minecome_hud_compositor_bundle_v1' -or $manifest.tools_only -ne $true -or
     @($manifest.files).Count -ne $expected.Count -or $manifest.runtime.version -cne '6.8.0' -or
-    $manifest.runtime.reshade64_sha256 -cne '0cee63f9c9f13f3ac909c5b4903f4dbb4b719a7ab3b4f13b0deaf83c814b94f7'){throw 'Unexpected compositor bundle contract.'}
+    $manifest.runtime.reshade64_sha256 -cne $expectedRuntime){throw 'Unexpected compositor bundle contract.'}
 $entries=@()
 foreach($relative in $expected){
     $record=@($manifest.files|Where-Object {$_.path -ceq $relative})

@@ -30,9 +30,9 @@ foreach($statement in $disable.EndBlock.Statements){
     if($statement -is [Management.Automation.Language.IfStatementAst]){$guards+=$statement.Extent.Text}
     elseif($guards.Count){break}
 }
-Check ($guards.Count -eq 4) 'All initial rollback mode gates must be exercised'
+Check ($guards.Count -eq 5) 'All initial rollback mode gates must be exercised'
 $guard=[scriptblock]::Create($guards -join "`n")
-$PhysicalMovement=$true;$LiveMouse=$false;$WorldClicks=$false;$SelectiveMouse=$false;$SelectiveRevision=1
+$WalkingAimed=$false;$PhysicalMovement=$true;$LiveMouse=$false;$WorldClicks=$false;$SelectiveMouse=$false;$SelectiveRevision=1
 & $guard
 Check $true 'Explicit physical rollback accepted'
 foreach($field in @('LiveMouse','WorldClicks','SelectiveMouse')){

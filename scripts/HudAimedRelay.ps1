@@ -20,15 +20,23 @@ function ConvertFrom-MineComeAimedJson([string]$Text) {
     }
     try{Visit-AimedJson $document.RootElement;$Text | ConvertFrom-Json -Depth 32}finally{$document.Dispose()}
 }
-function ConvertFrom-MineComeHudAimedRelayLog([string]$Text,[string]$Run,[switch]$Completed) {
+function ConvertFrom-MineComeHudAimedRelayLog([string]$Text,[string]$Run,[switch]$Completed,[string]$ExternalPhysicalPoseRun='') {
     if($Run -cnotmatch '^[0-9a-f]{32}$' -or $Text.Length -gt 2MB){throw 'Invalid aimed relay log identity or extent.'}
+    if($ExternalPhysicalPoseRun -and $ExternalPhysicalPoseRun -cnotmatch '^[0-9a-f]{32}$'){throw 'Invalid external physical pose run.'}
     if($Completed -and $Text.Length -gt 0 -and -not $Text.EndsWith("`n")){throw 'Completed aimed relay log has a partial line.'}
     $collections=@{}
     foreach($name in @('begin_sessions','cleanup_sessions','input_begins','input_ends','permits','captures','dispatches','results','rejections','events','engine_acks','lua_sessions','lua_permits','input_cancels')){$collections[$name]=[Collections.Generic.List[object]]::new()}
-    $world=$false;$summary=$null;$lineNumber=0
+    $world=$false;$summary=$null;$lineNumber=0;$externalPose=$null
     foreach($line in ($Text -split "`n" | Select-Object -SkipLast 1)){
         $line=$line.TrimEnd("`r");$lineNumber++
-        if($line -cmatch '^STONE_(BEGIN|CLEANUP)_ACK session=([1-9][0-9]{0,15})$'){
+        if($line -cmatch '^EXTERNAL_PHYSICAL_POSE_ACCEPTED run=([0-9a-f]{32}) seq=([1-9][0-9]{0,3}) sampled_engine_seconds=([0-9]+(?:\.[0-9]+)?)$'){
+            if(-not $ExternalPhysicalPoseRun -or $Matches[1] -cne $ExternalPhysicalPoseRun -or $externalPose){throw 'External physical pose acknowledgement differs or repeats.'}
+            $sequence=[long]$Matches[2];$engine=[double]::Parse($Matches[3],[Globalization.CultureInfo]::InvariantCulture)
+            if($sequence -gt 1024 -or -not [double]::IsFinite($engine)){throw 'External physical pose bounds invalid.'}
+            $externalPose=[pscustomobject]@{run=$Matches[1];seq=$sequence;sampled_engine_seconds=$engine;line=$lineNumber};$world=$true
+        }elseif($line.StartsWith('EXTERNAL_PHYSICAL_POSE_ACCEPTED',[StringComparison]::Ordinal)){
+            throw 'Malformed external physical pose acknowledgement.'
+        }elseif($line -cmatch '^STONE_(BEGIN|CLEANUP)_ACK session=([1-9][0-9]{0,15})$'){
             $kind=$Matches[1];$id=[long]$Matches[2];Assert-MineComeAimedInteger $id 1
             $collections[$(if($kind -ceq 'BEGIN'){'begin_sessions'}else{'cleanup_sessions'})].Add($id)
         }elseif($line -cmatch '^AIM_INPUT_(BEGIN|END)_ACK run=([0-9a-f]{32}) arena=([1-9][0-9]{0,15})$'){
@@ -66,7 +74,7 @@ function ConvertFrom-MineComeHudAimedRelayLog([string]$Text,[string]$Run,[switch
             $name=switch($tag){'MineComeAimInput'{'captures'};'MineComeAimSession'{'lua_sessions'};'MineComeAimPermit'{'lua_permits'};'MineComeBlock'{'events'}}
             $collections[$name].Add($record)
         }elseif($line -cmatch '^KCD2_LOG .*\[MineComePose\] (\{[^\r\n]*\})$'){
-            if(-not $world){$record=ConvertFrom-MineComeAimedJson $Matches[1];if($record.schema -eq 1 -and $null -ne $record.player -and $null -ne $record.camera){$world=$true}}
+            if(-not $ExternalPhysicalPoseRun -and -not $world){$record=ConvertFrom-MineComeAimedJson $Matches[1];if($record.schema -eq 1 -and $null -ne $record.player -and $null -ne $record.camera){$world=$true}}
         }elseif($line -cmatch '^Stone engine acknowledgements: placed=([0-9]+) removed=([0-9]+) rejected=([0-9]+) cleanup_ack=(true|false; Lua lease remains responsible)$'){
             if($summary){throw 'Duplicate aimed engine summary.'}
             $summary=[pscustomobject]@{placed=[int]$Matches[1];removed=[int]$Matches[2];rejected=[int]$Matches[3];cleanup_ack=($Matches[4] -ceq 'true')}
@@ -75,6 +83,7 @@ function ConvertFrom-MineComeHudAimedRelayLog([string]$Text,[string]$Run,[switch
         }
     }
     $result=[ordered]@{fresh_world=$world;summary=$summary}
+    if($ExternalPhysicalPoseRun){$result.external_physical_pose=$externalPose}
     foreach($name in $collections.Keys){
         $limit=if($name -in @('permits','lua_permits')){1800}elseif($name -eq 'lua_sessions'){2}elseif($name -eq 'events'){33}elseif($name -eq 'engine_acks'){17}else{16}
         if($collections[$name].Count -gt $limit){throw 'Aimed relay receipt bound exceeded.'}
@@ -122,16 +131,21 @@ function ConvertFrom-MineComeHudAimedAudit([string]$Text,[switch]$Completed) {
     [pscustomobject]@{authenticated=($hello -eq 1 -and $null -ne $anchor);arena=$anchor;requests=@($requests.ToArray());results=@($results.ToArray());queue_drops=@($queueDrops.ToArray());ended=$ended;completed=[bool]$Completed}
 }
 
-function New-MineComeHudAimedRelay($Context,[string]$Directory,[string]$Run,[long]$ExpiresUtcMs,[ValidateRange(1,65535)][int]$Port=38765) {
+function New-MineComeHudAimedRelay($Context,[string]$Directory,[string]$Run,[long]$ExpiresUtcMs,[ValidateRange(1,65535)][int]$Port=38765,[string]$ExternalPhysicalPoseRun='') {
+    if($ExternalPhysicalPoseRun -and $ExternalPhysicalPoseRun -cnotmatch '^[0-9a-f]{32}$'){throw 'Invalid external physical pose run.'}
     $session=New-MineComeHudStoneRelay $Context $Directory $Run $ExpiresUtcMs $Port
     $session|Add-Member NoteProperty AimProbes @()
     $session|Add-Member NoteProperty InputCleanupVerified $false
     $session|Add-Member NoteProperty GuestWorldCleanupComplete $false
+    $session|Add-Member NoteProperty ExternalPhysicalPoseRun $ExternalPhysicalPoseRun
+    $session|Add-Member NoteProperty AsyncStopRequested $false
+    $session|Add-Member NoteProperty AsyncStopVerified $false
     $session
 }
 function Update-MineComeHudAimedRelayEvidence($Session) {
     try{
-        if(Test-Path -LiteralPath $Session.Stdout){$Session.Native=ConvertFrom-MineComeHudAimedRelayLog (Read-MineComeHudStoneText $Session.Stdout) $Session.Run -Completed:$Session.ExitObserved}
+        $external=if($Session.PSObject.Properties['ExternalPhysicalPoseRun']){$Session.ExternalPhysicalPoseRun}else{''}
+        if(Test-Path -LiteralPath $Session.Stdout){$Session.Native=ConvertFrom-MineComeHudAimedRelayLog (Read-MineComeHudStoneText $Session.Stdout) $Session.Run -Completed:$Session.ExitObserved -ExternalPhysicalPoseRun $external}
         elseif($Session.ExitObserved){throw 'Completed aimed relay log missing.'}
         $path=Join-Path $Session.Home 'runtime/logs/tools-bridge.log'
         if(Test-Path -LiteralPath $path){$Session.ReceiptAudit=ConvertFrom-MineComeHudAimedAudit (Read-MineComeHudStoneText $path) -Completed:$Session.ExitObserved;$Session.TransportAuthVerified=$Session.ReceiptAudit.authenticated}
@@ -164,6 +178,7 @@ function Start-MineComeHudAimedRelay($Session) {
         $Session.AimProbes=@($probe,$intent)
         if((Get-FileHash -LiteralPath $Session.Preflight.NativePath).Hash -ine $Session.Preflight.NativeHash){throw 'Aimed relay executable changed before launch.'}
         $arguments=@('--home',('"'+$Session.Home+'"'),'--game-log',('"'+$Session.Context.GameLog+'"'),'--stop-file',('"'+$Session.StopFile+'"'),'--fov-unit','radians','--seconds',[string][Math]::Min(180,[Math]::Ceiling(($Session.ExpiresUtcMs-[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())/1000)),'--port',[string]$Session.Port,'--aimed-stone','--aimed-run',$Session.Run)
+        if($Session.ExternalPhysicalPoseRun){$arguments+=@('--external-physical-pose-run',$Session.ExternalPhysicalPoseRun)}
         $Session.Process=Start-Process -FilePath $Session.Preflight.NativePath -ArgumentList $arguments -WindowStyle Hidden -PassThru -RedirectStandardOutput $Session.Stdout -RedirectStandardError $Session.Stderr
         $null=$Session.Process.Handle;$Session.ProcessId=$Session.Process.Id;$Session.ProcessStart=$Session.Process.StartTime.ToUniversalTime()
         $deadline=[DateTime]::UtcNow.AddSeconds(10)
@@ -192,11 +207,20 @@ function Send-MineComeHudAimedIntent($Session,$Selection,$Click,[scriptblock]$Be
     $readyLine="AIM_PERMIT_READY run=$($Session.Run) arena=$arena permit=$permit installed_utc_ms=$($Selection.installed_utc_ms)"
     $ready=[regex]::Matches($text,('(?m)^'+[regex]::Escape($readyLine)+"`r?`n"))
     if($BeforeDispatch){$decline=& $BeforeDispatch;if($decline){return [pscustomobject]@{accepted=$false;declined=$true;reason=[string]$decline}}}
+    $external=[bool]($Session.PSObject.Properties['ExternalPhysicalPoseRun'] -and $Session.ExternalPhysicalPoseRun)
+    if($external){Assert-MineComeProbeContext $Session.Context}
     $now=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
     if($ready.Count -ne 1 -or $Selection.installed_utc_ms -ge $Click.utc_ms -or $Click.utc_ms -gt $now -or $now-$Click.utc_ms -gt 250 -or $now-$Selection.installed_utc_ms -gt 350){return [pscustomobject]@{accepted=$false;declined=$true;reason='expired_or_unacknowledged_permit'}}
     $record=[pscustomobject]@{ordinal=$Session.Intents.Count+1;request_id=$Click.sequence;sequence=$Click.sequence;arena_id=$arena;permit_id=$permit;action=$Click.action;edge_utc_ms=$Click.utc_ms;installed_utc_ms=$Selection.installed_utc_ms;sent_utc_ms=$now;accepted=$false;failure=$null}
     $Session.Intents.Add($record);$Session.LastIntentUtcMs=$now
-    try{Invoke-MineComeProbeConsole $Session.Context $command;$record.accepted=$true;return $record}
+    try{
+        if($external){
+            # One bounded dispatch during source-time playback. The exact owner
+            # guard and final original-edge/permit clocks were checked above.
+            Invoke-MineComeToolsRequest -PathAndQuery ('/api/System/Console/ExecuteString?command='+[Uri]::EscapeDataString($command)) -TimeoutMilliseconds 150 | Out-Null
+        }else{Invoke-MineComeProbeConsole $Session.Context $command}
+        $record.accepted=$true;return $record
+    }
     catch{$record.failure=$_.Exception.Message;$Session.Failure=$record.failure;throw}
 }
 
@@ -473,6 +497,41 @@ function Get-MineComeHudAimedRelayEvidence($Session) {
         intents=@($Session.Intents.ToArray());input_disposition=$Session.InputDisposition;native=$Session.Native;receipt_audit=$Session.ReceiptAudit;receipt_audit_failure=$Session.ReceiptAuditFailure;failure=$Session.Failure;cleanup_failure=$Session.CleanupFailure;guest_verification_failure=$Session.GuestVerificationFailure
         kcd_launched=$false;kcd_stopped=$false;other_processes_stopped=$false;credentials_recorded=$false
     }
+}
+# The combined controller must keep forwarding movement during relay cleanup.
+# Request never waits; completion verifies the same legacy cleanup receipts only
+# after the owned process has exited. Ordinary Stop below retains its behavior.
+function Request-MineComeHudAimedRelayStop($Session) {
+    if(-not $Session.PSObject.Properties['AsyncStopRequested']){throw 'Asynchronous stop requires an owned relay session.'}
+    if($Session.AsyncStopRequested){return}
+    $Session.AsyncStopRequested=$true
+    if($Session.Process -and -not $Session.Process.HasExited){
+        if($Session.Process.Id -ne $Session.ProcessId -or $Session.Process.StartTime.ToUniversalTime() -ne $Session.ProcessStart){throw 'Aimed relay owner changed before stop.'}
+        [IO.File]::WriteAllText($Session.StopFile,'Graceful aimed stop requested by owning combined HUD controller.')
+    }
+}
+function Complete-MineComeHudAimedRelayStop($Session) {
+    if(-not $Session.AsyncStopRequested){throw 'Asynchronous aimed stop was not requested.'}
+    if($Session.AsyncStopVerified){return $true}
+    if($Session.Process -and -not $Session.Process.HasExited){return $false}
+    # Parse once and retain in memory while movement is active. The ordinary
+    # Stop path also reparses and writes its full journal in finally; that disk
+    # work is deferred until the combined controller has finished playback.
+    $Session.StopAttempted=$true
+    try{
+        if(-not $Session.Process){throw 'Asynchronous aimed cleanup lacks its owned process.'}
+        $Session.ExitObserved=$true;$Session.ExitCode=$Session.Process.ExitCode
+        Update-MineComeHudAimedRelayEvidence $Session;$native=$Session.Native
+        if($Session.ReceiptAuditFailure -or -not $native -or -not $native.summary -or -not $native.summary.cleanup_ack){throw 'Aimed relay engine cleanup unacknowledged.'}
+        foreach($id in $native.begin_sessions){if(@($native.cleanup_sessions|Where-Object{$_ -eq $id}).Count -ne 1){throw 'Aimed engine session lacks unique cleanup.'}}
+        $Session.CleanupVerified=$true
+        if($native.input_begins.Count -ne 1 -or $native.input_ends.Count -ne 1 -or $native.input_cancels.Count -ne 1 -or
+            $native.input_begins[0].arena -ne $native.input_ends[0].arena -or $native.input_ends[0].arena -ne $native.input_cancels[0].arena -or
+            $native.input_begins[0].line -ge $native.input_cancels[0].line -or $native.input_cancels[0].line -ge $native.input_ends[0].line){throw 'Aimed Lua input gate has no independent end acknowledgement.'}
+        $Session.InputCleanupVerified=$true
+        if($Session.ExitCode -ne 0){throw 'Owned aimed relay exited unsuccessfully.'}
+        $Session.AsyncStopVerified=$true;return $true
+    }catch{$Session.CleanupFailure=$_.Exception.Message;if(-not $Session.Failure){$Session.Failure=$Session.CleanupFailure};throw}
 }
 function Stop-MineComeHudAimedRelay($Session) {
     if($Session.StopAttempted){return};$Session.StopAttempted=$true

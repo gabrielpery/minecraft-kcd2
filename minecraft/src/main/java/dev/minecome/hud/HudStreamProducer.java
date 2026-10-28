@@ -58,6 +58,7 @@ public final class HudStreamProducer implements AutoCloseable {
     private volatile PublicationStage publicationStage=new PublicationStage("not_started",System.nanoTime());
     private volatile long maxPublicationGapNanos,maxConversionNanos,maxMapWriteNanos,maxPublishedCaptureAgeMs,lastPublishedCaptureUtcMs,lastPublishedUtcMs;
     private volatile HudEvidenceWriter evidenceWriter;
+    private boolean walkingAimReadyQueued,walkingAimClosedQueued;
     public HudStreamProducer(Path root,Path directory,Identity identity,String save,boolean genuine) {
         this(root,directory,identity,save,genuine,0);
     }
@@ -93,6 +94,15 @@ public final class HudStreamProducer implements AutoCloseable {
         worker.start();
     }
     public boolean isReady(){return ready.get() && failure.get()==null && !finished.get();}
+    public void offerWalkingAimState(String stage,JsonObject state){
+        if(!HudPhysicalMovementMode.walkingAimed(System.getProperties()) || evidenceWriter==null || !isReady())throw new IllegalStateException("Walking aimed receipt outside active profile");
+        if(stage.equals("ready")){if(walkingAimReadyQueued)throw new IllegalStateException("Repeated walking aim ready receipt");walkingAimReadyQueued=true;}
+        else if(stage.equals("closed")){if(walkingAimClosedQueued)throw new IllegalStateException("Repeated walking aim closure");walkingAimClosedQueued=true;}
+        else throw new IllegalArgumentException("Invalid walking aim evidence stage");
+        var receipt=identityReceipt(producerPid,producerStart);
+        state.entrySet().forEach(entry->receipt.add(entry.getKey(),entry.getValue().deepCopy()));
+        evidenceWriter.submit(directory.resolve("walking-aim-"+stage+".json"),receipt);
+    }
     public boolean isFinished(){return finished.get();}
     public String failure(){return failure.get();}
     public long publishedFrames(){return published.get();}
@@ -151,6 +161,7 @@ public final class HudStreamProducer implements AutoCloseable {
             r.addProperty("standalone",standalone);
         }
         if(physicalMovement){
+            if(HudPhysicalMovementMode.walkingAimed(System.getProperties())){r.addProperty("ui_input_walking_aimed",true);r.addProperty("scripted_input",false);}
             if(movementSession.extended())r.addProperty("movement_session",movementSession.id());
             boolean scripted=HudPhysicalMovementMode.fixture(System.getProperties());
             if(Boolean.getBoolean("minecome.hudWalkingAimedFixture"))r.addProperty("ui_walking_aimed_fixture",true);
@@ -314,7 +325,8 @@ public final class HudStreamProducer implements AutoCloseable {
         // Combined evidence retains both vanilla action receipts and movement
         // timing. Compact formatting preserves that proof within the same 64KiB
         // limit; it does not grant a larger transport or evidence budget.
-        if(object.has("ui_walking_aimed_fixture") && object.get("ui_walking_aimed_fixture").getAsBoolean())serializer.serializeNulls();
+        if((object.has("ui_walking_aimed_fixture") && object.get("ui_walking_aimed_fixture").getAsBoolean())
+                || (object.has("ui_input_walking_aimed") && object.get("ui_input_walking_aimed").getAsBoolean()))serializer.serializeNulls();
         else serializer.setPrettyPrinting();
         // Closed pointer phases explicitly carry scroll_position:null; absence
         // means a malformed proof. Preserve that distinction in stage/final files.

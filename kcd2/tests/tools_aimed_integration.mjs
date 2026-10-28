@@ -7,8 +7,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import assert from 'node:assert/strict';
 const [exe,workspace]=process.argv.slice(2);
+const externalPhysicalPose=process.argv.includes('--external-physical-pose');
 assert.ok(exe&&workspace,'usage: tools_aimed_integration.mjs HOST_EXE WORKSPACE');
 const run='0123456789abcdef0123456789abcdef';
+const physicalRun='fedcba9876543210fedcba9876543210';
 const root=fs.mkdtempSync(path.join(workspace,'runtime','tools-aimed-fixture-'));
 fs.mkdirSync(path.join(root,'config'));fs.mkdirSync(path.join(root,'runtime','logs'),{recursive:true});
 const token='b'.repeat(64);fs.writeFileSync(path.join(root,'config','bridge.token'),token);
@@ -21,6 +23,14 @@ const commands=[],owned=new Map(),installations=new Map();
 let beginCount=0,bootstrapAckSent=false,refusePermitAck=false,session=0,lastAcknowledgedPermit='0';
 const started=performance.now();
 const clock=()=>Math.fround(100+(performance.now()-started)/1000);
+let physicalTimer,physicalAttempts=0,physicalSequence=0,physicalPaused=false,lastPhysicalRecord;
+const poseProgress=()=>externalPhysicalPose?physicalAttempts:commands.filter(c=>c==='#MineCome.SamplePose()').length;
+const newPhysicalRecord=()=>({schema:1,run:physicalRun,seq:++physicalSequence,result:'sampled',physical_movement:true,sampled_engine_seconds:clock(),player:{x:100,y:200,z:50.08},camera:{position:{x:100,y:200,z:51.7},forward:{x:1,y:0,z:0},up:{x:0,y:0,z:1},fov:1},camera_basis_valid:true});
+function physicalSample(){
+  ++physicalAttempts;if(physicalPaused||quietLog)return;
+  lastPhysicalRecord=newPhysicalRecord();
+  log('[MineComeHudPhysicalView]',lastPhysicalRecord);
+}
 const sessionLog=(event,id,result)=>log('[MineComeBlockSession]',{schema:1,event,session:id,result,owned_count:owned.size,pending_count:0});
 const server=http.createServer((request,response)=>{
   const url=new URL(request.url,'http://127.0.0.1');
@@ -72,7 +82,13 @@ await refused(['--aimed-stone'],'invalid aimed begin');
 await refused(['--aimed-run',run],'requires explicit aimed');
 await refused(['--aimed-stone','--aimed-run',run,'--interactive-stone'],'cannot mix');
 await refused(['--aimed-stone','--aimed-run',run,'--camera-only'],'cannot mix');
-const child=spawn(exe,[...args,'--aimed-stone','--aimed-run',run],{windowsHide:true});
+if(externalPhysicalPose){
+  await refused(['--external-physical-pose-run',physicalRun],'requires explicit aimed');
+  await refused(['--aimed-stone','--aimed-run',run,'--external-physical-pose-run','123'],'32 lowercase');
+  await refused(['--aimed-stone','--aimed-run',run,'--external-physical-pose-run',physicalRun,'--fov-unit','degrees'],'radian FOV');
+  await refused(['--aimed-stone','--aimed-run',run,'--external-physical-pose-run',physicalRun,'--external-physical-pose-run',physicalRun],'one 32');
+}
+const child=spawn(exe,[...args,'--aimed-stone','--aimed-run',run,...(externalPhysicalPose?['--external-physical-pose-run',physicalRun]:[])],{windowsHide:true});
 let output='';child.stdout.on('data',b=>output+=b);child.stderr.on('data',b=>output+=b);
 const finished=new Promise((resolve,reject)=>{child.once('error',reject);child.once('close',resolve);});
 const waitFor=async(test,label,timeout=4000)=>{const end=performance.now()+timeout;while(!test()){if(performance.now()>end)throw new Error(`Timed out: ${label}\n${output}`);await delay(10);}};
@@ -84,6 +100,7 @@ const arena=Buffer.alloc(100);arena.writeBigUInt64LE(1n);
 [12,64,20,10,62,18,14,66,22].forEach((v,i)=>arena.writeInt32LE(v,64+4*i));
 let socket,poseTimer,permitTimer,seq=1,permitId=0,arenaAck=false,hostPose=false;
 const requests=[];
+const hostFlags=[];
 const send=(type,payload)=>socket.write(frame(type,seq++,payload));
 const sendPermit=()=>{const body=Buffer.alloc(16);body.writeBigUInt64LE(1n);body.writeBigUInt64LE(BigInt(++permitId),8);send(14,body);return String(permitId);};
 const installCalls=()=>commands.filter(c=>c.startsWith('#MineCome.InstallAimedPermit('));
@@ -102,6 +119,17 @@ function capture(permit,click,action=2,overrides={},cutTailBytes=0){
 }
 try{
   await waitFor(()=>output.includes('Official tools console binding verified'),'adapter startup');
+  if(externalPhysicalPose){
+    const partialRecord=newPhysicalRecord(),text='\r\n[MineComeHudPhysicalView] '+JSON.stringify(partialRecord);
+    fs.appendFileSync(gameLog,text.slice(0,-1));await delay(300);
+    assert.ok(!output.includes('EXTERNAL_PHYSICAL_POSE_ACCEPTED'),'partial sampler JSON cannot publish authority');
+    fs.appendFileSync(gameLog,'}');
+    await waitFor(()=>output.includes('reason=stale_log_batch'),'old partial sampler record remains stale when completed');
+    log('[MineComeHudPhysicalView]',partialRecord);
+    await waitFor(()=>output.includes('reason=replayed_or_regressed'),'stale sampler sequence cannot be copied into a fresh append');
+    assert.ok(!output.includes('EXTERNAL_PHYSICAL_POSE_ACCEPTED'),'stale or replayed sampler cannot establish readiness');
+    physicalSample();physicalTimer=setInterval(physicalSample,50);
+  }
   socket=net.createConnection({host:'127.0.0.1',port});socket.on('error',()=>{});
   let buffered=Buffer.alloc(0);
   socket.on('data',chunk=>{
@@ -110,7 +138,7 @@ try{
       const size=buffered.readUInt32LE(12);if(buffered.length<32+size)break;
       const type=buffered.readUInt16LE(8),payload=buffered.subarray(32,32+size);assert.equal(buffered.readUInt16LE(6),2);
       if(type===1)assert.equal(payload.readUInt32LE(4),2);
-      if(type===3){assert.equal(payload.readUInt32LE(124),11);hostPose=true;}
+      if(type===3){const flags=payload.readUInt32LE(124);if(!externalPhysicalPose)assert.equal(flags,11);else assert.ok(flags===11||flags===0);hostFlags.push(flags);if(flags===11)hostPose=true;}
       if(type===11){assert.deepEqual(payload,arena);arenaAck=true;}
       if(type===12){assert.equal(size,96);requests.push({arena:payload.readBigUInt64LE(0),id:payload.readBigUInt64LE(8),permit:payload.readBigUInt64LE(16),action:payload.readUInt32LE(24),occlusion:payload.readUInt32LE(28),origin:[0,1,2].map(i=>payload.readDoubleLE(32+8*i))});}
       buffered=buffered.subarray(32+size);
@@ -131,8 +159,8 @@ try{
   clearInterval(permitTimer);permitTimer=null;
   await waitFor(()=>readyPermits().some(p=>p.permit===String(permitId)),'latest original permit acknowledged');
   const installsWhileQuiet=installCalls().length;
-  const posesWhileQuiet=commands.filter(c=>c==='#MineCome.SamplePose()').length;
-  await waitFor(()=>commands.filter(c=>c==='#MineCome.SamplePose()').length>=posesWhileQuiet+2,'polling with unchanged latest permit');
+  const posesWhileQuiet=poseProgress();
+  await waitFor(()=>poseProgress()>=posesWhileQuiet+2,'polling with unchanged latest permit');
   assert.equal(installCalls().length,installsWhileQuiet,'unchanged latest permit must not be installed repeatedly');
   const replacement=sendPermit();
   await waitFor(()=>readyPermits().some(p=>p.permit===replacement),'fresh replacement acknowledged without another peer permit');
@@ -151,7 +179,7 @@ try{
   quietLog=true;
   const partialCapture=capture(firstUsable,1,2,{},1);
   const incompleteBytes=fs.statSync(gameLog).size;
-  const sampleCalls=()=>commands.filter(c=>c==='#MineCome.SamplePose()').length;
+  const sampleCalls=poseProgress;
   const samplesBeforePartial=sampleCalls(),malformedBefore=(output.match(/reason=unavailable_or_malformed_sample/g)||[]).length;
   await waitFor(()=>sampleCalls()>samplesBeforePartial,'poll during incomplete critical tail',250);
   await delay(20);
@@ -188,16 +216,31 @@ try{
   await delay(650);assert.ok(readyPermits().every(p=>BigInt(p.permit)<=BigInt(lastAllowedReady)),'HTTP dispatch without Lua ACK must not announce readiness');
   const unacknowledged={permit:String(permitId-1)};
   if(installations.has(unacknowledged.permit)){capture(unacknowledged,5);await delay(150);assert.equal(requests.length,2,'unacknowledged permit cannot dispatch');}
+  if(externalPhysicalPose){
+    assert.ok(output.includes('EXTERNAL_PHYSICAL_POSE_ACCEPTED run='+physicalRun),'readiness must identify original walking sampler run');
+    clearInterval(permitTimer);permitTimer=null;physicalPaused=true;
+    // Fresh unrelated pose traffic must not renew the original walking sample.
+    const unrelated=setInterval(()=>{
+      log('[MineComePose]',{schema:1,player:{x:100,y:200,z:50.08},camera:{x:100,y:200,z:51.7},forward:{x:1,y:0,z:0},up:{x:0,y:0,z:1},fov_raw:1,calibrated:false});
+      log('[MineComeHudPhysicalView]',{...lastPhysicalRecord,run:'e'.repeat(32),seq:++physicalSequence,sampled_engine_seconds:clock()});
+    },50);
+    try {await waitFor(()=>output.includes('no fresh external physical world sample for 300ms')&&hostFlags.at(-1)===0,'stale walking pose invalidated despite foreign/legacy traffic',1200);}
+    finally {clearInterval(unrelated);}
+    log('[MineComeHudPhysicalView]',lastPhysicalRecord);
+    await waitFor(()=>output.includes('reason=replayed_or_regressed'),'copied original walking sample rejected');
+    await delay(100);assert.equal(hostFlags.at(-1),0,'replayed sample must not restore world authority');
+  }
   fs.writeFileSync(stopFile,'Owned synthetic fixture stop');const code=await finished;assert.equal(code,0,output);
   assert.equal(owned.size,0);assert.ok(output.includes('cleanup_ack=true'));assert.ok(commands.includes(`#MineCome.EndAimedInput('${run}','1')`));
   assert.ok(output.includes('AIM_INPUT_END_ACK run='+run+' arena=1'),'late input gate ACK must be read after stone cleanup');
   assert.ok(output.indexOf('STONE_CLEANUP_ACK')<output.indexOf('AIM_INPUT_END_ACK'));
   assert.ok(output.includes('Aimed input cleanup acknowledgement: true'));
   assert.equal(new Set(installCalls()).size,installCalls().length,'no original permit may ever be reinstalled');
-  fs.writeFileSync(path.join(root,'verification.json'),JSON.stringify({schema:1,result:'passed',synthetic_engine:true,synthetic_minecraft_peer:true,kcd_connected:false,requests:requests.length,engine_cleanup:true},null,2));
-  console.log('TOOLS_AIMED_INTEGRATION_PASS synthetic_engine=true synthetic_minecraft_peer=true requests=2 cleanup=true');
+  if(externalPhysicalPose)assert.equal(commands.filter(c=>c==='#MineCome.SamplePose()').length,0,'external mode must never add SamplePose polling, including cleanup');
+  fs.writeFileSync(path.join(root,'verification.json'),JSON.stringify({schema:1,result:'passed',synthetic_engine:true,synthetic_minecraft_peer:true,kcd_connected:false,requests:requests.length,engine_cleanup:true,external_physical_pose:externalPhysicalPose,pose_http_requests:commands.filter(c=>c==='#MineCome.SamplePose()').length},null,2));
+  console.log('TOOLS_AIMED_INTEGRATION_PASS synthetic_engine=true synthetic_minecraft_peer=true requests=2 cleanup=true external_physical_pose='+externalPhysicalPose);
 }finally{
-  clearInterval(poseTimer);clearInterval(permitTimer);if(socket)socket.destroy();
+  clearInterval(physicalTimer);clearInterval(poseTimer);clearInterval(permitTimer);if(socket)socket.destroy();
   if(child.exitCode===null){fs.writeFileSync(stopFile,'Owned fixture cleanup');await Promise.race([finished,delay(3000)]);}
   await new Promise(resolve=>server.close(resolve));
 }

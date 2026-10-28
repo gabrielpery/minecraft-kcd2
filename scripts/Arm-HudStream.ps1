@@ -2,12 +2,14 @@
 # Original bounded stream arm. Input mode still requires a physical F8 latch.
 # No game launch, movement or process injection.
 [CmdletBinding()]
-param([string]$ReadyManifest, [string]$BundleDirectory, [switch]$PreflightOnly, [switch]$InputMode, [switch]$OffscreenPresentation, [switch]$LiveMouse, [switch]$StoneLive, [switch]$WorldClicks, [switch]$SelectiveMouse, [ValidateSet(1,2,3,4)][int]$SelectiveRevision=1, [switch]$AimedStone, [switch]$PhysicalMovement)
+param([string]$ReadyManifest, [string]$BundleDirectory, [switch]$PreflightOnly, [switch]$InputMode, [switch]$OffscreenPresentation, [switch]$LiveMouse, [switch]$StoneLive, [switch]$WorldClicks, [switch]$SelectiveMouse, [ValidateSet(1,2,3,4)][int]$SelectiveRevision=1, [switch]$AimedStone, [switch]$PhysicalMovement, [switch]$WalkingAimed)
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'HudPhysicalMovement.ps1')
+. (Join-Path $PSScriptRoot 'HudWalkingAimedProfile.ps1')
+if($WalkingAimed -and (-not $InputMode -or -not $LiveMouse -or -not $OffscreenPresentation -or $PhysicalMovement -or $StoneLive -or $WorldClicks -or $SelectiveMouse -or $AimedStone -or $SelectiveRevision -ne 1)){throw 'WalkingAimed requires its separate live input profile without legacy mode flags.'}
 if($PhysicalMovement -and (-not $InputMode -or -not $LiveMouse -or -not $OffscreenPresentation -or $StoneLive -or $WorldClicks -or $SelectiveMouse -or $AimedStone -or $SelectiveRevision -ne 1)){throw 'Physical walking requires its separate live input profile.'}
-$inputProtocol=if($PhysicalMovement){2}else{1}
+$inputProtocol=if($PhysicalMovement -or $WalkingAimed){2}else{1}
 if($OffscreenPresentation -and -not $InputMode){throw 'Offscreen presentation requires explicit input mode.'}
 if($LiveMouse -and (-not $InputMode -or -not $OffscreenPresentation)){throw 'Live mouse requires explicit input mode and offscreen presentation.'}
 if($StoneLive -and (-not $LiveMouse -or -not $InputMode -or -not $OffscreenPresentation)){throw 'Combined stone arming requires the explicit live mouse profile.'}
@@ -36,7 +38,11 @@ if(-not $BundleDirectory) {$BundleDirectory=Join-Path $runtimeRoot $(if($Selecti
 $expectedArm=if($SelectiveMouse){'minecome-hud/addons/MineComeHudSelective.ini'}elseif($WorldClicks){'minecome-hud/addons/MineComeHudWorld.ini'}elseif($LiveMouse){'minecome-hud/addons/MineComeHudMouse.ini'}elseif($InputMode){'minecome-hud/addons/MineComeHudInput.ini'}else{'minecome-hud/addons/MineComeHudStream.ini'}
 $exeHash='a32d077e6b54e5cd0c5a5f3194f473779706ff266a711e4745ccdb598843340a'
 $proxyHash='0cee63f9c9f13f3ac909c5b4903f4dbb4b719a7ab3b4f13b0deaf83c814b94f7'
-if($PhysicalMovement){
+if($WalkingAimed){
+    $mouseProfile=Get-MineComeWalkingAimedProfile;$proxyHash=$mouseProfile.runtime_sha256
+    if(-not $PSBoundParameters.ContainsKey('BundleDirectory')){$BundleDirectory=Join-Path $runtimeRoot 'hud-compositor-walking-aimed'}
+    $expectedArm='minecome-hud/addons/MineComeHudWalkingAimed.ini'
+}elseif($PhysicalMovement){
     $mouseProfile=Get-MineComePhysicalMovementProfile;$proxyHash=$mouseProfile.runtime_sha256
     if(-not $PSBoundParameters.ContainsKey('BundleDirectory')){$BundleDirectory=Join-Path $runtimeRoot 'hud-compositor-walking'}
     $expectedArm='minecome-hud/addons/MineComeHudMovement.ini'
@@ -64,7 +70,8 @@ function Assert-Artifact([string]$Path,$Record) {
 $BundleDirectory=Assert-Unlinked $BundleDirectory
 if(-not $BundleDirectory.StartsWith($runtimeRoot+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)) {throw 'Stream bundle must remain in workspace runtime.'}
 $bundle=Read-Receipt (Join-Path $BundleDirectory 'bundle.json')
-if($PhysicalMovement){Assert-MineComePhysicalMovementBundle $bundle $mouseProfile}
+if($WalkingAimed){Assert-MineComeWalkingAimedBundle $bundle $mouseProfile}
+elseif($PhysicalMovement){Assert-MineComePhysicalMovementBundle $bundle $mouseProfile}
 elseif($LiveMouse){Assert-MineComeMouseBundle $bundle $mouseProfile -WorldClicks:$WorldClicks -SelectiveMouse:$SelectiveMouse -SelectiveRevision $SelectiveRevision}
 elseif($bundle.PSObject.Properties.Name -contains 'mouse_capture_api' -or $bundle.PSObject.Properties.Name -contains 'world_clicks' -or $bundle.PSObject.Properties.Name -contains 'selective_mouse' -or $bundle.PSObject.Properties.Name -contains 'selective_revision'){throw 'Mouse/world/selective bundle requires its explicit mode.'}
 if($bundle.schema -ne 1 -or $bundle.kind -cne 'minecome_hud_compositor_bundle_v1' -or $bundle.stream_protocol -ne 1 -or $bundle.tools_only -ne $true -or $bundle.runtime.version -cne '6.8.0' -or $bundle.runtime.reshade64_sha256 -cne $proxyHash -or $bundle.arm_config_relative_path -cne $expectedArm -or @($bundle.files).Count -ne 6) {throw 'An exact prepared stream bundle is required.'}
@@ -97,7 +104,7 @@ function Assert-LoadedStream {
 }
 Assert-LoadedStream
 $armPath=Assert-Unlinked (Join-Path $bin $bundle.arm_config_relative_path)
-foreach($name in @('MineComeHud.ini','MineComeHudStream.ini','MineComeHudInput.ini','MineComeHudMouse.ini','MineComeHudWorld.ini','MineComeHudSelective.ini','MineComeHudMovement.ini')){
+foreach($name in @('MineComeHud.ini','MineComeHudStream.ini','MineComeHudInput.ini','MineComeHudMouse.ini','MineComeHudWorld.ini','MineComeHudSelective.ini','MineComeHudMovement.ini','MineComeHudWalkingAimed.ini')){
     if(Test-Path -LiteralPath (Join-Path $bin ('minecome-hud/addons/'+$name))){throw 'Existing HUD arm preserved; ownership-checked cleanup is required first.'}
 }
 if($PreflightOnly) {Write-Output 'HUD_STREAM_ARM_PREFLIGHT_PASS no_changes=true';return}
@@ -106,7 +113,8 @@ $ReadyManifest=Assert-Unlinked $ReadyManifest
 if(-not $ReadyManifest.StartsWith($evidenceRoot+'\',[StringComparison]::OrdinalIgnoreCase) -or [IO.Path]::GetFileName($ReadyManifest) -cne 'stream-ready.json') {throw 'Readiness must come from workspace stream evidence.'}
 $ready=Read-Receipt $ReadyManifest
 Assert-HudNonFixtureArm $ready
-Assert-HudPhysicalMovementReady $ready ([bool]$PhysicalMovement)
+Assert-HudWalkingAimedReady $ready ([bool]$WalkingAimed)
+Assert-HudPhysicalMovementReady $ready ([bool]($PhysicalMovement -or $WalkingAimed))
 if($InputMode){
     if($ready.PSObject.Properties.Name -notcontains 'ui_input_protocol' -or $ready.ui_input_protocol -ne $inputProtocol){throw 'Input mode requires explicit genuine guest readiness.'}
     if($ready.PSObject.Properties.Name -notcontains 'ui_input_fixture' -or $ready.ui_input_fixture -isnot [bool] -or $ready.ui_input_fixture -ne $false){throw 'Fixture producer cannot arm live KCD input.'}
@@ -117,11 +125,11 @@ if($InputMode){
     if($ready.PSObject.Properties.Name -notcontains 'ui_input_pointer_fixture' -or $ready.ui_input_pointer_fixture -isnot [bool] -or $ready.ui_input_pointer_fixture -ne $false){throw 'Pointer fixture cannot arm live KCD input.'}
     if($ready.PSObject.Properties.Name -notcontains 'ui_input_live_mouse' -or $ready.ui_input_live_mouse -isnot [bool] -or $ready.ui_input_live_mouse -ne [bool]$LiveMouse){throw 'Live mouse requires matching explicit guest readiness.'}
     foreach($field in @('ui_input_stone_bridge','ui_input_stone_fixture','ui_input_stone_live')){
-        $expectedStone=$field -ne 'ui_input_stone_fixture' -and [bool]$StoneLive
-        if($ready.PSObject.Properties.Name -notcontains $field){if($StoneLive){throw 'Live stone readiness marker missing.'};continue}
+        $expectedStone=$field -ne 'ui_input_stone_fixture' -and [bool]($StoneLive -or $WalkingAimed)
+        if($ready.PSObject.Properties.Name -notcontains $field){if($StoneLive -or $WalkingAimed){throw 'Live stone readiness marker missing.'};continue}
         if($ready.$field -isnot [bool] -or $ready.$field -ne $expectedStone){throw 'Combined HUD stone readiness does not match explicit live mode.'}
     }
-    Assert-HudAimedArmMode $ready ([bool]$AimedStone)
+    Assert-HudAimedArmMode $ready ([bool]($AimedStone -or $WalkingAimed))
 }
 elseif($ready.PSObject.Properties.Name -contains 'ui_input_protocol'){throw 'Input producer requires explicit InputMode.'}
 $start=$context.GameStartedUtc.ToFileTimeUtc().ToString()
@@ -139,11 +147,12 @@ $hash=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).T
 $evidenceDirectory=[IO.Path]::GetDirectoryName($ReadyManifest)
 $receipt=[ordered]@{schema=1;kind='minecome_hud_stream_arm_v1';run=$ready.run;game_pid=$context.GamePid;game_start_filetime=$start;producer_pid=$ready.producer_pid;producer_start_filetime=$ready.producer_start_filetime;expires_utc_ms=$ready.expires_utc_ms;arm_path=$armPath;arm_sha256=$hash;bundle=$BundleDirectory;addon_sha256=$addonRecord.sha256;visual_verified=$false;interactive_inventory_verified=$false;game_launched=$false}
 $receipt.live_mouse=[bool]$LiveMouse
-$receipt.stone_live=[bool]$StoneLive
-$receipt.aimed_stone=[bool]$AimedStone
-$receipt.world_clicks=[bool]$WorldClicks
-$receipt.selective_mouse=[bool]$SelectiveMouse
-$receipt.physical_movement=[bool]$PhysicalMovement
+$receipt.stone_live=[bool]($StoneLive -or $WalkingAimed)
+$receipt.aimed_stone=[bool]($AimedStone -or $WalkingAimed)
+$receipt.world_clicks=[bool]($WorldClicks -or $WalkingAimed)
+$receipt.selective_mouse=[bool]($SelectiveMouse -or $WalkingAimed)
+$receipt.physical_movement=[bool]($PhysicalMovement -or $WalkingAimed)
+if($WalkingAimed){$receipt.walking_aimed=$true;$receipt.movement_session='extended';$receipt.selective_revision=4}
 if($SelectiveRevision -ge 2){$receipt.selective_revision=$SelectiveRevision}
 $receiptPath=Join-Path $evidenceDirectory 'stream-arming.json'
 if(Test-Path -LiteralPath $receiptPath) {throw 'Existing stream arm receipt preserved.'}

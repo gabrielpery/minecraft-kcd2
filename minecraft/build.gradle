@@ -49,6 +49,8 @@ loom {
                 vmArgs '-Dminecome.hudPhysicalMovementExtended=true'
             if (project.hasProperty('minecomeHudWalkingAimedFixture'))
                 vmArgs '-Dminecome.hudWalkingAimedFixture=true'
+            if (project.hasProperty('minecomeHudWalkingAimed'))
+                vmArgs '-Dminecome.hudWalkingAimed=true'
             if (project.hasProperty('minecomeHudPhysicalFixtureYaw'))
                 vmArgs "-Dminecome.hudPhysicalFixtureYaw=${project.property('minecomeHudPhysicalFixtureYaw')}"
             if (project.hasProperty('minecomeHudHostViewFile'))
@@ -182,6 +184,12 @@ tasks.register('hudBuildRegionTest', JavaExec) {
     mainClass = 'dev.minecome.terrain.HudBuildRegionTests'
 }
 check.dependsOn hudBuildRegionTest
+tasks.register('hudWalkingAimGateTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'dev.minecome.hud.HudWalkingAimGateTests'
+}
+check.dependsOn hudWalkingAimGateTest
 tasks.register('groundCollisionOwnershipTest', JavaExec) {
     dependsOn testClasses
     classpath = sourceSets.test.runtimeClasspath

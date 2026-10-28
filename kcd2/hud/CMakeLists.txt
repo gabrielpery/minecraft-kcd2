@@ -194,6 +194,22 @@ endif()
 add_custom_command(TARGET minecome_hud_movement_compositor POST_BUILD
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/shaders/MineComeMouseHud.fx"
     "$<TARGET_FILE_DIR:minecome_hud_movement_compositor>/MineComeHud.fx")
+# A separate opt-in target combines input v2 with original world-click edges.
+# Existing movement/r4 binaries and their frozen profiles remain independent.
+add_library(minecome_hud_walking_aimed_compositor SHARED hud_input_addon.cpp)
+target_link_libraries(minecome_hud_walking_aimed_compositor PRIVATE minecome_hud_input user32)
+target_include_directories(minecome_hud_walking_aimed_compositor PRIVATE "${MINECOME_RESHADE_ROOT}/include")
+target_compile_definitions(minecome_hud_walking_aimed_compositor PRIVATE MINECOME_HUD_UI_INPUT=1 MINECOME_HUD_LIVE_MOUSE=1 MINECOME_HUD_WORLD_CLICKS=1 MINECOME_HUD_SELECTIVE_MOUSE=1 MINECOME_HUD_MOTION_FILTER=1 MINECOME_HUD_RAW_OWNER_FILTER=1 MINECOME_HUD_PHYSICAL_MOVEMENT=1 MINECOME_HUD_WALKING_AIMED=1)
+set_target_properties(minecome_hud_walking_aimed_compositor PROPERTIES OUTPUT_NAME "MineComeHudCompositor" PREFIX "" SUFFIX ".addon64"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/walking-aimed" ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/walking-aimed"
+    PDB_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/walking-aimed")
+if(MSVC)
+    set_target_properties(minecome_hud_walking_aimed_compositor PROPERTIES MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    target_compile_options(minecome_hud_walking_aimed_compositor PRIVATE /W4 /permissive- /utf-8 /EHsc)
+endif()
+add_custom_command(TARGET minecome_hud_walking_aimed_compositor POST_BUILD
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/shaders/MineComeMouseHud.fx"
+    "$<TARGET_FILE_DIR:minecome_hud_walking_aimed_compositor>/MineComeHud.fx")
 if(BUILD_TESTING)
     add_executable(minecome_hud_movement_tests movement_forwarding_tests.cpp)
     target_link_libraries(minecome_hud_movement_tests PRIVATE minecome_hud_input)

@@ -76,12 +76,14 @@ public:
         (void)get(L"/api/System/Console/ExecuteString?command="+url_escape(value));
     }
 };
-std::string new_log_bytes(const std::filesystem::path& path,std::uint64_t& offset) {
+std::string new_log_bytes(const std::filesystem::path& path,std::uint64_t& offset,bool require_append_only=false) {
     const auto file=CreateFileW(path.c_str(),GENERIC_READ,FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE,nullptr,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,nullptr);
     if(file==INVALID_HANDLE_VALUE) return {};
     struct Close {HANDLE file;~Close(){CloseHandle(file);}} close{file};
     LARGE_INTEGER size{};if(!GetFileSizeEx(file,&size)||size.QuadPart<0) return {};
     const auto length=static_cast<std::uint64_t>(size.QuadPart);
+    if(require_append_only&&(length<offset||length-offset>1024*1024))
+        throw std::runtime_error("external physical pose log was truncated or exceeded its bounded unread span");
     if(length<offset) offset=0;
     if(length-offset>1024*1024) offset=length-1024*1024;
     LARGE_INTEGER position{};position.QuadPart=static_cast<LONGLONG>(offset);
@@ -387,7 +389,7 @@ int wmain(int argc,wchar_t** argv) {
         unsigned seconds=120,port=38765,http_port=1403;
         std::optional<minecome::FovUnit> fov;
         bool camera_only=false,mirror_stone=false,interactive_stone=false,standalone_fixture=false,aimed_stone=false;
-        std::string aimed_run;
+        std::string aimed_run,external_physical_pose_run;
         for(int i=1;i<argc;++i) {
             const std::wstring argument=argv[i];
             if(argument==L"--camera-only") {camera_only=true;continue;}
@@ -404,6 +406,11 @@ int wmain(int argc,wchar_t** argv) {
                 if(value.size()!=32||!std::all_of(value.begin(),value.end(),[](wchar_t c){return (c>=L'0'&&c<=L'9')||(c>=L'a'&&c<=L'f');})) throw std::runtime_error("aimed run must be 32 lowercase hexadecimal characters");
                 aimed_run.clear();for(wchar_t c:value) aimed_run.push_back(static_cast<char>(c));
             }
+            else if(argument==L"--external-physical-pose-run") {
+                if(!external_physical_pose_run.empty()||value.size()!=32||!std::all_of(value.begin(),value.end(),[](wchar_t c){return (c>=L'0'&&c<=L'9')||(c>=L'a'&&c<=L'f');}))
+                    throw std::runtime_error("external physical pose run must be one 32 lowercase hexadecimal value");
+                for(wchar_t c:value) external_physical_pose_run.push_back(static_cast<char>(c));
+            }
             else if(argument==L"--seconds") seconds=bounded_integer(value,3600);
             else if(argument==L"--port") port=bounded_integer(value,65535);
             else if(argument==L"--tools-port") http_port=bounded_integer(value,65535);
@@ -414,10 +421,13 @@ int wmain(int argc,wchar_t** argv) {
             } else throw std::runtime_error("unknown argument");
         }
         if(home.empty()||game_log.empty()||!home.is_absolute()||!game_log.is_absolute()||!fov)
-            throw std::runtime_error("Usage: minecome_tools_host --home ABS --game-log ABS --fov-unit radians|degrees [--seconds 120] [--port 38765] [--tools-port 1403] [--stop-file ABS] [--camera-only] [--mirror-stone] [--interactive-stone | --aimed-stone --aimed-run HEX32]");
+            throw std::runtime_error("Usage: minecome_tools_host --home ABS --game-log ABS --fov-unit radians|degrees [--seconds 120] [--port 38765] [--tools-port 1403] [--stop-file ABS] [--camera-only] [--mirror-stone] [--interactive-stone | --aimed-stone --aimed-run HEX32 [--external-physical-pose-run HEX32]]");
         if(aimed_stone&&(interactive_stone||camera_only)) throw std::runtime_error("aimed stone mode cannot mix with fixed-cell or camera-only modes");
         if(aimed_stone) (void)minecome::aimed_begin_command(aimed_run,1);
         else if(!aimed_run.empty()) throw std::runtime_error("aimed run requires explicit aimed stone mode");
+        const bool external_physical_pose=!external_physical_pose_run.empty();
+        if(external_physical_pose&&(!aimed_stone||*fov!=minecome::FovUnit::radians))
+            throw std::runtime_error("external physical pose requires explicit aimed stone mode and radian FOV");
         if(!stop_file.empty()&&!stop_file.is_absolute()) throw std::runtime_error("stop file must be an absolute path");
         if(standalone_fixture&&(http_port==1403||game_log.filename()!=L"fixture-kcd.log"
             ||std::filesystem::exists(game_log.parent_path()/L"Bin/Win64ReleaseSteamLTO_DLL/KingdomCome.exe")))
@@ -427,6 +437,7 @@ int wmain(int argc,wchar_t** argv) {
         std::ofstream evidence(home/"runtime"/"logs"/"tools-live-evidence.log",std::ios::app);
         auto record=[&](const std::string& text){evidence<<text<<'\n';evidence.flush();std::cout<<text<<'\n'<<std::flush;};
         if(standalone_fixture) record("STANDALONE_ENGINE_FIXTURE: simulated engine and peers, no live KCD proof");
+        if(external_physical_pose) record("EXTERNAL_PHYSICAL_POSE_MODE run="+external_physical_pose_run+" source=MineComeHudPhysicalView max_age_ms=300 max_log_batch_ms=250 pose_http_polling=false");
         ToolsHttp http(static_cast<INTERNET_PORT>(http_port));
         const auto info=http.get(L"/api/System/Console?info");
         if(info.find("ExecuteString")==std::string::npos) throw std::runtime_error("expected official console binding missing");
@@ -439,6 +450,8 @@ int wmain(int argc,wchar_t** argv) {
         std::optional<AimedInputRelay> aimed_inputs;
         if(aimed_stone) aimed_inputs.emplace(bridge,http,*stones,record,aimed_run);
         std::optional<minecome::protocol::Pose> current_world;
+        std::optional<minecome::PhysicalPoseCursor> physical_pose_cursor;
+        if(external_physical_pose) physical_pose_cursor.emplace(external_physical_pose_run);
         std::string pending;
         // A complete critical JSON record can precede KCD's next newline.
         // Retain its exact bytes until that separator arrives; never replay it.
@@ -451,7 +464,7 @@ int wmain(int argc,wchar_t** argv) {
         std::deque<LoggedInput> pending_inputs;
         auto last_input_log_read=Clock::now();
         auto last_input_generation=bridge.drain_block_events(0);
-        bool partial_input_stale=false;
+        bool partial_input_stale=false,partial_pose_stale=false;
         auto partial_input_received=Clock::now();
         std::uint64_t last_input_id=0;
         if(interactive_stone) record("Interactive stone input enabled; use minecome_place / minecome_break in the KCD2 console. Minecraft input capability and fresh world state required.");
@@ -475,10 +488,31 @@ int wmain(int argc,wchar_t** argv) {
             if(stones) stones->end(reason);
             record(std::string("World POSE invalidated; all validity flags cleared: ")+reason);
         };
+        auto consume_external_pose=[&](const minecome::PhysicalToolsPose& sample,const std::string& line,bool fresh) {
+            const auto decision=physical_pose_cursor->observe(sample,fresh);
+            if(decision==minecome::PhysicalPoseDecision::foreign_run) return;
+            if(decision!=minecome::PhysicalPoseDecision::accepted) {
+                record("EXTERNAL_PHYSICAL_POSE_REJECTED run="+sample.run+" seq="+std::to_string(sample.sequence)
+                    +" reason="+(decision==minecome::PhysicalPoseDecision::stale_batch?"stale_log_batch":"replayed_or_regressed"));
+                invalidate_world("external physical pose lost original freshness or sequence authority");return;
+            }
+            auto pose=sample.sample.pose;pose.flags|=8u;
+            ++samples;++world_samples;bridge.publish(pose);
+            world_state_valid=true;had_world=true;last_world_sample=Clock::now();current_world=pose;
+            if(samples==1) {
+                record("KCD2_LOG "+line);
+                record("EXTERNAL_PHYSICAL_POSE_ACCEPTED run="+sample.run+" seq="+std::to_string(sample.sequence)
+                    +" sampled_engine_seconds="+std::to_string(sample.sampled_engine_seconds));
+            }
+        };
+        auto fresh_aimed_capture=[&](bool fresh_line) {
+            return fresh_line&&(!external_physical_pose
+                ||(world_state_valid&&Clock::now()-last_world_sample<=300ms));
+        };
         auto drain_game_log=[&] {
             const auto input_generation=bridge.drain_block_events(0);
             const bool carried_partial=!pending.empty();
-            pending+=new_log_bytes(game_log,offset);
+            pending+=new_log_bytes(game_log,offset,external_physical_pose);
             const auto input_log_read=Clock::now();
             const auto after_read_generation=bridge.drain_block_events(0);
             const bool fresh_input_batch=input_log_read-last_input_log_read<=1s
@@ -486,6 +520,7 @@ int wmain(int argc,wchar_t** argv) {
                 &&input_generation.reset_generation==last_input_generation.reset_generation
                 &&input_generation.connection_generation==after_read_generation.connection_generation
                 &&input_generation.reset_generation==after_read_generation.reset_generation;
+            const bool fresh_pose_batch=input_log_read-last_input_log_read<=250ms;
             last_input_log_read=input_log_read;
             last_input_generation=after_read_generation;
             // KCD commonly writes a newline before the next record, leaving the
@@ -493,6 +528,8 @@ int wmain(int argc,wchar_t** argv) {
             // not all future records in a buffer that may never become empty.
             bool line_input_stale=!fresh_input_batch||(carried_partial
                 &&(partial_input_stale||input_log_read-partial_input_received>1s));
+            bool line_pose_stale=!fresh_pose_batch||(carried_partial
+                &&(partial_pose_stale||input_log_read-partial_input_received>250ms));
             bool consumed_line=false;
             while(true) {
                 const auto end=pending.find('\n');if(end==std::string::npos) break;
@@ -503,13 +540,13 @@ int wmain(int argc,wchar_t** argv) {
                         pending.clear();processed_critical_tail.clear();partial_input_stale=true;return;
                     }
                     processed_critical_tail.clear();
-                    line_input_stale=!fresh_input_batch;consumed_line=true;continue;
+                    line_input_stale=!fresh_input_batch;line_pose_stale=!fresh_pose_batch;consumed_line=true;continue;
                 }
                 if(line.find("[MineComePing]")!=std::string::npos) record("KCD2_LOG "+line);
                 if(auto receipt=minecome::parse_stone_receipt(line)) {record("KCD2_LOG "+line);if(stones) stones->receipt(*receipt);}
                 if(aimed_inputs) {
                     if(auto receipt=minecome::parse_aimed_lua_receipt(line)) {record("KCD2_LOG "+line);aimed_inputs->receipt(*receipt,!line_input_stale);}
-                    if(auto intent=minecome::parse_aimed_input_intent(line)) {record("KCD2_LOG "+line);aimed_inputs->intent(*intent,!line_input_stale);}
+                    if(auto intent=minecome::parse_aimed_input_intent(line)) {record("KCD2_LOG "+line);aimed_inputs->intent(*intent,fresh_aimed_capture(!line_input_stale));}
                     else if(line.find("[MineComeAimInput]")!=std::string::npos) {
                         record("KCD2_LOG "+line.substr(0,4096));
                         record("AIM_INPUT_REJECTED reason=unavailable_or_malformed_sample");
@@ -526,7 +563,14 @@ int wmain(int argc,wchar_t** argv) {
                         else record("STONE_INPUT_REJECTED reason=disabled_or_busy request="+std::to_string(input->id));
                     }
                 }
-                if(auto sample=minecome::parse_tools_pose(line,*fov)) {
+                if(external_physical_pose) {
+                    if(auto sample=minecome::parse_physical_tools_pose(line)) consume_external_pose(*sample,line,!line_pose_stale);
+                    else if(line.find("[MineComeHudPhysicalView]")!=std::string::npos) {
+                        record("EXTERNAL_PHYSICAL_POSE_REJECTED reason=malformed_sample");
+                        invalidate_world("external physical pose record malformed");
+                    }
+                }
+                else if(auto sample=minecome::parse_tools_pose(line,*fov)) {
                     ++samples;
                     if(sample->has_player) {
                         if(aimed_stone) sample->pose.flags|=8u;
@@ -543,6 +587,7 @@ int wmain(int argc,wchar_t** argv) {
                 // Subsequent lines started in this read; the old partial's
                 // age/reset history must not reject these independent records.
                 line_input_stale=!fresh_input_batch;
+                line_pose_stale=!fresh_pose_batch;
                 consumed_line=true;
             }
             if(!processed_critical_tail.empty()) {
@@ -558,12 +603,17 @@ int wmain(int argc,wchar_t** argv) {
                     record("KCD2_LOG "+pending);aimed_inputs->receipt(*receipt,!line_input_stale);
                     processed_critical_tail=pending;
                 } else if(auto intent=minecome::parse_aimed_input_intent(pending)) {
-                    record("KCD2_LOG "+pending);aimed_inputs->intent(*intent,!line_input_stale);
+                    record("KCD2_LOG "+pending);aimed_inputs->intent(*intent,fresh_aimed_capture(!line_input_stale));
                     processed_critical_tail=pending;
+                } else if(external_physical_pose) {
+                    if(auto sample=minecome::parse_physical_tools_pose(pending)) {
+                        consume_external_pose(*sample,pending,!line_pose_stale);processed_critical_tail=pending;
+                    }
                 }
             }
             if(pending.size()>8192) {pending.clear();processed_critical_tail.clear();}
             partial_input_stale=!pending.empty()&&line_input_stale;
+            partial_pose_stale=!pending.empty()&&line_pose_stale;
             if(consumed_line||!carried_partial||pending.empty()) partial_input_received=input_log_read;
         };
         auto next_pose_request=Clock::now();
@@ -572,7 +622,7 @@ int wmain(int argc,wchar_t** argv) {
             // trip, but only while the previous endpoint/world authority is fresh.
             if(aimed_stone&&http_failures==0&&world_state_valid&&Clock::now()-last_world_sample<=500ms)
                 drain_game_log();
-            if(!aimed_stone||Clock::now()>=next_pose_request) {
+            if(!external_physical_pose&&(!aimed_stone||Clock::now()>=next_pose_request)) {
                 try {
                     http.command("#MineCome.SamplePose()");
                     http_failures=0;
@@ -590,7 +640,8 @@ int wmain(int argc,wchar_t** argv) {
                 }
             }
             drain_game_log();
-            if(world_state_valid&&Clock::now()-last_world_sample>1s) invalidate_world("no fresh valid world sample for one second");
+            if(world_state_valid&&Clock::now()-last_world_sample>(external_physical_pose?300ms:1000ms))
+                invalidate_world(external_physical_pose?"no fresh external physical world sample for 300ms":"no fresh valid world sample for one second");
             if(stones) stones->update(current_world);
             if(aimed_inputs) aimed_inputs->update();
             // Permit ACKs/captures written during those synchronous commands
@@ -644,8 +695,8 @@ int wmain(int argc,wchar_t** argv) {
             while((!stones->idle()||(aimed_inputs&&!aimed_inputs->cleanup_complete()))&&Clock::now()<cleanup_deadline) {
                 // Read-only sampling supplies the next log separator: KCD can
                 // leave its final End receipt without a terminating newline.
-                try {http.command("#MineCome.SamplePose()");} catch(const std::exception&) {}
-                pending+=new_log_bytes(game_log,offset);
+                if(!external_physical_pose) try {http.command("#MineCome.SamplePose()");} catch(const std::exception&) {}
+                pending+=new_log_bytes(game_log,offset,external_physical_pose);
                 while(true) {
                     const auto newline=pending.find('\n');if(newline==std::string::npos) break;
                     const auto line=pending.substr(0,newline);pending.erase(0,newline+1);
@@ -655,6 +706,16 @@ int wmain(int argc,wchar_t** argv) {
                     }
                     if(auto receipt=minecome::parse_stone_receipt(line)) {record("KCD2_LOG "+line);stones->receipt(*receipt);}
                     if(aimed_inputs) if(auto receipt=minecome::parse_aimed_lua_receipt(line)) {record("KCD2_LOG "+line);aimed_inputs->receipt(*receipt,false);}
+                }
+                // External mode never adds a pose request, including cleanup.
+                // These strict end-anchored receipts can complete without the
+                // next log separator; later bytes are still checked once.
+                if(external_physical_pose&&processed_critical_tail.empty()&&!pending.empty()) {
+                    if(auto receipt=minecome::parse_stone_receipt(pending)) {
+                        record("KCD2_LOG "+pending);stones->receipt(*receipt);processed_critical_tail=pending;
+                    } else if(aimed_inputs) if(auto aim_receipt=minecome::parse_aimed_lua_receipt(pending)) {
+                        record("KCD2_LOG "+pending);aimed_inputs->receipt(*aim_receipt,false);processed_critical_tail=pending;
+                    }
                 }
                 std::this_thread::sleep_for(50ms);
             }
