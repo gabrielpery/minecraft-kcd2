@@ -1,5 +1,18 @@
 # Resume checkpoint — 28 October 2026
 
+## Delivery priority — user correction
+
+The user says progress per time/usage is too poor and wants less reliance on manual
+testing. Apply the delivery workflow in AGENTS.md. Do not start this session with
+another first-click countdown. The warm-up below is implemented; its live validation
+can be included in the next feature acceptance session.
+
+Next deliverable: integrate repeatable sessions in the same KCD process, rather
+than stopping at the existing standalone rearm policy. Then develop longer playable
+sessions with explicit terrain/ownership handling. Keep the verified current profile
+available. Reserve human input for the final foreground/composition check; use the
+existing actual-Minecraft fixtures and coupled-game checks for ordinary regression.
+
 ## Current result
 
 **Newest implementation, not yet live verified:** startup now prewarms the real
@@ -8,7 +21,8 @@ state before Minecraft starts. No input/permits/HTTP are generated. Per-click st
 timings are recorded in memory. Warm-up15/controller179 checks pass; offline snapshot
 first/repeat24.91/1.71 ms, policy56.20/1.19 ms. Retained evidence:
 `runtime/evidence/hud-aim-admission-offline-20261028-161412-d64f9fe773c4410f80ae35f279f3e7c0/warmup-comparison.json`.
-Next verify this warmed path; do not repeat the duplicate-admission removal.
+Validate this warmed path with the next feature milestone; do not repeat the
+duplicate-admission removal or make another isolated manual comparison a blocker.
 
 Latest comparison HUD `1ec548ae2a1f4e42b60c54c79ab3b771`, probe
 `18efa61cbae141d383077103d1a3c324`, at
@@ -162,20 +176,7 @@ unknown. Later unchanged camera code passed. Do not mark that intermittent issue
 
 ## Next work
 
-1. Reduce first-click permit delay without renewing timestamps, replaying edges
-   or widening the 500 ms lifetime. Both combined face scenarios now pass; do not
-   repeat completed implementation. The user is happy to perform live controls.
-   Computer Use can close/restart games; its F8 route is still unverified.
-   The duplicate early settled/foreground admission is now removed; the final
-   BeforeDispatch check and subsequent original clock checks remain. Controller
-   169, relay 165 and permit 23 tests pass. Preserve original input timestamps.
-   Startup warm-up and stage timings now add focused15/controller179 checks.
-   A focused first-placement comparison can use the generic WalkingBreak profile
-   without repeating inventory; inspect actual placement/break receipts separately
-   before claiming those actions passed. Locate the stone before the first step
-   to avoid spending the12-second block budget searching. Existing full top/side
-   inventory milestones remain valid.
-2. Integrate explicit same-process rearm in a separate opt-in profile. A standalone
+1. Integrate explicit same-process rearm in a separate opt-in profile. A standalone
    `rearm_policy.hpp` and dedicated CTest now pass 363 assertions; it admits at most
    two generations only after verified, identity-bound cleanup. Nothing uses it
    live yet. Replace one-shot session objects, retire render ownership, and avoid
@@ -184,8 +185,30 @@ unknown. Later unchanged camera code passed. Do not mark that intermittent issue
    GroundCollision.install replaces a singleton map, so longer timers alone cannot
    provide free roaming. Design immutable alignment and transactional proxy ownership
    before expanding bounds or removing restoration.
+2. Extend toward a longer playable session through that terrain/ownership work.
+   Do not merely increase timers over the current tiny sampled footprint.
 3. Add general terrain-face placement with an explicit terrain/support policy. The
    owned lab support does not prove arbitrary placement against KCD terrain.
+
+Keep the intermittent first-click expiry tracked, with original timestamps and
+freshness limits intact. The duplicate admission and startup warm-up are already
+implemented. Revisit measured residual delays if they block the milestone; validate
+the warmed path in its batched acceptance check. Do not repeat completed face and
+inventory implementation just to obtain another equivalent recording.
+
+Reuse these automated entry points when relevant (do not run all for every edit):
+
+- `scripts/Test-HudPhysicalMovementFixture.ps1 -ExtendedWalking -AimedBlocks`:
+  actual Minecraft movement, inventory, top/side placement and cleanup; optional
+  `-GroundPatchFile` covers recorded KCD ground.
+- `scripts/Start-AimedStoneLab.ps1`: actual Minecraft aiming scenarios.
+- `scripts/Test-CoupledMovement.ps1 -HudWorld`: automatic two-game movement and
+  restoration with an already-loaded KCD world. This does not prove native HUD
+  composition or physical input capture.
+
+Use the narrow unit/contract tests for a localized fix. No extra test framework is
+needed merely to change the workflow. The remaining human-only acceptance scope
+is the actual foreground input/composition boundary and subjective responsiveness.
 
 Official tools1.5.5 only. Retail1.5.6 remains gated by loader/address-library work.
 
