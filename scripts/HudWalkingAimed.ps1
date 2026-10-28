@@ -4,6 +4,39 @@
 . (Join-Path $PSScriptRoot 'AimedWorldClicks.ps1')
 . (Join-Path $PSScriptRoot 'HudWorldClicks.ps1')
 
+# Exercise first-use parsing/binding before Minecraft starts. This disposable
+# state is never joined to a live controller, permit ledger, or input channel.
+function Initialize-HudWalkingAimedAdmissionWarmup([string]$Directory,[string]$ProjectRoot,$Context){
+    Initialize-MineComeHudWorldNative
+    $path=Resolve-HudMovementEvidencePath (Join-Path $Directory 'diagnostic-aim-view.json') $ProjectRoot
+    $run='a'*32;$probe='b'*32;$patch='c'*32;$hash='d'*64
+    $view=[pscustomobject]@{schema=1;source_kind='live_kcd_hud_view_v1';run=$run;patch_run=$patch;patch_sha256=$hash;
+        target_pid=1;target_start_filetime='1';seq=4;utc_ms=1420;forward=[pscustomobject]@{x=1.;y=0.;z=0.};up=[pscustomobject]@{x=0.;y=0.;z=1.}}
+    $native=[pscustomobject]@{schema=1;run=$probe;seq=4;result='sampled';physical_movement=$true;camera_basis_valid=$true;
+        player=[pscustomobject]@{x=100.2;y=200.;z=50.};camera=[pscustomobject]@{position=[pscustomobject]@{x=100.2;y=200.;z=51.7};forward=$view.forward;up=$view.up;fov=1.2}}
+    $pose=[pscustomobject]@{x=.2;y=64.;z=0.}
+    $first=[pscustomobject]@{SourceMs=500.;Record=[pscustomobject]@{utc_ms=1200L}}
+    $latest=[pscustomobject]@{SourceMs=700.;Target=$native.player;Record=[pscustomobject]@{utc_ms=1400L;server_age_ns=1000000L;client=$pose;server=$pose}}
+    $state=[pscustomobject]@{LastClock=0L;Stopping=$false;Closed=$null;Run=$run;ProbeRun=$probe;PatchRun=$patch;PatchHash=$hash;TargetPid=1;TargetStart='1';LastViewSeq=0L;
+        LastSample=$latest;Stationary=@($first,$first,$latest);Ready=[pscustomobject]@{initial_guest_feet=[pscustomobject]@{x=0.;y=64.;z=0.};host_anchor=[pscustomobject]@{x=100.;y=200.;z=51.7}}}
+    $snapshot=[ordered]@{schema=1;kind='minecome_hud_diagnostic_aim_view_v1';diagnostic_only=$true;synthetic_view=$view}
+    $bytes=[Text.UTF8Encoding]::new($false).GetBytes(($snapshot|ConvertTo-Json -Depth 8 -Compress))
+    $stream=[IO.FileStream]::new($path,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::Read)
+    try{$stream.Write($bytes,0,$bytes.Length)}finally{$stream.Dispose()}
+    $measurements=[Collections.Generic.List[object]]::new();$total=[Diagnostics.Stopwatch]::StartNew()
+    foreach($iteration in 1..2){
+        $watch=[Diagnostics.Stopwatch]::StartNew();$discard=Read-HudCameraSnapshot $path $ProjectRoot;$snapshotMs=$watch.Elapsed.TotalMilliseconds
+        if($null -eq $discard -or -not $discard.diagnostic_only){throw 'Diagnostic camera warmup did not read its own snapshot.'}
+        $watch.Restart();$null=Test-MineComeHudWorldForeground $Context;$foregroundMs=$watch.Elapsed.TotalMilliseconds
+        $watch.Restart();$reason=Get-HudWalkingAimedDecline $state $view $native 1450;$policyMs=$watch.Elapsed.TotalMilliseconds
+        if($reason){throw "Disposable settled-admission warmup failed: $reason"}
+        $measurements.Add([pscustomobject]@{iteration=$iteration;snapshot_ms=$snapshotMs;foreground_ms=$foregroundMs;settled_policy_ms=$policyMs})
+    }
+    [pscustomobject]@{schema=1;kind='minecome_hud_aim_admission_warmup_v1';diagnostic_only=$true;synthetic_policy_state=$true;
+        discarded_foreground_results=$true;live_authority_granted=$false;input_generated=$false;permits_issued=0;http_requests=0;
+        diagnostic_snapshot=$path;elapsed_ms=$total.Elapsed.TotalMilliseconds;measurements=$measurements.ToArray();game_input_latency_measured=$false}
+}
+
 # Post-run evidence only. This helper also accepts the same collector receipt
 # from a standalone fixture, without turning that fixture into live host proof.
 function Assert-HudWalkingInventoryEvidence($Evidence) {
@@ -305,18 +338,36 @@ function Invoke-HudWalkingAimedClicks($State,$Session,[scriptblock]$SettledAdmis
             $click=ConvertFrom-MineComeHudWorldClick $line $State.Run $State.Sequence
             if($null -eq $click){continue}
             $State.Sequence=$click.sequence
-            $record=[pscustomobject]@{sequence=$click.sequence;utc_ms=$click.utc_ms;action=$click.action;observed_utc_ms=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds();status='pending';reason=$null;intent_ordinal=0;request_id=0L;arena_id=$null;permit_id=$null;installed_utc_ms=0L}
+            $record=[pscustomobject]@{sequence=$click.sequence;utc_ms=$click.utc_ms;action=$click.action;observed_utc_ms=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds();status='pending';reason=$null;intent_ordinal=0;request_id=0L;arena_id=$null;permit_id=$null;installed_utc_ms=0L;
+                timings=[pscustomobject]@{selection_ms=0.;admission_ms=0.;admission_calls=0;send_including_admission_ms=0.;send_excluding_admission_ms=0.;processing_ms=0.;game_input_latency_measured=$false}}
             $State.Clicks.Add($record)
+            $clickTiming=$record.timings
+            $processing=[Diagnostics.Stopwatch]::StartNew()
+            try{
             # Admission consumes every sequence, including foreground/lease
             # refusals; a selected permit is spent even if dispatch then fails.
-            $selection=Select-MineComeAimedClickPermit $State.AimedLedger $click $record.observed_utc_ms
+            $selectionWatch=[Diagnostics.Stopwatch]::StartNew()
+            try{$selection=Select-MineComeAimedClickPermit $State.AimedLedger $click $record.observed_utc_ms}
+            finally{$record.timings.selection_ms=$selectionWatch.Elapsed.TotalMilliseconds}
             if(-not $selection.accepted){$record.status='declined';$record.reason=$selection.reason;continue}
             $record.arena_id=$selection.arena;$record.permit_id=$selection.permit;$record.installed_utc_ms=$selection.installed_utc_ms
-            $reason=Get-HudWalkingAimedCurrentDecline $State $Session $click $selection $SettledAdmission
-            if($reason){$record.status='declined';$record.reason=$reason;continue}
-            $receipt=Send-MineComeHudAimedIntent $Session $selection $click -BeforeDispatch {Get-HudWalkingAimedCurrentDecline $State $Session $click $selection $SettledAdmission}
+            # The sender invokes this admission after its owner/permit reads and
+            # before recording or sending anything. Doing the same camera/log
+            # reads here first needlessly spends the original edge/permit lease.
+            $sendWatch=[Diagnostics.Stopwatch]::StartNew()
+            try{
+                $receipt=Send-MineComeHudAimedIntent $Session $selection $click -BeforeDispatch {
+                    $clickTiming.admission_calls++;$admissionWatch=[Diagnostics.Stopwatch]::StartNew()
+                    try{Get-HudWalkingAimedCurrentDecline $State $Session $click $selection $SettledAdmission}
+                    finally{$clickTiming.admission_ms+=$admissionWatch.Elapsed.TotalMilliseconds}
+                }
+            }finally{
+                $record.timings.send_including_admission_ms=$sendWatch.Elapsed.TotalMilliseconds
+                $record.timings.send_excluding_admission_ms=[Math]::Max(0,$record.timings.send_including_admission_ms-$record.timings.admission_ms)
+            }
             if(-not $receipt.accepted){$record.status='declined';$record.reason=$receipt.reason;continue}
             $record.status='sent';$record.intent_ordinal=$receipt.ordinal;$record.request_id=$receipt.request_id
+            }finally{$record.timings.processing_ms=$processing.Elapsed.TotalMilliseconds}
         }
     }catch{$State.Failure=$_.Exception.Message;if($State.Clicks.Count -gt 0 -and $State.Clicks[-1].status -ceq 'pending'){$State.Clicks[-1].status='failed';$State.Clicks[-1].reason=$State.Failure};throw}
 }

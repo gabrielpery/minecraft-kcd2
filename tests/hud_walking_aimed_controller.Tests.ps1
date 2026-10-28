@@ -93,7 +93,7 @@ $r=ConvertFrom-MineComeHudAimedRelayLog $legacy $run -ExternalPhysicalPoseRun $p
 # The first rejection spends its permit and sequence permanently; a later poll
 # cannot revive it after the positions become settled.
 $productionSend=(Get-Command Send-MineComeHudAimedIntent).ScriptBlock
-$script:edgeLines=[Collections.Generic.List[string]]::new();$script:allow=$false;$script:dispatches=0;$script:checksAtSend=0;$script:revokeAtSend=$false
+$script:edgeLines=[Collections.Generic.List[string]]::new();$script:allow=$false;$script:dispatches=0;$script:checksAtSend=0;$script:revokeAtSend=$false;$script:settledChecks=0;$script:admissionFault=$false
 function Read-MineComeHudWorldClickLines($Reader){if($Reader -is [string]){return};$lines=$script:edgeLines.ToArray();$script:edgeLines.Clear();$lines}
 function Get-MineComeHudWorldCurrentDecline($State,$Session,$Click){return $null}
 function Send-MineComeHudAimedIntent($Session,$Selection,$Click,[scriptblock]$BeforeDispatch){
@@ -114,32 +114,44 @@ function ClickCase {
     [pscustomobject]@{State=$state;Relay=$relay}
 }
 $case=ClickCase
-$admission={param($Now) if(-not $script:allow){'guest_not_settled'}}
+$admission={param($Now) $script:settledChecks++;if($script:admissionFault){throw 'diagnostic admission fault'};if(-not $script:allow){'guest_not_settled'}}
 Invoke-HudWalkingAimedClicks $case.State $case.Relay $admission
 Check ($case.State.Sequence -eq 1 -and $case.State.Clicks[0].status -ceq 'declined' -and $case.State.AimedLedger.Permits[0].used -and $script:dispatches -eq 0) 'Moving edge was not permanently consumed'
+Check ($case.State.Clicks[0].timings.admission_calls -eq 1 -and $case.State.Clicks[0].timings.processing_ms -ge 0) 'Declined physical edge lost bounded timing diagnostics'
+Check ($script:settledChecks -eq 1 -and $script:checksAtSend -eq 1) 'Moving rejection must use the final dispatch admission once'
 $script:allow=$true
 Invoke-HudWalkingAimedClicks $case.State $case.Relay $admission
 Check ($script:dispatches -eq 0 -and $case.State.Clicks.Count -eq 1) 'Rejected edge retried after settlement'
+Check ($script:settledChecks -eq 1) 'Consumed edge performed another settled lookup'
 $case=ClickCase;Invoke-HudWalkingAimedClicks $case.State $case.Relay $admission;Assert-HudWalkingAimedClicks $case.State $case.Relay
 Check ($script:dispatches -eq 1 -and $case.State.Clicks[0].status -ceq 'sent') 'Fresh settled edge not correlated to its original permit'
+foreach($field in @('selection_ms','admission_ms','send_including_admission_ms','send_excluding_admission_ms','processing_ms')){Check ($case.State.Clicks[0].timings.$field -ge 0) "Invalid per-click timing $field"}
+Check (-not $case.State.Clicks[0].timings.game_input_latency_measured -and $case.State.Clicks[0].timings.admission_calls -eq 1) 'Diagnostic timings invented input latency or repeated admission'
+Check ($script:settledChecks -eq 2 -and $script:checksAtSend -eq 2) 'Fresh edge repeated the expensive admission before dispatch'
 $case=ClickCase;$script:revokeAtSend=$true
 Invoke-HudWalkingAimedClicks $case.State $case.Relay $admission
-Check ($script:dispatches -eq 1 -and $case.State.Clicks[0].status -ceq 'declined' -and $script:checksAtSend -eq 2) 'Settlement was not checked again at dispatch'
+Check ($script:dispatches -eq 1 -and $case.State.Clicks[0].status -ceq 'declined' -and $script:checksAtSend -eq 3 -and $script:settledChecks -eq 3) 'Settlement was not checked at the final dispatch boundary'
+Check ($case.State.AimedLedger.Permits[0].used -and $case.Relay.Intents.Count -eq 0) 'Final rejection restored the permit or created an intent'
+$case=ClickCase;$script:admissionFault=$true;$script:revokeAtSend=$false
+Reject {Invoke-HudWalkingAimedClicks $case.State $case.Relay $admission} 'Admission error was swallowed'
+Check ($case.State.Clicks[0].status -ceq 'failed' -and $case.State.Clicks[0].timings.admission_calls -eq 1 -and
+    $case.State.Clicks[0].timings.processing_ms -ge $case.State.Clicks[0].timings.admission_ms -and $script:dispatches -eq 1) 'Admission error lost timing or dispatched input'
+$script:admissionFault=$false
 # Actual shared sender: only combined external-pose sessions use150ms HTTP;
 # retained legacy profile still calls its existing console boundary.
-$script:httpTimeout=0;$script:legacySend=0;$script:contextChecks=0;$script:dispatchText='';$script:permitText=''
+$script:httpTimeout=0;$script:httpDispatches=0;$script:legacySend=0;$script:contextChecks=0;$script:dispatchText='';$script:permitText=''
 function Assert-MineComeHudAimedRelay($Session){}
 function Assert-MineComeProbeContext($Context){$script:contextChecks++}
 function Read-MineComeHudStoneText([string]$Path){$script:permitText}
-function Invoke-MineComeToolsRequest([string]$PathAndQuery,[int]$TimeoutMilliseconds){$script:httpTimeout=$TimeoutMilliseconds;$script:dispatchText=$PathAndQuery}
+function Invoke-MineComeToolsRequest([string]$PathAndQuery,[int]$TimeoutMilliseconds){$script:httpDispatches++;$script:httpTimeout=$TimeoutMilliseconds;$script:dispatchText=$PathAndQuery}
 function Invoke-MineComeProbeConsole($Context,[string]$Command){$script:legacySend++}
-function SenderCase([bool]$External){
+function SenderCase([bool]$External,[int]$PermitAge=50){
     $now=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds();$ledger=New-MineComeAimedClickLedger $run
-    $script:permitText="AIM_PERMIT_READY run=$run arena=1 permit=1 installed_utc_ms=$($now-50)`n"
+    $script:permitText="AIM_PERMIT_READY run=$run arena=1 permit=1 installed_utc_ms=$($now-$PermitAge)`n"
     Add-MineComeAimedPermitLine $ledger $script:permitText.TrimEnd("`n")
     $click=[pscustomobject]@{sequence=1L;action=2L;utc_ms=$now};$selection=Select-MineComeAimedClickPermit $ledger $click $now
     $session=[pscustomobject]@{Run=$run;Context=$context;ExternalPhysicalPoseRun=$(if($External){$probe}else{''});Intents=[Collections.Generic.List[object]]::new();LastIntentUtcMs=0L;Stdout='mock';Failure=$null}
-    [pscustomobject]@{Session=$session;Selection=$selection;Click=$click}
+    [pscustomobject]@{Session=$session;Selection=$selection;Click=$click;Ledger=$ledger}
 }
 $c=SenderCase $true;$r=& $productionSend $c.Session $c.Selection $c.Click {$null}
 Check ($r.accepted -and $script:httpTimeout -eq 150 -and $script:contextChecks -eq 1 -and $script:legacySend -eq 0) 'Combined intent lacked bounded HTTP/current ownership check'
@@ -148,6 +160,22 @@ Check ($r.accepted -and $script:legacySend -eq 1 -and $script:contextChecks -eq 
 $c=SenderCase $true;$c.Click.utc_ms-=251;$c.Selection.edge_utc_ms=$c.Click.utc_ms
 $r=& $productionSend $c.Session $c.Selection $c.Click {$null}
 Check (-not $r.accepted -and $c.Session.Intents.Count -eq 0) 'Expired combined edge dispatched'
+# Real final sender clocks, with a slow admission boundary only. The selected
+# timestamps stay immutable; an initially fresh edge/permit expires naturally.
+foreach($expiry in @('edge','permit')){
+    $c=SenderCase $true $(if($expiry -ceq 'permit'){300}else{50})
+    $originalEdge=$c.Click.utc_ms;$originalPermit=$c.Selection.installed_utc_ms;$httpBefore=$script:httpDispatches
+    $script:freshAtFinalAdmission=$false
+    $r=& $productionSend $c.Session $c.Selection $c.Click {
+        $at=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+        $script:freshAtFinalAdmission=($at-$c.Click.utc_ms -le 250 -and $at-$c.Selection.installed_utc_ms -le 350)
+        Start-Sleep -Milliseconds $(if($expiry -ceq 'edge'){270}else{100})
+        return $null
+    }
+    Check $script:freshAtFinalAdmission "The $expiry boundary test did not begin fresh"
+    Check (-not $r.accepted -and $r.reason -ceq 'expired_or_unacknowledged_permit' -and $c.Session.Intents.Count -eq 0 -and $script:httpDispatches -eq $httpBefore) "$expiry expired during admission but still dispatched"
+    Check ($c.Ledger.Permits[0].used -and $c.Click.utc_ms -eq $originalEdge -and $c.Selection.installed_utc_ms -eq $originalPermit) "$expiry expiration renewed its timestamps or restored its permit"
+}
 # Pending native stop polling returns immediately without wait/parse; once exit
 # is observed, the independent cancellation/end receipts are still mandatory.
 $script:stopParses=0;$script:badStopOrder=$false
@@ -262,4 +290,6 @@ foreach($path in @('../scripts/Start-HudWalkingAimed.ps1','../scripts/Test-HudWa
     $ast=Parse $path;$scenario=@($ast.ParamBlock.Parameters | Where-Object {$_.Name.VariablePath.UserPath -ceq 'Scenario'})
     Check ($scenario.Count -eq 1 -and $scenario[0].DefaultValue.Value -ceq 'WalkingBreak') 'Wrapper/controller scenario default changed'
 }
+$controllerText=Get-Content -LiteralPath (Join-Path $PSScriptRoot '../scripts/Test-HudWalkingAimed.ps1') -Raw
+Check ($controllerText.IndexOf('Initialize-HudWalkingAimedAdmissionWarmup $directory') -lt $controllerText.IndexOf('$helper=Start-Process')) 'Admission warmup must precede Minecraft launch'
 Write-Output "HUD_WALKING_AIMED_CONTROLLER_TESTS_PASS checks=$checks no_game_started=true"

@@ -17,6 +17,7 @@ Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'powershell7.ps1')
 . (Join-Path $PSScriptRoot 'HudWalkingAimed.ps1')
 . (Join-Path $PSScriptRoot 'HudAimedRelay.ps1')
+. (Join-Path $PSScriptRoot 'HudInputPrompt.ps1')
 $ExtendedWalking=$true
 $root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $walkingSession=Get-HudWalkingSession -ExtendedWalking:$ExtendedWalking
@@ -133,6 +134,8 @@ try{
     Start-MineComeHudAimedRelay $aimRelay
     $aimClicks=New-MineComeHudWorldClicks $context (Join-Path ([IO.Path]::GetDirectoryName($context.GamePath)) 'ReShade.log') $run
     Initialize-HudWalkingAimedClicks $aimClicks $aimRelay
+    $admissionWarmup=Initialize-HudWalkingAimedAdmissionWarmup $directory $root $context
+    $admissionWarmup|ConvertTo-Json -Depth 6|Set-Content -LiteralPath (Join-Path $directory 'aim-admission-warmup.json') -Encoding utf8NoBOM
     $aimReadyPath=Join-Path $directory 'capture/walking-aim-ready.json'
     $aimClosedPath=Join-Path $directory 'capture/walking-aim-closed.json'
     $args=@('-NoProfile','-File',(Join-Path $PSScriptRoot 'Run-HudStreamClient.ps1'),'-EvidenceDirectory',$directory,'-Run',$run,
@@ -177,9 +180,12 @@ try{
                 $physicalReady.target_start_filetime -cne $context.GameStartedUtc.ToFileTimeUtc().ToString() -or
                 $physicalReady.utc_ms -lt $minimumUtc -or $physicalReady.utc_ms -gt [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()+50 -or
                 $physicalReady.view_seq -lt 1 -or $physicalReady.view_seq -gt (Get-HudCameraDeliveryState $camera).Sequence){throw 'Actual physical guest readiness did not match the current session.'}
-            $activationWindow=[int][Math]::Floor(($deadline-[DateTime]::UtcNow).TotalSeconds-35)
-            if($activationWindow -lt 1){throw 'Not enough bounded time remains for the full physical HUD check.'}
-            Write-Output "HUD_WALKING_AIMED_READY run=$run scenario=$Scenario press_F8=true press_F8_within_seconds=$activationWindow movement_seconds=$($walkingSession.SourceMs/1000) input_seconds=$($walkingSession.InputMs/1000) movement_session=$($walkingSession.Name) hud_seconds=30"
+            $prompt=[pscustomobject]@{schema=1;kind='minecome_hud_input_prompt_v1';run=$run;
+                sampled_utc_ms=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds();controller_deadline_utc_ms=([DateTimeOffset]$deadline).ToUnixTimeMilliseconds()}
+            $promptWindow=Get-HudInputPromptWindow $ready $physicalReady $prompt $run $prompt.sampled_utc_ms 1
+            if(-not $promptWindow.can_prompt){throw 'Not enough bounded time remains for the full physical HUD check.'}
+            $prompt|ConvertTo-Json -Compress|Set-Content -LiteralPath (Join-Path $directory 'capture/input-prompt.json') -Encoding utf8NoBOM
+            Write-Output "HUD_WALKING_AIMED_READY run=$run scenario=$Scenario press_F8=true activation_deadline_utc_ms=$($promptWindow.activation_deadline_utc_ms) prompt_deadline_utc_ms=$($promptWindow.effective_deadline_utc_ms) sampled_utc_ms=$($promptWindow.sampled_utc_ms) remaining_seconds_at_sample=$($promptWindow.remaining_seconds) reread_prompt_window_before_asking=true movement_seconds=$($walkingSession.SourceMs/1000) input_seconds=$($walkingSession.InputMs/1000) movement_session=$($walkingSession.Name) hud_seconds=30"
         }
         if($receiver -and -not $traceEnded){
             $producer=Get-Process -Id $producerIdentity.Pid

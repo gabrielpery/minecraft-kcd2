@@ -1,5 +1,30 @@
 # Known issues and blockers
 
+## Latest combined input limitations
+
+The combined side-face/walking/inventory check now passes in KCD2, including all
+156 movement updates/readbacks. Its first placement request nevertheless expired
+at 505.5376 ms against the 500 ms permit lifetime, before vanilla placement was
+queued; a second request succeeded. This specific rejection was not player
+collision. Reducing that transport/permit delay remains work; do not widen the
+freshness limit or replay an expired click as a repair.
+
+Removing duplicate pre-dispatch validation passes automated checks, but the next
+live comparison still rejected its first click as stale. A second click placed
+without moving. The added block was broken, but the seed remained at the 12-second
+aim cutoff, so the lab ended through failure cleanup before the 30-second HUD limit.
+Consistent first-click responsiveness remains unresolved. Do not classify that
+comparison as a full pass or as a player-hitbox failure.
+
+Startup now prewarms camera parsing and settled-state validation on disposable
+diagnostic data, and records per-click processing stages. Offline checks pass;
+the warmed live first-click path still needs verification.
+
+A preceding retry was spoiled by a stale buffered READY countdown: a prompt
+promised 35 seconds with only 3.412 seconds remaining. Exact guest deadlines and
+the fresh `Read-HudInputPromptWindow` check now replace that workflow. A console
+line's reported remaining time must never be reused as a current countdown.
+
 ## Public source, experimental game support
 
 The [public repository](https://github.com/gabrielpery/minecraft-kcd2) contains

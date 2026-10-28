@@ -1,5 +1,121 @@
 # MineCome progress — 2026-10-28
 
+## First-use admission warm-up — OFFLINE PASS, LIVE COMPARISON PENDING
+
+`Initialize-HudWalkingAimedAdmissionWarmup` now exercises the real snapshot reader,
+foreground query and settled policy before Minecraft launches. It uses a separate
+create-new `diagnostic-aim-view.json` and disposable synthetic policy state; query
+results are discarded. It grants no authority, creates no permits or clicks, sends
+no HTTP and never writes the live view path. Existing input clocks and limits stay
+unchanged. Bounded per-click timing fields now separate selection, final admission,
+send and total processing, including rejection/error paths, without per-click file IO.
+
+Focused warm-up15 and controller179 checks pass. Retained offline measurements:
+`runtime/evidence/hud-aim-admission-offline-20261028-161412-d64f9fe773c4410f80ae35f279f3e7c0/warmup-comparison.json`.
+Snapshot first/repeated calls cost24.9087/1.7074 ms; settled policy56.2046/1.1871 ms;
+foreground1.9812/.0408 ms. These are isolated startup/function measurements, not
+game-input latency or proof that the live first-click failure is fixed. The latest
+live comparison below predates this warm-up and remains failed.
+
+## First-click comparison still expires; cleanup cutoff reached — FAILED
+
+HUD `1ec548ae2a1f4e42b60c54c79ab3b771`, probe `18efa61cbae141d383077103d1a3c324`:
+`runtime/evidence/hud-walking-aimed-20261028-160030-18efa61cbae141d383077103d1a3c324/`.
+This comparison includes the duplicate-admission removal below. The first click
+still gets stale result 3 before reaching the HUD arena. Controller observation to
+dispatch takes 132 ms (physical edge to dispatch 176 ms); the second takes 33 ms and
+places successfully from the same position. The subsequent break also succeeds.
+The user confirms second-attempt placement without stepping back, then reports
+that the HUD disappeared after breaking the added block.
+
+The original seed remains when the existing 12-second aim cutoff closes. Closure
+reports owned_count=1 and incomplete guest/support cleanup; the controller therefore
+fails and stops the relay/HUD. It forwards 125 movement points, restores KCD's player
+through failure cleanup and receives native removal/authority-cleanup acknowledgment.
+Minecraft saves and exits with code 0; the complete scenario did not pass. Preserve the earlier
+full side-face pass separately. No input lease or cutoff was enlarged. First-use
+processing is under automated investigation; no latency improvement is established.
+
+## Combined side-face placement, inventory and resumed walking — LIVE PASS
+
+HUD `557a41b52b7142bfa9fd98e999074f08`, probe `af23ad5d4c154c0b8de845fee2508f9a`:
+`runtime/evidence/hud-walking-aimed-20261028-154714-af23ad5d4c154c0b8de845fee2508f9a/`.
+`SideFaceInventory` passes 156/156 movement updates and KCD readbacks, WEST-face
+placement, added-block and seed breaks, inventory suppression and resumed walking.
+The inventory window lasts 1994.2718 ms with 209 observations, zero client/server
+displacement and a subsequent accepted S step of .222952 m on both sides. There
+are 665 camera samples with no worker failure, full aimed/support cleanup before
+follower restoration, zero remaining owned stones and Minecraft exit 0. Native
+input closes normally at its 30,000 ms activation limit with 27/27 events acknowledged.
+
+The user confirms it worked, but needed another placement click after stepping
+back. Request 1 / permit 47 was rejected as stale (`input_unavailable`, result 3),
+with permit-derived capture age 505.5376 ms against the existing 500 ms limit;
+`vanilla_queued=false`. It never reached Minecraft's placement/collision check.
+Request 2 / permit 75 placed successfully at age 303.225 ms, followed by two
+confirmed breaks. Thus this proves the completed side-face sequence, not reliable
+first-click placement. The user's feedback is separate from primary machine flags.
+
+The retry includes the camera snapshot reader repair and exact prompt-deadline
+metadata. Java maps the existing monotonic stream start to UTC once; controller
+READY output reports absolute deadlines. `Read-HudInputPromptWindow` re-reads
+identity, liveness and the current clock before a human prompt, preserving the
+existing controller margin and all gameplay/freshness limits. It rejects legacy,
+expired or too-short metadata. It does not claim to observe F8 activation itself.
+The fresh pre-prompt check returned 32 seconds, and the user was offered 20 seconds.
+Prompt checks29, controller checks159, Java compilation and inventory checks35 pass.
+
+## First-click processing reduction — AUTOMATED PASS
+
+The earlier side-face run's first click was captured at 15:48:20.006, observed by
+the controller at 20.093 and dispatched at 20.196 UTC. Its permit was already
+installed at 19.910. The 505.5376 ms guest value measures original permit-derived
+age, not physical click age; the click itself spent 190 ms before dispatch. There
+is no per-function timing evidence attributing all 103 ms of controller processing
+to one check.
+
+`Invoke-HudWalkingAimedClicks` performed the same settled/foreground admission
+twice consecutively. It now performs it once in the sender's final BeforeDispatch
+callback, preserving exact owner checks, original edge/permit timestamps and the
+subsequent 250/350/500 ms freshness bounds. No denied edge is retried. Controller
+169, relay 165 and permit 23 checks pass, including expiry during final admission
+with no HTTP dispatch or intent recorded. This removes duplicate work; live
+comparison results must establish whether first-click responsiveness improves.
+
+## Repeatable session lifecycle — STANDALONE PREPARATION
+
+`kcd2/hud/rearm_policy.hpp` now defines a single-owner policy for at most two
+explicit sessions in one game process. A second session requires generation-bound
+closed-input acknowledgment, empty event queues, retired renderer ownership,
+released/drained mouse capture, producer exit and verified controller cleanup.
+Replayed identities, changed image dimensions and incomplete retirement are
+rejected; session failure prevents rearm. Owner snapshots are values, so an old
+callback cannot silently inherit a later generation through a reference alias.
+
+The dedicated `hud_explicit_rearm_policy` CTest builds and passes 363 assertions,
+including setup assertions; independent review found and corrected the alias
+hazard. This is not connected to any addon, arm script or live profile. KCD still
+needs restarting between current tests. Integration requires generation-owned
+worker/channel state and renderer retirement without a render-thread GPU wait.
+Existing one-shot profiles and installed artifacts are unchanged.
+
+## Side-face retry received a stale activation prompt — INCOMPLETE
+
+HUD `ee5f7e5f0b704689ba94acec6ca987b9`, probe `5fa3810b938b4ff1bcd83158945b51b5`:
+`runtime/evidence/hud-walking-aimed-20261028-153111-5fa3810b938b4ff1bcd83158945b51b5/`.
+The controller's buffered READY line still advertised 42 seconds when retrieved
+at 15:32:36 UTC. The user prompt was sent at 15:32:44.138 and promised 35 seconds,
+but the guest ended its activation wait at 15:32:47.550: only 3.412 seconds later.
+The user pressed F8 immediately, saw the hotbar, then saw it disappear after W.
+This was an invalid test opportunity, not evidence of a new gameplay crash.
+
+The guest records `waiting_60s_complete`, no accepted input or movement, and
+normal Minecraft exit 0; KCD remained alive. There were 823 camera samples with
+no camera worker failure. `user-feedback.json` preserves the user's observation;
+`prompt-timing-diagnosis.json` matches the chat's question timestamp to native
+closure, and `reshade.log` preserves the original native receipts. Primary machine
+visual flags are unchanged. Do not infer successful side-face play from this run.
+
 ## Computer Use keyboard attempt did not activate the bridge — INCOMPLETE
 
 HUD `8e968faa4bf340209f2c8b838d40de94`, probe `bd53c4362e0646b28c6540363e4a152e`:

@@ -50,8 +50,11 @@ walk, place on the stone's top face, break both blocks, open and close inventory
 then walk again with the hotbar visible. The latest `TopFaceInventory` check has
 matching records for all **155 movement samples/readbacks** and three block actions.
 Minecraft stays still throughout its 1.85-second inventory window, then both client
-and server resume walking. The user reports **“all worked!”** The separate
-`SideFaceInventory` scenario remains pending live verification. Aiming ends before
+and server resume walking. The user reports **“all worked!”** The subsequent
+`SideFaceInventory` check also passes with 156 matched movement updates, side
+placement, both breaks, stationary inventory and walking afterward. Its first
+placement request expired before reaching vanilla placement; a later click succeeded.
+That intermittent input delay remains under investigation. Aiming ends before
 automatic restoration; this remains a bounded development lab, not a final playable build.
 
 The input-phase repair and a first-step downhill transition fix now pass together

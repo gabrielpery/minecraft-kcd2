@@ -455,7 +455,7 @@ The optional `-Scenario` selects verification requirements only:
 |---|---|---|
 | `WalkingBreak` (default) | Walk, perform the aimed seed break, resume walking and clean up. | Passed. |
 | `TopFaceInventory` | Place against the seed's UP face, break the upper block and seed, remain still in inventory, then resume walking. | Passed. |
-| `SideFaceInventory` | Place against the seed's WEST face, break the added block and seed, remain still in inventory, then resume walking. | Pending. |
+| `SideFaceInventory` | Place against the seed's WEST face, break the added block and seed, remain still in inventory, then resume walking. | Live pass; first request expired, later click succeeded. |
 
 For the top-face check, after the separate combined bundle is installed:
 
@@ -464,6 +464,20 @@ For the top-face check, after the separate combined bundle is installed:
 ```
 
 Wait for the matching `scenario=TopFaceInventory` READY message and press F8 once.
+For a remotely coordinated check, buffered READY output is not a live countdown.
+Immediately before prompting the player, read the current window in PowerShell 7:
+
+```powershell
+. './scripts/HudInputPrompt.ps1'
+Read-HudInputPromptWindow -CaptureDirectory '<current evidence directory>/capture' -ExpectedRun '<current HUD run>' -MinimumSeconds 25
+```
+
+Only prompt when `can_prompt` is true. Use the returned absolute deadline and allow
+time for message delivery; never reuse `remaining_seconds_at_sample` from an old
+console line. The reader checks the actual guest start/deadline, existing controller
+margin, current run/process identities and terminal receipts. It does not extend
+activation, gameplay or input freshness. A short/expired window needs a fresh test;
+it does not authorize changing any receipt or reusing a consumed arm.
 After the seed appears, tap W briefly and release. Let movement settle for half a
 second, right-click the centre of the seed's top face, then break the upper block
 and seed with separate left-clicks, waiting for each change. Press E, leave
@@ -500,8 +514,11 @@ The user reports “Done, worked perfectly.”
 `runtime/evidence/hud-walking-aimed-20261028-150034-6a7cde05c377471e9c7b92bcfb091222/`:
 155/155 movement readbacks, exact UP placement and both removals, 1.85 seconds of
 zero client/server inventory drift, resumed S walking of .859955 m, full cleanup
-and normal exit. The user confirms “all worked!” Side-face live coverage remains
-pending; continuous free roaming is still unfinished.
+and normal exit. The user confirms “all worked!” The subsequent side-face run
+passes 156/156 readbacks, placement and both removals, 1.994 seconds of stationary
+inventory and resumed walking. Its first request exceeded the 500 ms permit limit
+before vanilla placement; the next click succeeded. Continuous free roaming and
+consistent first-click responsiveness are still unfinished.
 
 Inventory verification observes the real screen, fresh grounded client/server
 poses and actual movement bindings. At least 250 ms, three fresh observations,

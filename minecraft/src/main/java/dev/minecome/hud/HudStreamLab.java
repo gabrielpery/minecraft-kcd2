@@ -107,7 +107,7 @@ public final class HudStreamLab {
     private JsonObject offscreenTrialEvidence;
     private String terminalResult="passed";
     private Object world,player,serverIdentity;
-    private long worldAt,streamAt,stateAt,lastCaptureAt,terminalAt,pauseStartedUtc,pauseEndedUtc;
+    private long worldAt,streamAt,streamStartedUtc,stateAt,lastCaptureAt,terminalAt,pauseStartedUtc,pauseEndedUtc;
     private long capturedServerConfirmed,capturedServerPending;
     private long captureServerStaleSkips,captureUnconfirmedSkips,captureOlderReadbacks,maxServerObservationAgeMs,lastCaptureEnqueuedUtc;
     private String lastCaptureDecision="not_started";
@@ -378,7 +378,14 @@ public final class HudStreamLab {
             catch(Exception e){fail(client,"Owned offscreen window: "+e.getMessage());return;}
         }
         if(!terminal && output.isReady()){
-            if(streamAt==0){streamAt=now;LOG.info("HUD_STREAM_READY run={} save={} realCreativePackets=true inputMode={}",identity.run(),save,inputMode);}
+            if(streamAt==0){
+                streamAt=now;
+                // Metadata only: map the existing monotonic start to wall time.
+                // Round elapsed time up so a prompt never gains an extra millisecond.
+                long sampledUtc=System.currentTimeMillis(),sampledNs=System.nanoTime();
+                streamStartedUtc=sampledUtc-(sampledNs-streamAt+999_999L)/1_000_000L;
+                LOG.info("HUD_STREAM_READY run={} save={} realCreativePackets=true inputMode={}",identity.run(),save,inputMode);
+            }
             long elapsed=now-streamAt;
             if(physicalFixtureMode){
                 try{
@@ -539,7 +546,7 @@ public final class HudStreamLab {
             if(elapsed>=700_000_000L && prearmDelayStartUtc!=0 && prearmDelayEndUtc==0)prearmDelayEndUtc=System.currentTimeMillis();
         }
         input.acknowledge(new HudInputReader.Acknowledgement(inputGate.sequence(),System.currentTimeMillis(),1,HudVanillaUiAdapter.inventory(client.currentScreen)?1:0,client.player.getInventory().selectedSlot));
-        if(physicalMovement!=null){try{physicalMovement.publishReady(outputDirectory,System.nanoTime());}catch(java.io.IOException e){throw new IllegalStateException("Physical readiness receipt: "+e.getMessage(),e);}}
+        if(physicalMovement!=null && streamStartedUtc>0){try{physicalMovement.publishReady(outputDirectory,System.nanoTime(),streamStartedUtc,streamStartedUtc+60_000L);}catch(java.io.IOException e){throw new IllegalStateException("Physical readiness receipt: "+e.getMessage(),e);}}
         if(firstReadyAckAt==0)firstReadyAckAt=now;
     }
     private void finishInput(MinecraftClient client,long now,String reason){

@@ -96,7 +96,7 @@ public final class HudPhysicalMovement {
     }
     public void suspend(MinecraftClient client){keys.suspend();authorityUntil=0;release(client);}
     /** One-time actual world readiness; the stream mapping can exist before terrain settles. */
-    public void publishReady(Path directory,long now)throws IOException{
+    public void publishReady(Path directory,long now,long streamStartedUtc,long activationDeadlineUtc)throws IOException{
         if(readyPublished || !inputReady(now) || completed)return;
         var sample=freshObservation(System.nanoTime());var view=views.current(System.currentTimeMillis(),System.nanoTime());
         if(sample==null || view==null || !grounded(sample.motion()) || !grounded(clientMotion) ||
@@ -110,6 +110,8 @@ public final class HudPhysicalMovement {
         e.addProperty("run",identity.run());e.addProperty("save",save);e.addProperty("patch_run",patch.run());e.addProperty("patch_sha256",patch.sha256());
         e.addProperty("target_pid",identity.targetPid());e.addProperty("target_start_filetime",Long.toUnsignedString(identity.targetStart()));
         e.addProperty("utc_ms",System.currentTimeMillis());e.addProperty("view_seq",view.view().sequence());
+        if(streamStartedUtc<=0 || activationDeadlineUtc-streamStartedUtc!=60_000L)throw new IOException("Invalid physical activation deadline metadata");
+        e.addProperty("stream_started_utc_ms",streamStartedUtc);e.addProperty("activation_deadline_utc_ms",activationDeadlineUtc);
         var a=new JsonObject();a.addProperty("x",sample.motion().x());a.addProperty("y",sample.motion().y());a.addProperty("z",sample.motion().z());e.add("anchor_mc",a);
         Path temp=parent.resolve("physical-ready.json.tmp"),target=parent.resolve("physical-ready.json");
         if(Files.exists(target,LinkOption.NOFOLLOW_LINKS))throw new IOException("Physical readiness already exists");

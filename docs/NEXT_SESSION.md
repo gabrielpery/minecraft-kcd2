@@ -2,12 +2,43 @@
 
 ## Current result
 
-The combined live walking/aimed-block/HUD profile now also passes top-face placement,
-both breaks, inventory and resumed walking in KCD2. The user confirmed **“all worked!”**
-The new inventory collector records zero displacement during the real inventory
-window and actual walking afterward. Preserve this milestone and the 200 ms buffer.
-Free roaming remains unfinished. The later side-face attempt failed on a camera-file
-read conflict, not a demonstrated face-targeting failure; it remains unverified.
+**Newest implementation, not yet live verified:** startup now prewarms the real
+camera reader, foreground query and pure settled policy using disposable diagnostic
+state before Minecraft starts. No input/permits/HTTP are generated. Per-click stage
+timings are recorded in memory. Warm-up15/controller179 checks pass; offline snapshot
+first/repeat24.91/1.71 ms, policy56.20/1.19 ms. Retained evidence:
+`runtime/evidence/hud-aim-admission-offline-20261028-161412-d64f9fe773c4410f80ae35f279f3e7c0/warmup-comparison.json`.
+Next verify this warmed path; do not repeat the duplicate-admission removal.
+
+Latest comparison HUD `1ec548ae2a1f4e42b60c54c79ab3b771`, probe
+`18efa61cbae141d383077103d1a3c324`, at
+`runtime/evidence/hud-walking-aimed-20261028-160030-18efa61cbae141d383077103d1a3c324/`
+did NOT pass: first click still stale, second placed without moving, added block
+broke, seed remained at the 12-second cutoff. Controller failed cleanup admission,
+then restored KCD and removed native authority/stones; Minecraft exited with code 0.
+Duplicate-admission removal alone did not solve the delay. First observed-to-send
+processing was 132 ms versus 33 ms for the next click. Preserve the prior full pass.
+
+The combined live walking/aimed-block/HUD profile now passes both top-face and
+side-face placement, both breaks, inventory and resumed walking in KCD2. Preserve
+these milestones and the 200 ms buffer. Free roaming remains unfinished. The
+latest side-face run exposed an intermittent stale-permit rejection on the first
+click, before vanilla placement; a second click completed the sequence.
+
+Latest HUD `557a41b52b7142bfa9fd98e999074f08`, probe `af23ad5d4c154c0b8de845fee2508f9a`:
+`runtime/evidence/hud-walking-aimed-20261028-154714-af23ad5d4c154c0b8de845fee2508f9a/`.
+156/156 movement updates/readbacks, WEST placement, both breaks, 1.994 seconds of
+stationary inventory, resumed S, full cleanup and exit 0. First request's permit
+age was 505.5376 ms (limit 500), `vanilla_queued=false`; second was 303.225 ms.
+This is not evidence of player-collision rejection. See PROGRESS.md and separate
+user-feedback.json. The camera reader repair now has a complete live pass.
+
+A preceding run `ee5f7e5f0b704689ba94acec6ca987b9` expired before F8: buffered
+READY output was stale and a 35-second prompt was sent with only 3.412 seconds
+remaining. Exact guest deadline metadata and `Read-HudInputPromptWindow` now
+prevent relying on that stale countdown. Check current receipts immediately
+before prompting, allow message-delivery time, and refuse a short window. The
+helper checks liveness and timestamps, not whether F8 has already been pressed.
 
 ## Latest top-face PASS and side-face failure
 
@@ -131,14 +162,28 @@ unknown. Later unchanged camera code passed. Do not mark that intermittent issue
 
 ## Next work
 
-1. Finish SideFaceInventory live coverage after the tested camera-read repair.
-   TopFaceInventory already passes; do not repeat its implementation. User now
-   requests Computer Use for tests where possible; F8/2 did not register in the
-   attempted run, so diagnose its input route before more unattended countdowns.
-   Distinguish automation-generated
-   keys from physical-human-input proof. Keep all stones removed before12s cutoff.
-2. Design persistent-session and terrain-streaming ownership before expanding bounds
-   or removing automatic restoration. Current finite footprint/deadlines are intentional.
+1. Reduce first-click permit delay without renewing timestamps, replaying edges
+   or widening the 500 ms lifetime. Both combined face scenarios now pass; do not
+   repeat completed implementation. The user is happy to perform live controls.
+   Computer Use can close/restart games; its F8 route is still unverified.
+   The duplicate early settled/foreground admission is now removed; the final
+   BeforeDispatch check and subsequent original clock checks remain. Controller
+   169, relay 165 and permit 23 tests pass. Preserve original input timestamps.
+   Startup warm-up and stage timings now add focused15/controller179 checks.
+   A focused first-placement comparison can use the generic WalkingBreak profile
+   without repeating inventory; inspect actual placement/break receipts separately
+   before claiming those actions passed. Locate the stone before the first step
+   to avoid spending the12-second block budget searching. Existing full top/side
+   inventory milestones remain valid.
+2. Integrate explicit same-process rearm in a separate opt-in profile. A standalone
+   `rearm_policy.hpp` and dedicated CTest now pass 363 assertions; it admits at most
+   two generations only after verified, identity-bound cleanup. Nothing uses it
+   live yet. Replace one-shot session objects, retire render ownership, and avoid
+   `release()`/GPU wait on ordinary render callbacks. Keep current profile intact.
+   Terrain streaming follows: current GroundPatch captures remap to local zero and
+   GroundCollision.install replaces a singleton map, so longer timers alone cannot
+   provide free roaming. Design immutable alignment and transactional proxy ownership
+   before expanding bounds or removing restoration.
 3. Add general terrain-face placement with an explicit terrain/support policy. The
    owned lab support does not prove arbitrary placement against KCD terrain.
 
@@ -146,19 +191,18 @@ Official tools1.5.5 only. Retail1.5.6 remains gated by loader/address-library wo
 
 ## Process state and next live launch
 
-KCD50700 was closed normally after the Computer Use trial; Minecraft exited0.
-The old179b92..., successful17311..., and failedaee7... arms were all archived
-with exact receipts after closing their games. The latest8e968... arm is archived
-as well; both games are closed. Recheck process/receipt state before
-continuing. Computer Use works for close/restart through node_repl @oai/sky; no
+KCD29300 hosted the successful side-face test; KCD24480 hosted the later comparison.
+Both were closed normally after Minecraft exited0. Their557a... and1ec5... arms
+are archived, as are the previous8e968... and expired-ee5f... arms. Both games are
+closed. Recheck process/receipt state before continuing.
+Computer Use works for close/restart through node_repl @oai/sky; no
 user-stop was reported in this phase. Never infer a historical Escape stop applies
 to a new turn. Follow the installed skill and record automation provenance.
 
-After closing KCD normally, archive only this owned expired arm and start fresh:
+The latest arm has already been archived. Start a fresh test world when needed:
 
 ```powershell
 $r = 'C:/Users/xephi/Documents/ChatGPT/New project/MineCome'
-& "$r/scripts/Archive-HudArm.ps1" -ReceiptPath "$r/runtime/evidence/hud-walking-aimed-20261028-151957-bd53c4362e0646b28c6540363e4a152e/capture/stream-arming.json"
 & "$r/scripts/Start-Kcd2ToolsTest.ps1"
 ```
 
@@ -168,7 +212,9 @@ Only when another manual check is needed and the user is ready:
 & 'C:/Users/xephi/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/powershell/pwsh.exe' -NoProfile -File 'C:/Users/xephi/Documents/ChatGPT/New project/MineCome/scripts/Start-HudWalkingAimed.ps1' -Scenario SideFaceInventory
 ```
 
-Wait for HUD_WALKING_AIMED_READY before the F8 prompt. Wait for the stone, start
+Wait for HUD_WALKING_AIMED_READY, then use Read-HudInputPromptWindow against that
+run's capture directory immediately before the F8 prompt. Never repeat the old
+console countdown. Wait for the stone, start
 walking soon, and keep KCD foreground until HUD disappearance30s after F8. Movement
 returns about16s after first step. No administrator mode, PowerShell setup or further
 installation is needed on this machine. Never load retail1.5.6 saves in tools1.5.5.
