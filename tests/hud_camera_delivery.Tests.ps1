@@ -4,6 +4,7 @@
 $ErrorActionPreference='Stop';Set-StrictMode -Version Latest
 $root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 . (Join-Path $root 'scripts/HudCameraDelivery.ps1')
+. (Join-Path $root 'scripts/HudGroundMovement.ps1')
 $script:checks=0
 function Check([bool]$Value,[string]$Message){$script:checks++;if(-not $Value){throw $Message}}
 function Reject([scriptblock]$Action,[string]$Message){$threw=$false;try{& $Action | Out-Null}catch{$threw=$true};Check $threw $Message}
@@ -194,4 +195,82 @@ try{
 $case=New-Case 'valid'
 Reject {Start-HudCameraDelivery $case.Context $case.Probe 'bad-run' $case.Patch $case.View $root} 'Invalid session identity accepted'
 Reject {Start-HudCameraDelivery $case.Context $case.Probe $case.Run $case.Patch (Join-Path $case.Directory 'other.json') $root} 'Unowned output filename accepted'
+
+# Snapshot readers share deletion with the actual atomic publisher. A transient
+# external lock yields no view immediately; recovery never rebases its timestamp.
+$snapshot=Join-Path $fixture 'snapshot.json'
+$utf8=[Text.UTF8Encoding]::new($false)
+[IO.File]::WriteAllText($snapshot,'{"seq":1,"utc_ms":1234}',$utf8)
+$read=Read-HudCameraSnapshot $snapshot $root
+Check ($read.seq -eq 1 -and $read.utc_ms -eq 1234) 'Snapshot changed the original publication identity/clock'
+$locked=[IO.FileStream]::new($snapshot,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::None)
+try{
+    $clock=[Diagnostics.Stopwatch]::StartNew();$read=Read-HudCameraSnapshot $snapshot $root
+    Check ($null -eq $read -and $clock.ElapsedMilliseconds -lt 250) 'Sharing conflict must be unavailable without retrying or stalling movement'
+}finally{$locked.Dispose()}
+Check ((Read-HudCameraSnapshot $snapshot $root).seq -eq 1) 'Snapshot reader failed to recover after an external lock ended'
+$retired=$snapshot+'.retired';[IO.File]::Move($snapshot,$retired)
+Check ($null -eq (Read-HudCameraSnapshot $snapshot $root)) 'Missing publication must be unavailable'
+[IO.File]::Move($retired,$snapshot)
+Check ((Read-HudCameraSnapshot $snapshot $root).utc_ms -eq 1234) 'Deletion-race recovery altered the source age'
+
+foreach($bad in @('{"seq":','null','[]','{"seq":1,}','{/*comment*/"seq":1}')){
+    [IO.File]::WriteAllText($snapshot,$bad,$utf8)
+    Reject {Read-HudCameraSnapshot $snapshot $root} 'Malformed/nonobject camera JSON was treated as transient availability'
+}
+[IO.File]::WriteAllBytes($snapshot,[byte[]](0x7b,0x22,0x78,0x22,0x3a,0x22,0xc3,0x28,0x22,0x7d))
+Reject {Read-HudCameraSnapshot $snapshot $root} 'Invalid UTF-8 was silently replaced'
+[IO.File]::WriteAllText($snapshot,('{"padding":"'+('x'*65536)+'"}'),$utf8)
+Reject {Read-HudCameraSnapshot $snapshot $root} 'Oversized opened snapshot was accepted'
+[IO.File]::WriteAllText($snapshot,'{"padding":"'+('x'*65522)+'"}',$utf8)
+Check ((Get-Item -LiteralPath $snapshot).Length -eq 65536 -and (Read-HudCameraSnapshot $snapshot $root).padding.Length -eq 65522) 'Exact 64KiB snapshot boundary was rejected'
+Reject {Read-HudCameraSnapshot $fixture $root} 'Directory/access failure was silently swallowed'
+Reject {Read-HudCameraSnapshot (Join-Path $root 'README.md') $root} 'Snapshot read escaped the owned evidence root'
+$linkTarget=Join-Path $fixture 'snapshot-target';[void][IO.Directory]::CreateDirectory($linkTarget)
+[IO.File]::WriteAllText((Join-Path $linkTarget 'view.json'),'{"seq":1}',$utf8)
+$junction=Join-Path $fixture 'snapshot-junction'
+$null=New-Item -ItemType Junction -Path $junction -Target $linkTarget
+Reject {Read-HudCameraSnapshot (Join-Path $junction 'view.json') $root} 'Snapshot followed a reparse ancestor'
+
+# Exercise the production writer concurrently: a shared reader holds an old
+# opened version while Replace publishes newer versions under the same name.
+$case=New-Case 'valid';$session=Start-Case $case;$opened=$null
+try{
+    $first=Wait-State $session {param($s)$s.ViewCount -ge 1}
+    $opened=[IO.FileStream]::new($case.View,[IO.FileMode]::Open,[IO.FileAccess]::Read,([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
+    $firstSnapshot=Read-HudCameraSnapshot $case.View $root;$lastSequence=$firstSnapshot.seq;$readCount=0
+    $clock=[Diagnostics.Stopwatch]::StartNew()
+    do{
+        $snapshotValue=Read-HudCameraSnapshot $case.View $root
+        if($null -ne $snapshotValue){
+            Check ($snapshotValue.seq -ge $lastSequence -and $snapshotValue.run -ceq $case.Run -and $snapshotValue.utc_ms -gt 0) 'Atomic reader returned a mixed or regressed publication'
+            $lastSequence=$snapshotValue.seq;$readCount++
+        }
+        Start-Sleep -Milliseconds 5
+    }while($clock.ElapsedMilliseconds -lt 650)
+    $later=Get-HudCameraDeliveryState $session
+    Check ($readCount -gt 10 -and $later.ViewCount -ge $first.ViewCount+3 -and -not $later.Failure) 'Shared snapshot reads blocked atomic camera publication'
+    Check ($opened.Length -gt 0 -and $lastSequence -gt $firstSnapshot.seq) 'Opened snapshot was not preserved across replacement'
+}finally{if($opened){$opened.Dispose()};$final=Stop-HudCameraDelivery $session}
+Check ($final.ResourcesClosed -and -not $final.Failure) 'Concurrent camera reader/writer cleanup failed'
+
+# Execute the actual caller function without starting its controller. A missing
+# view declines the current edge before looking up native receipts or permits.
+$controllerAst=[Management.Automation.Language.Parser]::ParseFile((Join-Path $root 'scripts/Test-HudWalkingAimed.ps1'),[ref]$null,[ref]$null)
+$declineFunction=$controllerAst.Find({param($node)$node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Get-CurrentAimDecline'},$true)
+Check ($null -ne $declineFunction) 'Combined camera admission function is missing'
+. ([scriptblock]::Create($declineFunction.Extent.Text))
+$aimState=[pscustomobject]@{present=$true};$viewFile=Join-Path $fixture 'absent-current-view.json'
+function Read-Receipts {throw 'Unavailable snapshot must not reach native receipt lookup.'}
+Check ((Get-CurrentAimDecline 9999) -ceq 'host_view_unavailable') 'Missing camera snapshot did not decline the current aimed edge'
+[IO.File]::WriteAllText($viewFile,'{"seq":1,"utc_ms":1234}',$utf8)
+$locked=[IO.FileStream]::new($viewFile,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::None)
+try{Check ((Get-CurrentAimDecline 9999) -ceq 'host_view_unavailable') 'Locked camera snapshot did not decline the current aimed edge'}
+finally{$locked.Dispose()}
+function Read-Receipts {return [pscustomobject]@{seq=1}}
+function Get-HudWalkingAimedDecline($State,$View,$Native,[long]$Now){
+    Check ($View.utc_ms -eq 1234 -and $View.seq -eq $Native.seq -and $Now -eq 9999) 'Recovery changed freshness inputs to existing settled admission'
+    return 'simulated_existing_admission'
+}
+Check ((Get-CurrentAimDecline 9999) -ceq 'simulated_existing_admission') 'Recovered snapshot did not return to existing settled admission'
 Write-Output "HUD_CAMERA_DELIVERY_TESTS checks=$script:checks PASS game_calls=false http_calls=false"

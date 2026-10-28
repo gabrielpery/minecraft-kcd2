@@ -3,6 +3,8 @@ package dev.minecome.terrain;
 import com.google.gson.JsonObject;
 import dev.minecome.hud.*;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.gui.screen.ingame.InventoryScreen;
+import net.minecraft.client.gui.screen.ingame.CreativeInventoryScreen;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.attribute.EntityAttributes;
 import net.minecraft.server.MinecraftServer;
@@ -26,6 +28,7 @@ public final class HudPhysicalMovement {
     private final Path traceFile,viewFile;
     private final HudMovementKeys keys;
     private final HudMovementTiming inputTiming=new HudMovementTiming();
+    private final HudMovementInventoryEvidence inventoryEvidence;
     private final HudMovementCompletion completion=new HudMovementCompletion();
     private final AtomicReference<Observation> observed=new AtomicReference<>();
     private final AtomicReference<String> failure=new AtomicReference<>();
@@ -60,6 +63,8 @@ public final class HudPhysicalMovement {
     public HudPhysicalMovement(Path patchFile,Path traceFile,Path viewFile,String save,HudInputProtocol.Identity identity,boolean fixture,HudMovementSession session)throws IOException{
         patch=GroundPatch.read(patchFile);this.traceFile=traceFile;this.viewFile=viewFile;this.save=save;this.identity=identity;this.fixture=fixture;
         this.session=java.util.Objects.requireNonNull(session);keys=new HudMovementKeys(session);
+        inventoryEvidence=HudPhysicalMovementMode.walkingAimed(System.getProperties())||Boolean.getBoolean("minecome.hudWalkingAimedFixture")
+                ?new HudMovementInventoryEvidence():null;
         if(!patch.sourceKind().equals(fixture?"standalone_ground_fixture":"live_kcd_ground_patch") || patch.run().equals(identity.run()) ||
                 !patch.run().matches("[0-9a-f]{32}") || !save.equals("MineCome-HudStream-"+UUID.fromString(save.substring("MineCome-HudStream-".length()))) ||
                 !traceFile.isAbsolute() || !viewFile.isAbsolute())
@@ -84,6 +89,7 @@ public final class HudPhysicalMovement {
     public void activate(long now){keys.activate(now);}
     public boolean inputReady(long now){return ready && !closing && (completed || (views!=null && views.current(System.currentTimeMillis(),now)!=null));}
     public void authority(MinecraftClient client,long now,boolean fresh){
+        observeInventory(client,false);
         boolean allowed=fresh && inputReady(now) && client.currentScreen==null && client.getOverlay()==null && !client.isPaused();
         keys.authority(now,allowed);authorityUntil=allowed?now+HudMovementKeys.HOLD_LEASE_NS:0;
         if(!allowed)release(client);
@@ -114,7 +120,16 @@ public final class HudPhysicalMovement {
         long receivedUtc=System.currentTimeMillis();
         boolean allowed=now<authorityUntil && inputReady(now) && client.currentScreen==null && client.getOverlay()==null;
         boolean accepted=keys.event(event.kind(),event.code(),now,allowed);
-        inputTiming.event(event,receivedUtc,now,accepted);
+        long receivedNs=now;
+        if(inventoryEvidence!=null){
+            observeInventory(client,false);
+            // Capture both diagnostic series at the same actual processing point
+            // after observing the current screen. Never reuse an older callback
+            // timestamp as though it followed this observation.
+            receivedUtc=System.currentTimeMillis();receivedNs=System.nanoTime();
+            inventoryEvidence.event(event,receivedUtc,receivedNs,accepted);
+        }
+        inputTiming.event(event,receivedUtc,receivedNs,accepted);
         if(accepted){
             events++;
             if(trace==null)startTrace(client,now);
@@ -127,6 +142,7 @@ public final class HudPhysicalMovement {
         if(clientWorld==null)return;
         requireClient(client);
         if(!ready || completed){release(client);return;}
+        observeInventory(client,false);
         var view=views.current(System.currentTimeMillis(),now);
         if(view==null || now>=authorityUntil || client.currentScreen!=null || client.getOverlay()!=null || client.isPaused()){
             suspend(client);return;
@@ -215,6 +231,7 @@ public final class HudPhysicalMovement {
             if(now-setupAt>8_000_000_000L && !ready)throw new IllegalStateException("Physical HUD settling deadline");
             return;
         }
+        observeInventory(client,false);
         if(completed || trace==null)return;
         if(corrections.get()!=baselineCorrections)throw new IllegalStateException("Physical HUD post-settle correction");
         if(views.current(System.currentTimeMillis(),System.nanoTime())==null){
@@ -252,6 +269,7 @@ public final class HudPhysicalMovement {
             if(result==HudMovementCompletion.Result.PASSED && writeTrace(sample,"PASSED",true)){
                 trace.finish(System.currentTimeMillis(),"passed","PASSED","Physical HUD input produced bounded vanilla walking on client and server");
                 traceResult="passed";durationMs=(now-keys.startedAt())/1_000_000;completed=true;views.close();
+                if(inventoryEvidence!=null)inventoryEvidence.finish();
             }else writeTrace(sample,settled?"RESTING":"LANDING",false);
         }else writeTrace(sample,!clientMotion.onGround()?"JUMPING":keys.neutral(now)?"RESTING":"WALKING",false);
     }
@@ -316,6 +334,7 @@ public final class HudPhysicalMovement {
     public void abort(MinecraftClient client,String reason){terminate("failed","FAILED",reason);close(client);}
     public void close(MinecraftClient client){
         if(closing)return;closing=true;keys.close();authorityUntil=0;if(controlsOwned)release(client);
+        if(inventoryEvidence!=null)inventoryEvidence.finish();
         terminate("stopped","STOPPED","Physical HUD closed before completion");if(views!=null)views.close();
         clientReleased=!clientInstalled || GroundCollision.clear((BlockView)clientWorld,patch.run(),false);
         if(server==null)serverReleased.set(true);
@@ -341,6 +360,7 @@ public final class HudPhysicalMovement {
         e.addProperty("ground_source_kind",patch.sourceKind());e.addProperty("input_source",fixture?"scripted_hud_physical_controller_fixture":"hud_input_v2");e.addProperty("scripted_input",fixture);e.addProperty("physical_input_verified",false);
         e.addProperty("started",keys.started());e.addProperty("completed",completed);e.addProperty("movement_events_applied",events);e.addProperty("held_ticks",heldTicks);
         e.add("input_timing",inputTiming.evidence());
+        if(inventoryEvidence!=null)e.add("inventory_evidence",inventoryEvidence.evidence());
         e.addProperty("client_walk",clientWalk);e.addProperty("server_walk",serverWalk);e.addProperty("client_air",clientAir);e.addProperty("server_air",serverAir);
         e.addProperty("client_land",clientLand);e.addProperty("server_land",serverLand);e.addProperty("duration_ms",durationMs);
         e.addProperty("trace_file",traceFile.toString());e.addProperty("trace_records",trace==null?0:trace.records());e.addProperty("trace_closed",trace!=null&&trace.closed());e.addProperty("trace_result",traceResult);
@@ -375,6 +395,20 @@ public final class HudPhysicalMovement {
     private void recordBindings(MinecraftClient c,boolean beforeVanilla){
         inputTiming.bindings(System.currentTimeMillis(),System.nanoTime(),c.options.forwardKey.isPressed(),c.options.backKey.isPressed(),
                 c.options.leftKey.isPressed(),c.options.rightKey.isPressed(),c.options.jumpKey.isPressed(),beforeVanilla);
+        observeInventory(c,beforeVanilla);
+    }
+    private void observeInventory(MinecraftClient c,boolean beforeVanilla){
+        if(inventoryEvidence==null||!ready||completed||closing||c.world!=clientWorld||c.player!=clientPlayer)return;
+        var sample=observed.get();
+        var actual=motion(c.player,hasGround(c.world,c.player));
+        var remote=sample!=null&&sample.world()==serverWorld&&sample.player()==serverPlayer?sample.motion():null;
+        int mask=(c.options.forwardKey.isPressed()?1:0)|(c.options.backKey.isPressed()?2:0)|(c.options.leftKey.isPressed()?4:0)
+                |(c.options.rightKey.isPressed()?8:0)|(c.options.jumpKey.isPressed()?16:0);
+        inventoryEvidence.observe(new HudMovementInventoryEvidence.Frame(System.currentTimeMillis(),System.nanoTime(),
+                c.currentScreen instanceof InventoryScreen||c.currentScreen instanceof CreativeInventoryScreen,
+                new HudMovementInventoryEvidence.Position(actual.x(),actual.y(),actual.z()),
+                remote==null?null:new HudMovementInventoryEvidence.Position(remote.x(),remote.y(),remote.z()),
+                sample==null?0:sample.sequence(),sample==null?0:sample.at(),grounded(actual),remote!=null&&grounded(remote),mask,beforeVanilla));
     }
     private boolean grounded(MovementTraceSink.Motion m){return m.onGround()&&m.proxySupport()&&Math.abs(m.y()-patch.groundForFeet(m.x(),m.z(),.3))<.15;}
     private boolean allAir(BlockView world){for(var cell:patch.cells())if(!world.getBlockState(new BlockPos(cell.x(),cell.y(),cell.z())).isAir())return false;return true;}

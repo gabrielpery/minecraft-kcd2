@@ -2,12 +2,57 @@
 
 ## Current result
 
-The combined live walking/aimed-block/HUD profile passes in KCD2. The user took a
-W step, aimed and broke the seed, then walked S with the hotbar visible and confirmed
-**“Done, worked perfectly.”** Preserve this working milestone. Do not repeat its
-implementation or retune the verified 200 ms buffer. Free roaming remains unfinished.
+The combined live walking/aimed-block/HUD profile now also passes top-face placement,
+both breaks, inventory and resumed walking in KCD2. The user confirmed **“all worked!”**
+The new inventory collector records zero displacement during the real inventory
+window and actual walking afterward. Preserve this milestone and the 200 ms buffer.
+Free roaming remains unfinished. The later side-face attempt failed on a camera-file
+read conflict, not a demonstrated face-targeting failure; it remains unverified.
 
-## Latest combined live PASS
+## Latest top-face PASS and side-face failure
+
+- Top HUD `17311ef5fda841d6869e9cbe3484af1f`, probe `6a7cde05c377471e9c7b92bcfb091222`.
+  Evidence: `runtime/evidence/hud-walking-aimed-20261028-150034-6a7cde05c377471e9c7b92bcfb091222/`.
+  155/155 source/readback pairs, UP-face placement and both breaks, zero owned
+  stones, support removed before restoration, Minecraft exit0. Inventory lasts
+  1850.4451ms/194 observations/36 distinct server advances with zero displacement
+  or bindings; post-close S moves both sides .859955m. User feedback is separate;
+  primary machine visual/physical-W-attempt flags stay false.
+- `-Scenario WalkingBreak|TopFaceInventory|SideFaceInventory` selects proof requirements.
+  Default WalkingBreak is unchanged. Enhanced modes require exact UP/WEST placement,
+  added-block and seed breaks, closed inventory, and fresh accepted resumed movement.
+  E toggles inventory both ways, so Escape is unnecessary.
+- New actual Minecraft fixture `8fe454e8df144b17a0bc2a0b949e0c1d`:
+  `runtime/evidence/hud-physical-fixture-20261028-145757-8fe454e8df144b17a0bc2a0b949e0c1d/`.
+  95 source hashes matched before the later PowerShell camera-reader change.
+  Two stationary inventory windows (.783/.804s) and subsequent walking pass the
+  supplemental inventory proof. This is scripted input, not KCD compositing proof.
+  Java checks: inventory35, movement336, aim24; controller159.
+- Side HUD `aee7bfb17fa54dc18a665f767468af67`, probe `0c7a45dd698f49ec990a414dfb3dc028`.
+  Evidence: `runtime/evidence/hud-walking-aimed-20261028-150753-0c7a45dd698f49ec990a414dfb3dc028/`.
+  Windows denied Get-Content(host-view.json); parent stopped relay, then Minecraft
+  failed its stream and saved/exited0. Only74 forwards/70 readbacks; KCD restored
+  and remained alive. User: “didnt do anything just crashed.” Preserve failed evidence.
+  Initial150658/1332a14ecd05467a9d707a9c19bb7dd0 attempt timed out during debug HTTP
+  probe setup, before arming; foregrounding KCD allowed initialization.
+- Narrow repair in HudCameraDelivery.ps1 uses one bounded opened snapshot with
+  ReadWrite|Delete sharing. Only transient missing/sharing/delete-pending races
+  yield unavailable; the current aim edge is declined, never replayed. Malformed,
+  oversized, invalid UTF-8 and access failures remain fatal. No wait or lease change.
+  Camera138 and controller159 checks pass, including concurrent production writer
+  replacement, exclusive-lock decline and recovery. This does not establish a fix
+  for the older 100ms camera-writer lock issue.
+- Computer Use attempt: HUD `8e968faa4bf340209f2c8b838d40de94`, probe
+  `bd53c4362e0646b28c6540363e4a152e`, evidence
+  `runtime/evidence/hud-walking-aimed-20261028-151957-bd53c4362e0646b28c6540363e4a152e/`.
+  F8 and2 press_key calls returned successfully, but MineCome registered zero events.
+  Guest cancelled after60s waiting and exited0; no movement began. 811 camera samples,
+  no camera read error, but no repaired full walking/side-face proof. Supplemental
+  computer-use-intent/outcome.json records explicit automated-input provenance.
+  Cause of missed keys is not isolated. CU can close/relaunch games; do not claim
+  the full interactive test can currently be completed autonomously.
+
+## Earlier combined walking-break PASS
 
 - HUD `179b92e699de495880dec7d6f6ac7449`, probe `8cdbdbd02281412a86fb584a0dd9eab1`.
 - Evidence: `runtime/evidence/hud-walking-aimed-20261028-142552-8cdbdbd02281412a86fb584a0dd9eab1/`.
@@ -86,9 +131,12 @@ unknown. Later unchanged camera code passed. Do not mark that intermittent issue
 
 ## Next work
 
-1. Exercise top/side placement and inventory transitions in the new combined live
-   mode. They already pass separately and in the combined scripted fixture. Keep
-   each check short enough to remove every stone before the existing12s aim cutoff.
+1. Finish SideFaceInventory live coverage after the tested camera-read repair.
+   TopFaceInventory already passes; do not repeat its implementation. User now
+   requests Computer Use for tests where possible; F8/2 did not register in the
+   attempted run, so diagnose its input route before more unattended countdowns.
+   Distinguish automation-generated
+   keys from physical-human-input proof. Keep all stones removed before12s cutoff.
 2. Design persistent-session and terrain-streaming ownership before expanding bounds
    or removing automatic restoration. Current finite footprint/deadlines are intentional.
 3. Add general terrain-face placement with an explicit terrain/support policy. The
@@ -98,23 +146,26 @@ Official tools1.5.5 only. Retail1.5.6 remains gated by loader/address-library wo
 
 ## Process state and next live launch
 
-KCD PID49756 is the current tools world. Minecraft exited normally. New179b92... arm
-is consumed and unarchived. Olde50b03... arm was archived before the bundle update.
-Recheck processes and exact receipts. No Computer Use was invoked during the new
-combined phase; do not assume a historical Escape stop persists in a new turn.
+KCD50700 was closed normally after the Computer Use trial; Minecraft exited0.
+The old179b92..., successful17311..., and failedaee7... arms were all archived
+with exact receipts after closing their games. The latest8e968... arm is archived
+as well; both games are closed. Recheck process/receipt state before
+continuing. Computer Use works for close/restart through node_repl @oai/sky; no
+user-stop was reported in this phase. Never infer a historical Escape stop applies
+to a new turn. Follow the installed skill and record automation provenance.
 
 After closing KCD normally, archive only this owned expired arm and start fresh:
 
 ```powershell
 $r = 'C:/Users/xephi/Documents/ChatGPT/New project/MineCome'
-& "$r/scripts/Archive-HudArm.ps1" -ReceiptPath "$r/runtime/evidence/hud-walking-aimed-20261028-142552-8cdbdbd02281412a86fb584a0dd9eab1/capture/stream-arming.json"
+& "$r/scripts/Archive-HudArm.ps1" -ReceiptPath "$r/runtime/evidence/hud-walking-aimed-20261028-151957-bd53c4362e0646b28c6540363e4a152e/capture/stream-arming.json"
 & "$r/scripts/Start-Kcd2ToolsTest.ps1"
 ```
 
 Only when another manual check is needed and the user is ready:
 
 ```powershell
-& 'C:/Users/xephi/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/powershell/pwsh.exe' -NoProfile -File 'C:/Users/xephi/Documents/ChatGPT/New project/MineCome/scripts/Start-HudWalkingAimed.ps1'
+& 'C:/Users/xephi/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/powershell/pwsh.exe' -NoProfile -File 'C:/Users/xephi/Documents/ChatGPT/New project/MineCome/scripts/Start-HudWalkingAimed.ps1' -Scenario SideFaceInventory
 ```
 
 Wait for HUD_WALKING_AIMED_READY before the F8 prompt. Wait for the stone, start

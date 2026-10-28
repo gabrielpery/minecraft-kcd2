@@ -178,6 +178,13 @@ tasks.register('hudPhysicalMovementTest', JavaExec) {
     mainClass = 'dev.minecome.hud.HudPhysicalMovementTests'
 }
 check.dependsOn hudPhysicalMovementTest
+
+tasks.register('hudMovementInventoryEvidenceTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'dev.minecome.hud.HudMovementInventoryEvidenceTests'
+}
+check.dependsOn hudMovementInventoryEvidenceTest
 tasks.register('hudBuildRegionTest', JavaExec) {
     dependsOn testClasses
     classpath = sourceSets.test.runtimeClasspath

@@ -115,7 +115,8 @@ reports "worked. still delay, but worked." The actor returns to its exact starti
 position, timers cancel, FPS restores and Minecraft exits normally. All 611
 camera publications stay fresh. Parser warmup, native finish and fixed sampling
 are now exercised together in this live pass; repeating that comparison is not
-the next milestone. Integration with aimed blocks is next; remaining latency is deferred.
+the next milestone. The separate combined profile below now verifies aimed blocks
+and inventory with walking; further latency work is deferred.
 This remains a bounded development test with an intentional 200 ms playback
 buffer. See [the current evidence](../docs/PROGRESS.md) for practical limits.
 
@@ -152,8 +153,8 @@ jumping has separate observations and is not a completed live milestone.
 Default movement accepts new held input for at most five seconds from the first
 accepted edge; `-ExtendedWalking` selects fifteen seconds. Both allow at most one
 additional second for neutral settling. The HUD can
-continue for up to 30 seconds after F8. E opens inventory and Escape closes it;
-inventory transitions release movement, and a held key cannot silently resume
+continue for up to 30 seconds after F8. E toggles inventory open and closed; Escape
+also closes it. Inventory transitions release movement, and a held key cannot silently resume
 when inventory closes. Native camera look remains available outside inventory.
 This profile does not publish block placement/breaking clicks.
 
@@ -434,8 +435,12 @@ The two support writes are recorded separately from vanilla actions.
 Combined receipts retain the unchanged 64 KiB limit using compact JSON, including
 explicit null states. The controller checks six correlated actions, real movement
 before and after them, UI frames, cleanup, and an unchanged source manifest.
-This establishes the Minecraft integration with scripted rays. The separate live
-profile below now verifies physical walking and an aimed break in KCD2 too.
+This establishes the Minecraft integration with scripted rays. The same bounded
+inventory collector used by the live scenarios also passes on both inventory
+windows in run `8fe454e8df144b17a0bc2a0b949e0c1d`, with zero drift, resumed walking
+and all 95 pinned source hashes unchanged. Its supplemental
+`inventory-verification.json` makes no physical-input or KCD claims. The separate
+live profile below now verifies walking, top placement and inventory in KCD2 too.
 
 ## Combined live walking, aiming and HUD
 
@@ -444,6 +449,31 @@ Use `scripts/Start-HudWalkingAimed.ps1` only after installing its separate
 It automatically selects PowerShell 7 and the extended 15-second movement session.
 Do not enable the old walking and stone profile flags together or run two controllers.
 
+The optional `-Scenario` selects verification requirements only:
+
+| Scenario | Required result | Live status |
+|---|---|---|
+| `WalkingBreak` (default) | Walk, perform the aimed seed break, resume walking and clean up. | Passed. |
+| `TopFaceInventory` | Place against the seed's UP face, break the upper block and seed, remain still in inventory, then resume walking. | Passed. |
+| `SideFaceInventory` | Place against the seed's WEST face, break the added block and seed, remain still in inventory, then resume walking. | Pending. |
+
+For the top-face check, after the separate combined bundle is installed:
+
+```powershell
+& './scripts/Start-HudWalkingAimed.ps1' -Scenario TopFaceInventory
+```
+
+Wait for the matching `scenario=TopFaceInventory` READY message and press F8 once.
+After the seed appears, tap W briefly and release. Let movement settle for half a
+second, right-click the centre of the seed's top face, then break the upper block
+and seed with separate left-clicks, waiting for each change. Press E, leave
+inventory open for about one second and briefly press/release W. Press E again to
+close inventory, then briefly tap S and release. Complete aiming before 12 seconds
+after the first movement and the resumed step within the 15-second movement window.
+Keep KCD in front until the 30-second HUD ends. For the side scenario, target the
+seed's WEST face; that adjacent cell must be outside the protected imported terrain.
+
+The following shorter procedure remains the default `WalkingBreak` check.
 Wait for `HUD_WALKING_AIMED_READY`, then press F8. Wait for the stone, take a short
 step, release movement for at least half a second, aim at the stone and break it.
 Walk again afterward. Stay in KCD until the HUD closes 30s after F8; the return near
@@ -464,5 +494,21 @@ First live PASS: HUD `179b92e699de495880dec7d6f6ac7449`, controller evidence
 `runtime/evidence/hud-walking-aimed-20261028-142552-8cdbdbd02281412a86fb584a0dd9eab1/`.
 156/156 native movement readbacks, one confirmed physical aimed break, resumed
 walking, exact restoration, support/input cleanup and normal Minecraft exit.
-The user reports “Done, worked perfectly.” Combined live top/side placement and
-inventory transitions remain next; continuous free roaming is still unfinished.
+The user reports “Done, worked perfectly.”
+
+`TopFaceInventory` also passes with HUD `17311ef5fda841d6869e9cbe3484af1f`, evidence
+`runtime/evidence/hud-walking-aimed-20261028-150034-6a7cde05c377471e9c7b92bcfb091222/`:
+155/155 movement readbacks, exact UP placement and both removals, 1.85 seconds of
+zero client/server inventory drift, resumed S walking of .859955 m, full cleanup
+and normal exit. The user confirms “all worked!” Side-face live coverage remains
+pending; continuous free roaming is still unfinished.
+
+Inventory verification observes the real screen, fresh grounded client/server
+poses and actual movement bindings. At least 250 ms, three fresh observations,
+two advancing server observations and zero movement bindings are required, then
+a new accepted walking press must reach the vanilla binding and move both sides
+at least .05 m. The live native filter normally suppresses W while inventory is
+open, so the guest cannot prove that a physical W press occurred from its absence.
+User confirmation of that action and the visible result remains separate from the
+machine receipt. Scenario proof confirms the face sequence and an inventory/resume
+interval; it does not establish timestamps ordering those two branches.

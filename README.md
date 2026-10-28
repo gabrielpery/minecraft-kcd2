@@ -46,10 +46,13 @@ Walking and aimed blocks now also pass in one automated Minecraft fixture on fla
 ground and captured KCD terrain: walk, place/break on top and side faces, reopen
 inventory, then walk again. This uses scripted rays and an explicit protected
 terrain/build region. A separate combined live profile now also passes in KCD2:
-walk, stop and aim to break the stone, then walk again with the hotbar visible.
-All 156 movement samples and the physical click have matching native/guest records,
-and the user reports **“worked perfectly.”** Aiming ends before automatic restoration;
-this remains a bounded development lab, not a final playable build.
+walk, place on the stone's top face, break both blocks, open and close inventory,
+then walk again with the hotbar visible. The latest `TopFaceInventory` check has
+matching records for all **155 movement samples/readbacks** and three block actions.
+Minecraft stays still throughout its 1.85-second inventory window, then both client
+and server resume walking. The user reports **“all worked!”** The separate
+`SideFaceInventory` scenario remains pending live verification. Aiming ends before
+automatic restoration; this remains a bounded development lab, not a final playable build.
 
 The input-phase repair and a first-step downhill transition fix now pass together
 in KCD2. In the earlier short run, accepted keys reached Minecraft's movement

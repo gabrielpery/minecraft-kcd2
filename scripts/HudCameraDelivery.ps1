@@ -1,5 +1,38 @@
 # A dedicated bounded runspace owns camera request/receipt/publication. It cannot
 # move an actor; parent controller work must not stall the camera's original lease.
+function Read-HudCameraSnapshot([string]$Path,[string]$ProjectRoot){
+    $stream=$null
+    try{
+        $resolved=Resolve-HudMovementEvidencePath $Path $ProjectRoot
+        # Atomic replacement may retire this filename while we read. Read only
+        # this opened version, and do not deny the publisher its rename/delete.
+        $stream=[IO.FileStream]::new($resolved,[IO.FileMode]::Open,[IO.FileAccess]::Read,([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
+        $attributes=[IO.File]::GetAttributes($stream.SafeFileHandle)
+        $length=$stream.Length
+        if(($attributes -band ([IO.FileAttributes]::Directory -bor [IO.FileAttributes]::ReparsePoint)) -or $length -lt 2 -or $length -gt 65536){
+            throw 'Invalid bounded camera snapshot.'
+        }
+        $bytes=[byte[]]::new([int]$length)
+        $stream.ReadExactly($bytes,0,$bytes.Length)
+        if($stream.ReadByte() -ne -1 -or $stream.Length -ne $length){throw 'Camera snapshot changed size while reading.'}
+        # Keep the existing ancestor/reparse policy on both sides of the open.
+        # An atomic replacement can change the leaf identity, never its owner.
+        $null=Resolve-HudMovementEvidencePath $resolved $ProjectRoot
+        $json=[Text.UTF8Encoding]::new($false,$true).GetString($bytes)
+        $options=[Text.Json.JsonDocumentOptions]::new();$options.MaxDepth=12
+        $document=[Text.Json.JsonDocument]::Parse($json,$options)
+        try{if($document.RootElement.ValueKind -ne [Text.Json.JsonValueKind]::Object){throw 'Camera snapshot must be a JSON object.'}}
+        finally{$document.Dispose()}
+        return ConvertFrom-Json -InputObject $json -Depth 12 -NoEnumerate -ErrorAction Stop
+    }catch [IO.IOException]{
+        # These native races mean no current snapshot, not a longer lease. The
+        # caller declines this physical click; it never queues it for retry.
+        # Access denied, malformed data and all other I/O failures remain fatal.
+        $code=$_.Exception.HResult -band 0xffff
+        if($code -in @(2,3,32,33,303)){return $null}
+        throw
+    }finally{if($stream){$stream.Dispose()}}
+}
 function Get-HudCameraDeliveryWorkerScript {
     return {
         param($Context,$Probe,[string]$Run,$LivePatch,[string]$ViewFile,[string]$ProjectRoot,$Shared,$StopToken,$Timings,[long]$DeadlineUtcMs,[long]$DeadlineStamp)

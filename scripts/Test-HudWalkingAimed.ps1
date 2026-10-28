@@ -1,7 +1,8 @@
 #Requires -Version 7.3
 # Explicit combined15-second movement/aiming session and30-second HUD.
 [CmdletBinding()]
-param([switch]$PreflightOnly,[string]$JavaHome,[string]$BundleDirectory)
+param([switch]$PreflightOnly,[string]$JavaHome,[string]$BundleDirectory,
+    [ValidateSet('WalkingBreak','TopFaceInventory','SideFaceInventory')][string]$Scenario='WalkingBreak')
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'KcdToolsProbeHelpers.ps1')
@@ -24,7 +25,8 @@ if(-not(Test-Path -LiteralPath (Join-Path $JavaHome 'bin/java.exe'))){throw 'A l
 if(-not $BundleDirectory){$BundleDirectory=Join-Path $root 'runtime/hud-compositor-walking-aimed'}
 $context=Get-MineComeProbeContext
 & (Join-Path $PSScriptRoot 'Arm-HudStream.ps1') -WalkingAimed -InputMode -LiveMouse -OffscreenPresentation -BundleDirectory $BundleDirectory -PreflightOnly
-if($PreflightOnly){Write-Output 'HUD_WALKING_AIMED_PREFLIGHT_PASS no_changes=true';return}
+if($PreflightOnly){Write-Output "HUD_WALKING_AIMED_PREFLIGHT_PASS scenario=$Scenario no_changes=true";return}
+$scenarioProof=$null
 $probe=$null;$helper=$null;$arm=$null;$budget=$null;$budgetEvidence=$null;$failure=$null
 $followerStarted=$false;$restored=$false;$passed=$false;$traceEnded=$false;$tracePassed=$false
 $followerFinishRequested=$false;$sourceClock=New-HudBufferedSourceState -ExtendedWalking:$ExtendedWalking
@@ -48,8 +50,8 @@ function Console([string]$Code){
 }
 function Get-CurrentAimDecline([long]$NowUtcMs){
     if(-not $aimState){return 'aim_not_initialized'}
-    if(-not(Test-Path -LiteralPath $viewFile)){return 'host_view_unavailable'}
-    $view=Read-HudMovementJson $viewFile
+    $view=Read-HudCameraSnapshot $viewFile $root
+    if($null -eq $view){return 'host_view_unavailable'}
     $views=@(Read-Receipts 'MineComeHudPhysicalView' | Where-Object seq -EQ $view.seq)
     if($views.Count -gt 1){throw 'Duplicate native camera sequence.'}
     $nativeView=if($views.Count){$views[0]}else{$null}
@@ -141,7 +143,7 @@ try{
     if($ExtendedWalking){$args+='-ExtendedWalking'}
     $quoted=@($args | ForEach-Object {ConvertTo-MineComeWindowsArgument $_})
     $helper=Start-Process -FilePath (Join-Path $PSHOME 'pwsh.exe') -ArgumentList ([string]::Join(' ',$quoted)) -WorkingDirectory $root -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $directory 'helper.log') -RedirectStandardError (Join-Path $directory 'helper-errors.log')
-    Write-Output "HUD_WALKING_AIMED_START run=$run evidence=$directory"
+    Write-Output "HUD_WALKING_AIMED_START run=$run scenario=$Scenario evidence=$directory"
     do{
         Assert-MineComeProbeContext $context
         if(-not $traceEnded){
@@ -162,7 +164,7 @@ try{
             $arm=& (Join-Path $PSScriptRoot 'Arm-HudStream.ps1') -WalkingAimed -InputMode -LiveMouse -OffscreenPresentation -BundleDirectory $BundleDirectory -ReadyManifest $readyPath
             $readyHash=(Get-FileHash -LiteralPath $readyPath).Hash
             $producerIdentity=[pscustomobject]@{Pid=$ready.producer_pid;Start=[string]$ready.producer_start_filetime}
-            Write-Output "HUD_WALKING_AIMED_ARMED run=$run waiting_for_settled_guest=true"
+            Write-Output "HUD_WALKING_AIMED_ARMED run=$run scenario=$Scenario waiting_for_settled_guest=true"
         }
         $physicalReadyPath=Join-Path $directory 'capture/physical-ready.json'
         if($ready -and -not $physicalReady -and (Test-Path -LiteralPath $physicalReadyPath)){
@@ -177,7 +179,7 @@ try{
                 $physicalReady.view_seq -lt 1 -or $physicalReady.view_seq -gt (Get-HudCameraDeliveryState $camera).Sequence){throw 'Actual physical guest readiness did not match the current session.'}
             $activationWindow=[int][Math]::Floor(($deadline-[DateTime]::UtcNow).TotalSeconds-35)
             if($activationWindow -lt 1){throw 'Not enough bounded time remains for the full physical HUD check.'}
-            Write-Output "HUD_WALKING_AIMED_READY run=$run press_F8=true press_F8_within_seconds=$activationWindow movement_seconds=$($walkingSession.SourceMs/1000) input_seconds=$($walkingSession.InputMs/1000) movement_session=$($walkingSession.Name) hud_seconds=30"
+            Write-Output "HUD_WALKING_AIMED_READY run=$run scenario=$Scenario press_F8=true press_F8_within_seconds=$activationWindow movement_seconds=$($walkingSession.SourceMs/1000) input_seconds=$($walkingSession.InputMs/1000) movement_session=$($walkingSession.Name) hud_seconds=30"
         }
         if($receiver -and -not $traceEnded){
             $producer=Get-Process -Id $producerIdentity.Pid
@@ -288,6 +290,9 @@ try{
     $final=@(Read-CoupledTraceLines $traceReader -ExtendedWalking:$ExtendedWalking)
     if($final.Count -ne $lineCount -or $traceReader.Bytes[-1] -ne 10 -or (Get-FileHash -LiteralPath $readyPath).Hash -cne $readyHash -or (Get-FileHash -LiteralPath $patchFile).Hash.ToLowerInvariant() -cne $receiver.PatchHash){throw 'Owned trace/readiness/terrain changed after completion.'}
     $traceHash=(Get-FileHash -LiteralPath $traceReader.Path).Hash
+    # Scenarios add evidence requirements only; they cannot change the input,
+    # timing, arena, lease or cleanup policy of this combined session.
+    $scenarioProof=Assert-HudWalkingAimedScenario -Guest $guest -Scenario $Scenario
     $exitDeadline=[DateTime]::UtcNow.AddSeconds(15)
     while(-not $helper.HasExited -and [DateTime]::UtcNow -lt $exitDeadline){Start-Sleep -Milliseconds 50}
     if(-not $helper.HasExited){throw 'Minecraft normal exit remained pending.'}
@@ -297,7 +302,7 @@ try{
     $budgetEvidence=Get-MineComeHudGpuBudgetEvidence $budget
     if(-not $budget.RestorationVerified -or -not $budget.BudgetValid){throw 'Temporary host FPS budget was not restored.'}
     $passed=$true
-    Write-Output "HUD_WALKING_AIMED_PASS run=$run server_frames=$($forwarded.Count) delayed_kcd_readbacks=$($applied.Count) restored=true evidence=$directory"
+    Write-Output "HUD_WALKING_AIMED_PASS run=$run scenario=$Scenario server_frames=$($forwarded.Count) delayed_kcd_readbacks=$($applied.Count) restored=true evidence=$directory"
 }catch{$failure=$_.Exception.Message;throw}
 finally{
     # Revoke input first on every failure path. If guest/native completion was
@@ -370,7 +375,7 @@ finally{
             }catch{if(-not $failure){$failure=$_.Exception.Message};$passed=$false}
         }
         if($aimClicks){$aimClickEvidence=Get-MineComeHudWorldClickEvidence $aimClicks $aimRelay}
-        [ordered]@{schema=1;kind='minecome_hud_walking_aimed_cleanup_v1';run=$run;alignment=$(if($aimState){$aimState.Ready}else{$null});closure=$(if($aimState){$aimState.Closed}else{$null});
+        [ordered]@{schema=1;kind='minecome_hud_walking_aimed_cleanup_v1';run=$run;scenario=$Scenario;scenario_proof=$scenarioProof;alignment=$(if($aimState){$aimState.Ready}else{$null});closure=$(if($aimState){$aimState.Closed}else{$null});
             aim_cleanup_before_follower_finish=$aimCleanupBeforeRestore;aim_cleanup_utc_ms=$aimCleanupUtcMs;follower_finish_requested_utc_ms=$finishRequestUtcMs;
             ready_sha256=$aimReadyHash;closed_sha256=$aimClosedHash;clicks=$aimClickEvidence;relay=$aimRelayEvidence;visual_verified=$false} |
             ConvertTo-Json -Depth 32 | Set-Content -LiteralPath (Join-Path $probe.Directory 'aimed-verification.json') -Encoding utf8NoBOM
@@ -385,7 +390,7 @@ finally{
         $viewTimings=@();$viewCount=0;$cameraEvidence=$null
         if($cameraState){$viewCount=$cameraState.ViewCount;$cameraEvidence=$cameraState | Select-Object -ExcludeProperty Timings;if($cameraState.PSObject.Properties['Timings']){$viewTimings=@($cameraState.Timings)}}
         ConvertTo-Json -InputObject $viewTimings -Depth 4 | Set-Content -LiteralPath (Join-Path $probe.Directory 'view-timings.json') -Encoding utf8NoBOM
-        [ordered]@{schema=1;kind='minecome_hud_walking_aimed_controller_v1';movement_session=$walkingSession.Name;run=$run;probe_run=$probe.Run;result=$(if($passed){'passed'}else{'failed'});failure=$failure;target_pid=$context.GamePid;target_start_filetime=$context.GameStartedUtc.ToFileTimeUtc().ToString();source_sha256=$probe.SourceHash;compositor_armed=[bool]$arm;view_samples=$viewCount;camera_worker=$cameraEvidence;forwarded_frames=$forwarded.Count;delayed_readbacks=$applied.Count;trace_passed=$tracePassed;trace_sha256=$traceHash;restoration_verified=$restored;host_gpu_budget=$budgetEvidence;guest=$guest;visual_verified=$false;physical_input_exclusivity_verified=$false;full_world_movement_authority_verified=$false} |
+        [ordered]@{schema=1;kind='minecome_hud_walking_aimed_controller_v1';movement_session=$walkingSession.Name;run=$run;probe_run=$probe.Run;scenario=$Scenario;scenario_proof=$scenarioProof;result=$(if($passed){'passed'}else{'failed'});failure=$failure;target_pid=$context.GamePid;target_start_filetime=$context.GameStartedUtc.ToFileTimeUtc().ToString();source_sha256=$probe.SourceHash;compositor_armed=[bool]$arm;view_samples=$viewCount;camera_worker=$cameraEvidence;forwarded_frames=$forwarded.Count;delayed_readbacks=$applied.Count;trace_passed=$tracePassed;trace_sha256=$traceHash;restoration_verified=$restored;host_gpu_budget=$budgetEvidence;guest=$guest;visual_verified=$false;physical_input_exclusivity_verified=$false;full_world_movement_authority_verified=$false} |
             ConvertTo-Json -Depth 16 | Set-Content -LiteralPath (Join-Path $probe.Directory 'verification.json') -Encoding utf8NoBOM
     }
     if($traceReader.Stream){$traceReader.Stream.Dispose()}

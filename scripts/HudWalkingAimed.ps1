@@ -4,6 +4,140 @@
 . (Join-Path $PSScriptRoot 'AimedWorldClicks.ps1')
 . (Join-Path $PSScriptRoot 'HudWorldClicks.ps1')
 
+# Post-run evidence only. This helper also accepts the same collector receipt
+# from a standalone fixture, without turning that fixture into live host proof.
+function Assert-HudWalkingInventoryEvidence($Evidence) {
+    if($null -eq $Evidence -or (Get-HudBufferedField $Evidence 'kind') -cne 'minecome_hud_movement_inventory_v1') {
+        throw 'unsupported_evidence: bounded movement inventory windows are required.'
+    }
+    function Int($O,[string]$K,[long]$Min,[long]$Max){Get-HudBufferedInteger (Get-HudBufferedField $O $K) $K $Min $Max}
+    function Num($O,[string]$K,[double]$Min,[double]$Max){Get-HudBufferedNumber (Get-HudBufferedField $O $K) $K $Min $Max}
+    function Flag($O,[string]$K,[bool]$V){Assert-HudBufferedFlag (Get-HudBufferedField $O $K) $K $V}
+    [void](Int $Evidence schema 1 1);[void](Int $Evidence max_windows 4 4);[void](Int $Evidence max_events 32 32)
+    Flag $Evidence truncated $false;Flag $Evidence capture_finished $true;Flag $Evidence capture_complete $true
+    $windows=Get-HudBufferedField $Evidence 'windows';$windows=@($windows)
+    $events=Get-HudBufferedField $Evidence 'events';$events=@($events)
+    if($windows.Count -lt 1 -or $windows.Count -gt 4 -or $events.Count -gt 32){throw 'Inventory evidence window/event bounds exceeded or absent.'}
+    [void](Int $Evidence window_count $windows.Count $windows.Count);[void](Int $Evidence event_count $events.Count $events.Count)
+    if($null -ne (Get-HudBufferedField $Evidence 'failure')){throw 'Inventory capture reported a failure.'}
+    $verified=[Collections.Generic.List[object]]::new();$refused=[Collections.Generic.List[object]]::new();$previousClose=$null
+    foreach($window in $windows) {
+        $id=Int $window id 1 4
+        if($id -ne $verified.Count+$refused.Count+1){throw 'Inventory window IDs are not consecutive.'}
+        $open=Int $window opened_monotonic_ns ([long]::MinValue) ([long]::MaxValue)
+        $close=Int $window closed_monotonic_ns ([long]::MinValue) ([long]::MaxValue)
+        $duration=[decimal]$close-[decimal]$open
+        if($duration -lt 0 -or $duration -gt 30000000000 -or ($null -ne $previousClose -and $open -lt $previousClose)){throw 'Inventory window times overlap or regress.'}
+        $previousClose=$close
+        [void](Int $window opened_utc_ms 1 ([long]::MaxValue));[void](Int $window closed_utc_ms 1 ([long]::MaxValue))
+        Flag $window complete $true
+        try {
+            if($duration -lt 250000000){throw 'Inventory window was shorter than 250ms.'}
+            [void](Int $window samples 3 2000);[void](Int $window stale_samples 0 0)
+            [void](Int $window server_sequence_advances 2 2000)
+            [void](Int $window max_sample_gap_ns 0 250000000);[void](Int $window max_server_age_ns 0 250000000)
+            [void](Num $window max_client_displacement 0 .01);[void](Num $window max_server_displacement 0 .01)
+            [void](Num $window client_server_max_error 0 .01)
+            Flag $window all_grounded $true;Flag $window immobility_verified $true
+            [void](Int $window nonzero_binding_samples 0 0);[void](Int $window bindings_or 0 0)
+            $resume=Get-HudBufferedField $window 'resumed_movement'
+            $sequence=Int $resume input_sequence 1 ([long]::MaxValue)
+            $key=Int $resume key 0 255
+            if($key -notin @(87,83,65,68)){throw 'Resumption requires a walking key.'}
+            $resumeNs=Int $resume received_monotonic_ns ([long]::MinValue) ([long]::MaxValue)
+            if($resumeNs -le $close){throw 'Movement resumption predates inventory close.'}
+            [void](Int $resume captured_utc_ms $window.closed_utc_ms ([long]::MaxValue));[void](Int $resume received_utc_ms 1 ([long]::MaxValue))
+            Flag $resume binding_observed $true;Flag $resume verified $true
+            [void](Int $resume stale_samples 0 0)
+            [void](Num $resume client_displacement .05 4);[void](Num $resume server_displacement .05 4)
+            [void](Num $resume client_displacement_from_close .05 4);[void](Num $resume server_displacement_from_close .05 4)
+            $matching=@($events | Where-Object {$_.input_sequence -eq $sequence})
+            if($matching.Count -ne 1){throw 'Resumed movement has no unique delivered movement event.'}
+            $edge=$matching[0]
+            [void](Int $edge kind 1 1);[void](Int $edge key $key $key)
+            [void](Int $edge received_monotonic_ns $resumeNs $resumeNs)
+            foreach($clock in @('captured_utc_ms','received_utc_ms')){[void](Int $edge $clock $resume.$clock $resume.$clock)}
+            Flag $edge accepted_down $true;Flag $edge inventory_open $false
+            Flag $edge context_observed $true;[void](Int $edge window_id 0 0)
+            $verified.Add([pscustomobject]@{id=$id;duration_ms=[double]($duration/1000000);samples=$window.samples;
+                max_client_displacement=$window.max_client_displacement;max_server_displacement=$window.max_server_displacement;
+                resumed_movement=$resume})
+        }catch{$refused.Add([pscustomobject]@{id=$id;reason=$_.Exception.Message})}
+    }
+    if($verified.Count -eq 0){throw ('insufficient_evidence: no stationary inventory window followed by actual resumed walking. '+(($refused | ForEach-Object {$_.reason}) -join ' '))}
+    [pscustomobject]@{schema=1;kind='minecome_hud_walking_inventory_proof_v1';verified_windows=$verified.ToArray();refused_windows=$refused.ToArray();
+        physical_w_attempt_verified=$false;physical_w_denial_verified=$false;host_rendering_verified=$false}
+}
+
+# Additional scenario requirements. The caller must first validate the complete
+# guest/native bridge, movement trace, delayed host readbacks and cleanup receipts.
+# The default deliberately adds no requirement to the established WalkingBreak.
+function Assert-HudWalkingAimedScenario {
+    param($Guest,[ValidateSet('WalkingBreak','TopFaceInventory','SideFaceInventory')][string]$Scenario='WalkingBreak')
+    $proof=[ordered]@{schema=1;kind='minecome_hud_walking_aimed_scenario_v1';scenario=$Scenario;result='passed';
+        requested_face=$null;confirmed_network_actions=$null;inventory=$null;visual_verified=$false;physical_w_attempt_verified=$false;physical_w_denial_verified=$false}
+    if($Scenario -eq 'WalkingBreak'){return [pscustomobject]$proof}
+    function Int($O,[string]$K,[long]$Min,[long]$Max){Get-HudBufferedInteger (Get-HudBufferedField $O $K) $K $Min $Max}
+    function Flag($O,[string]$K,[bool]$V){Assert-HudBufferedFlag (Get-HudBufferedField $O $K) $K $V}
+    function Cell($Value){foreach($axis in @('x','y','z')){[void](Int $Value $axis -10000000 10000000)};return "$($Value.x),$($Value.y),$($Value.z)"}
+    function Same($A,$B){if((Cell $A) -cne (Cell $B)){throw 'Scenario target/hit cell differs from requested face.'}}
+    $lab=Get-HudBufferedField $Guest 'lab_evidence';$stone=Get-HudBufferedField $lab 'stone_bridge';$arena=$stone.arena
+    $face=if($Scenario -eq 'TopFaceInventory'){'UP'}else{'WEST'}
+    $seed=$stone.arena_offer.seed;$null=Cell $seed
+    $added=[pscustomobject]@{x=$seed.x;y=$seed.y;z=$seed.z};if($face -ceq 'UP'){$added.y++}else{$added.x--}
+    $support=[pscustomobject]@{x=$seed.x;y=$seed.y-1;z=$seed.z}
+    $confirmations=@($stone.confirmations);$components=@($arena.confirmations);$requests=@($stone.requests)
+    if($confirmations.Count -ne 4 -or $components.Count -ne 4 -or $requests.Count -lt 3 -or $requests.Count -gt 16){throw 'Scenario requires bootstrap, face placement, added-block break and seed break.'}
+    [void](Int $stone confirmed_network_actions 3 3);[void](Int $stone owned_count 0 0);[void](Int $arena owned_count 0 0)
+    Flag $stone guest_world_cleanup_complete $true;Flag $stone logical_closed_before_restore $true;Flag $stone.build_support cleanup_complete $true
+    Flag $stone pending $false;Flag $arena pending $false
+    [void](Int $arena omitted_receipts 0 0)
+    foreach($field in @('block_writes','inventory_writes','camera_writes')){[void](Int $arena $field 0 0)}
+    if(@($arena.owned_cells).Count -ne 0){throw 'Scenario left owned guest blocks behind.'}
+    $targets=@($seed,$added,$added,$seed);$hits=@($support,$seed,$added,$seed);$actions=@(1,1,2,2)
+    $lastComponent=0L;$lastWire=0L
+    for($i=0;$i -lt 4;$i++) {
+        $row=$confirmations[$i];$component=$components[$i]
+        $id=Int $row component_request_id ($lastComponent+1) ([long]::MaxValue);$lastComponent=$id
+        [void](Int $component id $id $id)
+        foreach($actual in @($row,$component)) {
+            [void](Int $actual action $actions[$i] $actions[$i]);Flag $actual bootstrap ($i -eq 0);Flag $actual client_and_server $true
+            Same $actual.target $targets[$i];Same $actual.hit_block $hits[$i]
+            if($actual.face -cnotin @('UP','DOWN','NORTH','SOUTH','EAST','WEST') -or ($i -eq 0 -and $actual.face -cne 'UP') -or ($i -eq 1 -and $actual.face -cne $face)){throw 'Scenario vanilla hit face differs from requested face.'}
+        }
+        if($component.status -cne 'confirmed' -or $row.face -cne $component.face){throw 'Scenario component confirmation differs from bridge.'}
+        Flag $row block_event_queued $true
+        if($i -eq 0){[void](Int $row wire_request_id 0 0)}
+        else {
+            $wire=Int $row wire_request_id ($lastWire+1) ([long]::MaxValue);$lastWire=$wire
+            $matching=@($requests | Where-Object {$_.wire.requestId -eq $wire})
+            if($matching.Count -ne 1){throw 'Scenario action lacks a unique vanilla network request.'}
+            $request=$matching[0]
+            [void](Int $request component_request_id $id $id);[void](Int $request result 1 1);[void](Int $request.wire action $actions[$i] $actions[$i])
+            foreach($flag in @('actions_enabled','vanilla_queued','client_and_server','result_queued')){Flag $request $flag $true}
+        }
+    }
+    Flag $lab inventory_opened $true;Flag $lab inventory_closed $true
+    $movement=Get-HudBufferedField $lab 'physical_movement'
+    if($null -eq $movement.PSObject.Properties['inventory_evidence']){throw 'unsupported_evidence: this guest predates bounded movement inventory windows.'}
+    $inventory=Assert-HudWalkingInventoryEvidence $movement.inventory_evidence
+    $timing=Get-HudBufferedField $movement 'input_timing';Flag $timing truncated $false
+    $events=@($timing.events);$bindings=@($timing.binding_states)
+    if($events.Count -gt 32 -or $bindings.Count -gt 32){throw 'Scenario movement timing exceeded bounded evidence.'}
+    foreach($window in $inventory.verified_windows) {
+        $resume=$window.resumed_movement;$matching=@($events | Where-Object {$_.input_sequence -eq $resume.input_sequence})
+        if($matching.Count -ne 1){throw 'Scenario resumed edge missing from movement timing.'}
+        $edge=$matching[0]
+        [void](Int $edge kind 1 1);[void](Int $edge key $resume.key $resume.key);Flag $edge accepted_down $true
+        foreach($clock in @('captured_utc_ms','received_utc_ms','received_monotonic_ns')){[void](Int $edge $clock $resume.$clock $resume.$clock)}
+        $bit=@{87=1;83=2;65=4;68=8}[[int]$resume.key]
+        $applied=@($bindings | Where-Object {$_.after_input_sequence -eq $resume.input_sequence -and $_.stage -ceq 'before_vanilla_poll' -and $_.monotonic_ns -ge $resume.received_monotonic_ns -and ($_.mask -band $bit) -ne 0})
+        if($applied.Count -lt 1){throw 'Scenario resumed movement lacks the actual vanilla key binding.'}
+    }
+    $proof.requested_face=$face;$proof.confirmed_network_actions=3;$proof.inventory=$inventory
+    return [pscustomobject]$proof
+}
+
 function New-HudWalkingAimedAdmission([string]$Run,[string]$ProbeRun,$LivePatch,$Context) {
     if($Run -cnotmatch '^[0-9a-f]{32}$' -or $ProbeRun -cnotmatch '^[0-9a-f]{32}$' -or
         $LivePatch.Run -cnotmatch '^[0-9a-f]{32}$' -or $LivePatch.Hash -cnotmatch '^[0-9a-f]{64}$') {throw 'Invalid combined controller identity.'}

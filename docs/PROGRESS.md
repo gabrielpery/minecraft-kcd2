@@ -1,5 +1,100 @@
 # MineCome progress — 2026-10-28
 
+## Computer Use keyboard attempt did not activate the bridge — INCOMPLETE
+
+HUD `8e968faa4bf340209f2c8b838d40de94`, probe `bd53c4362e0646b28c6540363e4a152e`:
+`runtime/evidence/hud-walking-aimed-20261028-151957-bd53c4362e0646b28c6540363e4a152e/`.
+This retry selected the default `WalkingBreak` scenario. Computer Use's
+`@oai/sky` `press_key` calls returned for F8 at UTC-ms 1793200869912 and slot 2 at
+1793200886465, but neither registered in the HUD input bridge. The guest finished
+with `input_cancelled` / `waiting_60s_complete`, zero applied input events and
+`host_armed=false`. There were 811 camera samples, zero forwarded movement points
+and no started movement; Minecraft exited normally with code 0.
+
+No camera snapshot read failure occurred in this run. Because the bridge never
+activated, this is not a completed walking test or a live validation of the reader
+repair during movement, and it supplies no side-face evidence. The reason the
+keypresses did not register is undetermined. Computer Use has successfully closed
+and relaunched the test games, but autonomous gameplay controls remain unverified.
+
+## Combined side-face attempt stopped on a camera snapshot read — FAILED
+
+`SideFaceInventory` run `aee7bfb17fa54dc18a665f767468af67`, probe
+`0c7a45dd698f49ec990a414dfb3dc028`, evidence:
+`runtime/evidence/hud-walking-aimed-20261028-150753-0c7a45dd698f49ec990a414dfb3dc028/`.
+The controller's `Get-Content` read of `host-view.json` in `HudGroundMovement.ps1`
+failed with a Windows sharing violation. Only 74 source points were forwarded and
+70 delayed readbacks were retained; this is partial movement evidence, not a
+successful side-face scenario. Failure cleanup restored KCD's player and stopped
+the relay. Minecraft reported the stream failure, saved and exited with code 0;
+KCD remained alive. The user reports **“didnt do anything just crashed.”** That
+observation is saved separately in `user-feedback.json` without changing the
+primary failed receipt.
+
+A narrow snapshot reader using `FileShare.ReadWrite | FileShare.Delete` is now
+implemented, with **138 camera checks and 159 controller checks passing**. It has
+not yet passed a replacement live walking/side-face test. This read failure is
+separate from the earlier fixture's exhausted 100 ms camera-file **replacement**
+retry budget, whose lock holder remains unknown.
+The successful top-face milestone below remains valid; side-face live coverage
+is still pending.
+
+The immediately preceding attempt,
+`runtime/evidence/hud-walking-aimed-20261028-150658-1332a14ecd05467a9d707a9c19bb7dd0/`,
+timed out on the debug HTTP request during probe initialization, before compositor
+arming or the controller START message. Its folder contains only
+`movement_probe.lua`; it is not a gameplay trial. Bringing KCD to the foreground
+allowed the subsequent controller to initialize. These failures do not establish
+a new input or face-targeting defect.
+
+## Combined top-face placement, inventory and resumed walking in KCD2 — PASS
+
+`TopFaceInventory` passes with HUD `17311ef5fda841d6869e9cbe3484af1f`, probe
+`6a7cde05c377471e9c7b92bcfb091222`, evidence:
+`runtime/evidence/hud-walking-aimed-20261028-150034-6a7cde05c377471e9c7b92bcfb091222/`.
+The user confirms **“all worked!”** All **155 source points and delayed native
+readbacks** match. Actual vanilla client/server records confirm a non-bootstrap
+placement against the seed's UP face, removal of the added upper block, and seed
+removal. Owned stones and support are cleaned up before follower restoration;
+the client exits normally with code 0.
+
+The actual inventory window lasts **1,850.4451 ms**, with 194 fresh observations,
+zero client/server displacement and zero movement bindings. A fresh S press after
+closing reaches the actual vanilla binding; both Minecraft sides then move
+**0.859955 m**. Machine evidence records the face-action sequence and this separate
+inventory/resumption interval. It does not timestamp block actions relative to
+inventory, infer an OS keypress from a missing packet, or set visual proof flags.
+The user's physical-control and display confirmation remains separate. E can open
+and close inventory; Escape is not required for this check.
+
+The combined controller now accepts explicit verification scenarios:
+`WalkingBreak` remains the unchanged default, `TopFaceInventory` requires the
+seed's UP face, and `SideFaceInventory` requires WEST. Each enhanced scenario
+requires the added-block break, seed break, empty ownership/support cleanup and
+an inventory interval followed by actual resumed walking. Side-face live coverage
+is pending. Scenario selection changes proof requirements, not the renderer,
+movement authority, leases or session duration.
+
+`HudMovementInventoryEvidence` observes actual client screens, bindings and fresh
+client/server positions only in the combined live/fixture modes. Its bounded
+receipt retains at most four windows and 32 delivered movement edges. Verification
+requires a naturally closed window of at least 250 ms, at least three fresh
+observations and two server-sequence advances, grounded positions within .01 m,
+no stale observations/nonzero bindings, and at least .05 m of actual client/server
+movement after a new accepted post-close walking edge. A native-filtered W press
+inside inventory is absent from the guest stream and is not invented as evidence.
+
+The same collector also passes in actual standalone Minecraft run
+`8fe454e8df144b17a0bc2a0b949e0c1d`, evidence:
+`runtime/evidence/hud-physical-fixture-20261028-145757-8fe454e8df144b17a0bc2a0b949e0c1d/`.
+All 95 pinned source hashes match. Supplemental `inventory-verification.json`
+verifies two windows of 782.7226 ms and 803.7647 ms, both with zero drift and
+subsequent client/server walking. Scripted inputs and synthetic host rays remain
+explicit; this fixture does not prove KCD compositing or physical input. The 35
+collector checks and 159 controller checks pass alongside the existing physical
+and aimed checks. The 200 ms buffer, sampled terrain, 15-second movement session,
+12-second aim cutoff, completion tail and 30-second HUD lifetime remain unchanged.
+
 ## First combined physical walking, aimed break and HUD in KCD2 — PASS
 
 HUD `179b92e699de495880dec7d6f6ac7449`, probe `8cdbdbd02281412a86fb584a0dd9eab1`:
@@ -41,8 +136,9 @@ mistaken for a cutoff; regression coverage includes that case. Stream metadata
 explicitly marks scripted_input=false only for the new combined live mode. The
 owned bundle update completed at
 `runtime/evidence/hud-update-20261028-142142-ac73673d4aad41d4a94522d1bd2829e4/`.
-Remaining: combined live placement/inventory, longer/persistent sessions and real
-terrain placement. This is a verified bounded milestone, not a final retail build.
+Combined top placement/inventory is verified in the later milestone above.
+Remaining: combined live side coverage, longer/persistent sessions and real terrain
+placement. This is a verified bounded milestone, not a final retail build.
 
 ## Walking, aimed blocks and HUD together in actual Minecraft
 
@@ -94,11 +190,11 @@ JSON result limit. Combined-only compact JSON now preserves all fields and expli
 nulls within the unchanged64KiB limit. Legacy formatting remains unchanged. Neither
 failed trial counts as a full PASS; camera code has not been changed speculatively.
 
-Next live integration needs a dedicated controller/compositor capability, settled
-host playback before issuing an aim permit, and revocation before native movement
-restoration. Do not widen the .25m eye tolerance, rebase rays, or add another
-high-rate pose sampler beside the existing walking camera requests. The verified
-live walking profile and200ms buffer remain unchanged.
+The later live milestones above use a dedicated controller/compositor capability,
+settled host playback before issuing an aim permit, and revocation before native
+movement restoration. The .25m eye tolerance is unchanged; rays are not rebased and
+no second high-rate pose sampler runs beside the walking camera requests. The
+verified live walking profile and 200 ms buffer remain unchanged.
 
 ## Optional 15-second walking mode
 

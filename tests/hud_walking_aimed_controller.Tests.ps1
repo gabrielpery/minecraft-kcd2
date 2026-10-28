@@ -162,4 +162,104 @@ $r=StoppingRelay;Check (-not (Complete-MineComeHudAimedRelayStop $r) -and $scrip
 $r.Process.HasExited=$true;Check ((Complete-MineComeHudAimedRelayStop $r) -and $script:stopParses -eq 1 -and $r.InputCleanupVerified) 'Exited async stop lacks independent cleanup proof'
 $null=Complete-MineComeHudAimedRelayStop $r;Check ($script:stopParses -eq 1) 'Completed stop reparsed while movement active'
 $r=StoppingRelay;$r.Process.HasExited=$true;$script:badStopOrder=$true;Reject {Complete-MineComeHudAimedRelayStop $r} 'Input end before cancellation accepted'
+
+# Synthetic proof validation only. These records cannot establish physical input,
+# real Minecraft execution, host rendering, or delayed native application.
+function InventoryEvidence {
+    Clone @{schema=1;kind='minecome_hud_movement_inventory_v1';max_windows=4;max_events=32;window_count=1;event_count=1;failure=$null;truncated=$false;capture_finished=$true;capture_complete=$true;
+        events=@(@{input_sequence=7;kind=1;key=83;captured_utc_ms=2990;received_utc_ms=3000;received_monotonic_ns=3000000000L;accepted_down=$true;inventory_open=$false;window_id=0;context_observed=$true});
+        windows=@(@{id=1;opened_utc_ms=1000;opened_monotonic_ns=1000000000L;closed_utc_ms=2000;closed_monotonic_ns=2000000000L;complete=$true;
+            samples=20;server_sequence_advances=19;stale_samples=0;max_sample_gap_ns=50000000;max_server_age_ns=50000000;max_client_displacement=.002;max_server_displacement=.002;client_server_max_error=.002;
+            all_grounded=$true;nonzero_binding_samples=0;bindings_or=0;immobility_verified=$true;
+            resumed_movement=@{input_sequence=7;key=83;captured_utc_ms=2990;received_utc_ms=3000;received_monotonic_ns=3000000000L;binding_observed=$true;stale_samples=0;client_displacement=.15;server_displacement=.15;client_displacement_from_close=.15;server_displacement_from_close=.15;verified=$true}})}
+}
+function ScenarioGuest([string]$Face='UP') {
+    $seed=@{x=2;y=64;z=0};$support=@{x=2;y=63;z=0};$added=if($Face -ceq 'UP'){@{x=2;y=65;z=0}}else{@{x=1;y=64;z=0}}
+    $targets=@($seed,$added,$added,$seed);$hits=@($support,$seed,$added,$seed);$actions=@(1,1,2,2);$faces=@('UP',$Face,'WEST','WEST')
+    $rows=@();$components=@();$requests=@()
+    for($i=0;$i -lt 4;$i++) {
+        $rows+=@{component_request_id=$i+1;wire_request_id=$i;action=$actions[$i];target=$targets[$i];hit_block=$hits[$i];face=$faces[$i];bootstrap=($i -eq 0);client_and_server=$true;block_event_queued=$true}
+        $components+=@{id=$i+1;action=$actions[$i];target=$targets[$i];hit_block=$hits[$i];face=$faces[$i];bootstrap=($i -eq 0);client_and_server=$true;status='confirmed'}
+        if($i -gt 0){$requests+=@{wire=@{requestId=$i;action=$actions[$i]};component_request_id=$i+1;result=1;actions_enabled=$true;vanilla_queued=$true;client_and_server=$true;result_queued=$true}}
+    }
+    Clone @{lab_evidence=@{inventory_opened=$true;inventory_closed=$true;
+        stone_bridge=@{arena_offer=@{seed=$seed};confirmations=$rows;requests=$requests;confirmed_network_actions=3;owned_count=0;guest_world_cleanup_complete=$true;logical_closed_before_restore=$true;pending=$false;build_support=@{cleanup_complete=$true};
+            arena=@{confirmations=$components;owned_count=0;pending=$false;omitted_receipts=0;block_writes=0;inventory_writes=0;camera_writes=0;owned_cells=@()}};
+        physical_movement=@{inventory_evidence=(InventoryEvidence);input_timing=@{truncated=$false;
+            events=@(@{input_sequence=7;kind=1;key=83;captured_utc_ms=2990;received_utc_ms=3000;received_monotonic_ns=3000000000L;accepted_down=$true});
+            binding_states=@(@{after_input_sequence=7;monotonic_ns=3010000000L;mask=2;stage='before_vanilla_poll'})}}}}
+}
+$proof=Assert-HudWalkingAimedScenario -Guest $null
+Check ($proof.scenario -ceq 'WalkingBreak' -and $proof.result -ceq 'passed' -and $null -eq $proof.inventory) 'Default scenario gained new inventory or face requirements'
+$proof=Assert-HudWalkingAimedScenario -Guest $null -Scenario walkingbreak
+Check ($proof.result -ceq 'passed') 'Case-insensitive ValidateSet changed default behavior'
+$proof=Assert-HudWalkingAimedScenario -Guest (ScenarioGuest) -Scenario topfaceinventory
+Check ($proof.requested_face -ceq 'UP') 'Case-insensitive scenario selected wrong face'
+foreach($case in @(@('TopFaceInventory','UP'),@('SideFaceInventory','WEST'))) {
+    $g=ScenarioGuest $case[1];$proof=Assert-HudWalkingAimedScenario -Guest $g -Scenario $case[0]
+    Check ($proof.requested_face -ceq $case[1] -and $proof.confirmed_network_actions -eq 3 -and $proof.inventory.verified_windows.Count -eq 1) 'Scenario did not establish exact face and resumed walking'
+    Check (-not $proof.physical_w_attempt_verified -and -not $proof.physical_w_denial_verified -and -not $proof.visual_verified) 'Scenario fabricated physical W or visual proof'
+}
+$g=ScenarioGuest 'WEST';Reject {Assert-HudWalkingAimedScenario $g TopFaceInventory} 'Front-facing placement counted as top-face placement'
+$g=ScenarioGuest 'UP';Reject {Assert-HudWalkingAimedScenario $g SideFaceInventory} 'Top-face placement counted as WEST placement'
+$mutations=@(
+    {param($g)$g.lab_evidence.stone_bridge.confirmations[1].target.x++},
+    {param($g)$g.lab_evidence.stone_bridge.confirmations[1].hit_block.y++},
+    {param($g)$g.lab_evidence.stone_bridge.confirmations[2].target.y--},
+    {param($g)$g.lab_evidence.stone_bridge.confirmations[3].target.y++},
+    {param($g)$g.lab_evidence.stone_bridge.confirmations[1].client_and_server=$false},
+    {param($g)$g.lab_evidence.stone_bridge.arena.confirmations[1].face='WEST'},
+    {param($g)$g.lab_evidence.stone_bridge.arena.confirmations[1].status='pending'},
+    {param($g)$g.lab_evidence.stone_bridge.requests[0].vanilla_queued=$false},
+    {param($g)$g.lab_evidence.stone_bridge.requests[0].component_request_id=9},
+    {param($g)$g.lab_evidence.stone_bridge.confirmations[2].wire_request_id=1},
+    {param($g)$g.lab_evidence.stone_bridge.owned_count=1},
+    {param($g)$g.lab_evidence.stone_bridge.arena.owned_cells=@(@{x=2;y=64;z=0})},
+    {param($g)$g.lab_evidence.stone_bridge.build_support.cleanup_complete=$false},
+    {param($g)$g.lab_evidence.stone_bridge.arena.block_writes=1},
+    {param($g)$g.lab_evidence.stone_bridge.arena.omitted_receipts=1},
+    {param($g)$g.lab_evidence.inventory_closed=$false},
+    {param($g)$g.lab_evidence.physical_movement.PSObject.Properties.Remove('inventory_evidence')},
+    {param($g)$g.lab_evidence.physical_movement.input_timing.events[0].received_monotonic_ns++},
+    {param($g)$g.lab_evidence.physical_movement.input_timing.events[0].accepted_down=$false},
+    {param($g)$g.lab_evidence.physical_movement.input_timing.binding_states[0].mask=0},
+    {param($g)$g.lab_evidence.physical_movement.input_timing.binding_states[0].stage='release'},
+    {param($g)$g.lab_evidence.physical_movement.input_timing.binding_states[0].monotonic_ns=2990000000L},
+    {param($g)$g.lab_evidence.physical_movement.input_timing.truncated=$true}
+)
+foreach($mutate in $mutations){$g=ScenarioGuest;& $mutate $g;Reject {Assert-HudWalkingAimedScenario $g TopFaceInventory} 'Malformed/unsupported scenario evidence passed'}
+$inventoryMutations=@(
+    {param($e)$e.kind='other'}, {param($e)$e.truncated=$true}, {param($e)$e.windows=@()},
+    {param($e)$e.capture_finished=$false}, {param($e)$e.capture_complete=$false},
+    {param($e)$e.window_count=2}, {param($e)$e.event_count=2}, {param($e)$e.failure='clock_regressed'},
+    {param($e)$e.windows=@($e.windows[0]) * 5}, {param($e)$e.events=@($e.events[0]) * 33},
+    {param($e)$e.windows[0].complete=$false}, {param($e)$e.windows[0].id=2},
+    {param($e)$e.windows[0].closed_monotonic_ns=1249999999}, {param($e)$e.windows[0].closed_monotonic_ns=999999999},
+    {param($e)$e.windows[0].samples=2}, {param($e)$e.windows[0].stale_samples=1},
+    {param($e)$e.windows[0].server_sequence_advances=1},
+    {param($e)$e.windows[0].max_sample_gap_ns=250000001}, {param($e)$e.windows[0].max_server_age_ns=250000001},
+    {param($e)$e.windows[0].max_client_displacement=.01001}, {param($e)$e.windows[0].max_server_displacement=.01001},
+    {param($e)$e.windows[0].client_server_max_error=.01001}, {param($e)$e.windows[0].all_grounded=$false},
+    {param($e)$e.windows[0].nonzero_binding_samples=1}, {param($e)$e.windows[0].bindings_or=1},
+    {param($e)$e.windows[0].immobility_verified=$false}, {param($e)$e.windows[0].max_client_displacement=[double]::NaN},
+    {param($e)$e.windows[0].resumed_movement.received_monotonic_ns=2000000000L},
+    {param($e)$e.windows[0].resumed_movement.captured_utc_ms=1999},
+    {param($e)$e.windows[0].resumed_movement.key=32}, {param($e)$e.windows[0].resumed_movement.binding_observed=$false},
+    {param($e)$e.windows[0].resumed_movement.client_displacement=.04999}, {param($e)$e.windows[0].resumed_movement.server_displacement=.04999},
+    {param($e)$e.windows[0].resumed_movement.stale_samples=1},
+    {param($e)$e.windows[0].resumed_movement.client_displacement_from_close=.04999}, {param($e)$e.windows[0].resumed_movement.server_displacement_from_close=.04999},
+    {param($e)$e.windows[0].resumed_movement.verified=$false}, {param($e)$e.events[0].accepted_down=$false},
+    {param($e)$e.events[0].inventory_open=$true}, {param($e)$e.events[0].received_monotonic_ns++}, {param($e)$e.events[0].captured_utc_ms++},
+    {param($e)$e.events[0].context_observed=$false}, {param($e)$e.events[0].window_id=1},
+    {param($e)$e.events+=@($e.events[0])}
+)
+foreach($mutate in $inventoryMutations){$e=InventoryEvidence;& $mutate $e;Reject {Assert-HudWalkingInventoryEvidence $e} 'Invalid inventory/resumption evidence passed'}
+$e=InventoryEvidence;$proof=Assert-HudWalkingInventoryEvidence $e
+Check ($proof.verified_windows.Count -eq 1 -and -not $proof.physical_w_attempt_verified -and $e.events.Count -eq 1) 'Native-filtered W absence was falsely required or represented as proof'
+$e=InventoryEvidence;$e.windows[0].closed_monotonic_ns=1250000000
+$null=Assert-HudWalkingInventoryEvidence $e;Check $true 'Exactly 250ms inventory window rejected'
+foreach($path in @('../scripts/Start-HudWalkingAimed.ps1','../scripts/Test-HudWalkingAimed.ps1')){
+    $ast=Parse $path;$scenario=@($ast.ParamBlock.Parameters | Where-Object {$_.Name.VariablePath.UserPath -ceq 'Scenario'})
+    Check ($scenario.Count -eq 1 -and $scenario[0].DefaultValue.Value -ceq 'WalkingBreak') 'Wrapper/controller scenario default changed'
+}
 Write-Output "HUD_WALKING_AIMED_CONTROLLER_TESTS_PASS checks=$checks no_game_started=true"

@@ -49,21 +49,44 @@ the remaining gameplay limits.
 
 The combined walking/aimed fixture passes in actual Minecraft on flat and captured
 KCD terrain, including top/side placement, breaking, inventory and resumed walking.
-The separate combined live profile now passes walking, a settled aimed break and
-resumed walking with the HUD: 156/156 movement readbacks, confirmed native removal,
-cleanup before restoration and normal exit. The user reports “worked perfectly.”
+The separate combined live profile passes walking, a settled aimed break and
+resumed walking with the HUD: its first run has 156/156 movement readbacks and
+the user reports “worked perfectly.” The newer `TopFaceInventory` scenario also
+passes top placement, added-block and seed breaks, inventory and resumed walking:
+155/155 readbacks, 1.85 seconds of zero client/server inventory displacement,
+cleanup before restoration and normal exit. The user reports “all worked!”
 Clicks require fresh host/guest agreement after the 200 ms playback buffer settles.
 Aiming closes 12s after first movement and drains before KCD's automatic restoration,
 since the guest remains at its final position. All stones must be removed before
 that cutoff. The dedicated support is beside the imported terrain; general placement
-directly against KCD terrain remains unverified. Top/side placement and inventory
-already pass separately and in the combined scripted fixture, but have not yet been
-repeated within this new combined live walking profile.
+directly against KCD terrain remains unverified. `SideFaceInventory` requires the
+seed's WEST face and is still pending live verification in this combined profile;
+that adjacent cell must be outside the imported collision cells. Other faces and
+sustained sessions remain unverified. The new bounded inventory collector proves
+observed immobility, zero movement bindings and actual movement after closing.
+It cannot establish a physical W attempt from a missing event: the native input
+filter normally suppresses W before Minecraft receives it. User confirmation of
+that attempted control stays separate from machine receipts, whose physical-input
+and visual proof flags remain false. E toggles the inventory open and closed.
+
+The subsequent `SideFaceInventory` attempt `aee7bfb17fa54dc18a665f767468af67`
+failed when the controller's `Get-Content` camera snapshot read encountered a
+sharing violation on `host-view.json`. It retained only 74 forwards/70 readbacks;
+KCD restoration succeeded, then Minecraft saved and exited 0 after relay/stream
+closure. KCD itself remained alive. The user's “didnt do anything just crashed”
+report is preserved separately. A snapshot reader with explicit read/write/delete
+sharing now passes 138 automated camera checks and 159 controller checks. The
+following Computer Use attempt read 811 camera samples without that error, but
+never activated input or started movement, so it does not verify the repair during
+walking. Side-face coverage remains pending. An earlier debug HTTP timeout
+occurred during probe initialization before arming, and supplies no gameplay proof.
+See [the exact failure receipts](PROGRESS.md#combined-side-face-attempt-stopped-on-a-camera-snapshot-read--failed).
 
 One combined trial stopped when Windows denied camera-file replacement for the
 existing100ms retry budget. The lock holder is unknown; later unchanged camera
 code passes flat and captured-terrain runs. Retain the original failure evidence
-rather than treating this intermittent file-sharing issue as resolved.
+rather than treating this intermittent file-sharing issue as resolved. This older
+writer-side failure is distinct from the later controller snapshot read failure.
 
 ## Stone texture blur resolved in the verified close view
 
@@ -118,10 +141,18 @@ Escape key dispatches, but no pause menu appeared in the subsequent captures.
 The subsequent F8 attempt missed the guest's 60-second activation window by four
 seconds, so it provides no evidence about F8 delivery. Alt+F4 did close the owned
 KCD test window normally, with process absence confirmed.
-Its documented interface also lacks button-free relative mouse movement and a
-configurable key-hold duration. Window access therefore does not establish that
+In that access check, its documented interface lacked button-free relative mouse
+movement and a configurable key-hold duration. Window access does not establish that
 FPS aiming or all game controls work. Future automated input must be recorded as
 Computer Use input, separately from human physical-input verification.
+
+The 2026-10-28 Computer Use retry `8e968faa4bf340209f2c8b838d40de94` returned from
+`@oai/sky` F8 and slot-2 key calls, but the bridge recorded neither: zero input
+events, `host_armed=false`, and cancellation after the 60-second activation wait.
+No movement began; Minecraft exited 0. There were 811 camera samples and no camera
+read error, but no walking or side-face proof. Computer Use can close and relaunch
+the test games; delivery of these gameplay keys remains unverified. The cause is
+unknown, and successful tool calls alone do not establish input receipt.
 
 Never load newer retail1.5.6 saves into this older1.5.5 development game. Backups of
 982 existing save/profile files were copied and SHA256 verified before testing.
