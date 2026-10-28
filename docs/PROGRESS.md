@@ -1,5 +1,16 @@
 # MineCome progress — 2026-10-28
 
+## Repeat-session installation — VERIFIED, LIVE ACCEPTANCE PENDING
+
+With both games closed and no leftover arm files, the guarded updater verified
+both six-file bundles, disabled the owned proxy, installed the staged repeat
+add-on and re-enabled the proxy unarmed. Installed-profile verification passed
+without further changes. Receipt:
+`runtime/evidence/hud-update-20261028-182335-a328f8eca0994dd0927935076feb99e2/update.json`.
+Both games remain closed; no new live result is claimed. NEXT_SESSION.md starts
+with the exact launch commands and two-session acceptance steps. No new launcher
+or repeated game test was needed for this preparation.
+
 ## Larger area — SCRIPTED TWO-GAME MOVEMENT AND COMBINED MINECRAFT PASS
 
 The existing coupled harness now supports `-WideWalking`, retaining explicit

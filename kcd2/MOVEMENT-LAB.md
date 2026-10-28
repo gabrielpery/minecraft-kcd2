@@ -2,15 +2,18 @@
 
 ## Repeat sessions in one KCD process
 
-The separate repeat profile is implemented, compiled and staged; its complete
+The separate repeat profile is implemented, compiled and installed in the local
+development setup; its complete
 two-session game check is pending. It permits two explicit sessions with a new
 Minecraft process each time, retaining the existing time and terrain bounds.
 It does not grant continuous movement. Failed cleanup/input faults require a restart.
 
-For development acceptance, with KCD closed and the existing walking-aimed bundle
-installed, run from the repository root:
+The local development setup was updated on 28 October; skip installation there.
+For another setup with KCD closed and the existing walking-aimed bundle installed,
+run from the repository root:
 
 ```powershell
+& .\scripts\Disable-HudCompositor.ps1 -WalkingAimed
 & .\scripts\Update-HudCompositor.ps1 -WalkingAimed -RepeatSession -PreviousBundleDirectory '.\runtime\hud-compositor-walking-aimed'
 & .\scripts\Start-Kcd2ToolsTest.ps1
 ```

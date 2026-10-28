@@ -1,5 +1,33 @@
 # Resume checkpoint — 28 October 2026
 
+## Ready for the next round
+
+The compiled repeat-session add-on is now **installed and unarmed** in the official
+development build. Both games are closed. The guarded update and installed-file
+verification passed; no live session was started. Do not repeat installation.
+Update receipt:
+`runtime/evidence/hud-update-20261028-182335-a328f8eca0994dd0927935076feb99e2/update.json`.
+
+From the repository root, the existing helpers automatically select PowerShell 7:
+
+```powershell
+& './scripts/Start-Kcd2ToolsTest.ps1'
+```
+
+After the fresh world loads, start the first combined acceptance from the terminal:
+
+```powershell
+& './scripts/Start-HudWalkingAimed.ps1' -RepeatSession -WideWalking -Scenario TopFaceInventory
+```
+
+Use the controller's fresh readiness output for F8; do not start an asynchronous
+countdown from stale output. After successful cleanup, use the exact printed
+`HUD_REPEAT_NEXT_ARM_RECEIPT` path as `-PreviousArmReceipt` on the same command for
+session two. Keep the same KCD process. Do not automatically discover a latest arm
+or bypass failed cleanup. Verify first retirement `idle`, second `exhausted`.
+The remaining live check covers larger-area controls/composition and reuse;
+automated walking/jumping/block/inventory checks below already passed.
+
 ## Delivery priority — user correction
 
 The user says progress per time/usage is too poor and wants less reliance on manual
@@ -8,7 +36,7 @@ another first-click countdown. The warm-up below is implemented; its live valida
 can be included in the next feature acceptance session.
 
 The larger walking area now passes automated two-game movement and the combined
-Minecraft block/HUD fixture. The repeat-session addon is compiled and staged. Batch their remaining
+Minecraft block/HUD fixture. The repeat-session addon is now installed. Batch their remaining
 live acceptance into one session when the user is available; do not launch another
 small countdown test by default. Keep the verified current profile available and
 use existing actual-Minecraft fixtures and coupled-game checks for regression.
@@ -44,13 +72,13 @@ without a relevant change.
 
 Next useful acceptance: wide capture plus a complete repeat-session lifecycle,
 using `Start-HudWalkingAimed.ps1 -WideWalking -RepeatSession` and the previous arm
-receipt for session two. Install the staged repeat profile first as documented in
-MOVEMENT-LAB.md. The fresh KCD test world was launched automatically, restored,
+receipt for session two. The repeat profile is already installed (above).
+The previous fresh KCD test world was launched automatically, restored,
 then closed normally; Minecraft exited normally too. No countdown is pending.
 Beyond that, rolling terrain requires explicit patch ownership and a
 stable coordinate anchor; current wide capture is one immutable patch.
 
-**Repeat sessions: offline verified; not installed/live verified.**
+**Repeat sessions: installed and offline verified; live verification pending.**
 Separate target `minecome_hud_walking_repeat_compositor`, profile
 `config/hud-walking-repeat-profile.json`, staged bundle `runtime/hud-compositor-walking-repeat`.
 The native policy is now wired into actual addon lifetime, render retirement and
@@ -60,7 +88,8 @@ Controller `-RepeatSession -PreviousArmReceipt <first capture/stream-arming.json
 validates final completion plus native retirement before archiving the first arm.
 Failed native input closures are not reusable even if scene cleanup succeeds.
 Native targeted tests, controller179, repeat33 (real retained completion replay)
-and profile155 checks pass. Installed/default frozen artifacts were not changed.
+and profile155 checks pass. Frozen workspace bundles remain intact; the owned
+development installation was subsequently updated to the repeat profile above.
 See MOVEMENT-LAB.md's repeat-session instructions; no countdown/test is pending.
 
 **Newest implementation, not yet live verified:** startup now prewarms the real
