@@ -286,4 +286,23 @@ foreach($duration in @(5999,14999,16001,15000.5,'15000',$null)){
 Assert-HudWalkingDuration ([pscustomobject]@{duration_ms=15000}) -ExtendedWalking
 Assert-HudWalkingDuration ([pscustomobject]@{duration_ms=16000}) -ExtendedWalking
 
+# The adjoining terrain corridor keeps the extended timeline/queue limits and
+# linear-path proof, but uses a rectangle instead of a radial movement budget.
+$corridorAck=Clone $extendedAck;$corridorAck | Add-Member walking_area corridor
+$corridorPoints=Clone $extendedPoints
+$corridorPoints[-1].Target.x=6.0
+Check ((Assert-HudBufferedMovementReceipt $corridorAck $corridorPoints -ExtendedWalking -CorridorWalking).SourceMs -eq 10100) 'Corridor supports later source points beyond the first tile without changing playback'
+Reject {Assert-HudBufferedMovementReceipt $corridorAck $corridorPoints -CorridorWalking} 'Corridor admitted short playback'
+Reject {Assert-HudBufferedMovementReceipt $corridorAck $corridorPoints -ExtendedWalking} 'Corridor admitted default area'
+Reject {Assert-HudBufferedMovementReceipt $corridorAck $corridorPoints -ExtendedWalking -WideWalking -CorridorWalking} 'Corridor and wide profiles combined'
+foreach($case in @(@('x',7.5001),@('x',-3.5001),@('y',3.5001),@('y',-3.5001),@('z',3.5001),@('z',-6.1001))){
+    $bad=Clone $corridorPoints;$bad[-1].Target.($case[0])=$case[1]
+    Reject {Assert-HudBufferedMovementReceipt $corridorAck $bad -ExtendedWalking -CorridorWalking} 'Corridor forwarded point exceeded immutable source-zero rectangle'
+}
+$corridorSummary=Clone $summary;$corridorSummary | Add-Member walking_area corridor
+Assert-HudWalkingFollowerSession @($corridorSummary) -ExtendedWalking -CorridorWalking
+Check $true 'Corridor preserves extended18-second and2047-write bounds'
+Reject {Assert-HudWalkingFollowerSession @($corridorSummary) -CorridorWalking} 'Corridor session inferred extension'
+Reject {Assert-HudWalkingFollowerSession @($corridorSummary) -ExtendedWalking -WideWalking -CorridorWalking} 'Corridor native session also wide'
+
 Write-Output "HUD_BUFFERED_MOVEMENT_TESTS_PASS checks=$checks game_calls=false"

@@ -274,7 +274,7 @@ public final class HudStreamLab {
             if(output==null || terminal || paused)return;
             var meta=JsonParser.parseString(frame.metadata()).getAsJsonObject();
             if(groundMovement!=null && meta.has("ground_movement_phase"))groundMovement.captured(meta);
-            if(physicalFixture!=null && meta.has("physical_fixture_phase"))physicalFixture.captured(meta.get("physical_fixture_phase").getAsString());
+            if(physicalFixture!=null && meta.has("physical_fixture_phase"))physicalFixture.captured(meta);
             if(timing!=null)timing.readbackAge(System.currentTimeMillis()-meta.get("captured_utc_ms").getAsLong());
             output.offer(new HudStreamProducer.Frame(frame.width(),frame.height(),frame.bottomUp(),meta.get("captured_utc_ms").getAsLong(),meta.get("selected_slot").getAsInt(),meta.get("screen").getAsInt(),frame.metadata()));
         });
@@ -307,7 +307,7 @@ public final class HudStreamLab {
         meta.addProperty("server_selected_slot",observation.selected());meta.addProperty("server_observation_age_ms",(now-observation.at())/1_000_000);
         meta.addProperty("no_world_pixels",true);meta.addProperty("hand_pixels",false);meta.addProperty("gui_scale",client.getWindow().getScaleFactor());
         if(groundMovement!=null){meta.addProperty("ground_movement_phase",groundMovement.phase());groundMovement.captureMetadata(meta);}
-        if(physicalFixture!=null)meta.addProperty("physical_fixture_phase",physicalFixture.phase());
+        if(physicalFixture!=null){meta.addProperty("physical_fixture_phase",physicalFixture.phase());physicalFixture.captureMetadata(client,meta);}
         meta.add("client_slots",jsonSlots(local));meta.add("server_slots",jsonSlots(observation.slots()));
         timingStage("pbo_enqueue");
         try{if(readback.capture(client.getFramebuffer(),++captureId,meta.toString())){lastCaptureAt=now;captureCadence.captured(inventory,now);lastCaptureEnqueuedUtc=System.currentTimeMillis();lastCaptureDecision="enqueued";if(serverConfirmed)capturedServerConfirmed++;else capturedServerPending++;}else lastCaptureDecision="pbo_busy";}

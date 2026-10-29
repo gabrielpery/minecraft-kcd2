@@ -40,6 +40,19 @@ foreach($value in @($true,'true',0,$null)){
 $live=Clone $ready;$live | Add-Member -NotePropertyName scripted_input -NotePropertyValue $false
 Assert-HudPhysicalMovementReady $live $true
 Check $true 'Explicit non-scripted readiness accepted'
+$corridorReady=Clone $live;$corridorReady | Add-Member walking_area corridor;$corridorReady | Add-Member movement_session extended
+Assert-HudPhysicalMovementReady $corridorReady $true -CorridorWalking
+Check $true 'Explicit extended physical corridor readiness accepted'
+Reject {Assert-HudPhysicalMovementReady $corridorReady $true} 'Legacy arming implicitly accepted corridor'
+Reject {Assert-HudPhysicalMovementReady $corridorReady $false -CorridorWalking} 'Corridor arming accepted nonphysical controller'
+foreach($marker in @('ui_input_walking_aimed','ui_input_aimed_stone_bridge','ui_walking_aimed_fixture','facing_seed','ui_ground_corridor_fixture','ui_ground_corridor_coupled','corridor_walk_only')){
+    $bad=Clone $corridorReady;$bad | Add-Member $marker $true
+    Reject {Assert-HudPhysicalMovementReady $bad $true -CorridorWalking} 'Mixed corridor physical/aimed/scripted capability accepted'
+}
+$bad=Clone $corridorReady;$bad.movement_session='short'
+Reject {Assert-HudPhysicalMovementReady $bad $true -CorridorWalking} 'Physical corridor inferred extended session'
+$bad=Clone $corridorReady;$bad.walking_area='wide'
+Reject {Assert-HudPhysicalMovementReady $bad $true -CorridorWalking} 'Physical corridor accepted wide area'
 foreach($value in @($false,0,1,'true','false',$null)){
     $bad=Clone $ready;$bad.ui_input_physical_movement=$value
     Reject {Assert-HudPhysicalMovementReady $bad $true} 'Missing/malformed physical marker accepted'

@@ -23,11 +23,12 @@ function Get-HudBufferedField($Value,[string]$Name) {
     }
     return ,($Value.$Name)
 }
-function Assert-HudWalkingFollowerSession($Receipts,[switch]$ExtendedWalking,[switch]$WideWalking) {
+function Assert-HudWalkingFollowerSession($Receipts,[switch]$ExtendedWalking,[switch]$WideWalking,[switch]$CorridorWalking) {
+    if($CorridorWalking -and -not $ExtendedWalking){throw 'Physical corridor requires the extended buffered session.'}
     $session=Get-HudWalkingSession -ExtendedWalking:$ExtendedWalking
     if(@($Receipts).Count -lt 1 -or @($Receipts).Count -gt $session.Receipts){throw 'Follower receipt budget exceeded or absent.'}
     foreach($receipt in $Receipts){
-        Assert-HudWalkingArea $receipt ([bool]$WideWalking)
+        Assert-HudWalkingArea $receipt ([bool]$WideWalking) -CorridorWalking:$CorridorWalking
         Assert-HudWalkingSession $receipt -ExtendedWalking:$ExtendedWalking
         [void](Get-HudBufferedNumber (Get-HudBufferedField $receipt 'hard_deadline_ms') 'hard deadline' $session.DeadlineMs $session.DeadlineMs)
         [void](Get-HudBufferedInteger (Get-HudBufferedField $receipt 'writes') 'follower writes' 0 ($session.OrdinaryWrites+1))
@@ -94,7 +95,7 @@ function Initialize-HudBufferedMovementPipeline {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$PatchFile,
         [Parameter(Mandatory)][string]$ExpectedHudSave,
-        [Parameter(Mandatory)]$MinimumUtcMs,[switch]$ExtendedWalking,[switch]$WideWalking)
+        [Parameter(Mandatory)]$MinimumUtcMs,[switch]$ExtendedWalking,[switch]$WideWalking,[switch]$CorridorWalking,$Corridor)
     $ErrorActionPreference='Stop'
     $watch=[Diagnostics.Stopwatch]::StartNew()
     try {
@@ -102,19 +103,20 @@ function Initialize-HudBufferedMovementPipeline {
         # Validate the caller's inputs normally, then bind only this fresh state
         # to a separate synthetic world so these records cannot name the HUD save.
         $diagnosticReceiver=New-MineComeTraceReceiver -PatchFile $PatchFile -MinimumUtcMs $MinimumUtcMs `
-            -ExpectedHudSave $ExpectedHudSave -PhysicalMovement -BufferedPhysicalMovement -ExtendedWalking:$ExtendedWalking -WideWalking:$WideWalking
+            -ExpectedHudSave $ExpectedHudSave -PhysicalMovement -BufferedPhysicalMovement -ExtendedWalking:$ExtendedWalking -WideWalking:$WideWalking -CorridorWalking:$CorridorWalking -Corridor $Corridor
         $diagnosticWorld=[Guid]::NewGuid().ToString('D')
         $diagnosticSave='MineCome-HudStream-'+$diagnosticWorld
         $diagnosticReceiver.ExpectedHudSave=$diagnosticSave
         $diagnosticClock=New-HudBufferedSourceState -ExtendedWalking:$ExtendedWalking
         $diagnosticIdentity=[ordered]@{schema=1;run=$diagnosticReceiver.ExpectedRun;patch_sha256=$diagnosticReceiver.PatchHash;
-            source_kind=(Get-HudWalkingSession -ExtendedWalking:$ExtendedWalking).SourceKind;save=$diagnosticSave;world=$diagnosticWorld;utc_ms=[long]$MinimumUtcMs}
-        if($WideWalking){$diagnosticIdentity.walking_area='wide'}
+            source_kind=$(if($CorridorWalking){'live_kcd_hud_physical_movement_corridor'}else{(Get-HudWalkingSession -ExtendedWalking:$ExtendedWalking).SourceKind});save=$diagnosticSave;world=$diagnosticWorld;utc_ms=[long]$MinimumUtcMs}
+        if($CorridorWalking){$diagnosticIdentity.walking_area='corridor'}elseif($WideWalking){$diagnosticIdentity.walking_area='wide'}
         $diagnosticBegin=[ordered]@{}
         foreach($entry in $diagnosticIdentity.GetEnumerator()){$diagnosticBegin[$entry.Key]=$entry.Value}
         $diagnosticBegin.kind='begin';$diagnosticBegin.seq=1L;$diagnosticBegin.phase='SETTLING'
         $diagnosticBegin.started_monotonic_ns=0L;$diagnosticBegin.center=$diagnosticReceiver.Center
-        $diagnosticBegin.anchor_mc=[pscustomobject]@{x=0.0;y=64.0;z=0.0}
+        $diagnosticY=if($CorridorWalking){$diagnosticReceiver.InitialGroundY}else{64.0}
+        $diagnosticBegin.anchor_mc=[pscustomobject]@{x=0.0;y=$diagnosticY;z=0.0}
         $diagnosticBegin.approximate_heightfield=$true;$diagnosticBegin.full_collision_export_verified=$false
         $diagnosticResult=Receive-MineComeMovementTrace -State $diagnosticReceiver `
             -JsonLine (ConvertTo-Json -InputObject $diagnosticBegin -Depth 8 -Compress) -NowUtcMs $MinimumUtcMs
@@ -128,8 +130,8 @@ function Initialize-HudBufferedMovementPipeline {
             $diagnosticSample.phase=if($index -eq 1){'SETTLING'}else{'RESTING'}
             $diagnosticSample.monotonic_ns=[long]($index*100000000);$diagnosticSample.server_seq=[long]$index
             $diagnosticSample.server_age_ns=0L
-            $diagnosticSample.client=[pscustomobject]@{x=0.0;y=64.0;z=0.0;vx=0.0;vy=0.0;vz=0.0;on_ground=$true;proxy_support=$true}
-            $diagnosticSample.server=[pscustomobject]@{x=0.0;y=64.0;z=0.0;vx=0.0;vy=0.0;vz=0.0;on_ground=$true;proxy_support=$true}
+            $diagnosticSample.client=[pscustomobject]@{x=0.0;y=$diagnosticY;z=0.0;vx=0.0;vy=0.0;vz=0.0;on_ground=$true;proxy_support=$true}
+            $diagnosticSample.server=[pscustomobject]@{x=0.0;y=$diagnosticY;z=0.0;vx=0.0;vy=0.0;vz=0.0;on_ground=$true;proxy_support=$true}
             $diagnosticJson=ConvertTo-Json -InputObject $diagnosticSample -Depth 8 -Compress
             $diagnosticResult=Receive-MineComeMovementTrace -State $diagnosticReceiver -JsonLine $diagnosticJson -NowUtcMs $MinimumUtcMs
             if($diagnosticResult.Kind -cne 'sample'){throw 'Diagnostic buffered warmup did not accept its synthetic stationary sample.'}
@@ -178,8 +180,9 @@ function Get-HudBufferedCamera($Value,[string]$Name) {
     }
     return [pscustomobject]@{position=$position;forward=$forward;up=$up;fov=$fov}
 }
-function Assert-HudBufferedMovementReceipt($Receipt,$Forwarded,[switch]$ExtendedWalking,[switch]$WideWalking) {
-    Assert-HudWalkingArea $Receipt ([bool]$WideWalking)
+function Assert-HudBufferedMovementReceipt($Receipt,$Forwarded,[switch]$ExtendedWalking,[switch]$WideWalking,[switch]$CorridorWalking) {
+    if($CorridorWalking -and -not $ExtendedWalking){throw 'Physical corridor requires the extended buffered session.'}
+    Assert-HudWalkingArea $Receipt ([bool]$WideWalking) -CorridorWalking:$CorridorWalking
     $session=Get-HudWalkingSession -ExtendedWalking:$ExtendedWalking
     Assert-HudWalkingSession $Receipt -ExtendedWalking:$ExtendedWalking
     # This proves retained observed path samples, not unrecorded frames or visual
@@ -194,6 +197,14 @@ function Assert-HudBufferedMovementReceipt($Receipt,$Forwarded,[switch]$Extended
         $ms=Get-HudBufferedNumber (Get-HudBufferedField $point 'SourceMs') 'forwarded source time' 0 $session.SourceMs
         if($ms -ne [double][single]$ms){throw 'Forwarded SourceMs must retain the exact float32 wire value.'}
         $target=Get-HudBufferedVector (Get-HudBufferedField $point 'Target') 'forwarded target'
+        if($CorridorWalking -and $points.Count -gt 0){
+            # Source zero is the real settled anchor mapped to the saved KCD
+            # origin, never the centre of the second tile or a rolling anchor.
+            $origin=$points[0].Target
+            if($target.x -lt $origin.x-3.5 -or $target.x -gt $origin.x+7.5 -or
+                $target.y -lt $origin.y-3.5 -or $target.y -gt $origin.y+3.5 -or
+                $target.z -lt $origin.z-6.1 -or $target.z -gt $origin.z+3.5){throw 'Buffered corridor source leaves its immutable rectangle.'}
+        }
         if($seq -le $lastSeq -or $ms -le $lastMs -or ($points.Count -eq 0 -and $ms -ne 0)) {
             throw 'Dispatched source points must have a zero anchor and strictly increasing sequence/time.'
         }

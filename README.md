@@ -37,8 +37,14 @@ joins captured terrain into a 12×8 metre surface without changing the coordinat
 origin. An automatic two-game walking check now moves KCD's player and camera
 across the original patch edge and back from Minecraft server positions, then
 restores the starting position. HUD streaming and cleanup also pass. This route
-uses scripted controls and a standalone HUD receiver; the physical-input/native-HUD
-profiles still use their previous terrain limits. Rolling terrain remains unfinished.
+uses scripted controls and a standalone HUD receiver. A separate extended physical
+walking/HUD profile now accepts the same corridor. Its automatic Minecraft check
+crosses the old boundary, keeps the HUD rendering, blocks movement in inventory
+and returns to the origin. Replaying its recorded server path through KCD also
+passes native movement and exact restoration. Foreground input/composition
+acceptance is still pending.
+The existing combined blocks/inventory profile retains its verified 8×8m area.
+Rolling terrain remains unfinished.
 The separate jump diagnostic currently exposes a temporary KCD camera-height
 deviation during landing; it is not counted as a passing walking check.
 

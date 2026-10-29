@@ -87,6 +87,29 @@ public final class HudMovementBoundaryTests {
             check(gate.check(origin,1,1,false,angle,.13001,.42001,true).allow(),"diagonal normalization preserves flat clearance");
         }
         completion();
+        var corridor=GroundCorridorTests.flatCorridor();
+        var corridorAnchor=new MovementTraceSink.Motion(0,64,0,0,0,0,true,true,false,true);
+        var corridorGate=new HudMovementBoundary(corridor,corridorAnchor);
+        var crossed=new MovementTraceSink.Motion(5.5,64,0,.1,-.0784,0,true,true,false,true);
+        check(forward(corridorGate,crossed,-90).allow(),"Physical corridor admits grounded travel beyond the old four-metre edge");
+        check(corridorGate.check(crossed,-1,0,false,-90,.13001,.42001,false).allow(),"Physical corridor permits ordinary return input beyond old edge");
+        var rightEdge=new MovementTraceSink.Motion(7.3,64,0,.1,-.0784,0,true,true,false,true);
+        check(!forward(corridorGate,rightEdge,-90).allow(),"Physical corridor reserves raw rectangle stopping clearance");
+        var leftEdge=new MovementTraceSink.Motion(-3.3,64,0,-.1,-.0784,0,true,true,false,true);
+        check(!forward(corridorGate,leftEdge,90).allow(),"Physical corridor rejects braking past negative rectangle edge");
+        var sideEdge=new MovementTraceSink.Motion(5.5,64,3.3,0,-.0784,.1,true,true,false,true);
+        check(!forward(corridorGate,sideEdge,0).allow(),"Expanded X authority does not widen Z clearance");
+        var offsetAnchor=new MovementTraceSink.Motion(.001,64,0,0,0,0,true,true,false,true);
+        var offsetGate=new HudMovementBoundary(corridor,offsetAnchor);
+        check(!forward(offsetGate,leftEdge,90).allow(),"Frozen nonzero physical anchor cannot expand native rectangle authority");
+        // Actual29Oct captured run reached bothX>4.5, then W was released on
+        // a slab descent. Retain its horizontal motion in this pure footprint
+        // check: a conservative airborne coast passes7.5 before the old5.5 goal.
+        var descending=new MovementTraceSink.Motion(4.73267331404574,63.68766368865967,0,.11855739150455975,-.1552320045166016,0,false,true,false,true);
+        var descentStop=forward(corridorGate,descending,-90);
+        check(!descentStop.allow()&&descentStop.reason().equals("sampled_footprint_braking_clearance"),
+                "Recorded descent still releases W rather than weakening the sampled braking bound");
+        check(descending.x()-.3>4,"Whole player footprint has already crossed the original edge before this stop");
         return checks;
     }
     private static void completion(){

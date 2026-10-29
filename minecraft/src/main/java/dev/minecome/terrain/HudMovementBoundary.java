@@ -13,10 +13,10 @@ final class HudMovementBoundary {
     record Decision(boolean allow,String reason,boolean flat,double minGround,double maxGround,double reach) {}
     private record Rect(double minX,double maxX,double minZ,double maxZ) {}
     private record Heights(double min,double max) {}
-    private final GroundPatch patch;
+    private final GroundSurface patch;
     private final MovementTraceSink.Motion anchor;
 
-    HudMovementBoundary(GroundPatch patch,MovementTraceSink.Motion anchor){this.patch=patch;this.anchor=anchor;}
+    HudMovementBoundary(GroundSurface patch,MovementTraceSink.Motion anchor){this.patch=patch;this.anchor=anchor;}
 
     Decision check(MovementTraceSink.Motion m,int forward,int sideways,boolean jump,double yaw,
                    double acceleration,double jumpVelocity,boolean sprintJump){
@@ -44,13 +44,17 @@ final class HudMovementBoundary {
         Heights heights=flat?flatHeights:heights(corridor);
         if(heights==null)return reject("sampled_footprint_braking_clearance");
         double bottom=Math.min(m.y(),heights.min()),top=Math.max(peak,heights.max());
-        if(bottom-anchor.y()<MIN_Y)return reject("downhill_braking_clearance",flat,heights,0);
-        if(top-anchor.y()>MAX_Y)return reject("vertical_braking_clearance",flat,heights,0);
+        if(bottom-anchor.y()<(patch.corridor()?-6.05:MIN_Y) || (patch.corridor()&&bottom<57.95))return reject("downhill_braking_clearance",flat,heights,0);
+        if(top-anchor.y()>(patch.corridor()?3.45:MAX_Y) || (patch.corridor()&&top>67.45))return reject("vertical_braking_clearance",flat,heights,0);
         double dx=Math.max(Math.abs(corridor.minX()-anchor.x()),Math.abs(corridor.maxX()-anchor.x()));
         double dz=Math.max(Math.abs(corridor.minZ()-anchor.z()),Math.abs(corridor.maxZ()-anchor.z()));
         double dy=Math.max(Math.abs(bottom-anchor.y()),Math.abs(top-anchor.y()));
         double reach=Math.sqrt(dx*dx+dy*dy+dz*dz);
-        if(reach>(patch.wide()?3.5:RADIUS))return reject("sphere_braking_clearance",flat,heights,reach);
+        if(patch.corridor()){
+            if(corridor.minX()-anchor.x()< -3.5 || corridor.maxX()-anchor.x()>7.5 ||
+                    corridor.minZ()-anchor.z()< -3.5 || corridor.maxZ()-anchor.z()>3.5)
+                return reject("corridor_anchor_braking_clearance",flat,heights,reach);
+        }else if(reach>(patch.wide()?3.5:RADIUS))return reject("sphere_braking_clearance",flat,heights,reach);
         return new Decision(true,"clear",flat,heights.min(),heights.max(),reach);
     }
     private static Rect rectangle(MovementTraceSink.Motion m,double ax,double az,double kx,double kz,double factor){
@@ -67,7 +71,8 @@ final class HudMovementBoundary {
                 Math.min(m.z(),Math.min(z0,z1))-PAD,Math.max(m.z(),Math.max(z0,z1))+PAD);
     }
     private Heights heights(Rect r){
-        if(!patch.containsFeet(r.minX(),r.minZ(),.4) || !patch.containsFeet(r.maxX(),r.maxZ(),.4))return null;
+        double inset=patch.corridor()?.5:.4;
+        if(!patch.containsFeet(r.minX(),r.minZ(),inset) || !patch.containsFeet(r.maxX(),r.maxZ(),inset))return null;
         var xs=new TreeSet<Double>();var zs=new TreeSet<Double>();
         xs.add(r.minX());xs.add(r.maxX());zs.add(r.minZ());zs.add(r.maxZ());
         // groundForFeet is piecewise constant. Evaluate both sides and the

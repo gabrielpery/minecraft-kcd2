@@ -39,6 +39,31 @@ $repeatBundle.files[1].sha256=$repeatProfile.addon_sha256
 $repeatBundle | Add-Member NoteProperty repeat_sessions 2
 Assert-MineComeWalkingAimedBundle $repeatBundle $repeatProfile
 Check $true 'Explicit repeat-session bundle accepted'
+$updatePath=Join-Path $root 'scripts/Update-HudCompositor.ps1'
+$tokens=$null;$errors=$null
+$updateAst=[Management.Automation.Language.Parser]::ParseFile($updatePath,[ref]$tokens,[ref]$errors)
+$transition=$updateAst.Find({param($node)$node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Get-MineComePhysicalUpdatePreviousProfile'},$true)
+if(-not $transition){throw 'Missing integrated physical update predecessor check'}
+Invoke-Expression $transition.Extent.Text
+$repeatInstalled=[pscustomobject]@{schema=1;kind='minecome_hud_install_v1';files=(Clone $repeatBundle.files)}
+Check ((Get-MineComePhysicalUpdatePreviousProfile $repeatBundle $repeatInstalled $true).addon_sha256 -ceq $repeatProfile.addon_sha256) 'Explicit return to plain physical selects the exact repeat predecessor pins'
+Reject {Get-MineComePhysicalUpdatePreviousProfile $repeatBundle $repeatInstalled $false} 'Default physical transition silently accepted repeat predecessor'
+$r4Bundle=Clone $bundle;$r4Bundle.ui_input_protocol=1;$r4Bundle.arm_config_relative_path='minecome-hud/addons/MineComeHudSelective.ini'
+$r4Bundle.PSObject.Properties.Remove('walking_aimed');$r4Bundle.PSObject.Properties.Remove('physical_movement');$r4Bundle.files[1].sha256=$r4.addon_sha256
+$r4Installed=[pscustomobject]@{schema=1;kind='minecome_hud_install_v1';files=(Clone $r4Bundle.files)}
+Check ((Get-MineComePhysicalUpdatePreviousProfile $r4Bundle $r4Installed $false).addon_sha256 -ceq $r4.addon_sha256) 'Default physical transition retains the original exact r4 predecessor'
+Reject {Get-MineComePhysicalUpdatePreviousProfile $r4Bundle $r4Installed $true} 'Explicit repeat transition accepted r4 instead'
+Reject {Get-MineComePhysicalUpdatePreviousProfile $bundle ([pscustomobject]@{schema=1;kind='minecome_hud_install_v1';files=(Clone $bundle.files)}) $true} 'Repeat predecessor accepted one-shot walking aimed'
+for($index=0;$index -lt 6;$index++){
+    $bad=Clone $repeatInstalled;$bad.files[$index].sha256='f'*64
+    Reject {Get-MineComePhysicalUpdatePreviousProfile $repeatBundle $bad $true} 'Repeat transition bypassed one installed file identity'
+}
+foreach($field in @('repeat_sessions','walking_aimed','physical_movement')){
+    $bad=Clone $repeatBundle;$bad.$field=$false
+    Reject {Get-MineComePhysicalUpdatePreviousProfile $bad $repeatInstalled $true} 'Repeat transition accepted an altered predecessor profile'
+}
+Reject {& $updatePath -FromWalkingAimedRepeat -PreflightOnly} 'Repeat transition flag silently selected a destination profile'
+Reject {& $updatePath -PhysicalMovement -FromWalkingAimedRepeat -WalkingAimed -PreflightOnly} 'Repeat transition accepted mixed destination profiles'
 Reject {Assert-MineComeWalkingAimedBundle $repeatBundle $profile} 'One-shot profile cannot select repeat bundle'
 Reject {Assert-MineComeWalkingAimedBundle $bundle $repeatProfile} 'Repeat profile cannot select one-shot bundle'
 foreach($marker in @($true,'2',1,3)){

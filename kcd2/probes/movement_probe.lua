@@ -371,6 +371,11 @@ local PHYSICAL_LIMITS = { hard_ms=FOLLOWER_MS,source_ms=SOURCE_LIMIT_MS,writes=5
 local EXTENDED_LIMITS = { hard_ms=18000,source_ms=16000,writes=2047,receipts=256,session="extended",radius=2 }
 local WIDE_PHYSICAL_LIMITS = { hard_ms=FOLLOWER_MS,source_ms=SOURCE_LIMIT_MS,writes=511,receipts=128,radius=4,walking_area="wide" }
 local WIDE_EXTENDED_LIMITS = { hard_ms=18000,source_ms=16000,writes=2047,receipts=256,session="extended",radius=4,walking_area="wide" }
+-- Physical corridor keeps the existing extended buffered clocks and budgets.
+-- Its source coordinates are offsets from the frozen settled Minecraft anchor,
+-- and the host also checks captured geometry; no terrain origin is rebased here.
+local CORRIDOR_EXTENDED_LIMITS = { hard_ms=18000,source_ms=16000,writes=2047,receipts=256,session="extended",
+    walking_area="corridor",min_x=-3.5,max_x=7.5,min_y=-3.5,max_y=3.5,min_z=-6.1,max_z=3.5 }
 state.follower_profiles = state.follower_profiles or setmetatable({}, { __mode="k" })
 local follower_profiles = state.follower_profiles
 -- A still-owned follower from the pre-profile module has only baseline limits.
@@ -527,14 +532,14 @@ end
 local function begin_follower(run,physical,buffered,extended,walking_area)
     if not token(run) then return false,"invalid_run" end
     if walking_area ~= nil and walking_area ~= "wide" and walking_area ~= "corridor" then return false,"invalid_walking_area" end
-    if walking_area == "corridor" and (physical or buffered or extended) then return false,"invalid_walking_area" end
+    if walking_area == "corridor" and physical and not (buffered and extended) then return false,"invalid_walking_area" end
     if state.active or state.follower then return false,"busy" end
     local s,clock = snapshot(),now()
     local unsafe = guards(s,0.05,true,true)
     if not clock then unsafe = "clock_unavailable" end
     if type(field(s.entity,"SetWorldPos")) ~= "function" then unsafe = "position_writer_unavailable" end
     if not Script or type(Script.SetTimerForFunction) ~= "function" or type(Script.KillTimer) ~= "function" then unsafe = "timer_unavailable" end
-    local limits = walking_area == "corridor" and CORRIDOR_SCRIPTED_LIMITS
+    local limits = walking_area == "corridor" and (physical and CORRIDOR_EXTENDED_LIMITS or CORRIDOR_SCRIPTED_LIMITS)
         or walking_area == "wide" and (not physical and WIDE_SCRIPTED_LIMITS or extended and WIDE_EXTENDED_LIMITS or WIDE_PHYSICAL_LIMITS)
         or extended and EXTENDED_LIMITS or physical and PHYSICAL_LIMITS or SCRIPTED_LIMITS
     local p = {run=run,entity=s.entity,id=s.id,created=clock,deadline=clock and clock+limits.hard_ms/1000,origin=copy(s.position.value),
@@ -608,7 +613,7 @@ function MineCome.ApplyBufferedMovementFollower(run,seq,x,y,z,source_ms)
     local invalid
     if not finite(seq) or seq<1 or seq>200 or seq~=math.floor(seq) then invalid="sequence_invalid"
     elseif seq<=p.last_queued_seq then invalid="sequence_replayed"
-    elseif not vector(target) or distance(target,p.origin)>follower_radius(p) or z-p.origin.z < -1.5 or z-p.origin.z>1.5 then invalid="target_out_of_bounds"
+    elseif not follower_target_allowed(p,target) then invalid="target_out_of_bounds"
     elseif not finite(source_ms) or source_ms<0 or source_ms>follower_limits(p).source_ms then invalid="source_time_invalid"
     elseif not clock or clock<p.last_clock or (p.latest and clock<p.latest.received) then invalid="clock_unavailable_or_regressed"
     elseif clock>=p.deadline then invalid="hard_deadline"

@@ -2,12 +2,13 @@
 # Original bounded stream arm. Input mode still requires a physical F8 latch.
 # No game launch, movement or process injection.
 [CmdletBinding()]
-param([string]$ReadyManifest, [string]$BundleDirectory, [switch]$PreflightOnly, [switch]$InputMode, [switch]$OffscreenPresentation, [switch]$LiveMouse, [switch]$StoneLive, [switch]$WorldClicks, [switch]$SelectiveMouse, [ValidateSet(1,2,3,4)][int]$SelectiveRevision=1, [switch]$AimedStone, [switch]$PhysicalMovement, [switch]$WalkingAimed, [switch]$RepeatSession, [string]$PreviousArmReceipt, [switch]$WideWalking)
+param([string]$ReadyManifest, [string]$BundleDirectory, [switch]$PreflightOnly, [switch]$InputMode, [switch]$OffscreenPresentation, [switch]$LiveMouse, [switch]$StoneLive, [switch]$WorldClicks, [switch]$SelectiveMouse, [ValidateSet(1,2,3,4)][int]$SelectiveRevision=1, [switch]$AimedStone, [switch]$PhysicalMovement, [switch]$WalkingAimed, [switch]$RepeatSession, [string]$PreviousArmReceipt, [switch]$WideWalking,[switch]$CorridorWalking)
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'HudPhysicalMovement.ps1')
 . (Join-Path $PSScriptRoot 'HudWalkingAimedProfile.ps1')
 . (Join-Path $PSScriptRoot 'HudGroundMovement.ps1')
+if($CorridorWalking -and (-not $PhysicalMovement -or $WideWalking -or $WalkingAimed)){throw 'CorridorWalking requires the separate physical movement profile.'}
 if($WideWalking -and -not ($PhysicalMovement -or $WalkingAimed)){throw 'WideWalking requires an explicit walking profile.'}
 if($RepeatSession -and -not $WalkingAimed){throw 'RepeatSession requires the WalkingAimed profile.'}
 if($PreviousArmReceipt -and -not $RepeatSession){throw 'PreviousArmReceipt requires explicit RepeatSession.'}
@@ -125,8 +126,8 @@ if(-not $ReadyManifest.StartsWith($evidenceRoot+'\',[StringComparison]::OrdinalI
 $ready=Read-Receipt $ReadyManifest
 Assert-HudNonFixtureArm $ready
 Assert-HudWalkingAimedReady $ready ([bool]$WalkingAimed)
-Assert-HudWalkingArea $ready ([bool]$WideWalking)
-Assert-HudPhysicalMovementReady $ready ([bool]($PhysicalMovement -or $WalkingAimed))
+Assert-HudWalkingArea $ready ([bool]$WideWalking) -CorridorWalking:$CorridorWalking
+Assert-HudPhysicalMovementReady $ready ([bool]($PhysicalMovement -or $WalkingAimed)) -CorridorWalking:$CorridorWalking
 if($InputMode){
     if($ready.PSObject.Properties.Name -notcontains 'ui_input_protocol' -or $ready.ui_input_protocol -ne $inputProtocol){throw 'Input mode requires explicit genuine guest readiness.'}
     if($ready.PSObject.Properties.Name -notcontains 'ui_input_fixture' -or $ready.ui_input_fixture -isnot [bool] -or $ready.ui_input_fixture -ne $false){throw 'Fixture producer cannot arm live KCD input.'}
@@ -169,6 +170,7 @@ $receipt.physical_movement=[bool]($PhysicalMovement -or $WalkingAimed)
 if($WalkingAimed){$receipt.walking_aimed=$true;$receipt.movement_session='extended';$receipt.selective_revision=4}
 if($RepeatSession){$receipt.repeat_session=$true;$receipt.session_generation=if($previous){2}else{1}}
 if($WideWalking){$receipt.walking_area='wide'}
+if($CorridorWalking){$receipt.walking_area='corridor'}
 if($SelectiveRevision -ge 2){$receipt.selective_revision=$SelectiveRevision}
 $receiptPath=Join-Path $evidenceDirectory 'stream-arming.json'
 if(Test-Path -LiteralPath $receiptPath) {throw 'Existing stream arm receipt preserved.'}

@@ -68,6 +68,21 @@ public final class HudPhysicalMovementTests {
         check(HudPhysicalMovementMode.require(fixture) && HudPhysicalMovementMode.fixture(fixture),"Separate labelled scripted physical controller mode");
         var extendedFixture=new Properties();extendedFixture.putAll(fixture);extendedFixture.setProperty("minecome.hudPhysicalMovementExtended","true");
         check(HudPhysicalMovementMode.require(extendedFixture) && HudMovementSession.selected(extendedFixture)==HudMovementSession.EXTENDED,"Fixture opts into the same extended controller policy explicitly");
+        for(var base:List.of(extended,extendedFixture)){
+            var corridor=(Properties)base.clone();corridor.setProperty("minecome.hudCorridorWalking","true");
+            check(HudPhysicalMovementMode.require(corridor)&&HudPhysicalMovementMode.corridor(corridor),"Explicit corridor retains extended physical live/fixture identity");
+            for(String key:List.of("hudWideWalking","hudWalkingAimed","hudWalkingAimedFixture","hudFacingSeedFixture","hudGroundMovementFixture",
+                    "hudGroundMovementCoupled","hudGroundCorridorFixture","hudGroundCorridorCoupled","hudGroundCorridorWalkOnly")){
+                var mixed=(Properties)corridor.clone();mixed.setProperty("minecome."+key,"true");
+                reject(()->HudPhysicalMovementMode.require(mixed),"Physical corridor rejects "+key);
+            }
+            corridor.remove("minecome.hudPhysicalMovementExtended");reject(()->HudPhysicalMovementMode.require(corridor),"Corridor cannot use short timing");
+        }
+        var corridorOrphan=new Properties();corridorOrphan.setProperty("minecome.hudCorridorWalking","true");
+        reject(()->HudPhysicalMovementMode.require(corridorOrphan),"Corridor cannot enable implicit physical ownership");
+        for(String invalid:List.of("TRUE","1","","corridor")){
+            var p=(Properties)extended.clone();p.setProperty("minecome.hudCorridorWalking",invalid);reject(()->HudPhysicalMovementMode.require(p),"Malformed corridor selector");
+        }
         var wideFixture=new Properties();wideFixture.putAll(extendedFixture);wideFixture.setProperty("minecome.hudWideWalking","true");
         check(HudPhysicalMovementMode.require(wideFixture),"Wide crossing fixture retains extended movement");
         wideFixture.setProperty("minecome.hudWalkingAimedFixture","true");

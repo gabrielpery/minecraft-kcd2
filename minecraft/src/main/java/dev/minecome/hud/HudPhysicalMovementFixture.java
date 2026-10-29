@@ -12,6 +12,9 @@ import java.util.concurrent.atomic.AtomicReference;
 
 /** Scripted game-thread edges through the actual movement controller; never physical-input proof. */
 final class HudPhysicalMovementFixture implements AutoCloseable {
+    // The entire0.6m player footprint crosses X4 before the conservative
+    // airborne braking envelope may release input on descending terrain.
+    private static final double CORRIDOR_CROSSING_X=4.5;
     private record Observation(Vec3d position,long at){}
     private final HudPhysicalMovement movement;
     private final HudVanillaUiAdapter ui;
@@ -24,8 +27,9 @@ final class HudPhysicalMovementFixture implements AutoCloseable {
     private final int[] codes;
     private final boolean extended;
     private final boolean wide=HudPhysicalMovementMode.wide(System.getProperties());
+    private final boolean corridor=HudPhysicalMovementMode.corridor(System.getProperties());
     private final boolean aimedMode=Boolean.getBoolean("minecome.hudWalkingAimedFixture");
-    private final GroundPatch patch;
+    private final GroundSurface patch;
     private volatile HudWalkingAimedFixture aimed;
     private volatile boolean closing,cameraStopped;
     private volatile long views,droppedViews;
@@ -34,6 +38,8 @@ final class HudPhysicalMovementFixture implements AutoCloseable {
     private Vec3d origin,serverOrigin,previous,serverPrevious,postWalkOrigin,postWalkServerOrigin;
     private double inventoryClientMax,inventoryServerMax,postWalkInventoryClientMax,postWalkInventoryServerMax;
     private double clientMaxExcursion,serverMaxExcursion;
+    private double clientMaxX,serverMaxX,clientReturnDistance,serverReturnDistance;
+    private long crossingHudFrames;
     private boolean finished,postWalkInventoryOpened,postWalkInventoryClosed;
 
     HudPhysicalMovementFixture(MinecraftClient client,HudPhysicalMovement movement,Path patchFile,
@@ -41,14 +47,15 @@ final class HudPhysicalMovementFixture implements AutoCloseable {
         if(!HudPhysicalMovementMode.fixture(System.getProperties()) || Boolean.getBoolean("minecome.hudStreamInput"))
             throw new IllegalArgumentException("Scripted physical controller fixture requires its separate standalone mode");
         this.movement=movement;extended=movement.session().extended();
-        if(wide&&!extended)throw new IllegalArgumentException("Wide crossing fixture requires extended walking");
-        codes=wide?new int[]{0x57,0x53,0x57,0x57,0x53}:extended?new int[]{0x57,0x57,0x53,0x57,0x53}:new int[]{0x57,0x57,0x53};
+        if((wide||corridor)&&!extended)throw new IllegalArgumentException("Expanded crossing fixture requires extended walking");
+        codes=wide||corridor?new int[]{0x57,0x53,0x57,0x57,0x53}:extended?new int[]{0x57,0x57,0x53,0x57,0x53}:new int[]{0x57,0x57,0x53};
         ui=new HudVanillaUiAdapter(client,false);server=client.getServer();player=client.player.getUuid();
-        patch=GroundPatch.read(patchFile,wide);
-        if(!patch.sourceKind().equals("standalone_ground_fixture"))throw new IOException("Fixture patch provenance differs");
-        double yaw=Double.parseDouble(System.getProperty("minecome.hudPhysicalFixtureYaw","0"));
+        patch=corridor?GroundCorridor.read(patchFile):GroundPatch.read(patchFile,wide);
+        if(!patch.sourceKind().equals(corridor?"standalone_corridor_fixture":"standalone_ground_fixture")||patch.run().equals(identity.run()))throw new IOException("Fixture patch provenance differs");
+        double yaw=Double.parseDouble(System.getProperty("minecome.hudPhysicalFixtureYaw",corridor?"-90":"0"));
         if(!Double.isFinite(yaw) || yaw < -180 || yaw > 180)throw new IllegalArgumentException("Fixture yaw outside finite180 degrees");
         if(aimedMode && (!extended || yaw!=0))throw new IllegalArgumentException("Walking/aimed fixture requires extended yaw-zero movement");
+        if(corridor&&yaw!= -90)throw new IllegalArgumentException("Corridor crossing fixture requires yaw minus90");
         Path parent=viewFile.toAbsolutePath().normalize().getParent().toRealPath();
         Path evidence=client.runDirectory.toPath().toAbsolutePath().normalize().getParent().getParent().resolve("runtime/evidence").toRealPath();
         if(!viewFile.isAbsolute() || !parent.startsWith(evidence) || Files.exists(viewFile,LinkOption.NOFOLLOW_LINKS))
@@ -63,6 +70,20 @@ final class HudPhysicalMovementFixture implements AutoCloseable {
     }
     String phase(){return switch(stage){case 0->"settling";case 1->"inventory_blocked";case 2->"hotbar_ready";case 3,4->"scripted_walking";case 5->"final_settling";case 7->aimed!=null&&!aimed.interactionsComplete()?"aimed_interactions":"extended_wait";case 8->"post_walk_inventory_blocked";default->"cleanup";};}
     void captured(String phase){if(phase.equals("inventory_blocked"))inventoryFrames++;if(phase.equals("scripted_walking"))walkingFrames++;if(phase.equals("post_walk_inventory_blocked"))postWalkInventoryFrames++;if(phase.equals("aimed_interactions"))aimedFrames++;}
+    void captureMetadata(MinecraftClient client,JsonObject meta){
+        if(!corridor)return;
+        var remote=observed.get();long now=System.nanoTime();
+        if(remote==null||now<remote.at()||now-remote.at()>250_000_000L)return;
+        meta.addProperty("physical_corridor_sha256",patch.sha256());
+        meta.addProperty("physical_corridor_client_x",client.player.getX());meta.addProperty("physical_corridor_server_x",remote.position().x);
+    }
+    void captured(JsonObject meta){
+        captured(meta.get("physical_fixture_phase").getAsString());
+        if(corridor&&meta.has("physical_corridor_sha256")){
+            if(!patch.sha256().equals(meta.get("physical_corridor_sha256").getAsString()))throw new IllegalStateException("Physical corridor captured surface identity changed");
+            if(meta.get("physical_corridor_client_x").getAsDouble()>4.3&&meta.get("physical_corridor_server_x").getAsDouble()>4.3)crossingHudFrames++;
+        }
+    }
     boolean finished(){return finished;}
     boolean inventoryCaptured(){return inventoryFrames>=2;}
     private Observation observation(long now){
@@ -79,11 +100,12 @@ final class HudPhysicalMovementFixture implements AutoCloseable {
             var actual=client.player.getPos();var remote=observation(now).position();
             clientMaxExcursion=Math.max(clientMaxExcursion,Math.hypot(actual.x-origin.x,actual.z-origin.z));
             serverMaxExcursion=Math.max(serverMaxExcursion,Math.hypot(remote.x-serverOrigin.x,remote.z-serverOrigin.z));
+            if(corridor){clientMaxX=Math.max(clientMaxX,actual.x);serverMaxX=Math.max(serverMaxX,remote.x);}
         }
         if(stage==0){
             if(!movement.inputReady(now))return;
             if(aimedMode){
-                if(aimed==null)aimed=new HudWalkingAimedFixture(client,patch,client.getServer().getSaveProperties().getLevelName());
+                if(aimed==null)aimed=new HudWalkingAimedFixture(client,(GroundPatch)patch,client.getServer().getSaveProperties().getLevelName());
                 if(!aimed.prepare(client,now))return;
             }
             origin=client.player.getPos();serverOrigin=observation(now).position();previous=origin;serverPrevious=serverOrigin;started=now;
@@ -113,7 +135,11 @@ final class HudPhysicalMovementFixture implements AutoCloseable {
         }
         if(stage==3){
             movement.authority(client,now,true);
-            if(now-at<(wide&&pulse<2?800_000_000L:150_000_000L))return;
+            if(corridor&&(pulse==0||pulse==1||pulse==4)){
+                double x=client.player.getX(),sx=observation(now).position().x;
+                boolean reached=pulse==0?x>=CORRIDOR_CROSSING_X&&sx>=CORRIDOR_CROSSING_X:x<=.4&&sx<=.4;
+                if(!reached){if(now-at>3_000_000_000L)throw new IllegalStateException("Corridor fixture crossing/return3s deadline");return;}
+            }else if(now-at<(wide&&pulse<2?800_000_000L:150_000_000L))return;
             key(client,codes[pulse],false,now);stage=4;at=now;return;
         }
         if(stage==4){
@@ -159,6 +185,12 @@ final class HudPhysicalMovementFixture implements AutoCloseable {
             if(!movement.completed())return;
             if(inventoryFrames<2 || walkingFrames<2)throw new IllegalStateException("Fixture lacks captured inventory/walking HUD frames");
             if(wide&&(clientMaxExcursion<=2||serverMaxExcursion<=2))throw new IllegalStateException("Wide fixture did not cross the previous two-metre boundary on client and server");
+            if(corridor){
+                var actual=client.player.getPos();var remote=observation(now).position();
+                clientReturnDistance=Math.hypot(actual.x-origin.x,actual.z-origin.z);serverReturnDistance=Math.hypot(remote.x-serverOrigin.x,remote.z-serverOrigin.z);
+                if(clientMaxX<CORRIDOR_CROSSING_X||serverMaxX<CORRIDOR_CROSSING_X||crossingHudFrames==0||clientReturnDistance>.75||serverReturnDistance>.75)
+                    throw new IllegalStateException("Corridor fixture lacks both-thread crossing, captured HUD or bounded return");
+            }
             if(extended && (!postWalkInventoryOpened || !postWalkInventoryClosed || postWalkInventoryFrames<2))
                 throw new IllegalStateException("Extended fixture lacks post-walk inventory capture proof");
             if(aimed!=null){
@@ -180,6 +212,13 @@ final class HudPhysicalMovementFixture implements AutoCloseable {
     }
     JsonObject evidence(MinecraftClient client){
         var e=new JsonObject();e.addProperty("kind","standalone_hud_physical_controller_fixture_v1");e.addProperty("scripted_input",true);
+        if(corridor){
+            e.addProperty("walking_area","corridor");e.addProperty("corridor_boundary_crossed",clientMaxX>=CORRIDOR_CROSSING_X&&serverMaxX>=CORRIDOR_CROSSING_X);
+            e.addProperty("corridor_crossing_target_x",CORRIDOR_CROSSING_X);
+            e.addProperty("client_max_horizontal_excursion",clientMaxExcursion);e.addProperty("server_max_horizontal_excursion",serverMaxExcursion);
+            e.addProperty("client_max_x",clientMaxX);e.addProperty("server_max_x",serverMaxX);e.addProperty("crossing_hud_frames",crossingHudFrames);
+            e.addProperty("client_return_distance",clientReturnDistance);e.addProperty("server_return_distance",serverReturnDistance);
+        }
         if(wide){
             e.addProperty("walking_area","wide");e.addProperty("wide_boundary_crossed",clientMaxExcursion>2&&serverMaxExcursion>2);
             e.addProperty("client_max_horizontal_excursion",clientMaxExcursion);e.addProperty("server_max_horizontal_excursion",serverMaxExcursion);
@@ -196,7 +235,7 @@ final class HudPhysicalMovementFixture implements AutoCloseable {
         e.addProperty("synthetic_camera_dropped_samples",droppedViews);
         e.addProperty("camera_worker_stopped",cameraStopped);e.add("pulses",pulses.deepCopy());e.add("physical_movement",movement.evidence(client));return e;
     }
-    private void publishViews(Path path,HudInputProtocol.Identity identity,GroundPatch patch,double yaw){
+    private void publishViews(Path path,HudInputProtocol.Identity identity,GroundSurface patch,double yaw){
         Path temp=path.resolveSibling(path.getFileName()+".fixture.tmp");long deadline=System.nanoTime()+30_000_000_000L;
         try{
             while(!closing && System.nanoTime()<deadline){

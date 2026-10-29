@@ -17,6 +17,11 @@ public final class HudPhysicalMovementMode {
         if(!value.equals("true")&&!value.equals("false"))throw new IllegalArgumentException("Wide walking option must be true or false");
         return value.equals("true");
     }
+    public static boolean corridor(Properties p){
+        String value=p.getProperty("minecome.hudCorridorWalking","false");
+        if(!value.equals("true")&&!value.equals("false"))throw new IllegalArgumentException("Corridor walking option must be true or false");
+        return value.equals("true");
+    }
     public static boolean walkingAimed(Properties p){
         String value=p.getProperty("minecome.hudWalkingAimed","false");
         if(!value.equals("true") && !value.equals("false"))throw new IllegalArgumentException("Walking aimed option must be true or false");
@@ -24,6 +29,12 @@ public final class HudPhysicalMovementMode {
     }
     public static boolean require(Properties p){
         boolean live=Boolean.parseBoolean(p.getProperty("minecome.hudPhysicalMovement")),fixture=fixture(p);
+        if(corridor(p)){
+            if((!live&&!fixture)||!HudMovementSession.selected(p).extended())throw new IllegalArgumentException("Corridor walking requires extended physical live or fixture movement");
+            for(String conflict:List.of("hudWideWalking","hudWalkingAimed","hudWalkingAimedFixture","hudFacingSeedFixture",
+                    "hudGroundMovementFixture","hudGroundMovementCoupled","hudGroundCorridorFixture","hudGroundCorridorCoupled","hudGroundCorridorWalkOnly"))
+                if(Boolean.parseBoolean(p.getProperty("minecome."+conflict)))throw new IllegalArgumentException("Corridor physical walking conflicts with "+conflict);
+        }
         if(wide(p)&&!live&&!fixture && HudGroundMovementMode.mode(p)!=HudGroundMovementMode.Mode.COUPLED)
             throw new IllegalArgumentException("Wide walking requires explicit physical movement or authenticated scripted HUD coupling");
         boolean combined=walkingAimed(p);
@@ -50,7 +61,7 @@ public final class HudPhysicalMovementMode {
             if(!Boolean.parseBoolean(p.getProperty("minecome."+required)))throw new IllegalArgumentException("Physical HUD movement requires "+required);
         for(String conflict:fixture?List.of("hudStreamInput","hudStreamLiveMouse","hudStreamOffscreenPresentation"):List.of("hudStreamStandalone"))
             if(Boolean.parseBoolean(p.getProperty("minecome."+conflict)))throw new IllegalArgumentException("Physical HUD movement conflicts with "+conflict);
-        for(String conflict:List.of("hudGroundMovementFixture","hudGroundMovementCoupled",
+        for(String conflict:List.of("hudGroundMovementFixture","hudGroundMovementCoupled","hudGroundCorridorFixture","hudGroundCorridorCoupled","hudGroundCorridorWalkOnly",
                 "hudStreamInputFixture","hudStreamInputPointerFixture","hudStreamInputDelayFixture","hudStreamBackgroundTrial",
                 "hudStreamOffscreenTrial","hudStoneBridge","hudStoneFixture","hudStoneLive","hudAimedStoneBridge",
                 "groundMovementLab","externalInputLab","externalInputFixture","aimedStoneLab","aimedBridgeLab",

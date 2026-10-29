@@ -1,5 +1,30 @@
 # MineCome progress — 2026-10-29
 
+## Physical controller on expanded terrain — AUTOMATIC CONTROLLER/REPLAY PASS
+
+Added an explicit extended physical walking/HUD corridor profile, preserving the
+initial settled anchor, two-tile provenance, rectangular bounds, source timing
+and exact collision cleanup. Aimed blocks remain in the verified 8×8m profile.
+
+Captured-terrain fixture `d8dfe1edd3724a999ecf91083f4fc6f2` passed: client/server
+X=4.824m, return within0.118m, five W/S pulses, inventory movement suppression,
+253 HUD frames including10 crossing frames, source hashes and cleanup. Native
+replay `fbfc11b45b9843a9b2fc467ba2ae2275` passed156 forwarded/readback points,
+actual KCD displacement4.824m, maximum actor error0.000031m, exact restoration
+and FPS restoration. This validates recorded controller playback; it does not
+claim foreground physical input, native HUD composition or visual smoothness.
+
+The first captured test requested X=5.5 and hit the existing conservative coast
+braking guard during a small descent. Its failed evidence97e91b7da1ee45f3adf16f10bf511513
+is retained. The test now turns at X=4.5, fully beyond the original edge including
+the whole player footprint. Production braking and all limits are unchanged.
+The runner also handles empty startup logs and can retain an owned test world
+for setup diagnosis, avoiding repeated reloads. KCD54112 was closed normally.
+
+The physical bundle is staged separately and the exact repeat-to-physical update
+preflight passes. The installed repeat/aimed addon is untouched. Foreground
+acceptance remains pending; commands and evidence are in NEXT_SESSION.md.
+
 ## Expanded terrain drives KCD walking — AUTOMATIC TWO-GAME PASS
 
 The new coupled corridor route follows real Minecraft server observations across

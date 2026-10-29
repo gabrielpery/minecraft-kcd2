@@ -15,8 +15,54 @@ The native standalone receiver accepted 321 real HUD frames, including crossing
 and return frames. Client/server controls and collision proxies were released;
 there were no position corrections after settling. KCD was closed during this
 first Minecraft check. The separate two-game walking route below now passes live
-KCD following; physical controls and native HUD composition across the corridor
-remain unfinished. Existing physical profiles are unchanged.
+KCD following. The explicit physical corridor profile below is implemented;
+foreground input/native composition acceptance remains pending. Existing profiles
+keep their original bounds.
+
+### Physical controller corridor
+
+The opt-in `-CorridorWalking -ExtendedWalking` profile uses the real walking and
+inventory controller, the two-tile collision surface and a fixed initial settled
+player anchor. It allows 15 seconds of input plus one second to settle, with an
+18-second native deadline. Native playback retains its 200ms delay and 400ms lease.
+The anchor height comes from the grounded player, rather than the scripted lab's
+Y=64. The inset footprint is X[-3.5,7.5], Z[-3.5,3.5]. Aimed blocks are excluded.
+
+Automatic actual-Minecraft coverage:
+
+```powershell
+& './scripts/Test-HudPhysicalMovementFixture.ps1' -ExtendedWalking -CorridorWalking
+```
+
+It walks beyond X=4.5, returns, repeats walking, opens inventory before and after
+movement, verifies movement suppression and captures real HUD frames. Its keys
+and host view are scripted; it cannot arm the native HUD. Captured numeric terrain
+can be supplied with `-GroundPatchFile <captured-corridor-manifest>`; provenance
+and tile hashes are rewritten explicitly as a fixture, leaving the capture intact.
+
+The two-game automation captures current terrain, runs that controller fixture
+and replays its recorded authoritative server trace through KCD's extended
+buffered physical follower:
+
+```powershell
+& './scripts/Test-CoupledGroundCorridor.ps1' -PhysicalController -LaunchTestWorld
+```
+
+The replay requires matching capture/fixture/trace/source hashes, verifies native
+crossing and exact restoration, and restores the temporary FPS cap. It does not
+claim simultaneous Minecraft input, native HUD composition or visual smoothness.
+Omit `-LaunchTestWorld` to preserve an existing loaded world. A fresh launch may
+need its window brought forward to finish loading; no movement starts before the
+native running-state receipt.
+
+After installing the separately pinned physical HUD bundle, the foreground lab is:
+
+```powershell
+& './scripts/Start-HudWalkingLab.ps1' -ExtendedWalking -CorridorWalking -BundleDirectory './runtime/hud-compositor-walking-corridor-20261029'
+```
+
+The installed repeat/aimed bundle is preserved. The prepared profile transition
+and remaining acceptance check are documented in `docs/NEXT_SESSION.md`.
 
 With a fresh official tools world loaded and the player still, capture from the
 repository root:

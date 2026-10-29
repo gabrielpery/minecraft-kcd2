@@ -2,106 +2,115 @@
 
 ## Current capability
 
-Expanded terrain now drives real KCD player/camera walking automatically. Two
-captured tiles form one 12×8m surface under a fixed origin; Minecraft walks beyond
-the original X=4 edge and back, KCD follows actual server observations, then both
-sides release their resources and KCD returns to its saved origin.
+The fixed 12×8m corridor is implemented in the physical walking/HUD controller,
+selected with `-CorridorWalking -ExtendedWalking`. It preserves the initial
+settled player anchor and both tile hashes, installs collision on both Minecraft
+threads, and releases the exact owned surface. This separate walking/inventory
+profile excludes aimed blocks. The verified combined profile still uses 8×8m.
+Foreground physical input/native HUD composition across the corridor remains
+unverified. No native DLL was rebuilt or installed this round.
 
-The passing walking route uses scripted Minecraft keys and a standalone HUD
-receiver. Physical input and native HUD composition still use the previous 8×8m
-profile. Do not present corridor walking as already integrated into that profile.
-The previous 8×8m controls/blocks/inventory worked twice in one KCD process.
+The previous scripted corridor two-game walk passed in bf48df8. Its 20s source /
+22s host contract is unchanged. The new physical profile uses 15s input + 1s
+settling, an 18s host deadline, 200ms playback, 400ms lease, 200 records / 256KiB.
+Bounds are X[-3.5,7.5], Z[-3.5,3.5]; raw Y[57.9,67.5] intersects the settled-anchor
+relative range [-6.1,+3.5]. No freshness, braking or readback limit was relaxed.
 
-## Latest evidence
+## Latest passing automatic evidence
 
-Walking controller 3c51920138ab4cebab27a93304458ed8 passed:
+Captured-terrain Minecraft fixture:
 
-    runtime/evidence/coupled-movement-20261029-215241-3c51920138ab4cebab27a93304458ed8/verification.json
+    runtime/evidence/hud-physical-fixture-20261029-223141-d8dfe1edd3724a999ecf91083f4fc6f2/verification.json
 
-36 forwarded frames, 35 delayed native movement readbacks, maximum actual KCD X
-displacement 6.076m from the capture origin, return across the original edge and
-exact saved-origin restoration. Maximum camera error 0.058m versus the unchanged
-0.15m limit. 471 real HUD frames, collision/input cleanup, normal Minecraft exit
-and original FPS restoration passed. KCD PID31304 was closed normally afterward.
-Fresh capture: ground-corridor-20261029-215241-996020b00b0a4151aaace5cbe265de63.
+Both players reached X=4.824, fully crossing the old X=4 edge, and returned within
+0.118m. Five W/S pulses, inventory suppression before/after walking, 253 real HUD
+frames (10 crossing frames), 158 trace records, source hashes and cleanup passed.
 
-The one-command fresh-world check also PASSED:
+Native replay of those actual server observations:
 
-    runtime/evidence/coupled-movement-20261029-215918-123b870a55fe4ff1bdd40d64a8f45588/verification.json
+    runtime/evidence/buffered-movement-replay-20261029-223230-fbfc11b45b9843a9b2fc467ba2ae2275/verification.json
 
-38 forwarded frames/readbacks, actual KCD displacement 5.872m, maximum camera error
-0.051m, 480 real HUD frames, restoration/cleanup/FPS restoration passed. The wrapper
-closed its owned KCD PID52588 normally. Both games are now closed. Its complete log
-is runtime/corridor-one-command-20261029.log; recheck processes before another launch.
-All evidence stays local under runtime/evidence; game assets/saves stay out of Git.
+156 forwarded / 156 native readbacks passed. Actual KCD displacement reached
+4.824m; maximum actor error was 0.000031m. Every buffered source point drained,
+exact starting-position restoration and the original FPS restoration passed.
+This was recorded controller replay, not simultaneous physical input or native
+HUD composition. KCD PID54112 was closed normally afterward; both games closed.
+Complete log: runtime/physical-corridor-coupled-running.log.
 
-## Automated entry point
+Earlier captured fixture 97e91b7da1ee45f3adf16f10bf511513 failed its original X=5.5
+turnaround: conservative airborne-coast braking released W during a small slab
+descent, stopping at X=5.083. Fresh server samples and 27 crossing frames ruled out
+a crash or CPU delay. The fixture now turns at X=4.5, placing the whole 0.6m player
+footprint outside the old edge. Production limits stayed unchanged. Preserve the
+failed evidence. Flat fixture44e56ce3c6f84bab81888968bdaf0ab4 passed before this fix.
 
-From the repository root (PowerShell 7 is selected automatically):
+Focused checks: Java terrain/trace2290, mode183, physical418; Lua99; PS corridor57,
+buffered114, physical161, wide68, scripted corridor103, fixture227, replay24 and
+update profile171. Do not rerun unchanged suites.
 
-    ./scripts/Test-CoupledGroundCorridor.ps1 -LaunchTestWorld
+## Automatic entry points
 
-This launches a fresh pinned official world, captures both tiles, runs actual
-Minecraft and KCD following, validates crossing/return/HUD/cleanup and closes only
-its owned KCD process normally. Omit LaunchTestWorld to use an already-loaded,
-stationary world and leave it open. No F8 countdown or user controls are required.
+From repository root (wrappers select PowerShell7 automatically):
 
-The default is explicit walk-only mode. It has distinct readiness/proof/trace
-identities and rejects jump phases. IncludeJump selects the separate diagnostic
-below; never relabel its failures as walking passes.
+```powershell
+& './scripts/Test-HudPhysicalMovementFixture.ps1' -ExtendedWalking -CorridorWalking
+& './scripts/Test-CoupledGroundCorridor.ps1' -PhysicalController -LaunchTestWorld
+```
 
-## Known jump-camera issue — do not extend a tuning loop
+The second captures current KCD terrain, runs Minecraft's controller with scripted
+keys/view, then replays the recorded server path through the extended KCD follower.
+It validates capture/fixture/source/trace hashes, crossing, source draining and
+restoration. Omit LaunchTestWorld to preserve an existing loaded world. Optional
+KeepTestWorld retains an owned launch for debugging; default closes it normally.
 
-Full-jump controllers 608fc0a02eeb466c8d2ba61d3846de99 and
-0522c94041d54470bfd3fce629a71254 passed actor following, return/restoration and
-Minecraft/HUD proof, but failed the unchanged camera-offset criterion during
-LANDING: deviations 0.295m and 0.363m. Actor positions exactly matched the targets.
-One supported 1ms follower-cadence trial did not fix it and was reverted. Current
-corridor cadence is 40ms with 549 ordinary writes plus restoration. Preserve the
-failed evidence. No new engine camera API or offset was invented.
+A fresh world can take about two minutes and may need its window brought forward
+through Computer Use. One attempt timed out before RUNNING; another had a setup
+HTTP timeout after capture. Neither reached movement. An empty startup-log race
+was fixed. Keep the owned world open when diagnosing setup, instead of repeatedly
+restarting it. No F8 countdown is needed for these automated checks.
 
-## Next implementation
+## Next foreground check
 
-1. Bring the fixed corridor geometry/provenance into the physical-input/native-HUD
-   route. Add an explicit profile; preserve existing verified profiles and bounds.
-   Automate its source-side and coupled-game checks before one batched human check
-   for actual foreground composition/input/feel.
-2. Extend toward rolling terrain with explicit ownership/replacement. The corridor
-   is one immutable joined surface, not streaming or unrestricted roaming.
-3. General terrain-face placement remains unfinished. Current owned lab support
-   does not establish arbitrary building against KCD terrain.
+Fresh bundle staged; exact six-file update preflight passed:
+`runtime/hud-compositor-walking-corridor-20261029` (not installed).
+Installed repeat/aimed addon remains
+`c5353e4bc21fd512838160cd3196f23f17b0fd6d0dc412178037dd56426c0196`.
+The staged physical addon is the existing pinned
+`869fc9a8c3d56cb2db16974184ccfffee7548d1f97366a7e3074f75d5520e657`.
+With KCD closed, the prepared explicit transition is:
 
-Current contracts: fixed MC anchor(0,64,0); inset X[-3.5,7.5],Z[-3.5,3.5],
-Y[57.9,67.5]; 20s source/22s host, 400ms host lease, 256-record/256KiB trace.
-Client/server freshness and position/camera limits remain intact. Paused input
-still publishes advancing fresh server snapshots so the follower can hold safely.
+```powershell
+$r = 'C:/Users/xephi/Documents/ChatGPT/New project/MineCome'
+& "$r/scripts/Disable-HudCompositor.ps1" -WalkingAimed -RepeatSession -BundleDirectory "$r/runtime/hud-compositor-walking-repeat"
+& "$r/scripts/Update-HudCompositor.ps1" -PhysicalMovement -FromWalkingAimedRepeat -PreviousBundleDirectory "$r/runtime/hud-compositor-walking-repeat" -BundleDirectory "$r/runtime/hud-compositor-walking-corridor-20261029"
+& "$r/scripts/Start-Kcd2ToolsTest.ps1"
+```
 
-Focused checks passed: Java terrain/trace 2264, mode 183, legacy physical 383;
-Lua follower 96; PS corridor follower 103, legacy coupled 97, receiver 16 groups,
-wide 68, corridor helpers 39, old ground 134. Do not rerun unchanged suites.
+Once loaded:
 
-## Other retained work
+```powershell
+& "$r/scripts/Start-HudWalkingLab.ps1" -ExtendedWalking -CorridorWalking -BundleDirectory "$r/runtime/hud-compositor-walking-corridor-20261029"
+```
 
-Repeat-session gameplay reuse passed live, but final generation 2 exhausted-state
-and third-session refusal remain unverified after the completion-tail repair.
-The original second run's late receipt/native cleanup_timeout remains a failure;
-its separate post-run audit does not authorize rearm. See docs/PROGRESS.md and
-Git 87217b9. Bundle remaining acceptance with a useful feature check, not another
-isolated replay of already-proven inventory/block controls.
+Batch one foreground check: cross the old edge, release/return, inventory W
+suppression, walking afterward with the HUD visible. No aimed blocks in this
+profile. The updater validates the exact old repeat profile only with the explicit
+FromWalkingAimedRepeat flag; the default r4-to-physical transition is unchanged.
+Old installation receipts remain immutable. Do not claim replay as this acceptance.
 
-## Environment
+## Retained unfinished work
+
+Rolling terrain and arbitrary placement against KCD terrain remain unfinished.
+The corridor is one immutable map. Earlier jump-camera landing errors0.295/0.363m
+remain failures; the 1ms cadence trial did not fix them and was reverted. Do not
+reopen that tuning loop. Repeat gameplay worked twice, but final generation2
+exhaustion and third-session refusal remain unverified after repair87217b9.
 
 Workspace: C:/Users/xephi/Documents/ChatGPT/New project/MineCome
-Public repo: https://github.com/gabrielpery/minecraft-kcd2
-Branch: codex/initial-import; inspect current Git status/log before editing.
-Official Steam tools 2429020/build 1.5.5 only; retail 1.5.6 remains gated. Never load
-retail saves in tools. Existing repeat addon stays installed; no native addon was
-changed this round. Routine changes, launches, tests and Git pushes are authorized.
-JDK: C:/Program Files/Java/jdk-24
-Gradle cache: minecraft/.gradle-user-home
-Bundled PS7: C:/Users/xephi/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/powershell/pwsh.exe
-Lua tests: C:/Program Files/Wireshark/lua52.dll
-
-Follow AGENTS.md: integrated progress, focused automation, minimal manual requests,
-concise handoffs. Use exact owned identities/receipts; never guess a latest arm or
-reuse failed cleanup. Format commands separately before any question widget.
+Public repo: https://github.com/gabrielpery/minecraft-kcd2; branch codex/initial-import.
+Official Steam tools2429020/build1.5.5 only; never load retail1.5.6 saves.
+JDK: C:/Program Files/Java/jdk-24; Gradle cache: minecraft/.gradle-user-home.
+PS7: C:/Users/xephi/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/powershell/pwsh.exe
+Routine changes/tests/launches/pushes are authorized. Follow AGENTS.md: integrated
+progress, focused automation, minimal manual requests; format commands separately
+from questions. Inspect Git status/log and process state before resuming.

@@ -1,6 +1,6 @@
 # Automatic actual-Minecraft crossing with a pinned KCD player/camera follower.
 [CmdletBinding()]
-param([switch]$LaunchTestWorld,[switch]$PreflightOnly,[switch]$IncludeJump)
+param([switch]$LaunchTestWorld,[switch]$PreflightOnly,[switch]$IncludeJump,[switch]$PhysicalController,[switch]$KeepTestWorld)
 . (Join-Path $PSScriptRoot 'powershell7.ps1')
 if($PSVersionTable.PSVersion.Major -lt 7){
     $code=Invoke-MineComePowerShell7 -ScriptPath $PSCommandPath -BoundParameters $PSBoundParameters
@@ -8,6 +8,9 @@ if($PSVersionTable.PSVersion.Major -lt 7){
 }
 $ErrorActionPreference='Stop'
 . (Join-Path $PSScriptRoot 'KcdToolsProbeHelpers.ps1')
+. (Join-Path $PSScriptRoot 'HudGpuBudget.ps1')
+if($KeepTestWorld -and -not $LaunchTestWorld){throw 'KeepTestWorld applies only to a world owned by LaunchTestWorld.'}
+if($PhysicalController -and $IncludeJump){throw 'Physical corridor controller exercise is walk-only.'}
 $owned=$null;$ownedStart=$null;$ownedPath=$null
 try{
     if($LaunchTestWorld){
@@ -25,7 +28,7 @@ try{
         do{
             if($owned.HasExited){throw 'KCD exited during loading.'}
             if((Test-Path -LiteralPath $log) -and (Get-Item -LiteralPath $log).LastWriteTimeUtc -ge $ownedStart){
-                $loaded=(Get-Content -LiteralPath $log -Raw).Contains("'LEVEL_LOAD_COMPLETE'->'RUNNING'")
+                $loaded=([string](Get-Content -LiteralPath $log -Raw)).Contains("'LEVEL_LOAD_COMPLETE'->'RUNNING'")
             }
             if($loaded){break};Start-Sleep -Milliseconds 500
         }while([DateTime]::UtcNow -lt $deadline)
@@ -34,10 +37,31 @@ try{
         $context=Get-MineComeProbeContext
         if($context.GamePid -ne $owned.Id -or $context.GameStartedUtc -ne $ownedStart){throw 'Test launch identity changed.'}
     }
+    if($PhysicalController){
+        if($PreflightOnly){
+            $null=Get-MineComeProbeContext
+            & (Join-Path $PSScriptRoot 'Test-HudPhysicalMovementFixture.ps1') -ExtendedWalking -CorridorWalking -PreflightOnly
+        }else{
+            $capture=@(& (Join-Path $PSScriptRoot 'Test-KcdGroundCorridor.ps1') | Where-Object {$_ -isnot [string] -and $_.PSObject.Properties['GroundCorridorFile']})
+            if($capture.Count -ne 1){throw 'Expected one live corridor capture.'}
+            $budget=New-MineComeHudGpuBudget (Get-MineComeProbeContext)
+            try{
+                Start-MineComeHudGpuBudget $budget
+                $fixture=@(& (Join-Path $PSScriptRoot 'Test-HudPhysicalMovementFixture.ps1') -ExtendedWalking -CorridorWalking -GroundPatchFile $capture[0].GroundCorridorFile | ForEach-Object {
+                    if($_ -isnot [string] -and $_.PSObject.Properties['EvidenceDirectory']){$_}else{Write-Host $_}
+                })
+                if($fixture.Count -ne 1){throw 'Expected one completed real Minecraft controller fixture.'}
+            }finally{Stop-MineComeHudGpuBudget $budget}
+            if(-not $budget.BudgetValid){throw 'Fixture GPU budget was not restored before native replay.'}
+            & (Join-Path $PSScriptRoot 'Test-KcdBufferedReplay.ps1') -CorridorWalking -TraceDirectory $fixture[0].EvidenceDirectory -GroundCorridorFile $capture[0].GroundCorridorFile
+        }
+    }else{
     & (Join-Path $PSScriptRoot 'Test-CoupledMovement.ps1') -HudWorld -CorridorWalking -CorridorWalkOnly:(-not $IncludeJump) -PreflightOnly:$PreflightOnly
+    }
 }finally{
     # Only a process launched by this invocation is closed, using its normal window close.
-    if($owned){
+    if($owned -and $KeepTestWorld){Write-Host "Owned KCD test world kept open: PID $($owned.Id).";$owned.Dispose()}
+    elseif($owned){
         $current=Get-Process -Id $owned.Id -ErrorAction SilentlyContinue
         try{
             if($current -and $current.StartTime.ToUniversalTime() -eq $ownedStart -and $current.Path -ieq $ownedPath){

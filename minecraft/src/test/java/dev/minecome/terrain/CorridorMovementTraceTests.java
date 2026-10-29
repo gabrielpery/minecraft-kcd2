@@ -74,6 +74,34 @@ final class CorridorMovementTraceTests {
                     "Walk-only source identity cannot be mistaken for full-jump diagnostic");
         }
         var legacy=new MovementTraceSink.Context("legacy","e".repeat(64),"live_kcd_ground_patch",context.save(),world,0,0,0,MovementTraceSink.Profile.HUD_COUPLED);
+        for(boolean fixture:new boolean[]{false,true}){
+            var profile=MovementTraceSink.Profile.physical(fixture,dev.minecome.hud.HudMovementSession.EXTENDED,true);
+            String provenance=fixture?"standalone_corridor_fixture":"live_kcd_ground_corridor";
+            var physical=new MovementTraceSink.Context(context.run(),context.patchSha256(),provenance,context.save(),world,
+                    context.centerX(),context.centerY(),context.centerZ(),profile,0,64.375,0,false);
+            reject(()->MovementTraceSink.Profile.physical(fixture,dev.minecome.hud.HudMovementSession.SHORT,true));
+            reject(()->new MovementTraceSink.Context(context.run(),context.patchSha256(),fixture?"live_kcd_ground_corridor":"standalone_corridor_fixture",context.save(),world,
+                    context.centerX(),context.centerY(),context.centerZ(),profile,0,64.375,0,false));
+            Path physicalFile=run.resolve("physical-corridor-"+fixture+".ndjson");
+            try(var sink=MovementTraceSink.open(physicalFile,root,physical,0,1000)){
+                var initial=motion(0,64.375,0);var outward=motion(5.8,64.375,0);
+                check(sink.sample(0,1000,"SETTLING",initial,initial,1,0,true),"Physical corridor records actual settled anchor without fixed64 reset");
+                check(sink.sample(100_000_000L,1100,"WALKING",outward,outward,2,100_000_000L,false),"Physical corridor trace admits observed crossing");
+                var deep=motion(0,57.9,0);
+                try{sink.sample(200_000_000L,1200,"WALKING",deep,deep,3,200_000_000L,true);throw new AssertionError("Relative vertical bound widened by raw corridor range");}
+                catch(IllegalArgumentException expected){checks++;}
+                try{sink.sample(200_000_000L,1200,"RETURNING",initial,initial,3,200_000_000L,true);throw new AssertionError("Physical source claimed scripted return phase");}
+                catch(IllegalArgumentException expected){checks++;}
+                check(sink.sample(16_000_000_000L,17000,"PASSED",initial,initial,3,16_000_000_000L,true),"Physical corridor supports existing16s maximum final fresh sample");
+                sink.finish(17000,"passed","PASSED","Contract-only physical corridor fixture");
+            }
+            for(String line:Files.readAllLines(physicalFile)){
+                var record=JsonParser.parseString(line).getAsJsonObject();
+                check(record.get("walking_area").getAsString().equals("corridor")&&record.get("source_kind").getAsString().equals(fixture?
+                        "standalone_hud_physical_movement_corridor_fixture":"live_kcd_hud_physical_movement_corridor"),"Physical corridor source cannot be confused with scripted native follower or live input");
+                if(record.get("kind").getAsString().equals("begin"))check(record.getAsJsonObject("anchor_mc").get("y").getAsDouble()==64.375,"Physical corridor anchor retains actual settled height");
+            }
+        }
         try(var sink=MovementTraceSink.open(run.resolve("legacy-return-rejected.ndjson"),root,legacy,0,1000)){
             var m=new MovementTraceSink.Motion(.5,64,.5,0,0,0,true,true);
             try{sink.sample(0,1000,"RETURNING",m,m,1,0,true);throw new AssertionError("Legacy trace accepted corridor-only return phase");}

@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 # Explicit bounded physical WASD/Space + actual Minecraft HUD, in a fresh test world.
 [CmdletBinding()]
-param([switch]$PreflightOnly,[string]$JavaHome,[string]$BundleDirectory,[switch]$ExtendedWalking,[switch]$WideWalking)
+param([switch]$PreflightOnly,[string]$JavaHome,[string]$BundleDirectory,[switch]$ExtendedWalking,[switch]$WideWalking,[switch]$CorridorWalking)
 $ErrorActionPreference='Stop'
 if($PSVersionTable.PSVersion.Major -lt 7){
     . (Join-Path $PSScriptRoot 'powershell7.ps1')
@@ -10,6 +10,7 @@ if($PSVersionTable.PSVersion.Major -lt 7){
     if($PreflightOnly){$arguments+='-PreflightOnly'}
     if($ExtendedWalking){$arguments+='-ExtendedWalking'}
     if($WideWalking){$arguments+='-WideWalking'}
+    if($CorridorWalking){$arguments+='-CorridorWalking'}
     if($JavaHome){$arguments+=@('-JavaHome',$JavaHome)}
     if($BundleDirectory){$arguments+=@('-BundleDirectory',$BundleDirectory)}
     & $pwsh @arguments

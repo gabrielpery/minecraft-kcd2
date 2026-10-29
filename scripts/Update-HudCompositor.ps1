@@ -2,9 +2,10 @@
 # Original tools-only update of the owned, disabled MineCome HUD installation.
 # Does not start/stop a game. Preflight is read-only, including when the game is open.
 [CmdletBinding()]
-param([string]$BundleDirectory, [string]$PreviousBundleDirectory, [switch]$PreflightOnly, [switch]$LiveMouse, [switch]$WorldClicks, [switch]$SelectiveMouse, [ValidateSet(1,2,3,4)][int]$SelectiveRevision=1, [switch]$PhysicalMovement, [switch]$WalkingAimed, [switch]$RepeatSession)
+param([string]$BundleDirectory, [string]$PreviousBundleDirectory, [switch]$PreflightOnly, [switch]$LiveMouse, [switch]$WorldClicks, [switch]$SelectiveMouse, [ValidateSet(1,2,3,4)][int]$SelectiveRevision=1, [switch]$PhysicalMovement, [switch]$WalkingAimed, [switch]$RepeatSession, [switch]$FromWalkingAimedRepeat)
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
+if($FromWalkingAimedRepeat -and -not $PhysicalMovement){throw 'FromWalkingAimedRepeat requires the explicit PhysicalMovement destination profile.'}
 if($RepeatSession -and -not $WalkingAimed){throw 'RepeatSession requires the WalkingAimed profile.'}
 if($WalkingAimed -and ($PhysicalMovement -or $LiveMouse -or $WorldClicks -or $SelectiveMouse -or $SelectiveRevision -ne 1)){throw 'WalkingAimed is a separate update profile.'}
 if($PhysicalMovement -and ($LiveMouse -or $WorldClicks -or $SelectiveMouse -or $SelectiveRevision -ne 1)){throw 'PhysicalMovement is a separate update profile.'}
@@ -25,9 +26,10 @@ if($WalkingAimed){
     if(-not $PSBoundParameters.ContainsKey('PreviousBundleDirectory')){$PreviousBundleDirectory=Join-Path $runtimeRoot $(if($RepeatSession){'hud-compositor-walking-aimed'}else{'hud-compositor-walking'})}
 }elseif($PhysicalMovement){
     . (Join-Path $PSScriptRoot 'HudPhysicalMovement.ps1')
+    if($FromWalkingAimedRepeat){. (Join-Path $PSScriptRoot 'HudWalkingAimedProfile.ps1')}
     $mouseProfile=Get-MineComePhysicalMovementProfile;$proxyHash=$mouseProfile.runtime_sha256
     if(-not $PSBoundParameters.ContainsKey('BundleDirectory')){$BundleDirectory=Join-Path $runtimeRoot 'hud-compositor-walking'}
-    if(-not $PSBoundParameters.ContainsKey('PreviousBundleDirectory')){$PreviousBundleDirectory=Join-Path $runtimeRoot 'hud-compositor-selective-r4'}
+    if(-not $PSBoundParameters.ContainsKey('PreviousBundleDirectory')){$PreviousBundleDirectory=Join-Path $runtimeRoot $(if($FromWalkingAimedRepeat){'hud-compositor-walking-repeat'}else{'hud-compositor-selective-r4'})}
 }elseif($LiveMouse){. (Join-Path $PSScriptRoot 'HudMouseProfile.ps1');$mouseProfile=Get-MineComeMouseProfile -WorldClicks:$WorldClicks -SelectiveMouse:$SelectiveMouse -SelectiveRevision $SelectiveRevision;$proxyHash=$mouseProfile.runtime_sha256}
 $supportedAddonHashes=@('a9bb60999fb526df64b3c61975431aed7c0b85728dc21a30db91b41bfccea484',
     '819499b52971d5027745be24e136b4a428975d108870ee0f70c1edfdf60b69cb')
@@ -74,6 +76,20 @@ function Write-NewJson([string]$Path,$Value){
 }
 function Assert-Record($Record){
     if($Record.sha256-cnotmatch'^[0-9a-f]{64}$' -or ($Record.bytes-isnot[int] -and $Record.bytes-isnot[long]) -or $Record.bytes-lt 1 -or $Record.bytes-gt 64MB){throw 'Invalid bounded update file record.'}
+}
+function Get-MineComePhysicalUpdatePreviousProfile($Manifest,$Receipt,[bool]$FromWalkingAimedRepeat){
+    # An explicit transition, never inferred from a pathname or a bundle marker.
+    # Each branch retains its original exact runtime/addon/shader pins and all
+    # six installed file identities. The caller separately checks their bytes
+    # in the pinned tools installation before performing any replacement.
+    if($FromWalkingAimedRepeat){
+        $profile=Get-MineComeWalkingAimedProfile -RepeatSession
+        Assert-MineComeWalkingAimedInstalledBundle $Manifest $Receipt $profile
+    }else{
+        $profile=Get-MineComeMouseProfile -WorldClicks -SelectiveMouse -SelectiveRevision 4
+        Assert-MineComeMouseInstalledBundle $Manifest $Receipt $profile -WorldClicks -SelectiveMouse -SelectiveRevision 4
+    }
+    return $profile
 }
 function Assert-File([string]$Path,$Record){
     $null=Assert-Unlinked $Path
@@ -155,8 +171,7 @@ if($WalkingAimed){
 }elseif($PhysicalMovement){
     . (Join-Path $PSScriptRoot 'HudMouseProfile.ps1')
     $previousManifest=Read-Json (Join-Path $PreviousBundleDirectory 'bundle.json')
-    $previousMouseProfile=Get-MineComeMouseProfile -WorldClicks -SelectiveMouse -SelectiveRevision 4
-    Assert-MineComeMouseInstalledBundle $previousManifest $old $previousMouseProfile -WorldClicks -SelectiveMouse -SelectiveRevision 4
+    $previousMouseProfile=Get-MineComePhysicalUpdatePreviousProfile $previousManifest $old ([bool]$FromWalkingAimedRepeat)
     $previousProxyHash=$previousMouseProfile.runtime_sha256
 }elseif($WorldClicks){
     $previousManifest=Read-Json (Join-Path $PreviousBundleDirectory 'bundle.json')

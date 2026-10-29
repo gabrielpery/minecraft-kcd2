@@ -1,5 +1,7 @@
 # Explicit physical walking profile. The working r4 profile remains immutable.
 . (Join-Path $PSScriptRoot 'HudMouseProfile.ps1')
+. (Join-Path $PSScriptRoot 'HudWalkingArea.ps1')
+. (Join-Path $PSScriptRoot 'HudWalkingSession.ps1')
 function Get-MineComePhysicalMovementProfile {
     $base=Get-MineComeMouseProfile -WorldClicks -SelectiveMouse -SelectiveRevision 4
     $path=Join-Path $PSScriptRoot '../config/hud-physical-movement-profile.json'
@@ -38,7 +40,18 @@ function Assert-MineComePhysicalMovementBundle($Manifest,$Profile){
         if($entry.Count -ne 1 -or $entry[0].sha256 -cne $hashes[$path]){throw 'Physical movement artifact hash mismatch.'}
     }
 }
-function Assert-HudPhysicalMovementReady($Ready,[bool]$Expected){
+function Assert-HudPhysicalMovementReady($Ready,[bool]$Expected,[switch]$CorridorWalking){
+    if($CorridorWalking){
+        if(-not $Expected){throw 'Corridor readiness requires its explicit physical walking controller.'}
+        Assert-HudWalkingArea $Ready $false -CorridorWalking
+        Assert-HudWalkingSession $Ready -ExtendedWalking
+        foreach($name in @('ui_input_walking_aimed','ui_input_aimed_stone_bridge','ui_walking_aimed_fixture','facing_seed','ui_ground_corridor_fixture','ui_ground_corridor_coupled','corridor_walk_only')){
+            $marker=$Ready.PSObject.Properties[$name]
+            if($marker -and ($marker.Value -isnot [bool] -or $marker.Value)){throw 'Physical corridor cannot use an aimed, facing or scripted producer.'}
+        }
+    }elseif($Ready.PSObject.Properties['walking_area'] -and $Ready.walking_area -ceq 'corridor'){
+        throw 'Corridor readiness requires explicit corridor arming.'
+    }
     # A standalone controller fixture must never become a live renderer/input
     # producer, even if a malformed receipt also advertises live protocol fields.
     if($null -ne $Ready.PSObject.Properties['ui_physical_controller_fixture']){

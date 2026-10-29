@@ -1207,10 +1207,9 @@ test("wide profile survives module reload and retains bounds and source duration
     ok,why=f:point(2,16000.01,0);eq(ok,false);eq(why,"source_time_invalid")
     f:advance(.08);eq(player.position.x,120);eq(f:activeTimers(),0)
 end)
-test("corridor authority is explicit and cannot widen legacy or physical profiles",function()
+test("corridor authority is explicit and cannot widen legacy or short physical profiles",function()
     local f=fixture();f:verify()
-    for _,begin in ipairs({MineCome.BeginPhysicalMovementFollower,MineCome.BeginBufferedPhysicalMovementFollower,
-        MineCome.BeginExtendedBufferedPhysicalMovementFollower}) do
+    for _,begin in ipairs({MineCome.BeginPhysicalMovementFollower,MineCome.BeginBufferedPhysicalMovementFollower}) do
         local ok,why=begin("b","corridor");eq(ok,false);eq(why,"invalid_walking_area")
     end
     eq(f:activeTimers(),0);eq(#f.writes,0)
@@ -1290,6 +1289,69 @@ test("corridor hard deadline and write budget never renew under fresh poses",fun
     for _,line in ipairs(f.logs) do if line:find('[MineComeMovementFollower]',1,true) then receipts=receipts+1 end end
     eq(expiries,1);assert(receipts<=512)
     assert(f:contains('"end_result":"hard_deadline"') or f:contains('"end_result":"write_budget"'))
+end)
+test("physical corridor admits only its explicit extended buffered profile with the fixed rectangle",function()
+    for _,point in ipairs({{116.5,2036.5,49.9},{127.5,2043.5,59.5},{125.9,2039.5,57.3}}) do
+        local f=buffered_fixture(true,"corridor");local p=MineCome._movement_probe.follower
+        near(p.deadline,18);eq(p.physical_movement,true);eq(p.buffered_movement,true)
+        eq(f:point(1,0),true);eq(MineCome.ApplyBufferedMovementFollower("b",2,point[1],point[2],point[3],100),true)
+        eq(MineCome.FinishBufferedMovementFollower("b",2),true);f:advance(.5)
+        eq(player.position.x,120);eq(player.position.y,2040);eq(player.position.z,56);eq(f:activeTimers(),0)
+        assert(f:contains('"walking_area":"corridor"'));assert(f:contains('"movement_session":"extended"'))
+        assert(f:contains('"physical_movement":true'));assert(f:contains('"playback_delay_ms":200'))
+    end
+    for _,point in ipairs({{116.499,2040,56},{127.501,2040,56},{120,2036.499,56},{120,2043.501,56},
+        {120,2040,49.899},{120,2040,59.501}}) do
+        local f=buffered_fixture(true,"corridor");eq(f:point(1,0),true)
+        local ok,why=MineCome.ApplyBufferedMovementFollower("b",2,point[1],point[2],point[3],100)
+        eq(ok,false);eq(why,"target_out_of_bounds");f:advance(.08);eq(#f.writes,0);eq(f:activeTimers(),0)
+    end
+    local f=buffered_fixture(true,"corridor");eq(f:point(1,0),true)
+    local ok,why=f:point(201,100,0);eq(ok,false);eq(why,"sequence_invalid");f:advance(.08)
+    f=buffered_fixture(true,"corridor");eq(f:point(1,0),true)
+    ok,why=f:point(2,16000.01,0);eq(ok,false);eq(why,"source_time_invalid");f:advance(.08)
+end)
+
+test("physical corridor follows sixteen seconds across the seam and back with immutable origin and native look",function()
+    local f=buffered_fixture(true,"corridor");local p=MineCome._movement_probe.follower;local hard=p.timers.hard
+    eq(f:point(1,0),true);local epoch=p.buffer_epoch
+    for index=1,160 do
+        f:advance(.1)
+        local x=index<=80 and index*.075 or (160-index)*.075
+        eq(MineCome.ApplyBufferedMovementFollower("b",index+1,120+x,2040-.25*math.sin(index*math.pi/160),
+            56-.8*math.sin(index*math.pi/160),index*100),true)
+        eq(p.timers.hard,hard);near(p.deadline,18);near(p.buffer_epoch,epoch)
+        eq(p.origin.x,120);eq(p.origin.y,2040);eq(p.origin.z,56)
+        if index==80 then
+            assert(player.position.x>125.7,"physical replay must cross original tile X boundary")
+            dofile(MINECOME_MODULE_PATH);f.forward={x=1,y=0,z=0}
+        end
+        if index%20==0 then eq(MineCome.SamplePhysicalHudView("b"),true) end
+    end
+    eq(MineCome.FinishBufferedMovementFollower("b",161),true);f:advance(.35)
+    eq(p.last_buffered_ack_seq,161);eq(p.end_result,"explicit_end");eq(f:activeTimers(),0)
+    eq(player.position.x,120);eq(player.position.y,2040);eq(player.position.z,56)
+    local count=0
+    for _,line in ipairs(f.logs) do
+        if line:find('[MineComeMovementFollower]',1,true) then
+            assert(line:find('"walking_area":"corridor"',1,true));eq(receipt_number(line,"hard_deadline_ms"),18000)
+            if line:find('"event":"applied"',1,true) then
+                count=count+1;eq(receipt_number(line,"source_seq"),count);eq(receipt_number(line,"source_ms"),(count-1)*100)
+                assert(line:find('"readback":true',1,true));buffered_samples(line)
+            end
+        end
+    end
+    eq(count,161);assert(p.records<256);assert(#f.writes>511 and #f.writes<=2048)
+    local target=receipt_vector(f:last(),"target");eq(target.x,120);eq(target.y,2040);eq(target.z,56)
+    assert(f:last():find('"event":"restored","result":"restored"',1,true))
+end)
+
+test("physical corridor source lease and ownership remain guarded beyond the old circular boundary",function()
+    local f=buffered_fixture(true,"corridor");eq(f:point(1,0),true);eq(f:point(2,100,5.9),true)
+    f:advance(.6);eq(f:activeTimers(),0);eq(player.position.x,120);assert(f:contains('"end_result":"frame_lease_expired"'))
+    f=buffered_fixture(true,"corridor");eq(f:point(1,0),true);eq(f:point(2,100,5.9),true)
+    f:advance(.32);assert(player.position.x>125.8);local writes=#f.writes;player.id=io.stderr;f:advance(.1)
+    eq(#f.writes,writes);eq(f:activeTimers(),0);assert(f:contains('"event":"restore_failed"'))
 end)
 print(string.format("Verified %d standalone movement-probe cases in %s; engine bindings simulated",passed,_VERSION))
 print(string.format("Maximum tested buffered receipt: %d bytes plus CRLF; serialized subset of eight retained observations",maximum_buffered_receipt_bytes))

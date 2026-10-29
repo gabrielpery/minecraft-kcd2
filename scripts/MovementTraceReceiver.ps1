@@ -183,19 +183,29 @@ function Read-MineComeTraceCorridor([string]$Json,[string]$Hash,[string]$Path,$C
                 ($row -lt 8 -and [Math]::Abs($z-$unique["$col,$($row+1)"].z) -gt .5)){throw 'Corridor adjacent height step exceeds0.5m.'}
         }}
         foreach($axis in @('x','y','z')){if($center.$axis -ne $Corridor.Anchor.$axis){throw 'Corridor center differs from its authenticated anchor.'}}
-        return [pscustomobject]@{Run=$run;Center=$center}
+        # Match GroundSurface.groundForFeet(0,0,.3): the player's footprint
+        # overlaps these four slabs, and vanilla settles on their highest top.
+        $initialGroundY=[double]::NegativeInfinity
+        foreach($row in @(3,4)){foreach($col in @(3,4)){
+            $height=($unique["$col,$row"].z+$unique["$($col+1),$row"].z+
+                $unique["$col,$($row+1)"].z+$unique["$($col+1),$($row+1)"].z)/4
+            $initialGroundY=[Math]::Max($initialGroundY,64+$height-$center.z)
+        }}
+        return [pscustomobject]@{Run=$run;Center=$center;InitialGroundY=$initialGroundY}
     }finally{$document.Dispose()}
 }
 
 function New-MineComeTraceReceiver {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$PatchFile,[Parameter(Mandatory)]$MinimumUtcMs,[string]$ExpectedHudSave,[switch]$PhysicalMovement,[switch]$BufferedPhysicalMovement,[switch]$ExtendedWalking,[switch]$WideWalking,[switch]$ScriptedHudCoupled,[switch]$CorridorWalking,$Corridor,[switch]$CorridorWalkOnly)
-    if($CorridorWalkOnly -and -not $CorridorWalking){throw 'Walk-only corridor requires the explicit corridor profile.'}
-    if($CorridorWalking -and ($WideWalking -or $PhysicalMovement -or $BufferedPhysicalMovement -or $ExtendedWalking -or $ScriptedHudCoupled -or -not $ExpectedHudSave -or $null -eq $Corridor)){throw 'Corridor requires an exclusive scripted HUD profile and authenticated capture.'}
+    if($CorridorWalkOnly -and (-not $CorridorWalking -or $PhysicalMovement)){throw 'Walk-only corridor requires the explicit scripted corridor profile.'}
+    if($CorridorWalking -and ($WideWalking -or $ScriptedHudCoupled -or -not $ExpectedHudSave -or $null -eq $Corridor -or
+        ($PhysicalMovement -and (-not $BufferedPhysicalMovement -or -not $ExtendedWalking)) -or
+        (-not $PhysicalMovement -and ($BufferedPhysicalMovement -or $ExtendedWalking)))){throw 'Corridor requires exclusive scripted or extended buffered physical HUD movement and authenticated capture.'}
     if(-not $CorridorWalking -and $null -ne $Corridor){throw 'Corridor capture requires the explicit corridor profile.'}
     if($ScriptedHudCoupled -and ($PhysicalMovement -or -not $ExpectedHudSave)){throw 'Scripted coupled movement requires an exact HUD save without physical input mode.'}
     if($WideWalking -and -not ($PhysicalMovement -or $ScriptedHudCoupled)){throw 'Wide walking requires explicit physical or scripted coupled HUD movement.'}
-    $area=Get-HudWalkingArea -WideWalking:$WideWalking
+    $area=Get-HudWalkingArea -WideWalking:$WideWalking -CorridorWalking:$CorridorWalking
     Assert-MineComeTraceClock $MinimumUtcMs
     if($BufferedPhysicalMovement -and -not $PhysicalMovement){throw 'Buffered playback requires the physical movement profile.'}
     if($ExtendedWalking -and -not $BufferedPhysicalMovement){throw 'Extended walking requires explicit buffered physical movement.'}
@@ -222,9 +232,10 @@ function New-MineComeTraceReceiver {
     $currentHash=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
     if($hash -cne $currentHash) { throw 'Ground patch changed while reading.' }
     $json=[Text.UTF8Encoding]::new($false,$true).GetString($bytes)
+    $initialGroundY=64.0
     if($CorridorWalking){
         $surface=Read-MineComeTraceCorridor $json $hash $path $Corridor
-        $run=$surface.Run;$center=$surface.Center
+        $run=$surface.Run;$center=$surface.Center;$initialGroundY=$surface.InitialGroundY
     }else{
     $document=Read-MineComeTraceJson $json 65536 $area.JsonMembers
     try {
@@ -255,7 +266,7 @@ function New-MineComeTraceReceiver {
         }
     } finally { $document.Dispose() }
     }
-    return [pscustomobject]@{ExpectedRun=$run;PatchHash=$hash;Center=$center;ExpectedHudSave=$ExpectedHudSave;PhysicalMovement=[bool]$PhysicalMovement;BufferedPhysicalMovement=[bool]$BufferedPhysicalMovement;ExtendedWalking=[bool]$ExtendedWalking;WideWalking=[bool]$WideWalking;ScriptedHudCoupled=[bool]$ScriptedHudCoupled;CorridorWalking=[bool]$CorridorWalking;CorridorWalkOnly=[bool]$CorridorWalkOnly;Corridor=$Corridor;StartedMonotonicNs=[long]0;Anchor=[pscustomobject]@{x=0.0;y=64.0;z=0.0};AnchorVerified=$false;MinimumUtcMs=[long]$MinimumUtcMs;LastSeq=[long]0;LastServerSeq=[long]0;LastFreshPassedSeq=[long]0;LastPassedUtcMs=[long]0;LastPassedServerAgeMs=[double]0;World=$null;Save=$null;Begun=$false;Ended=$false;GroundProved=$false;Bytes=0;Records=0}
+    return [pscustomobject]@{ExpectedRun=$run;PatchHash=$hash;Center=$center;InitialGroundY=$initialGroundY;ExpectedHudSave=$ExpectedHudSave;PhysicalMovement=[bool]$PhysicalMovement;BufferedPhysicalMovement=[bool]$BufferedPhysicalMovement;ExtendedWalking=[bool]$ExtendedWalking;WideWalking=[bool]$WideWalking;ScriptedHudCoupled=[bool]$ScriptedHudCoupled;CorridorWalking=[bool]$CorridorWalking;CorridorWalkOnly=[bool]$CorridorWalkOnly;Corridor=$Corridor;StartedMonotonicNs=[long]0;Anchor=[pscustomobject]@{x=0.0;y=64.0;z=0.0};AnchorVerified=$false;MinimumUtcMs=[long]$MinimumUtcMs;LastSeq=[long]0;LastServerSeq=[long]0;LastFreshPassedSeq=[long]0;LastPassedUtcMs=[long]0;LastPassedServerAgeMs=[double]0;World=$null;Save=$null;Begun=$false;Ended=$false;GroundProved=$false;Bytes=0;Records=0}
 }
 
 function Receive-MineComeMovementTrace {
@@ -264,6 +275,7 @@ function Receive-MineComeMovementTrace {
     Assert-MineComeTraceClock $NowUtcMs
     if($State.Ended) { throw 'Trace already ended; appends/replay rejected.' }
     $corridor=$State.PSObject.Properties['CorridorWalking'] -and $State.CorridorWalking
+    $physicalCorridor=$corridor -and $State.PhysicalMovement
     $walkOnly=$corridor -and $State.CorridorWalkOnly
     $extent=if($State.WideWalking){4}else{2}
     $minX=if($corridor){-3.5}else{-$extent};$maxX=if($corridor){7.5}else{$extent}
@@ -272,7 +284,7 @@ function Receive-MineComeMovementTrace {
     if($JsonLine.IndexOfAny([char[]]@("`r","`n")) -ge 0) { throw 'Receiver accepts one complete NDJSON record without separators.' }
     $lineBytes=[Text.UTF8Encoding]::new($false,$true).GetByteCount($JsonLine)
     $session=Get-HudWalkingSession -ExtendedWalking:$State.ExtendedWalking
-    $maxBytes=if($corridor){262144}else{$session.TraceBytes};$maxRecords=if($corridor){256}else{200}
+    $maxBytes=if($corridor){262144}else{$session.TraceBytes};$maxRecords=if($corridor -and -not $physicalCorridor){256}else{200}
     if($lineBytes -lt 1 -or $lineBytes -gt 4096 -or $State.Bytes+$lineBytes+1 -gt $maxBytes -or $State.Records -ge $maxRecords) { throw 'Trace line/stream budget exceeded.' }
     $document=Read-MineComeTraceJson $JsonLine 4096
     try {
@@ -294,7 +306,7 @@ function Receive-MineComeMovementTrace {
         }
         Assert-MineComeTraceKeys $root $keys
         [void](Get-MineComeTraceInteger $root 'schema' 1 1)
-        $sourceKind=if($walkOnly){'hud_corridor_walk_coupled'}elseif($corridor){'hud_corridor_coupled'}elseif($State.PhysicalMovement){$session.SourceKind}else{'live_kcd_ground_patch'}
+        $sourceKind=if($physicalCorridor){'live_kcd_hud_physical_movement_corridor'}elseif($walkOnly){'hud_corridor_walk_coupled'}elseif($corridor){'hud_corridor_coupled'}elseif($State.PhysicalMovement){$session.SourceKind}else{'live_kcd_ground_patch'}
         if((Get-MineComeTraceString $root 'run') -cne $State.ExpectedRun -or (Get-MineComeTraceString $root 'patch_sha256') -cne $State.PatchHash -or (Get-MineComeTraceString $root 'source_kind') -cne $sourceKind) { throw 'Trace patch/run/source identity mismatch.' }
         $world=Get-MineComeTraceString $root 'world';$save=Get-MineComeTraceString $root 'save';$uuid=[Guid]::Empty
         $expectedSave=if($State.ExpectedHudSave){$State.ExpectedHudSave}else{'MineCome-Ground-'+$world}
@@ -308,7 +320,7 @@ function Receive-MineComeMovementTrace {
         if($utc -gt $NowUtcMs -and $utc-$NowUtcMs -gt 50) { throw 'Trace timestamp is too far in the future.' }
         $phase=Get-MineComeTraceString $root 'phase'
         $phases=@('SETTLING','WALKING','RESTING','JUMPING','LANDING','PASSED','FAILED','STOPPED')
-        if($corridor){$phases+=@('RETURNING','RETURN_REST')}
+        if($corridor -and -not $physicalCorridor){$phases+=@('RETURNING','RETURN_REST')}
         if($walkOnly){$phases=@($phases | Where-Object {$_ -cnotin @('JUMPING','LANDING')})}
         if($phase -cnotin $phases) { throw 'Invalid trace phase.' }
         $returnKind=$kind;$target=$null;$serverSeq=$State.LastServerSeq;$groundProved=$State.GroundProved
@@ -325,7 +337,7 @@ function Receive-MineComeMovementTrace {
                 if((Get-MineComeTraceNumber $center $axis -10000000 10000000) -ne $State.Center.$axis) { throw 'Begin center differs from captured patch.' }
                 $expected=if($axis -ceq 'y'){64}else{0}
                 if($State.PhysicalMovement){
-                    $low=if($axis -ceq 'y'){52}else{-0.01};$high=if($axis -ceq 'y'){76}else{0.01}
+                    $low=if($axis -ceq 'y'){$minY}else{-0.01};$high=if($axis -ceq 'y'){$maxY}else{0.01}
                     [void](Get-MineComeTraceNumber $anchor $axis $low $high)
                 }else{[void](Get-MineComeTraceNumber $anchor $axis $expected $expected)}
             }
@@ -333,7 +345,7 @@ function Receive-MineComeMovementTrace {
         } elseif($kind -ceq 'sample') {
             if(-not $State.Begun) { throw 'Sample precedes begin.' }
             $monotonic=Get-MineComeTraceInteger $root 'monotonic_ns' ([long]::MinValue) ([long]::MaxValue)
-            if($corridor){
+            if($corridor -and -not $physicalCorridor){
                 $elapsed=[decimal]$monotonic-[decimal]$State.StartedMonotonicNs
                 if($elapsed -lt 0 -or $elapsed -gt 20000000000L){throw 'Corridor source exceeded its20-second interval.'}
             }
@@ -345,6 +357,16 @@ function Receive-MineComeMovementTrace {
                 Assert-MineComeTraceKeys $motion @('x','y','z','vx','vy','vz','on_ground','proxy_support')
                 [void](Get-MineComeTraceNumber $motion 'x' $minX $maxX);[void](Get-MineComeTraceNumber $motion 'z' $minZ $maxZ)
                 [void](Get-MineComeTraceNumber $motion 'y' $minY $maxY)
+                if($physicalCorridor){
+                    # Capture coordinates stay tied to tile0; the physical
+                    # transform also preserves its actual settled spawn height.
+                    # Both bounds apply, so a tiny nonzero anchor cannot expand
+                    # the native rectangle at an edge.
+                    $dx=(Get-MineComeTraceNumber $motion 'x' $minX $maxX)-$State.Anchor.x
+                    $dz=(Get-MineComeTraceNumber $motion 'z' $minZ $maxZ)-$State.Anchor.z
+                    $dy=(Get-MineComeTraceNumber $motion 'y' $minY $maxY)-$State.Anchor.y
+                    if($dx -lt -3.5 -or $dx -gt 7.5 -or $dz -lt -3.5 -or $dz -gt 3.5 -or $dy -lt -6.1 -or $dy -gt 3.5){throw 'Physical corridor displacement leaves the fixed native bounds.'}
+                }
                 foreach($axis in @('vx','vy','vz')) { [void](Get-MineComeTraceNumber $motion $axis -4 4) }
                 [void](Get-MineComeTraceBoolean $motion 'on_ground');[void](Get-MineComeTraceBoolean $motion 'proxy_support')
             }
@@ -360,7 +382,7 @@ function Receive-MineComeMovementTrace {
             $active=$false
             if($phase -cin @('WALKING','RESTING') -and $grounded) { $active=$true;$groundProved=$true }
             elseif($phase -cin @('JUMPING','LANDING') -and $groundProved) { $active=$true }
-            elseif($corridor -and $phase -cin @('RETURNING','RETURN_REST') -and $groundProved -and $grounded){$active=$true}
+            elseif($corridor -and -not $physicalCorridor -and $phase -cin @('RETURNING','RETURN_REST') -and $groundProved -and $grounded){$active=$true}
             elseif($State.BufferedPhysicalMovement -and $grounded -and
                 (($phase -ceq 'SETTLING' -and -not $State.AnchorVerified) -or ($phase -ceq 'PASSED' -and $groundProved))) {
                 # Playback needs the actual initial anchor and terminal source
@@ -380,7 +402,7 @@ function Receive-MineComeMovementTrace {
                 $target=[pscustomobject]@{x=$State.Center.x+(Get-MineComeTraceNumber $server 'x' $minX $maxX)-$State.Anchor.x;y=$State.Center.y-(Get-MineComeTraceNumber $server 'z' $minZ $maxZ)+$State.Anchor.z;z=$State.Center.z+(Get-MineComeTraceNumber $server 'y' $minY $maxY)-$State.Anchor.y}
                 # Physical walking follows sampled slopes in either direction;
                 # the explicitly selected sphere bounds every submitted target.
-                if($State.PhysicalMovement -and (($target.x-$State.Center.x)*($target.x-$State.Center.x)+($target.y-$State.Center.y)*($target.y-$State.Center.y)+($target.z-$State.Center.z)*($target.z-$State.Center.z) -gt ($extent*$extent) -or $target.z-$State.Center.z -lt -1.5 -or $target.z-$State.Center.z -gt 1.5)){throw 'Physical movement target exceeds the physical follower bounds.'}
+                if($State.PhysicalMovement -and -not $physicalCorridor -and (($target.x-$State.Center.x)*($target.x-$State.Center.x)+($target.y-$State.Center.y)*($target.y-$State.Center.y)+($target.z-$State.Center.z)*($target.z-$State.Center.z) -gt ($extent*$extent) -or $target.z-$State.Center.z -lt -1.5 -or $target.z-$State.Center.z -gt 1.5)){throw 'Physical movement target exceeds the physical follower bounds.'}
             }
             if($phase -ceq 'PASSED' -and $returnKind -cne 'stale' -and $groundProved -and $grounded) {
                 $freshPassedSeq=$seq;$passedUtc=$utc;$passedServerAgeMs=$serverAgeMs
