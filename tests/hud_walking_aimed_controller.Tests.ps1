@@ -201,8 +201,9 @@ function InventoryEvidence {
             all_grounded=$true;nonzero_binding_samples=0;bindings_or=0;immobility_verified=$true;
             resumed_movement=@{input_sequence=7;key=83;captured_utc_ms=2990;received_utc_ms=3000;received_monotonic_ns=3000000000L;binding_observed=$true;stale_samples=0;client_displacement=.15;server_displacement=.15;client_displacement_from_close=.15;server_displacement_from_close=.15;verified=$true}})}
 }
-function ScenarioGuest([string]$Face='UP') {
-    $seed=@{x=2;y=64;z=0};$support=@{x=2;y=63;z=0};$added=if($Face -ceq 'UP'){@{x=2;y=65;z=0}}else{@{x=1;y=64;z=0}}
+function ScenarioGuest([string]$Face='UP',[long]$SeedX=2,[long]$SeedZ=0) {
+    $seed=@{x=$SeedX;y=64;z=$SeedZ};$support=@{x=$SeedX;y=63;z=$SeedZ};$added=@{x=$SeedX;y=64;z=$SeedZ}
+    switch -CaseSensitive ($Face){UP{$added.y++}WEST{$added.x--}EAST{$added.x++}NORTH{$added.z--}SOUTH{$added.z++}default{throw 'Unsupported scenario fixture face'}}
     $targets=@($seed,$added,$added,$seed);$hits=@($support,$seed,$added,$seed);$actions=@(1,1,2,2);$faces=@('UP',$Face,'WEST','WEST')
     $rows=@();$components=@();$requests=@()
     for($i=0;$i -lt 4;$i++) {
@@ -230,6 +231,25 @@ foreach($case in @(@('TopFaceInventory','UP'),@('SideFaceInventory','WEST'))) {
 }
 $g=ScenarioGuest 'WEST';Reject {Assert-HudWalkingAimedScenario $g TopFaceInventory} 'Front-facing placement counted as top-face placement'
 $g=ScenarioGuest 'UP';Reject {Assert-HudWalkingAimedScenario $g SideFaceInventory} 'Top-face placement counted as WEST placement'
+foreach($case in @(@('WEST',4,0),@('EAST',-5,0),@('NORTH',0,4),@('SOUTH',0,-5))){
+    $face=$case[0];$x=$case[1];$z=$case[2]
+    $g=ScenarioGuest $face $x $z
+    $proof=Assert-HudWalkingAimedScenario $g SideFaceInventory
+    Check ($proof.requested_face -ceq $face) "Perimeter seed must select origin-facing $face"
+    $topProof=Assert-HudWalkingAimedScenario (ScenarioGuest 'UP' $x $z) TopFaceInventory
+    Check ($topProof.requested_face -ceq 'UP') 'Top-face scenario must remain independent of horizontal perimeter'
+    foreach($other in @('WEST','EAST','NORTH','SOUTH') | Where-Object {$_ -cne $face}){
+        $bad=ScenarioGuest $other $x $z
+        Reject {Assert-HudWalkingAimedScenario $bad SideFaceInventory} "Wrong near face $other must not pass for $face seed"
+    }
+    $bad=ScenarioGuest $face $x $z
+    foreach($row in @($bad.lab_evidence.stone_bridge.confirmations[1],$bad.lab_evidence.stone_bridge.arena.confirmations[1])){$row.target.y++}
+    Reject {Assert-HudWalkingAimedScenario $bad SideFaceInventory} 'Correct face cannot admit a wrong adjacent cell'
+}
+foreach($case in @(@('WEST',4,4),@('EAST',-5,-5),@('NORTH',3,4),@('SOUTH',-4,-5))){
+    $proof=Assert-HudWalkingAimedScenario (ScenarioGuest $case[0] $case[1] $case[2]) SideFaceInventory
+    Check ($proof.requested_face -ceq $case[0]) 'Seed-center dominance and exact X tie break must be deterministic'
+}
 $mutations=@(
     {param($g)$g.lab_evidence.stone_bridge.confirmations[1].target.x++},
     {param($g)$g.lab_evidence.stone_bridge.confirmations[1].hit_block.y++},

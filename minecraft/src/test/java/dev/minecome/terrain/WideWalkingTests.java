@@ -1,6 +1,7 @@
 package dev.minecome.terrain;
 
 import com.google.gson.*;
+import dev.minecome.protocol.AimGeometry.Cell;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
@@ -34,6 +35,27 @@ final class WideWalkingTests {
         check(wide.heightAt(-3.5,-3.5)==64&&wide.heightAt(3.5,3.5)==64,"New outer corners retain fixed vertical anchor");
         check(wide.containsFeet(3.7,-3.7,.3)&&!wide.containsFeet(3.71,0,.3),"Feet stay inside the expanded capture");
         var region=new HudBuildRegion(wide,new dev.minecome.protocol.AimGeometry.Cell(4,63,0));
+        double[][] directions={{1,0},{-1,0},{0,1},{0,-1},{1,1},{-1,1},{-1,-1},{1,-1},{-.18414674699306488,-.9681517481803894}};
+        Cell[] expected={new Cell(4,63,-1),new Cell(-5,63,-1),new Cell(-1,63,4),new Cell(-1,63,-5),
+                new Cell(1,63,4),new Cell(-5,63,1),new Cell(-5,63,-2),new Cell(1,63,-5),new Cell(-1,63,-5)};
+        for(int i=0;i<directions.length;i++){
+            double x=directions[i][0],z=directions[i][1];
+            var support=HudBuildRegion.facingSupport(wide,63,x,z);
+            check(support.equals(expected[i]),"Facing support follows cardinal/diagonal/live heading "+i);
+            check(support.equals(HudBuildRegion.facingSupport(wide,63,7*x,7*z)),"Heading magnitude does not change deterministic support "+i);
+            var facing=new HudBuildRegion(wide,support);
+            double cx=support.x()+.5,cz=support.z()+.5,radius=Math.hypot(cx,cz);
+            check(radius<=Math.sqrt(4.5*4.5+1.5*1.5) && (cx*x+cz*z)/(radius*Math.hypot(x,z))>.89,
+                    "Facing support retains bounded reach and stays near captured heading "+i);
+            check(support.y()==63 && !facing.isImported(support) && !facing.isImported(facing.seed()),
+                    "Facing support preserves initial height and imported terrain ownership "+i);
+        }
+        reject(()->HudBuildRegion.facingSupport(wide,63,0,0),"zero heading");
+        reject(()->HudBuildRegion.facingSupport(wide,63,Double.NaN,1),"NaN heading");
+        reject(()->HudBuildRegion.facingSupport(wide,63,1,Double.POSITIVE_INFINITY),"infinite heading");
+        reject(()->HudBuildRegion.facingSupport(null,63,1,0),"missing heading patch");
+        var narrowRegion=new HudBuildRegion(GroundPatch.parse(bytes(patch(5))),new Cell(2,63,0));
+        check(narrowRegion.support().equals(new Cell(2,63,0)),"Narrow fixed support remains unchanged");
         check(region.seed().x()==4&&region.isImported(new dev.minecome.protocol.AimGeometry.Cell(3,63,0)),"Wide live build support stays beside protected imported ground");
         check(region.targetRejection(new dev.minecome.protocol.AimGeometry.Cell(4,65,0))==null
                 &&region.targetRejection(new dev.minecome.protocol.AimGeometry.Cell(3,64,0))==null,

@@ -18,6 +18,30 @@ public final class HudBuildRegion {
     private final String patchRun,patchSha256;
     private final Cell support,seed,minimum,maximum;
     private final Set<Cell> imported;
+    /** Choose only adjacent, reachable perimeter support; never use imported terrain as a fixture. */
+    public static Cell facingSupport(GroundPatch patch,int supportY,double forwardX,double forwardZ){
+        if(patch==null || !Double.isFinite(forwardX) || !Double.isFinite(forwardZ))
+            throw new IllegalArgumentException("Finite build heading and captured patch required");
+        double length=Math.hypot(forwardX,forwardZ);
+        if(length==0 || !Double.isFinite(length))throw new IllegalArgumentException("Nonzero build heading required");
+        double nx=forwardX/length,nz=forwardZ/length;
+        int half=(int)patch.halfExtent(),low=-half-1;
+        double maxRadiusSquared=(half+.5)*(half+.5)+1.5*1.5,bestScore=Double.NEGATIVE_INFINITY,bestRadius=Double.POSITIVE_INFINITY;
+        Cell best=null;
+        // Ascending coordinates settle equal-distance ties consistently. Corners are
+        // excluded so selecting a diagonal heading cannot extend bootstrap reach.
+        for(int x=low;x<=half;x++)for(int z=low;z<=half;z++){
+            if(x!=low && x!=half && z!=low && z!=half)continue;
+            double cx=x+.5,cz=z+.5,radius=cx*cx+cz*cz;
+            if(radius>maxRadiusSquared)continue;
+            double score=(cx*nx+cz*nz)/Math.sqrt(radius);
+            if(score>bestScore+1e-12 || Math.abs(score-bestScore)<=1e-12 && radius<bestRadius){
+                best=new Cell(x,supportY,z);bestScore=score;bestRadius=radius;
+            }
+        }
+        if(best==null)throw new IllegalArgumentException("No reachable captured-patch perimeter support");
+        return best;
+    }
 
     public HudBuildRegion(GroundPatch patch,Cell support){
         if(patch==null || support==null)throw new IllegalArgumentException("Build region requires a patch and explicit bootstrap support");

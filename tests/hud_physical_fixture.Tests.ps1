@@ -196,6 +196,26 @@ $wideAimed.arena.build_region.protected_imported_cells=64
 $wideCombinedProof | Add-Member NoteProperty aimed_blocks $wideAimed
 $null=Assert-HudPhysicalFixtureResult $wideCombined $run $hash -ExtendedWalking -WideWalking -AimedBlocks
 Check $true 'Wide combined fixture retains crossing, six actions, protected terrain and finite reach'
+$facing=Clone $wideCombined
+$fa=$facing.lab_evidence.physical_controller_fixture.aimed_blocks
+$fa | Add-Member NoteProperty facing_seed $true
+$fa | Add-Member NoteProperty facing_side 'NORTH'
+function Rotate-FacingCell($Cell){$oldX=$Cell.x;$Cell.x=$Cell.z-1;$Cell.z=$oldX}
+foreach($cell in @($fa.seed,$fa.support,$fa.arena.seed,$fa.arena.build_region.support,$fa.arena.arena_minimum,$fa.arena.arena_maximum_inclusive,$fa.top_aim_point)){Rotate-FacingCell $cell}
+foreach($row in @($fa.confirmations)+@($fa.arena.confirmations)+@($fa.arena.requests)){
+    Rotate-FacingCell $row.target;Rotate-FacingCell $row.hit_block
+    if($row.face -ceq 'WEST'){$row.face='NORTH'}
+}
+$fa.confirmations[3].label='side_place';$fa.confirmations[4].label='side_break'
+$null=Assert-HudPhysicalFixtureResult $facing $run $hash -ExtendedWalking -WideWalking -AimedBlocks -FacingSeed
+Check $true 'Facing fixture proves north placement and full cleanup with correlated geometry'
+Reject {Assert-HudPhysicalFixtureResult $facing $run $hash -ExtendedWalking -WideWalking -AimedBlocks} 'Facing fixture requires explicit selection'
+Reject {Assert-HudPhysicalFixtureResult $wideCombined $run $hash -ExtendedWalking -WideWalking -AimedBlocks -FacingSeed} 'Facing mode cannot accept fixed-east fixture'
+foreach($change in @('direction','support','top','face')){
+    $bad=Clone $facing;$a=$bad.lab_evidence.physical_controller_fixture.aimed_blocks
+    switch($change){direction{$a.facing_side='WEST'}support{$a.seed.z=3}top{$a.top_aim_point.z=4.5}face{$a.confirmations[3].face='WEST'}}
+    Reject {Assert-HudPhysicalFixtureResult $bad $run $hash -ExtendedWalking -WideWalking -AimedBlocks -FacingSeed} "Facing proof rejects $change"
+}
 foreach($change in @('marker','support','terrain_low','terrain_high','reach','top')){
     $bad=Clone $wideCombined;$a=$bad.lab_evidence.physical_controller_fixture.aimed_blocks
     switch($change){

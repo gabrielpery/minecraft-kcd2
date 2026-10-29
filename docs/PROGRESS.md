@@ -1,4 +1,37 @@
-# MineCome progress — 2026-10-28
+# MineCome progress — 2026-10-29
+
+## Facing bootstrap — IMPLEMENTED / COMPILED / MINECRAFT PASS; LIVE ACCEPTANCE PENDING
+
+Wide walking/aiming now selects its initial owned stone support from the captured
+footprint perimeter nearest a fresh validated host-camera heading. It retains
+the existing height, reach, ownership and terrain protections. Narrow support
+remains fixed at x2. The selected support and source heading are recorded in
+`stone_bridge.build_support.selection`. No native repeat-session code changed.
+
+The preceding live controller `0ee4decd20b24fe2b8bf35cb0208589c` registered F8 and
+confirmed a native stone spawn, but the fixed eastward stone was outside the last
+recorded view. Pressing F8 again cancelled normally; no crash or movement pass was
+established. Evidence:
+`runtime/evidence/hud-walking-aimed-20261029-195358-02a76a68a7334a3c94a6d6587267071b/`.
+
+Actual Minecraft facing fixture `49ac63b83cfe43519c197ed0ca5e9c94` passed all six
+vanilla block actions, walking, stationary inventory, resumed walking, complete
+cleanup and source-hash verification. Its support was `(-1,63,4)`, with UP/NORTH
+placement. Evidence:
+`runtime/evidence/hud-physical-fixture-20261029-201042-49ac63b83cfe43519c197ed0ca5e9c94/verification.json`.
+Optional standalone command:
+
+```powershell
+& './scripts/Test-HudPhysicalMovementFixture.ps1' -ExtendedWalking -WideWalking -AimedBlocks -FacingSeed
+```
+
+The first fixture `16494f36467843a0b4a2de33d46bf0a6` completed its six actions but
+failed after Windows blocked a camera-file replacement. The fixture-only writer
+now abandons that 100 ms-old publication and publishes a new sample on its next
+update. Production's 300 ms reader allowance is unchanged. Java compilation,
+ground-patch checks and physical-movement checks passed before the actual fixture.
+This is scripted Minecraft evidence; wider-area KCD composition and two-session
+live acceptance remain pending. KCD2 is being restarted for the retry.
 
 ## Repeat build startup — AUTOMATIC PASS
 
@@ -19,7 +52,7 @@ both six-file bundles, disabled the owned proxy, installed the staged repeat
 add-on and re-enabled the proxy unarmed. Installed-profile verification passed
 without further changes. Receipt:
 `runtime/evidence/hud-update-20261028-182335-a328f8eca0994dd0927935076feb99e2/update.json`.
-Both games remain closed; no new live result is claimed. NEXT_SESSION.md starts
+Both games were closed at that checkpoint; no new live result was claimed. NEXT_SESSION.md starts
 with the exact launch commands and two-session acceptance steps. No new launcher
 or repeated game test was needed for this preparation.
 

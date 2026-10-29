@@ -88,6 +88,16 @@ public final class HudPhysicalMovement {
     }
     public void activate(long now){keys.activate(now);}
     public boolean inputReady(long now){return ready && !closing && (completed || (views!=null && views.current(System.currentTimeMillis(),now)!=null));}
+    public record BuildHeading(long viewSequence,float yaw,double forwardX,double forwardZ){}
+    /** The fresh host snapshot is available before activation; default player yaw is not host evidence. */
+    public BuildHeading freshBuildHeading(long now){
+        if(!ready || closing || completed || views==null)return null;
+        var sample=views.current(System.currentTimeMillis(),now);
+        if(sample==null)return null;
+        var view=sample.view();
+        double radians=Math.toRadians(view.yaw());
+        return new BuildHeading(view.sequence(),view.yaw(),-Math.sin(radians),Math.cos(radians));
+    }
     public void authority(MinecraftClient client,long now,boolean fresh){
         observeInventory(client,false);
         boolean allowed=fresh && inputReady(now) && client.currentScreen==null && client.getOverlay()==null && !client.isPaused();

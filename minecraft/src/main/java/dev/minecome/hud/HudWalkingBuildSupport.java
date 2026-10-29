@@ -21,19 +21,24 @@ final class HudWalkingBuildSupport {
     private final UUID playerId;
     private final HudBuildRegion region;
     private final BlockPos support;
+    private final HudPhysicalMovement.BuildHeading heading;
     private final AtomicReference<Observation> observation=new AtomicReference<>();
     private final AtomicReference<String> failure=new AtomicReference<>();
     private final AtomicInteger writes=new AtomicInteger();
     private Object serverWorld,serverPlayer;
     private volatile boolean requested,prepared,cleanupRequested,cleaned;
 
-    HudWalkingBuildSupport(MinecraftClient client,GroundPatch patch,String save){
+    HudWalkingBuildSupport(MinecraftClient client,GroundPatch patch,String save,HudPhysicalMovement.BuildHeading heading){
         require(Boolean.getBoolean("minecome.hudWalkingAimed") && client.isOnThread() && client.player!=null && client.getServer()!=null,"Live walking build owner required");
         require(save.matches("MineCome-HudStream-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}") && save.equals(client.getServer().getSaveProperties().getLevelName()),"Exact walking HUD save required");
         require(patch.sourceKind().equals("live_kcd_ground_patch") && GroundCollision.matches(client.world,patch,false),"Exact live imported ground required");
         this.patch=patch;this.save=save;server=client.getServer();clientWorld=client.world;clientPlayer=client.player;playerId=client.player.getUuid();
         require(Math.abs(client.player.getX())<.001 && Math.abs(client.player.getZ())<.001,"Build support must precede walking");
-        region=new HudBuildRegion(patch,new AimGeometry.Cell((int)patch.halfExtent(),(int)Math.floor(client.player.getY())-1,0));support=pos(region.support());
+        this.heading=patch.gridSize()==9?heading:null;
+        require(patch.gridSize()!=9 || heading!=null,"Fresh host heading required for wide build support");
+        int supportY=(int)Math.floor(client.player.getY())-1;
+        var cell=this.heading==null?new AimGeometry.Cell(2,supportY,0):HudBuildRegion.facingSupport(patch,supportY,heading.forwardX(),heading.forwardZ());
+        region=new HudBuildRegion(patch,cell);support=pos(region.support());
     }
     HudBuildRegion region(){return region;}
     GroundPatch patch(){return patch;}
@@ -97,5 +102,10 @@ final class HudWalkingBuildSupport {
     private int state(BlockView w){var s=w.getBlockState(support);return s.isAir()?0:s.isOf(Blocks.BEDROCK)?1:2;}
     private static BlockPos pos(AimGeometry.Cell p){return new BlockPos(p.x(),p.y(),p.z());}
     private static void require(boolean b,String reason){if(!b)throw new IllegalStateException(reason);}
-    JsonObject evidence(){var e=new JsonObject();e.addProperty("patch_run",patch.run());e.addProperty("patch_sha256",patch.sha256());e.addProperty("prepared",prepared);e.addProperty("cleanup_complete",cleaned);e.addProperty("direct_support_writes",writes.get());e.addProperty("failure",failure.get());return e;}
+    JsonObject evidence(){
+        var e=new JsonObject();e.addProperty("patch_run",patch.run());e.addProperty("patch_sha256",patch.sha256());e.addProperty("prepared",prepared);e.addProperty("cleanup_complete",cleaned);e.addProperty("direct_support_writes",writes.get());e.addProperty("failure",failure.get());
+        var selection=new JsonObject();selection.addProperty("mode",heading==null?"narrow_fixed":"host_view_perimeter");
+        if(heading!=null){selection.addProperty("view_seq",heading.viewSequence());selection.addProperty("yaw",heading.yaw());selection.addProperty("forward_x",heading.forwardX());selection.addProperty("forward_z",heading.forwardZ());}
+        var cell=new JsonObject();cell.addProperty("x",support.getX());cell.addProperty("y",support.getY());cell.addProperty("z",support.getZ());selection.add("support",cell);e.add("selection",selection);return e;
+    }
 }

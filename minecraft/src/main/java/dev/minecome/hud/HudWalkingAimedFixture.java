@@ -24,13 +24,17 @@ final class HudWalkingAimedFixture implements AutoCloseable {
     private record Settled(Observation server,double distance,double clientSpeed,double serverSpeed,double clientVertical) {}
     private record Confirmed(String label,AimedStoneArena.Result result,long at,Settled settled) {}
     private static final String[] LABELS={"bootstrap","top_place","upper_break","west_place","west_break","seed_break"};
+    private static final String[] FACING_LABELS={"bootstrap","top_place","upper_break","side_place","side_break","seed_break"};
     private final MinecraftServer server;
     private final Object clientWorld,clientPlayer;
     private final UUID playerId;
     private final String save;
     private final GroundPatch patch;
     private final HudBuildRegion region;
-    private final BlockPos support,seed,upper,west;
+    private final BlockPos support,seed,upper,side;
+    private final boolean facingSeed;
+    private final Direction sideFace;
+    private final String[] labels;
     private final AimGeometry.Alignment alignment;
     private final Vec3d initialPosition;
     private final long initializedAt;
@@ -61,11 +65,16 @@ final class HudWalkingAimedFixture implements AutoCloseable {
                 "Walking/aimed fixture requires yaw zero for its fixed adjacent support");
         this.server=client.getServer();this.clientWorld=client.world;this.clientPlayer=client.player;
         this.playerId=client.player.getUuid();this.patch=patch;this.save=save;initializedAt=System.nanoTime();
+        facingSeed=HudPhysicalMovementMode.facingFixture(System.getProperties());
+        require(!facingSeed || patch.wide(),"Facing fixture requires the wide terrain profile");
+        labels=facingSeed?FACING_LABELS:LABELS;
         initialPosition=client.player.getPos();
         require(Math.abs(initialPosition.x)<.001 && Math.abs(initialPosition.z)<.001,"Fixture alignment must precede walking");
-        region=new HudBuildRegion(patch,new AimGeometry.Cell((int)patch.halfExtent(),(int)Math.floor(initialPosition.y)-1,0));
-        support=pos(region.support());seed=pos(region.seed());upper=seed.up();west=seed.west();
-        require(region.targetRejection(cell(upper))==null && region.targetRejection(cell(west))==null,
+        int supportY=(int)Math.floor(initialPosition.y)-1;
+        region=new HudBuildRegion(patch,facingSeed?HudBuildRegion.facingSupport(patch,supportY,0,1):new AimGeometry.Cell((int)patch.halfExtent(),supportY,0));
+        support=pos(region.support());seed=pos(region.seed());upper=seed.up();
+        sideFace=facingSeed?nearFace(cell(seed)):Direction.WEST;side=seed.offset(sideFace);
+        require(region.targetRejection(cell(upper))==null && region.targetRejection(cell(side))==null,
                 "Fixture top/side cells overlap protected terrain or lie outside the build region");
         var eye=client.player.getEyePos();
         alignment=new AimGeometry.Alignment(vec(eye),new Protocol.Vec3(patch.centerX(),patch.centerY(),
@@ -128,7 +137,7 @@ final class HudWalkingAimedFixture implements AutoCloseable {
         if(queued){
             if(arena.pending())return false;
             record(client,nextAction,now);nextAction++;
-            if(nextAction==LABELS.length){
+            if(nextAction==labels.length){
                 require(arena.ownedCells().isEmpty(),"Walking/aimed final owned set is not empty");
                 afterInteractions=client.player.getPos();serverAfterInteractions=observation.get().position();
                 interactionsAt=now;interactionsDone=true;return true;
@@ -143,10 +152,10 @@ final class HudWalkingAimedFixture implements AutoCloseable {
         require(client.player.getPos().distanceTo(beforeInteractions)<=.01 && settled.server.position().distanceTo(serverBeforeInteractions)<=.01,
                 "Player moved during settled aimed actions");
         Vec3d point=switch(nextAction){
-            case 1->vec(topAimPoint(patch.wide(),cell(seed)));
+            case 1->vec(facingSeed?facingTopAimPoint(cell(seed)):topAimPoint(patch.wide(),cell(seed)));
             case 2->Vec3d.ofCenter(upper);
-            case 3->new Vec3d(seed.getX(),seed.getY()+.5,seed.getZ()+.5);
-            case 4->Vec3d.ofCenter(west);
+            case 3->sideAimPoint(seed,sideFace);
+            case 4->Vec3d.ofCenter(side);
             case 5->Vec3d.ofCenter(seed);
             default->throw new IllegalStateException("Unknown fixture action");
         };
@@ -155,7 +164,7 @@ final class HudWalkingAimedFixture implements AutoCloseable {
         var ray=new AimedStoneArena.HostRay(System.nanoTime(),alignment,alignment.toKcd(mapped),AimedStoneArena.Occlusion.clear());
         int action=nextAction==1 || nextAction==3?Protocol.PLACE_STONE:Protocol.BREAK_STONE;
         var decision=arena.request(client,nextAction+1,action,ray);
-        require(decision.queued(),"Walking/aimed "+LABELS[nextAction]+" rejected: "+decision.reason());
+        require(decision.queued(),"Walking/aimed "+labels[nextAction]+" rejected: "+decision.reason());
         queued=true;dispatchedFrom=settled;return false;
     }
 
@@ -184,12 +193,12 @@ final class HudWalkingAimedFixture implements AutoCloseable {
     }
 
     private void record(MinecraftClient client,int index,long now){
-        var result=arena.lastResult();BlockPos expected=switch(index){case 0,5->seed;case 1,2->upper;case 3,4->west;default->throw new IllegalStateException();};
+        var result=arena.lastResult();BlockPos expected=switch(index){case 0,5->seed;case 1,2->upper;case 3,4->side;default->throw new IllegalStateException();};
         require(result!=null && result.id()==index+1 && result.status().equals("confirmed") && result.clientAndServer()
                 && result.target().equals(expected),"Walking/aimed action lacks exact authoritative outcome");
         if(index==0 || index==1)require(result.hit().side()==Direction.UP,"Top placement selected another face");
-        if(index==3)require(result.hit().side()==Direction.WEST,"Side placement selected another face");
-        confirmations.add(new Confirmed(LABELS[index],result,now,dispatchedFrom));queued=false;dispatchedFrom=null;
+        if(index==3)require(result.hit().side()==sideFace,"Side placement selected another face");
+        confirmations.add(new Confirmed(labels[index],result,now,dispatchedFrom));queued=false;dispatchedFrom=null;
     }
 
     private Settled settled(MinecraftClient client){
@@ -214,7 +223,7 @@ final class HudWalkingAimedFixture implements AutoCloseable {
                 && entity.getWorld()==source.getOverworld() && entity.isCreative() && save.equals(source.getSaveProperties().getLevelName()),"Walking/aimed server ownership changed");
         if(serverWorld==null){serverWorld=source.getOverworld();serverPlayer=entity;}
         require(serverWorld==source.getOverworld() && serverPlayer==entity && GroundCollision.matches(source.getOverworld(),patch,true),"Walking/aimed server proxy ownership changed");
-        for(var p:List.of(support,seed,upper,west))require(source.getOverworld().isChunkLoaded(p),"Walking/aimed chunk unavailable");
+        for(var p:List.of(support,seed,upper,side))require(source.getOverworld().isChunkLoaded(p),"Walking/aimed chunk unavailable");
     }
     private void removeSupport(boolean abort){
         try{
@@ -231,7 +240,7 @@ final class HudWalkingAimedFixture implements AutoCloseable {
         }catch(Exception e){if(abort)abortCleanup="preserved_after_owner_or_cleanup_failure";else failure.compareAndSet(null,"Fixture support cleanup: "+e.getMessage());}
     }
     private boolean importedAir(BlockView world){for(var c:region.importedCells())if(!world.getBlockState(pos(c)).isAir())return false;return true;}
-    private boolean stonesAir(BlockView world){for(var p:List.of(seed,upper,west))if(!world.getBlockState(p).isAir())return false;return true;}
+    private boolean stonesAir(BlockView world){for(var p:List.of(seed,upper,side))if(!world.getBlockState(p).isAir())return false;return true;}
     private int supportState(BlockView world){var state=world.getBlockState(support);return state.isAir()?0:state.isOf(Blocks.BEDROCK)?1:2;}
     private static double horizontal(Vec3d a,Vec3d b){return Math.hypot(a.x-b.x,a.z-b.z);}
     private static Protocol.Vec3 vec(Vec3d p){return new Protocol.Vec3(p.x,p.y,p.z);}
@@ -239,6 +248,19 @@ final class HudWalkingAimedFixture implements AutoCloseable {
     /** The wide perimeter is farther away; aim inside its top face without increasing ray reach. */
     static Protocol.Vec3 topAimPoint(boolean wide,AimGeometry.Cell seed){
         return new Protocol.Vec3(seed.x()+(wide?.25:.5),seed.y()+1,seed.z()+.5);
+    }
+    static Direction nearFace(AimGeometry.Cell seed){
+        double x=seed.x()+.5,z=seed.z()+.5;
+        return Math.abs(x)>=Math.abs(z)?(x>=0?Direction.WEST:Direction.EAST):(z>=0?Direction.NORTH:Direction.SOUTH);
+    }
+    static Protocol.Vec3 facingTopAimPoint(AimGeometry.Cell seed){
+        Direction face=nearFace(seed);
+        return new Protocol.Vec3(seed.x()+(face==Direction.WEST?.25:face==Direction.EAST?.75:.5),seed.y()+1,
+                seed.z()+(face==Direction.NORTH?.25:face==Direction.SOUTH?.75:.5));
+    }
+    private static Vec3d sideAimPoint(BlockPos seed,Direction face){
+        return new Vec3d(seed.getX()+(face==Direction.WEST?0:face==Direction.EAST?1:.5),seed.getY()+.5,
+                seed.getZ()+(face==Direction.NORTH?0:face==Direction.SOUTH?1:.5));
     }
     private static AimGeometry.Cell cell(BlockPos p){return new AimGeometry.Cell(p.getX(),p.getY(),p.getZ());}
     private static BlockPos pos(AimGeometry.Cell p){return new BlockPos(p.x(),p.y(),p.z());}
@@ -249,9 +271,10 @@ final class HudWalkingAimedFixture implements AutoCloseable {
         var e=new JsonObject();e.addProperty("kind","standalone_hud_walking_aimed_fixture_v1");e.addProperty("scripted_input",true);
         if(patch.wide()){
             e.addProperty("walking_area","wide");e.addProperty("max_host_ray_range",AimedStoneArena.MAX_HOST_RAY_RANGE);
-            var point=topAimPoint(true,cell(seed));var top=new JsonObject();top.addProperty("x",point.x());top.addProperty("y",point.y());top.addProperty("z",point.z());
+            var point=facingSeed?facingTopAimPoint(cell(seed)):topAimPoint(true,cell(seed));var top=new JsonObject();top.addProperty("x",point.x());top.addProperty("y",point.y());top.addProperty("z",point.z());
             e.add("top_aim_point",top);
         }
+        if(facingSeed){e.addProperty("facing_seed",true);e.addProperty("facing_side",sideFace.name());}
         e.addProperty("synthetic_host_rays",true);e.addProperty("physical_input_verified",false);e.addProperty("kcd_connected",false);
         e.addProperty("completed",cleaned && resumed);e.addProperty("alignment_before_movement",firstMovementAt>initializedAt);
         e.addProperty("bootstrap_before_movement",firstMovementAt>bootstrapAt && bootstrapAt>0);e.addProperty("movement_before_interactions",walkBefore>=.05);

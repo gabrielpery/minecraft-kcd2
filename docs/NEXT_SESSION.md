@@ -1,10 +1,40 @@
-# Resume checkpoint — 28 October 2026
+# Resume checkpoint — 29 October 2026
 
 ## Ready for the next round
 
-The compiled repeat-session add-on is now **installed and unarmed** in the official
-development build. Both games are closed. The guarded update and installed-file
-verification passed. A fresh startup check also passed: exact repeat module hash,
+The repeat-session add-on remains **installed** in the official development build.
+Wide-area controls/composition and the complete two-session live acceptance remain
+pending. KCD2 is being restarted for a fresh retry; inspect current process and
+readiness receipts before launching anything. No native repeat code changed.
+
+The first live attempt, controller `0ee4decd20b24fe2b8bf35cb0208589c`, registered F8
+and confirmed the stone spawned, but its fixed eastward position was outside the
+last recorded view. The second F8 cancelled normally; this was not a crash or a
+walking test. Evidence:
+`runtime/evidence/hud-walking-aimed-20261029-195358-02a76a68a7334a3c94a6d6587267071b/`.
+
+Wide live aiming now chooses its bootstrap support on the captured footprint's
+perimeter using a fresh validated host-camera heading. Narrow sessions retain
+their fixed x2 support. Initial support height, reach and imported-terrain
+protections remain unchanged. Selection evidence is recorded in
+`stone_bridge.build_support.selection`; no default Minecraft player yaw is trusted.
+
+Actual Minecraft facing fixture `49ac63b83cfe43519c197ed0ca5e9c94` passed six vanilla
+block actions, walking, stationary inventory, later walking, complete cleanup and
+matching source hashes:
+`runtime/evidence/hud-physical-fixture-20261029-201042-49ac63b83cfe43519c197ed0ca5e9c94/verification.json`.
+The first fixture `16494f36467843a0b4a2de33d46bf0a6` completed all six actions but
+failed a Windows camera-file replacement lock. The fixture now drops a blocked
+100 ms-old publication and publishes a new sample on its next update; production's
+300 ms reader allowance is unchanged. Do not repeat this successful fixture unless
+relevant code changes. Optional standalone command from the repository root:
+
+```powershell
+& './scripts/Test-HudPhysicalMovementFixture.ps1' -ExtendedWalking -WideWalking -AimedBlocks -FacingSeed
+```
+
+The 28 October guarded update, installed-file verification and fresh startup check
+already passed: exact repeat module hash,
 add-on registration, compatibility, shader compilation, world load and an 81-point
 terrain readback. It stayed unarmed and closed normally; no input session started.
 Do not repeat installation or this startup check without a relevant change.
@@ -25,8 +55,8 @@ After the fresh world loads, start the first combined acceptance from the termin
 & './scripts/Start-HudWalkingAimed.ps1' -RepeatSession -WideWalking -Scenario TopFaceInventory
 ```
 
-Use the controller's fresh readiness output for F8; do not start an asynchronous
-countdown from stale output. After successful cleanup, use the exact printed
+Use the controller's fresh readiness output and press F8 once; a second F8 cancels.
+Do not start an asynchronous countdown from stale output. After successful cleanup, use the exact printed
 `HUD_REPEAT_NEXT_ARM_RECEIPT` path as `-PreviousArmReceipt` on the same command for
 session two. Keep the same KCD process. Do not automatically discover a latest arm
 or bypass failed cleanup. Verify first retirement `idle`, second `exhausted`.
@@ -48,12 +78,13 @@ use existing actual-Minecraft fixtures and coupled-game checks for regression.
 
 ## Current result
 
-**Newest result: larger-area scripted two-game movement and combined Minecraft fixture PASS.**
+**Baseline result: larger-area scripted two-game movement and combined Minecraft fixture PASS.**
 `-WideWalking` flows through the walking and combined aimed launchers, capture,
 Java collision/input, trace admission and Lua follower. Explicit grid9/81 samples,
 8×8-metre footprint, four-metre radial limit; defaults remain unchanged. Strict
 `walking_area="wide"` markers cannot enable wide authority without the caller flag.
-Combined aiming keeps its support outside the expanded terrain at x4. No terrain
+Combined aiming keeps its support outside the expanded terrain; the latest wide
+live path chooses that perimeter position from the fresh camera heading. No terrain
 streaming, longer duration, DLL installation or persistent game settings change was made.
 
 Automatic coupled run `6615c9eb30984caa91463af12a5e5ac6` passed:
@@ -78,8 +109,6 @@ without a relevant change.
 Next useful acceptance: wide capture plus a complete repeat-session lifecycle,
 using `Start-HudWalkingAimed.ps1 -WideWalking -RepeatSession` and the previous arm
 receipt for session two. The repeat profile is already installed (above).
-The previous fresh KCD test world was launched automatically, restored,
-then closed normally; Minecraft exited normally too. No countdown is pending.
 Beyond that, rolling terrain requires explicit patch ownership and a
 stable coordinate anchor; current wide capture is one immutable patch.
 
@@ -95,9 +124,9 @@ Failed native input closures are not reusable even if scene cleanup succeeds.
 Native targeted tests, controller179, repeat33 (real retained completion replay)
 and profile155 checks pass. Frozen workspace bundles remain intact; the owned
 development installation was subsequently updated to the repeat profile above.
-See MOVEMENT-LAB.md's repeat-session instructions; no countdown/test is pending.
+See MOVEMENT-LAB.md's repeat-session instructions.
 
-**Newest implementation, not yet live verified:** startup now prewarms the real
+**Earlier implementation, not yet live verified:** startup prewarms the real
 camera reader, foreground query and pure settled policy using disposable diagnostic
 state before Minecraft starts. No input/permits/HTTP are generated. Per-click stage
 timings are recorded in memory. Warm-up15/controller179 checks pass; offline snapshot

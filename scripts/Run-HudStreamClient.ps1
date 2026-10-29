@@ -34,6 +34,7 @@ param(
     [switch]$ExtendedWalking,
     [switch]$WideWalking,
     [switch]$AimedBlocks,
+    [switch]$FacingSeed,
     [switch]$WalkingAimed,
     [ValidateRange(-180,180)][double]$PhysicalFixtureYaw=0,
     [string]$HostViewFile
@@ -68,6 +69,7 @@ try {
     if($ExtendedWalking -and -not ($PhysicalMovement -or $PhysicalMovementFixture -or $WalkingAimed)){throw 'Extended walking requires an explicit physical movement profile.'}
     if($WideWalking -and -not ($PhysicalMovement -or $PhysicalMovementFixture -or $WalkingAimed -or $GroundMovementCoupled)){throw 'Wide walking requires an explicit physical or scripted coupled HUD movement profile.'}
     if($WideWalking -and $PhysicalMovementFixture -and -not $ExtendedWalking){throw 'Wide walking fixture requires ExtendedWalking.'}
+    if($FacingSeed -and (-not $AimedBlocks -or -not $WideWalking -or -not $PhysicalMovementFixture)){throw 'FacingSeed requires the wide aimed standalone fixture.'}
     if($AimedStone -and (-not $StoneLive -or $StoneFixture)){throw 'Aimed stone requires the explicit live stone profile.'}
     if($StoneFixture -and ($StoneLive -or -not $InputFixture -or -not $InputOffscreenTrial -or $LiveMouse -or $InputPointerFixture -or $InputDelayFixture -or $InputBackgroundTrial -or -not $StoneTokenFile)){throw 'Stone fixture requires separate offscreen input fixture and explicit token.'}
     if($StoneLive -and ($StoneFixture -or -not $InputMode -or -not $LiveMouse -or -not $OffscreenPresentation -or $InputFixture -or $InputOffscreenTrial -or $InputPointerFixture -or $InputDelayFixture -or $InputBackgroundTrial -or -not $StoneTokenFile)){throw 'Live stone bridge requires the explicit live mouse profile and its owned relay token.'}
@@ -102,6 +104,7 @@ try {
     if($ExtendedWalking){$arguments+='-PminecomeHudPhysicalMovementExtended'}
     if($WideWalking){$arguments+='-PminecomeHudWideWalking'}
     if($AimedBlocks){$arguments+='-PminecomeHudWalkingAimedFixture'}
+    if($FacingSeed){$arguments+='-PminecomeHudFacingSeedFixture'}
     if($PhysicalMovementFixture){$arguments+=@('-PminecomeHudPhysicalMovementFixture',"-PminecomeGroundPatchFile=$GroundPatchFile","-PminecomeMovementTraceFile=$MovementTraceFile","-PminecomeHudHostViewFile=$HostViewFile",('-PminecomeHudPhysicalFixtureYaw='+$PhysicalFixtureYaw.ToString([Globalization.CultureInfo]::InvariantCulture)))}
     if($InputMode){$arguments+='-PminecomeHudStreamInput'}
     if($LiveMouse){$arguments+='-PminecomeHudStreamLiveMouse'}

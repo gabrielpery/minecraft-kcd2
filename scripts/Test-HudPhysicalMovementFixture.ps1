@@ -1,7 +1,7 @@
 # Actual Minecraft controller/physics/HUD exercise with explicitly scripted edges.
 # No KCD commands, renderer arm, reverse-input mapping, or physical-input claims.
 [CmdletBinding()]
-param([string]$JavaHome,[string]$GroundPatchFile,[ValidateRange(-180,180)][double]$YawDegrees=0,[switch]$PreflightOnly,[switch]$ExtendedWalking,[switch]$AimedBlocks,[switch]$WideWalking)
+param([string]$JavaHome,[string]$GroundPatchFile,[ValidateRange(-180,180)][double]$YawDegrees=0,[switch]$PreflightOnly,[switch]$ExtendedWalking,[switch]$AimedBlocks,[switch]$WideWalking,[switch]$FacingSeed)
 . (Join-Path $PSScriptRoot 'powershell7.ps1')
 if($PSVersionTable.PSVersion.Major -lt 7){
     $bootstrapExit=Invoke-MineComePowerShell7 -ScriptPath $PSCommandPath -BoundParameters $PSBoundParameters
@@ -13,7 +13,8 @@ Set-StrictMode -Version Latest
 if($AimedBlocks -and -not $ExtendedWalking){throw 'Combined aimed blocks require the explicit extended standalone walking fixture.'}
 if($AimedBlocks -and $YawDegrees -ne 0){throw 'Combined aimed blocks require the tested zero-yaw fixture.'}
 if($WideWalking -and -not $ExtendedWalking){throw 'Wide walking fixture requires ExtendedWalking.'}
-function Assert-HudWalkingAimedFixtureProof($Aimed,$Fixture,$Guest,[string]$PatchHash,[switch]$WideWalking) {
+if($FacingSeed -and (-not $WideWalking -or -not $AimedBlocks)){throw 'FacingSeed requires the wide aimed fixture.'}
+function Assert-HudWalkingAimedFixtureProof($Aimed,$Fixture,$Guest,[string]$PatchHash,[switch]$WideWalking,[switch]$FacingSeed) {
     function Flag($Object,[string]$Name,[bool]$Expected){if($Object.$Name -isnot [bool] -or $Object.$Name -ne $Expected){throw "Combined fixture boolean mismatch: $Name"}}
     function Text($Object,[string]$Name,[string]$Expected){if($Object.$Name -isnot [string] -or $Object.$Name -cne $Expected){throw "Combined fixture text mismatch: $Name"}}
     function Count($Object,[string]$Name,[long]$Expected){if(($Object.$Name -isnot [int] -and $Object.$Name -isnot [long]) -or $Object.$Name -ne $Expected){throw "Combined fixture integer mismatch: $Name"}}
@@ -25,6 +26,8 @@ function Assert-HudWalkingAimedFixtureProof($Aimed,$Fixture,$Guest,[string]$Patc
     function SameCell($Actual,$Expected){Cell $Actual;Cell $Expected;foreach($axis in @('x','y','z')){if($Actual.$axis -ne $Expected.$axis){throw 'Combined fixture cell correlation differs.'}}}
     Text $Aimed kind 'standalone_hud_walking_aimed_fixture_v1'
     Assert-HudWalkingArea $Aimed ([bool]$WideWalking)
+    if($FacingSeed){Flag $Aimed facing_seed $true;Text $Aimed facing_side 'NORTH'}
+    elseif($Aimed.PSObject.Properties['facing_seed']){throw 'Facing fixture proof requires explicit selection.'}
     if(($Fixture.aimed_hud_frames -isnot [int] -and $Fixture.aimed_hud_frames -isnot [long]) -or $Fixture.aimed_hud_frames -lt 2){throw 'Combined fixture lacks actual HUD frames during block interactions.'}
     foreach($name in @('scripted_input','synthetic_host_rays','completed','alignment_before_movement','bootstrap_before_movement','movement_before_interactions','movement_resumed_after_interactions','support_client_server_prepared','support_client_server_restored_air','imported_cells_unchanged','final_client_server_air')){Flag $Aimed $name $true}
     foreach($name in @('physical_input_verified','kcd_connected')){Flag $Aimed $name $false}
@@ -33,17 +36,23 @@ function Assert-HudWalkingAimedFixtureProof($Aimed,$Fixture,$Guest,[string]$Patc
     Count $Aimed arena_direct_block_writes 0
     [void](Number $Aimed.walk_before_m .05 4);[void](Number $Aimed.walk_after_m .05 4)
     $seed=$Aimed.seed;Cell $seed
-    if($WideWalking -and ($seed.x -ne 4 -or $seed.z -ne 0)){throw 'Wide fixture support must remain outside the imported terrain.'}
+    if($FacingSeed){
+        if($seed.x -notin @(-1,0) -or $seed.z -ne 4){throw 'Facing fixture support must face the declared zero-yaw direction.'}
+    }elseif($WideWalking -and ($seed.x -ne 4 -or $seed.z -ne 0)){throw 'Wide fixture support must remain outside the imported terrain.'}
     if($WideWalking){
         [void](Number $Aimed.max_host_ray_range 4.5 4.5)
-        [void](Number $Aimed.top_aim_point.x ($seed.x+.25) ($seed.x+.25))
+        $topX=$seed.x+$(if($FacingSeed){.5}else{.25});$topZ=$seed.z+$(if($FacingSeed){.25}else{.5})
+        [void](Number $Aimed.top_aim_point.x $topX $topX)
         [void](Number $Aimed.top_aim_point.y ($seed.y+1) ($seed.y+1))
-        [void](Number $Aimed.top_aim_point.z ($seed.z+.5) ($seed.z+.5))
+        [void](Number $Aimed.top_aim_point.z $topZ $topZ)
     }
     $support=[pscustomobject]@{x=$seed.x;y=$seed.y-1;z=$seed.z};SameCell $Aimed.support $support
     $top=[pscustomobject]@{x=$seed.x;y=$seed.y+1;z=$seed.z};$west=[pscustomobject]@{x=$seed.x-1;y=$seed.y;z=$seed.z}
+    if($FacingSeed){$west=[pscustomobject]@{x=$seed.x;y=$seed.y;z=$seed.z-1}}
     $targets=@($seed,$top,$top,$west,$west,$seed);$hits=@($support,$seed,$top,$seed,$west,$seed)
     $labels=@('bootstrap','top_place','upper_break','west_place','west_break','seed_break');$actions=@(1,1,2,1,2,2)
+    $side=if($FacingSeed){'NORTH'}else{'WEST'}
+    if($FacingSeed){$labels[3]='side_place';$labels[4]='side_break'}
     $arena=$Aimed.arena
     Count $arena schema 1;Text $arena kind 'minecome_aimed_stone_arena_v1';Text $arena save $Guest.save;SameCell $arena.seed $seed
     Count $arena max_owned_count 16
@@ -66,7 +75,7 @@ function Assert-HudWalkingAimedFixtureProof($Aimed,$Fixture,$Guest,[string]$Patc
         foreach($name in @('client_and_server','confirmed')){Flag $row $name $true}
         SameCell $row.target $targets[$index];SameCell $row.hit_block $hits[$index]
         if($row.face -isnot [string] -or $row.face -cnotin @('UP','DOWN','NORTH','SOUTH','WEST','EAST')){throw 'Combined fixture face is not cardinal.'}
-        if(($index -in @(0,1) -and $row.face -cne 'UP') -or ($index -eq 3 -and $row.face -cne 'WEST')){throw 'Combined fixture placement did not use the intended face.'}
+        if(($index -in @(0,1) -and $row.face -cne 'UP') -or ($index -eq 3 -and $row.face -cne $side)){throw 'Combined fixture placement did not use the intended face.'}
         [void](Number $row.client_server_distance 0 .01)
         Text $row speed_metric 'horizontal_xz'
         foreach($name in @('client_speed','server_speed')){if((Number $row.$name 0 .03) -ge .03){throw 'Combined fixture acted while the player was moving.'}}
@@ -85,7 +94,8 @@ function Assert-HudWalkingAimedFixtureProof($Aimed,$Fixture,$Guest,[string]$Patc
     $resumedMs=([decimal]$downs[3].received_monotonic_ns-[decimal]$downs[0].received_monotonic_ns)/1000000
     if($resumedMs -le $Aimed.confirmations[-1].elapsed_from_first_movement_ms){throw 'Combined fixture did not resume walking after block interactions.'}
 }
-function Assert-HudPhysicalFixtureResult($Guest,[string]$Run,[string]$PatchHash,[switch]$ExtendedWalking,[switch]$AimedBlocks,[switch]$WideWalking) {
+function Assert-HudPhysicalFixtureResult($Guest,[string]$Run,[string]$PatchHash,[switch]$ExtendedWalking,[switch]$AimedBlocks,[switch]$WideWalking,[switch]$FacingSeed) {
+    if($FacingSeed -and (-not $WideWalking -or -not $AimedBlocks)){throw 'FacingSeed requires the wide aimed fixture.'}
     if($AimedBlocks -and -not $ExtendedWalking){throw 'Combined aimed blocks require the extended walking fixture.'}
     if($WideWalking -and -not $ExtendedWalking){throw 'Wide walking fixture requires ExtendedWalking.'}
     if($Guest.schema -ne 1 -or $Guest.run -cne $Run -or $Guest.result -cne 'passed' -or $Guest.source_kind -cne 'minecraft_vanilla_ui_stream_v1' -or
@@ -187,7 +197,7 @@ function Assert-HudPhysicalFixtureResult($Guest,[string]$Run,[string]$PatchHash,
         ([double]([decimal]$binding[0].monotonic_ns-[decimal]$edge.received_monotonic_ns))/1000000
     })
     $proof | Add-Member -NotePropertyName scripted_receive_to_binding_ms -NotePropertyValue $delays -Force
-    if($AimedBlocks){Assert-HudWalkingAimedFixtureProof $proof.aimed_blocks $proof $Guest $PatchHash -WideWalking:$WideWalking}
+    if($AimedBlocks){Assert-HudWalkingAimedFixtureProof $proof.aimed_blocks $proof $Guest $PatchHash -WideWalking:$WideWalking -FacingSeed:$FacingSeed}
     return $proof
 }
 function Get-HudPhysicalFixtureSources([string]$Root) {
@@ -243,14 +253,14 @@ try{
         [ordered]@{schema=1;kind='standalone_hud_walking_aimed_source_manifest_v1';run=$run;ui_walking_aimed_fixture=$true;files=$sourceHashes} | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $directory 'source-hashes.json') -Encoding utf8NoBOM
     }
     Write-Output "HUD_PHYSICAL_FIXTURE_START run=$run evidence=$directory scripted_input=true kcd_unchanged=true"
-    & (Join-Path $PSScriptRoot 'Run-HudStreamClient.ps1') -EvidenceDirectory $directory -Run $run -TargetPid $PID -TargetStart $targetStart -ExpiresUtcMs $expires -JavaHome $JavaHome -Standalone -PhysicalMovementFixture -GroundPatchFile $patchPath -MovementTraceFile $tracePath -HostViewFile $viewPath -PhysicalFixtureYaw $YawDegrees -ExtendedWalking:$ExtendedWalking -AimedBlocks:$AimedBlocks -WideWalking:$WideWalking
+    & (Join-Path $PSScriptRoot 'Run-HudStreamClient.ps1') -EvidenceDirectory $directory -Run $run -TargetPid $PID -TargetStart $targetStart -ExpiresUtcMs $expires -JavaHome $JavaHome -Standalone -PhysicalMovementFixture -GroundPatchFile $patchPath -MovementTraceFile $tracePath -HostViewFile $viewPath -PhysicalFixtureYaw $YawDegrees -ExtendedWalking:$ExtendedWalking -AimedBlocks:$AimedBlocks -WideWalking:$WideWalking -FacingSeed:$FacingSeed
     if($LASTEXITCODE -ne 0){throw "Minecraft fixture child failed: $LASTEXITCODE"}
     $guest=Get-Content -LiteralPath (Join-Path $directory 'capture/stream-result.json') -Raw | ConvertFrom-Json
     if($guest.result -ceq 'failed'){
         $reason=if($guest.PSObject.Properties.Name -contains 'failure'){$guest.failure}elseif($guest.lab_evidence.PSObject.Properties.Name -contains 'failure'){$guest.lab_evidence.failure}else{'Producer reported failure without a diagnostic'}
         throw "Minecraft fixture failed: $reason"
     }
-    $proof=Assert-HudPhysicalFixtureResult $guest $run $patchHash -ExtendedWalking:$ExtendedWalking -AimedBlocks:$AimedBlocks -WideWalking:$WideWalking
+    $proof=Assert-HudPhysicalFixtureResult $guest $run $patchHash -ExtendedWalking:$ExtendedWalking -AimedBlocks:$AimedBlocks -WideWalking:$WideWalking -FacingSeed:$FacingSeed
     $traceLimit=if($ExtendedWalking){256KB}else{64KB}
     if((Get-Item -LiteralPath $tracePath).Length -gt $traceLimit){throw 'Fixture trace exceeded its selected byte budget.'}
     $records=@(Get-Content -LiteralPath $tracePath | ForEach-Object {$_ | ConvertFrom-Json})

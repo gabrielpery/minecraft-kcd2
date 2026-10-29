@@ -72,6 +72,18 @@ public final class HudPhysicalMovementTests {
         check(HudPhysicalMovementMode.require(wideFixture),"Wide crossing fixture retains extended movement");
         wideFixture.setProperty("minecome.hudWalkingAimedFixture","true");
         check(HudPhysicalMovementMode.require(wideFixture),"Wide extended fixture supports aimed blocks after its boundary crossing");
+        var facingFixture=new Properties();facingFixture.putAll(wideFixture);facingFixture.setProperty("minecome.hudFacingSeedFixture","true");
+        check(HudPhysicalMovementMode.require(facingFixture)&&HudPhysicalMovementMode.facingFixture(facingFixture),"Facing bootstrap uses only the explicit wide aimed fixture");
+        for(String key:List.of("hudWideWalking","hudWalkingAimedFixture","hudPhysicalMovementFixture","hudPhysicalMovementExtended")){
+            var p=new Properties();p.putAll(facingFixture);p.remove("minecome."+key);
+            reject(()->HudPhysicalMovementMode.require(p),"Facing fixture requires "+key);
+        }
+        for(String invalid:List.of("TRUE","1","","facing")){
+            var p=new Properties();p.putAll(facingFixture);p.setProperty("minecome.hudFacingSeedFixture",invalid);
+            reject(()->HudPhysicalMovementMode.require(p),"Malformed facing fixture option");
+        }
+        var facingLive=mode();facingLive.setProperty("minecome.hudFacingSeedFixture","true");
+        reject(()->HudPhysicalMovementMode.require(facingLive),"Facing fixture cannot attach to live input");
         var wideAimedShort=new Properties();wideAimedShort.putAll(wideFixture);wideAimedShort.remove("minecome.hudPhysicalMovementExtended");
         reject(()->HudPhysicalMovementMode.require(wideAimedShort),"wide aimed fixture still requires extended timing");
         wideFixture.remove("minecome.hudWalkingAimedFixture");wideFixture.remove("minecome.hudPhysicalMovementExtended");
@@ -346,18 +358,39 @@ public final class HudPhysicalMovementTests {
         Path root=Files.createTempDirectory("minecome-fixture-camera-"),target=root.resolve("view.json"),temp=root.resolve("view.tmp");
         try{
             String first=view(1,NOW).toString(),second=view(2,NOW+50).toString();
-            Files.writeString(temp,first);HudFixtureCameraFiles.replace(temp,target);
+            Files.writeString(temp,first);check(HudFixtureCameraFiles.replace(temp,target),"Fixture initial publication succeeds");
             check(Files.readString(target).equals(first) && !Files.exists(temp),"Fixture initial atomic publication preserves bytes");
             Files.writeString(temp,second);
             if(System.getProperty("os.name","").startsWith("Windows")){
                 try(var held=Files.newByteChannel(target,Set.of(StandardOpenOption.READ,com.sun.nio.file.ExtendedOpenOption.NOSHARE_DELETE))){
-                    long began=System.nanoTime();reject(()->HudFixtureCameraFiles.replace(temp,target),"permanently shared camera target has bounded retry");
-                    check(System.nanoTime()-began<1_000_000_000L,"Camera sharing retry cannot block indefinitely");
+                    long began=System.nanoTime();check(!HudFixtureCameraFiles.replace(temp,target),"Shared camera target drops this fixture publication after bounded retry");
+                    long elapsed=System.nanoTime()-began;
+                    check(elapsed>=HudFixtureCameraFiles.RETRY_NS&&elapsed<1_000_000_000L,"Camera sharing retry retains its existing 100ms bound");
                     check(Files.readString(target).equals(first) && Files.readString(temp).equals(second),"Denied replacement does not renew old source or mutate queued timestamp");
                 }
             }
-            HudFixtureCameraFiles.replace(temp,target);
+            check(HudFixtureCameraFiles.replace(temp,target),"Publication resumes after the sharing lock is released");
             check(Files.readString(target).equals(second),"Replacement after sharing release preserves original queued sequence/time");
+            reject(()->HudFixtureCameraFiles.replace(root.resolve("missing.tmp"),target),"Non-sharing I/O failures still abort fixture publication");
+            if(System.getProperty("os.name","").startsWith("Windows")){
+                long utc=System.currentTimeMillis();Files.writeString(temp,view(1,utc).toString());
+                check(HudFixtureCameraFiles.replace(temp,target),"Freshness test starts with its original source sample");
+                try(var reader=new HudMovementViewReader(target,root,ID,PATCH,HASH)){
+                    reader.start();waitFor(()->reader.current(System.currentTimeMillis(),System.nanoTime())!=null);
+                    var original=reader.current(System.currentTimeMillis(),System.nanoTime());
+                    Files.writeString(temp,view(2,System.currentTimeMillis()).toString());
+                    try(var held=Files.newByteChannel(target,Set.of(StandardOpenOption.READ,com.sun.nio.file.ExtendedOpenOption.NOSHARE_DELETE))){
+                        check(!HudFixtureCameraFiles.replace(temp,target),"Blocked fixture update can be dropped without aborting the publisher");
+                    }
+                    Files.delete(temp);
+                    check(reader.current(original.view().utcMs()+HudMovementView.MAX_AGE_MS+1,original.deadlineNs()+1)==null,
+                            "Dropping a fixture sample cannot extend the previous sample's production freshness lease");
+                    long recoveredUtc=System.currentTimeMillis();Files.writeString(temp,view(3,recoveredUtc).toString());
+                    check(HudFixtureCameraFiles.replace(temp,target),"Next publication uses a newly generated source sequence after a drop");
+                    waitFor(()->{var sample=reader.current(System.currentTimeMillis(),System.nanoTime());return sample!=null&&sample.view().sequence()==3;});
+                    check(reader.current(System.currentTimeMillis(),System.nanoTime()).view().utcMs()==recoveredUtc,"Recovered sample keeps its own source timestamp");
+                }
+            }
         }finally{Files.deleteIfExists(temp);Files.deleteIfExists(target);Files.deleteIfExists(root);}
     }
     private static void fixtureAimingGeometry(){
@@ -374,6 +407,21 @@ public final class HudPhysicalMovementTests {
                         "Reference top-face aim remains within unchanged reach after walking; real fixture still uses vanilla OUTLINE");
             }
         }
+        var facingSeeds=List.of(new dev.minecome.protocol.AimGeometry.Cell(4,64,-1),new dev.minecome.protocol.AimGeometry.Cell(-5,64,-1),
+                new dev.minecome.protocol.AimGeometry.Cell(-1,64,4),new dev.minecome.protocol.AimGeometry.Cell(-1,64,-5));
+        var faces=List.of("WEST","EAST","NORTH","SOUTH");
+        for(int i=0;i<facingSeeds.size();i++){
+            var seed=facingSeeds.get(i);var point=HudWalkingAimedFixture.facingTopAimPoint(seed);
+            check(HudWalkingAimedFixture.nearFace(seed).name().equals(faces.get(i)),"Facing fixture selects the origin-facing vertical surface");
+            var eye=new dev.minecome.protocol.Protocol.Vec3(0,65.62,0);
+            double x=point.x()-eye.x(),y=point.y()-eye.y(),z=point.z()-eye.z(),length=Math.sqrt(x*x+y*y+z*z);
+            var ray=new dev.minecome.protocol.AimGeometry.Ray(eye,new dev.minecome.protocol.Protocol.Vec3(x/length,y/length,z/length),4.5);
+            var hit=dev.minecome.protocol.AimGeometry.intersect(ray,seed.bounds());
+            check(hit.isPresent()&&hit.get().face()==dev.minecome.protocol.AimGeometry.Face.UP&&hit.get().distance()<4.5,
+                    "Facing fixture top stays inside unchanged reach for every perimeter direction");
+        }
+        var forwardPoint=HudWalkingAimedFixture.facingTopAimPoint(new dev.minecome.protocol.AimGeometry.Cell(-1,64,4));
+        check(forwardPoint.x()==-.5&&forwardPoint.y()==65&&forwardPoint.z()==4.25,"Yaw-zero fixture aims at the nearer north edge of the forward seed top");
     }
     public static void main(String[] args)throws Exception{modes();wire();holds();extendedHolds();views();reader();readerRaces();fixturePublication();fixtureAimingGeometry();checks+=HudMovementTimingTests.run();checks+=dev.minecome.terrain.HudMovementBoundaryTests.run();System.out.println("HudPhysicalMovementTests: "+checks+" checks passed");}
 }

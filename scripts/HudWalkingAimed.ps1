@@ -115,9 +115,14 @@ function Assert-HudWalkingAimedScenario {
     function Cell($Value){foreach($axis in @('x','y','z')){[void](Int $Value $axis -10000000 10000000)};return "$($Value.x),$($Value.y),$($Value.z)"}
     function Same($A,$B){if((Cell $A) -cne (Cell $B)){throw 'Scenario target/hit cell differs from requested face.'}}
     $lab=Get-HudBufferedField $Guest 'lab_evidence';$stone=Get-HudBufferedField $lab 'stone_bridge';$arena=$stone.arena
-    $face=if($Scenario -eq 'TopFaceInventory'){'UP'}else{'WEST'}
     $seed=$stone.arena_offer.seed;$null=Cell $seed
-    $added=[pscustomobject]@{x=$seed.x;y=$seed.y;z=$seed.z};if($face -ceq 'UP'){$added.y++}else{$added.x--}
+    # The bootstrap can lie on any captured perimeter. Select the vertical
+    # face toward the immutable Minecraft origin, with X winning exact ties.
+    $face=if($Scenario -eq 'TopFaceInventory'){'UP'}
+        elseif([Math]::Abs($seed.x+.5) -ge [Math]::Abs($seed.z+.5)){if($seed.x+.5 -gt 0){'WEST'}else{'EAST'}}
+        else{if($seed.z+.5 -gt 0){'NORTH'}else{'SOUTH'}}
+    $added=[pscustomobject]@{x=$seed.x;y=$seed.y;z=$seed.z}
+    switch -CaseSensitive ($face){UP{$added.y++}WEST{$added.x--}EAST{$added.x++}NORTH{$added.z--}SOUTH{$added.z++}}
     $support=[pscustomobject]@{x=$seed.x;y=$seed.y-1;z=$seed.z}
     $confirmations=@($stone.confirmations);$components=@($arena.confirmations);$requests=@($stone.requests)
     if($confirmations.Count -ne 4 -or $components.Count -ne 4 -or $requests.Count -lt 3 -or $requests.Count -gt 16){throw 'Scenario requires bootstrap, face placement, added-block break and seed break.'}

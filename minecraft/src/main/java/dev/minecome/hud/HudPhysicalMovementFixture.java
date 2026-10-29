@@ -28,7 +28,7 @@ final class HudPhysicalMovementFixture implements AutoCloseable {
     private final GroundPatch patch;
     private volatile HudWalkingAimedFixture aimed;
     private volatile boolean closing,cameraStopped;
-    private volatile long views;
+    private volatile long views,droppedViews;
     private long at,started,firstMovementAt,sequence,inventoryFrames,walkingFrames,closingAt,postWalkInventoryFrames,aimedFrames;
     private int stage,pulse;
     private Vec3d origin,serverOrigin,previous,serverPrevious,postWalkOrigin,postWalkServerOrigin;
@@ -193,6 +193,7 @@ final class HudPhysicalMovementFixture implements AutoCloseable {
         e.addProperty("physical_input_verified",false);e.addProperty("kcd_compositing_verified",false);e.addProperty("completed",finished);
         e.addProperty("inventory_client_max_displacement",inventoryClientMax);e.addProperty("inventory_server_max_displacement",inventoryServerMax);
         e.addProperty("inventory_frames",inventoryFrames);e.addProperty("walking_hud_frames",walkingFrames);e.addProperty("synthetic_camera_samples",views);
+        e.addProperty("synthetic_camera_dropped_samples",droppedViews);
         e.addProperty("camera_worker_stopped",cameraStopped);e.add("pulses",pulses.deepCopy());e.add("physical_movement",movement.evidence(client));return e;
     }
     private void publishViews(Path path,HudInputProtocol.Identity identity,GroundPatch patch,double yaw){
@@ -206,7 +207,13 @@ final class HudPhysicalMovementFixture implements AutoCloseable {
                 var forward=new JsonObject();forward.addProperty("x",-Math.sin(Math.toRadians(yaw)));forward.addProperty("y",-Math.cos(Math.toRadians(yaw)));forward.addProperty("z",0);
                 var up=new JsonObject();up.addProperty("x",0);up.addProperty("y",0);up.addProperty("z",1);v.add("forward",forward);v.add("up",up);
                 Files.writeString(temp,v.toString(),StandardOpenOption.CREATE_NEW,StandardOpenOption.WRITE);
-                HudFixtureCameraFiles.replace(temp,path);Thread.sleep(50);
+                if(!HudFixtureCameraFiles.replace(temp,path)){
+                    // Drop the blocked sample, then generate a new sequence/source
+                    // time normally. Persistent denial still expires the reader's
+                    // original 300ms lease; this does not renew its previous bytes.
+                    droppedViews++;Files.delete(temp);
+                }
+                Thread.sleep(50);
             }
             if(!closing)failure.compareAndSet(null,"Fixture camera30s deadline");
         }catch(InterruptedException e){if(!closing){Thread.currentThread().interrupt();failure.compareAndSet(null,"Fixture camera interrupted");}}
