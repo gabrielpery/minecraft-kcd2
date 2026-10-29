@@ -312,4 +312,39 @@ foreach($path in @('../scripts/Start-HudWalkingAimed.ps1','../scripts/Test-HudWa
 }
 $controllerText=Get-Content -LiteralPath (Join-Path $PSScriptRoot '../scripts/Test-HudWalkingAimed.ps1') -Raw
 Check ($controllerText.IndexOf('Initialize-HudWalkingAimedAdmissionWarmup $directory') -lt $controllerText.IndexOf('$helper=Start-Process')) 'Admission warmup must precede Minecraft launch'
+$tailNode=$controller.Find({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq 'Get-HudWalkingCompletionTail'},$true)
+. ([scriptblock]::Create($tailNode.Extent.Text))
+$tailState=[pscustomobject]@{TracePassed=$true;AimCleaned=$true;AimClosed=$true;FollowerFinishRequested=$true;CameraStopped=$true;CameraResourcesClosed=$true}
+$tailTerminal=[pscustomobject]@{event='restored';result='restored';end_result='explicit_end';physical_movement=$true;camera_basis_valid=$true;terminal=$true;timers_cancelled=$true;readback=$true;player_readback_error=0.0}
+$tail=Get-HudWalkingCompletionTail 113000 1000 113000 $tailState $tailTerminal
+Check ($tail.deadline_utc_ms -eq 118000 -and $tail.maximum_tail_ms -eq 5000) 'Restored gameplay may wait at most five seconds for terminal HUD receipt'
+Check ($null -eq (Get-HudWalkingCompletionTail 113000 1000 112999 $tailState $tailTerminal)) 'Receipt tail cannot alter the normal active loop'
+Check ($null -eq (Get-HudWalkingCompletionTail 113000 1000 118000 $tailState $tailTerminal)) 'Receipt tail cannot renew itself at expiry'
+$tail=Get-HudWalkingCompletionTail 116000 1000 116000 $tailState $tailTerminal
+Check ($tail.deadline_utc_ms -eq 118000) 'GPU restoration reserve must truncate receipt tail'
+Check ($null -eq (Get-HudWalkingCompletionTail 119000 1000 119000 $tailState $tailTerminal)) 'No receipt tail may consume final three seconds of GPU lease'
+foreach($field in $tailState.PSObject.Properties.Name){
+    foreach($badValue in @($false,'true')){
+        $bad=Clone $tailState;$bad.$field=$badValue
+        Check ($null -eq (Get-HudWalkingCompletionTail 113000 1000 113000 $bad $tailTerminal)) "Missing verified completion cannot admit receipt tail: $field"
+    }
+}
+foreach($field in @('physical_movement','camera_basis_valid','terminal','timers_cancelled','readback')){
+    $bad=Clone $tailTerminal;$bad.$field=$false
+    Check ($null -eq (Get-HudWalkingCompletionTail 113000 1000 113000 $tailState $bad)) "Incomplete native restoration cannot admit receipt tail: $field"
+}
+foreach($badError in @(-.001,.151,[double]::NaN,'0')){
+    $bad=Clone $tailTerminal;$bad.player_readback_error=$badError
+    Check ($null -eq (Get-HudWalkingCompletionTail 113000 1000 113000 $tailState $bad)) 'Invalid native readback error cannot admit receipt tail'
+}
+$bad=Clone $tailTerminal;$bad.end_result='deadline'
+Check ($null -eq (Get-HudWalkingCompletionTail 113000 1000 113000 $tailState $bad)) 'Deadline restoration is not normal explicit completion'
+Check ($null -eq (Get-HudWalkingCompletionTail 113000 1000 113000 $tailState @())) 'Missing restoration cannot admit receipt tail'
+Check ($null -eq (Get-HudWalkingCompletionTail 113000 1000 113000 $tailState @($tailTerminal,$tailTerminal))) 'Duplicate restoration cannot admit receipt tail'
+# Retained second-session result arrived3210ms after the declared deadline. Use the
+# whole UTC second preceding probe creation as a conservative replay estimate;
+# the old run did not retain the new exact pre-budget timestamp.
+$tail=Get-HudWalkingCompletionTail 1793305393884 1793305281000 1793305393884 $tailState $tailTerminal
+Check ($tail.deadline_utc_ms -eq 1793305398000 -and 1793305397094 -lt $tail.deadline_utc_ms) 'Recorded legitimate HUD completion fits bounded restored-gameplay tail'
+Check ($controllerText.IndexOf('Stop-MineComeHudGpuBudget $budget') -lt $controllerText.IndexOf('$exitDeadline=')) 'Host GPU budget must restore before waiting for JVM shutdown'
 Write-Output "HUD_WALKING_AIMED_CONTROLLER_TESTS_PASS checks=$checks no_game_started=true"

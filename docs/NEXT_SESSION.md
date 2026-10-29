@@ -3,9 +3,35 @@
 ## Ready for the next round
 
 The repeat-session add-on remains **installed** in the official development build.
-Wide-area controls/composition and the complete two-session live acceptance remain
-pending. KCD2 is being restarted for a fresh retry; inspect current process and
-readiness receipts before launching anything. No native repeat code changed.
+Wide-area walking, visible HUD, top placement/breaks, inventory suppression and
+later walking passed live twice in the same KCD2 process (PID10860). The user
+confirmed both runs worked. Both games are now closed normally; the final arm is
+archived. No native repeat code changed.
+
+First run `d2aece664fe444988e368d8d1b9860f0` passed all controller checks, 156 source
+frames/readbacks, restoration and native retirement `generation=1 state=idle`:
+`runtime/evidence/hud-walking-aimed-20261029-201902-52c493592de141e0b67dc87c5e97a35d/`.
+Second run `2ed8bd8b0e6e4ea2aef1cf0ce3a01ae8` completed gameplay and exited0, but
+its completion record arrived about3s after the controller's112s deadline. Native
+retirement later reported `cleanup_timeout` because the controller withheld its
+proof. Preserve that failed original record; do not claim final exhausted-state
+acceptance. Evidence:
+`runtime/evidence/hud-walking-aimed-20261029-202118-2cc13e07fda8437eb95a7a775735371a/`.
+Its separate `post-run-audit.json` passes nine retained-evidence checks: existing
+scenario/guest validators, all156 readbacks, exact player restoration, block and
+proxy cleanup, handle closure and FPS restoration. This does not authorize rearm
+or replace the original controller failure/native cleanup timeout.
+Completion waiting is now repaired and238 focused controller checks pass. After
+the movement trace, aimed cleanup, camera shutdown and native restoration all
+finish, the controller may wait up to5s solely for the final receipt. It stops no
+later than117s from an exact timestamp before the120s GPU lease starts, reserving
+3s for restoration. FPS restoration now precedes waiting for JVM exit. Original
+input, pose and freshness limits are unchanged.
+Retained-evidence replay admits the second run and its actual record fits a
+conservative reconstructed budget by906ms. The old exact pre-budget timestamp was
+not recorded; this is automated replay, not a new live retirement pass. Do not
+repeat gameplay implementation. Remaining live scope is final retirement after
+this timing repair, then third-session refusal.
 
 The first live attempt, controller `0ee4decd20b24fe2b8bf35cb0208589c`, registered F8
 and confirmed the stone spawned, but its fixed eastward position was outside the
@@ -60,8 +86,8 @@ Do not start an asynchronous countdown from stale output. After successful clean
 `HUD_REPEAT_NEXT_ARM_RECEIPT` path as `-PreviousArmReceipt` on the same command for
 session two. Keep the same KCD process. Do not automatically discover a latest arm
 or bypass failed cleanup. Verify first retirement `idle`, second `exhausted`.
-The remaining live check covers larger-area controls/composition and reuse;
-automated walking/jumping/block/inventory checks below already passed.
+Larger-area controls/composition and gameplay reuse have passed. Remaining
+acceptance concerns the completion-record tail and final native retirement.
 
 ## Delivery priority — user correction
 
@@ -70,10 +96,9 @@ testing. Apply the delivery workflow in AGENTS.md. Do not start this session wit
 another first-click countdown. The warm-up below is implemented; its live validation
 can be included in the next feature acceptance session.
 
-The larger walking area now passes automated two-game movement and the combined
-Minecraft block/HUD fixture. The repeat-session addon is now installed. Batch their remaining
-live acceptance into one session when the user is available; do not launch another
-small countdown test by default. Keep the verified current profile available and
+The larger walking area now passes automated and live combined checks. Do not
+repeat separate block, inventory or movement exercises. Complete the final
+retirement timing work automatically first. Keep the verified current profile available and
 use existing actual-Minecraft fixtures and coupled-game checks for regression.
 
 ## Current result
@@ -112,7 +137,7 @@ receipt for session two. The repeat profile is already installed (above).
 Beyond that, rolling terrain requires explicit patch ownership and a
 stable coordinate anchor; current wide capture is one immutable patch.
 
-**Repeat sessions: installed and offline verified; live verification pending.**
+**Repeat sessions: gameplay reuse verified live; final retirement pending.**
 Separate target `minecome_hud_walking_repeat_compositor`, profile
 `config/hud-walking-repeat-profile.json`, staged bundle `runtime/hud-compositor-walking-repeat`.
 The native policy is now wired into actual addon lifetime, render retirement and
@@ -287,9 +312,10 @@ unknown. Later unchanged camera code passed. Do not mark that intermittent issue
 
 ## Next work
 
-1. Complete one batched acceptance of the integrated repeat-session profile; do not
-   reimplement the policy/controller/native lifecycle. Verify two completed sessions
-   in the same KCD process and refusal of a third. The code already retires render
+1. Finish live acceptance of the tested completion-record timing fix and final
+   repeat retirement. Gameplay already worked twice in the same KCD process; do not
+   repeat separate face/inventory tests. Still verify second-session `exhausted`
+   retirement and refusal of a third. The code already retires render
    ownership and reuses same-size GPU storage. Continue to avoid
    `release()`/GPU wait on ordinary render callbacks. Keep current profile intact.
    Terrain streaming follows: current GroundPatch captures remap to local zero and
@@ -325,13 +351,11 @@ Official tools1.5.5 only. Retail1.5.6 remains gated by loader/address-library wo
 
 ## Process state and next live launch
 
-KCD29300 hosted the successful side-face test; KCD24480 hosted the later comparison.
-Both were closed normally after Minecraft exited0. Their557a... and1ec5... arms
-are archived, as are the previous8e968... and expired-ee5f... arms. Both games are
-closed. Recheck process/receipt state before continuing.
-Computer Use works for close/restart through node_repl @oai/sky; no
-user-stop was reported in this phase. Never infer a historical Escape stop applies
-to a new turn. Follow the installed skill and record automation provenance.
+KCD PID10860 hosted both29October combined runs and was closed normally after the
+second Minecraft producer exited0. Its final expired arm is archived in that run's
+capture directory. Both games are closed. Recheck process/receipt state before
+continuing; do not reuse its failed final receipt as rearm authority. Normal owned
+window close and the pinned launch helper worked without Computer Use this turn.
 
 The latest arm has already been archived. Start a fresh test world when needed:
 
@@ -343,7 +367,7 @@ $r = 'C:/Users/xephi/Documents/ChatGPT/New project/MineCome'
 Only when another manual check is needed and the user is ready:
 
 ```powershell
-& 'C:/Users/xephi/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/powershell/pwsh.exe' -NoProfile -File 'C:/Users/xephi/Documents/ChatGPT/New project/MineCome/scripts/Start-HudWalkingAimed.ps1' -Scenario SideFaceInventory
+& "$r/scripts/Start-HudWalkingAimed.ps1" -RepeatSession -WideWalking -Scenario TopFaceInventory
 ```
 
 Wait for HUD_WALKING_AIMED_READY, then use Read-HudInputPromptWindow against that

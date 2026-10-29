@@ -1,6 +1,35 @@
 # MineCome progress — 2026-10-29
 
-## Facing bootstrap — IMPLEMENTED / COMPILED / MINECRAFT PASS; LIVE ACCEPTANCE PENDING
+## Wider-area gameplay and facing bootstrap — LIVE PASS
+
+The user confirmed two combined runs worked in the same KCD2 process: the stone
+appeared ahead, walking and top placement/breaks worked, inventory suppressed
+movement, and walking resumed with the HUD visible. First run
+`d2aece664fe444988e368d8d1b9860f0` passed156 movement frames/readbacks, restoration
+and native retirement `generation=1 state=idle`:
+`runtime/evidence/hud-walking-aimed-20261029-201902-52c493592de141e0b67dc87c5e97a35d/`.
+
+Second run `2ed8bd8b0e6e4ea2aef1cf0ce3a01ae8` completed gameplay, wrote
+`input_completed` and exited0. Its controller had already hit the112s limit,
+roughly3s before that completion record arrived. It therefore withheld the
+retirement proof, and native retirement reported `cleanup_timeout`. This confirms
+same-process gameplay reuse, not final exhausted-state acceptance. Original failed
+evidence is retained:
+`runtime/evidence/hud-walking-aimed-20261029-202118-2cc13e07fda8437eb95a7a775735371a/`.
+The separate `post-run-audit.json` passes nine existing retained-evidence checks,
+including all156 readbacks, exact restoration, scenario completion and resource
+cleanup. It preserves the original failure and grants no rearm authority.
+Both games were closed normally afterward and the final expired arm archived.
+
+The controller now permits up to5s of receipt-only waiting after trace completion,
+aimed cleanup, stopped camera and native restoration. A117s limit measured before
+the unchanged120s GPU lease preserves a3s restoration reserve; GPU restoration
+also precedes JVM shutdown waiting. All238 focused controller checks pass.
+Replaying the retained terminal and real result time fits a conservative budget
+by906ms, although the old exact pre-budget timestamp was not recorded. No new live
+retirement pass is claimed, and original input/freshness limits are unchanged.
+
+## Facing bootstrap — IMPLEMENTED / COMPILED / MINECRAFT PASS
 
 Wide walking/aiming now selects its initial owned stone support from the captured
 footprint perimeter nearest a fresh validated host-camera heading. It retains
@@ -30,8 +59,8 @@ failed after Windows blocked a camera-file replacement. The fixture-only writer
 now abandons that 100 ms-old publication and publishes a new sample on its next
 update. Production's 300 ms reader allowance is unchanged. Java compilation,
 ground-patch checks and physical-movement checks passed before the actual fixture.
-This is scripted Minecraft evidence; wider-area KCD composition and two-session
-live acceptance remain pending. KCD2 is being restarted for the retry.
+The subsequent live runs above confirmed wider-area KCD composition and gameplay
+reuse. Final native retirement acceptance remains pending.
 
 ## Repeat build startup — AUTOMATIC PASS
 

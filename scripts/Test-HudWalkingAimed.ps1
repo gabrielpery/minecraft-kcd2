@@ -45,6 +45,30 @@ $receipts=@();$applied=@();$traceHash=$null
 $receiptCursor=$null
 $aimRelay=$null;$aimState=$null;$aimClicks=$null;$aimReadyHash=$null;$aimClosedHash=$null
 $aimRelayEvidence=$null;$aimClickEvidence=$null;$aimCleanupBeforeRestore=$false;$aimCleanupUtcMs=0L;$finishRequestUtcMs=0L
+$budgetStartUtcMs=0L;$completionWait=$null
+function Get-HudWalkingCompletionTail([long]$OriginalDeadlineUtcMs,[long]$BudgetStartUtcMs,[long]$NowUtcMs,$State,$Terminal){
+    # Receipt waiting only: finished gameplay cannot renew input, movement or
+    # the engine's120s GPU lease. Keep a3s budget-restoration reserve.
+    if($BudgetStartUtcMs -le 0 -or $OriginalDeadlineUtcMs -le $BudgetStartUtcMs -or $NowUtcMs -lt $OriginalDeadlineUtcMs){return $null}
+    foreach($field in @('TracePassed','AimCleaned','AimClosed','FollowerFinishRequested','CameraStopped','CameraResourcesClosed')){
+        if($State.$field -isnot [bool] -or -not $State.$field){return $null}
+    }
+    $ended=@($Terminal)
+    if($ended.Count -ne 1){return $null}
+    $end=$ended[0]
+    if($end.event -cne 'restored' -or $end.result -cne 'restored' -or $end.end_result -cne 'explicit_end'){return $null}
+    foreach($field in @('physical_movement','camera_basis_valid','terminal','timers_cancelled','readback')){
+        if($end.$field -isnot [bool] -or -not $end.$field){return $null}
+    }
+    $readbackError=$end.player_readback_error
+    if(($readbackError -isnot [int] -and $readbackError -isnot [long] -and $readbackError -isnot [double] -and $readbackError -isnot [decimal]) -or
+        -not [double]::IsFinite([double]$readbackError) -or $readbackError -lt 0 -or $readbackError -gt .15){return $null}
+    $until=[long][Math]::Min([decimal]$OriginalDeadlineUtcMs+5000,[decimal]$BudgetStartUtcMs+117000)
+    if($NowUtcMs -ge $until){return $null}
+    return [pscustomobject]@{kind='minecome_hud_completion_receipt_tail_v1';original_deadline_utc_ms=$OriginalDeadlineUtcMs;
+        budget_start_utc_ms=$BudgetStartUtcMs;started_utc_ms=$NowUtcMs;deadline_utc_ms=$until;maximum_tail_ms=5000;
+        receipt_found=$false;ended_utc_ms=0L;gameplay_already_restored=$true}
+}
 function Read-Receipts([string]$Tag){
     return @(Read-HudWalkingReceipts $script:receiptCursor $Tag)
 }
@@ -121,6 +145,7 @@ try{
     $readyPath=Join-Path $directory 'capture/stream-ready.json';$resultPath=Join-Path $directory 'capture/stream-result.json'
     $minimumUtc=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds();$expires=$minimumUtc+180000
     $budget=New-MineComeHudGpuBudget $context
+    $budgetStartUtcMs=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
     Start-MineComeHudGpuBudget $budget
     $deadline=[DateTime]::UtcNow.AddSeconds(112)
     $camera=Start-HudCameraDelivery -Context $context -Probe $probe -Run $run -LivePatch $livePatch -ViewFile $viewFile -ProjectRoot $root
@@ -259,6 +284,25 @@ try{
         if($helper.HasExited){throw 'HUD helper exited without its completion receipt.'}
         Start-Sleep -Milliseconds 15
     }while([DateTime]::UtcNow -lt $deadline)
+    if(-not(Test-Path -LiteralPath $resultPath)){
+        $completionState=[pscustomobject]@{TracePassed=($traceEnded -and $tracePassed);AimCleaned=($aimCleanupBeforeRestore -and $aimRelay.AsyncStopVerified);
+            AimClosed=($null -ne $aimState.Closed);FollowerFinishRequested=[bool]$followerFinishRequested;
+            CameraStopped=($null -ne $cameraState -and $cameraState.Stopped);CameraResourcesClosed=($null -ne $cameraState -and $cameraState.ResourcesClosed)}
+        $completionWait=Get-HudWalkingCompletionTail ([DateTimeOffset]$deadline).ToUnixTimeMilliseconds() $budgetStartUtcMs ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()) $completionState $terminal
+        if($completionWait){
+            # Do not re-enter the pose/click/camera loop. Only the authenticated
+            # terminal file may arrive during this bounded completion tail.
+            while([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() -lt $completionWait.deadline_utc_ms){
+                Assert-MineComeProbeContext $context
+                if([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds() -ge $completionWait.deadline_utc_ms){break}
+                if(Test-Path -LiteralPath $resultPath){$completionWait.receipt_found=$true;break}
+                if($helper.HasExited){throw 'HUD helper exited without its completion receipt.'}
+                Start-Sleep -Milliseconds 15
+            }
+            $completionWait.ended_utc_ms=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+        }
+        if(-not $completionWait -or -not $completionWait.receipt_found){throw 'Bounded physical HUD completion receipt tail timed out or was not admissible.'}
+    }
     if(-not(Test-Path -LiteralPath $resultPath)){throw 'Bounded physical HUD session timed out.'}
     $guest=Read-HudMovementJson $resultPath
     Assert-HudWalkingAimedProducer $guest
@@ -308,14 +352,16 @@ try{
     # Scenarios add evidence requirements only; they cannot change the input,
     # timing, arena, lease or cleanup policy of this combined session.
     $scenarioProof=Assert-HudWalkingAimedScenario -Guest $guest -Scenario $Scenario
+    # The authenticated HUD is closed and gameplay is restored. Release the
+    # GPU budget before waiting for process/JVM shutdown bookkeeping.
+    Stop-MineComeHudGpuBudget $budget
+    $budgetEvidence=Get-MineComeHudGpuBudgetEvidence $budget
+    if(-not $budget.RestorationVerified -or -not $budget.BudgetValid){throw 'Temporary host FPS budget was not restored.'}
     $exitDeadline=[DateTime]::UtcNow.AddSeconds(15)
     while(-not $helper.HasExited -and [DateTime]::UtcNow -lt $exitDeadline){Start-Sleep -Milliseconds 50}
     if(-not $helper.HasExited){throw 'Minecraft normal exit remained pending.'}
     $helper.WaitForExit()
     if($helper.ExitCode -ne 0){throw 'Minecraft child returned a failure exit.'}
-    Stop-MineComeHudGpuBudget $budget
-    $budgetEvidence=Get-MineComeHudGpuBudgetEvidence $budget
-    if(-not $budget.RestorationVerified -or -not $budget.BudgetValid){throw 'Temporary host FPS budget was not restored.'}
     $passed=$true
     Write-Output "HUD_WALKING_AIMED_PASS run=$run scenario=$Scenario server_frames=$($forwarded.Count) delayed_kcd_readbacks=$($applied.Count) restored=true evidence=$directory"
 }catch{$failure=$_.Exception.Message;throw}
@@ -407,6 +453,7 @@ finally{
         ConvertTo-Json -InputObject $viewTimings -Depth 4 | Set-Content -LiteralPath (Join-Path $probe.Directory 'view-timings.json') -Encoding utf8NoBOM
         $verification=[ordered]@{schema=1;kind='minecome_hud_walking_aimed_controller_v1';movement_session=$walkingSession.Name;run=$run;probe_run=$probe.Run;scenario=$Scenario;scenario_proof=$scenarioProof;result=$(if($passed){'passed'}else{'failed'});failure=$failure;target_pid=$context.GamePid;target_start_filetime=$context.GameStartedUtc.ToFileTimeUtc().ToString();source_sha256=$probe.SourceHash;compositor_armed=[bool]$arm;view_samples=$viewCount;camera_worker=$cameraEvidence;forwarded_frames=$forwarded.Count;delayed_readbacks=$applied.Count;trace_passed=$tracePassed;trace_sha256=$traceHash;restoration_verified=$restored;host_gpu_budget=$budgetEvidence;guest=$guest;visual_verified=$false;physical_input_exclusivity_verified=$false;full_world_movement_authority_verified=$false}
         if($WideWalking){$verification.walking_area='wide'}
+        $verification.completion_receipt_wait=$completionWait
         $verification | ConvertTo-Json -Depth 16 | Set-Content -LiteralPath (Join-Path $probe.Directory 'verification.json') -Encoding utf8NoBOM
     }
     if($traceReader.Stream){$traceReader.Stream.Dispose()}
