@@ -273,7 +273,7 @@ public final class HudStreamLab {
             lastReadbackId=frame.id();
             if(output==null || terminal || paused)return;
             var meta=JsonParser.parseString(frame.metadata()).getAsJsonObject();
-            if(groundMovement!=null && meta.has("ground_movement_phase"))groundMovement.captured(meta.get("ground_movement_phase").getAsString());
+            if(groundMovement!=null && meta.has("ground_movement_phase"))groundMovement.captured(meta);
             if(physicalFixture!=null && meta.has("physical_fixture_phase"))physicalFixture.captured(meta.get("physical_fixture_phase").getAsString());
             if(timing!=null)timing.readbackAge(System.currentTimeMillis()-meta.get("captured_utc_ms").getAsLong());
             output.offer(new HudStreamProducer.Frame(frame.width(),frame.height(),frame.bottomUp(),meta.get("captured_utc_ms").getAsLong(),meta.get("selected_slot").getAsInt(),meta.get("screen").getAsInt(),frame.metadata()));
@@ -306,7 +306,7 @@ public final class HudStreamLab {
         meta.addProperty("captured_utc_ms",System.currentTimeMillis());meta.addProperty("client_server_inventory_confirmed",serverConfirmed);
         meta.addProperty("server_selected_slot",observation.selected());meta.addProperty("server_observation_age_ms",(now-observation.at())/1_000_000);
         meta.addProperty("no_world_pixels",true);meta.addProperty("hand_pixels",false);meta.addProperty("gui_scale",client.getWindow().getScaleFactor());
-        if(groundMovement!=null)meta.addProperty("ground_movement_phase",groundMovement.phase());
+        if(groundMovement!=null){meta.addProperty("ground_movement_phase",groundMovement.phase());groundMovement.captureMetadata(meta);}
         if(physicalFixture!=null)meta.addProperty("physical_fixture_phase",physicalFixture.phase());
         meta.add("client_slots",jsonSlots(local));meta.add("server_slots",jsonSlots(observation.slots()));
         timingStage("pbo_enqueue");

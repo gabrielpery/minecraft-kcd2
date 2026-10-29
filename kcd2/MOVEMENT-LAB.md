@@ -1,5 +1,49 @@
 # Sampled-ground movement lab
 
+## Two-tile corridor
+
+The opt-in corridor lab joins two overlapping 9×9 terrain samples under the first
+sample's coordinate origin. Their centres are four metres apart along KCD X;
+the resulting collision surface spans Minecraft X[-4,8], Z[-4,4]. Overlap must
+agree, both tile hashes are retained, and the completed map is installed and
+released by its exact world/run/hash owner on each Minecraft game thread.
+This is an approximate terrain heightfield, not a full KCD collision export.
+
+On 29 October, an actual Minecraft run on captured KCD terrain crossed the old
+X=4 edge to X=6.044, jumped and landed, then returned within 0.063m of its start.
+The native standalone receiver accepted 321 real HUD frames, including crossing
+and return frames. Client/server controls and collision proxies were released;
+there were no position corrections after settling. KCD was closed during this
+Minecraft check. Live KCD following, physical input and native HUD composition
+across the corridor have not been verified; existing live profiles are unchanged.
+
+With a fresh official tools world loaded and the player still, capture from the
+repository root:
+
+```powershell
+$capture = & './scripts/Test-KcdGroundCorridor.ps1'
+$corridor = $capture.GroundCorridorFile
+```
+
+Then close KCD normally to avoid competing for GPU time and run:
+
+```powershell
+& './scripts/Start-HudGroundCorridorLab.ps1' -CorridorFile $corridor
+```
+
+These scripts automatically select the configured PowerShell 7 runtime. The
+capture only samples terrain; the standalone lab starts its own Minecraft world,
+walks across the join, jumps, walks back, exercises the normal HUD sequence and
+closes. It does not launch, move or arm KCD. Omitting `-CorridorFile` generates
+explicitly labelled synthetic terrain instead. Keep the manifest with its capture
+verification, receipt and Lua snapshot in the original evidence directory.
+
+The fixture pauses keys when the client gets ahead of a fresh server observation.
+An expired synthetic hold is released before vanilla movement and may be renewed
+only after another valid observation. Existing input lease, stall, freshness and
+disagreement limits remain in force. This standalone mode cannot enable a live
+HUD arm or be combined with physical/coupled movement modes.
+
 ## Repeat sessions in one KCD process
 
 The separate repeat profile is implemented, compiled and installed in the local

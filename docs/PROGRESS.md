@@ -1,5 +1,37 @@
 # MineCome progress — 2026-10-29
 
+## Joined terrain with a fixed origin — STANDALONE ACTUAL-MINECRAFT PASS
+
+Two overlapping wide captures now form one immutable 12×8m collision surface,
+retaining the first capture's coordinate origin. Capture validates all 162 terrain
+rays, stationary player, overlapping heights/normals, source snapshot, exact game
+identity and both raw tile hashes. Minecraft builds the whole map before publishing
+it and releases only its exact world/run/hash owner. Existing live bounds remain
+unchanged; rolling replacement and live KCD following over the join are next work.
+
+Real capture `5eb9ebb1940f49599ffd2b74e3ae9524` passed in KCD PID 41288, which was
+then closed normally. Actual Minecraft run `bbbe7a8590f54996a14896d1a7e79e48`
+passed on that capture: client/server walked 5.544m to X6.044 beyond the original
+X4 edge, jumped/landed and returned within 0.063m. The standalone native receiver
+accepted 321 real HUD frames, with 41 beyond the old edge and 23 during return.
+No post-settle corrections; underlying vanilla cells remained air; both proxies
+and held controls released. KCD compositing and physical input were not exercised.
+
+Evidence:
+
+- `runtime/evidence/ground-corridor-20261029-205630-5eb9ebb1940f49599ffd2b74e3ae9524/verification.json`
+- `runtime/evidence/hud-stream-20261029-210115-bbbe7a8590f54996a14896d1a7e79e48/verification.json`
+
+The first capture attempt timed out before sampling. Capture now performs bounded
+readiness queries before its single module-load attempt and records preparation
+failures. A synthetic actual run then stopped for client/server disagreement; the
+first captured run crossed and jumped but stopped on an expired synthetic hold.
+Corridor-only input backpressure and release-before-tick handling resolved those
+specific failures without relaxing existing bounds. Original failed evidence is
+retained. Passing focused checks: Java geometry/sequence 1827, mode 123, physical 383,
+collision ownership 25; PowerShell capture 33, preparation 11, corridor proof 23 and
+existing ground 134; Lua capture 8. No native addon change or manual test this turn.
+
 ## Wider-area gameplay and facing bootstrap — LIVE PASS
 
 The user confirmed two combined runs worked in the same KCD2 process: the stone

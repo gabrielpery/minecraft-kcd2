@@ -81,7 +81,7 @@ function Read-MineComeProbeLog($Context,[long]$Offset) {
         [Text.Encoding]::UTF8.GetString($bytes)
     } finally { $stream.Dispose() }
 }
-function New-MineComeProbeRun($Context,[string]$Prefix,[string]$Module,[string]$EntryPoint) {
+function New-MineComeProbeRun($Context,[string]$Prefix,[string]$Module,[string]$EntryPoint,[switch]$PrepareOnly) {
     if($Prefix -notmatch '^[a-z-]{1,40}$' -or $EntryPoint -notmatch '^[A-Za-z][A-Za-z0-9_]{1,60}$') { throw 'Invalid internal probe identifier.' }
     $run=[Guid]::NewGuid().ToString('N')
     $directory=Join-Path $Context.ProjectRoot ('runtime/evidence/'+$Prefix+'-'+(Get-Date -Format 'yyyyMMdd-HHmmss')+'-'+$run)
@@ -93,7 +93,22 @@ function New-MineComeProbeRun($Context,[string]$Prefix,[string]$Module,[string]$
     if($sourceHash -ne $snapshotHash) { throw 'Probe source changed while copying; no module load attempted.' }
     (Get-Item -LiteralPath $snapshot).IsReadOnly=$true
     $offset=(Get-Item -LiteralPath $Context.GameLog).Length
-    $path=$snapshot.Replace('\','/').Replace("'","\'")
+    $probe=[pscustomobject]@{Run=$run;Directory=$directory;Source=$source;SourceHash=$sourceHash;Snapshot=$snapshot;SnapshotHash=$snapshotHash;Offset=$offset;EntryPoint=$EntryPoint;FunctionReloadVerified=$false;
+        PreparedGamePid=$Context.GamePid;PreparedGameStartFileTime=$Context.GameStartedUtc.ToFileTimeUtc()}
+    if(-not $PrepareOnly){Initialize-MineComeProbeRun $Context $probe}
+    $probe
+}
+function Initialize-MineComeProbeRun($Context,$Probe) {
+    # Split preparation from dispatch so callers can retain exact failure evidence.
+    # A timed-out module load is never automatically repeated.
+    if($Probe.Run -cnotmatch '^[0-9a-f]{32}$' -or $Probe.EntryPoint -cnotmatch '^[A-Za-z][A-Za-z0-9_]{1,60}$' -or
+        $Probe.FunctionReloadVerified -ne $false -or $Probe.PSObject.Properties.Name -contains 'LoadAttempted') {throw 'Probe load may only be attempted once.'}
+    if((Get-FileHash -LiteralPath $Probe.Snapshot).Hash -cne $Probe.SnapshotHash){throw 'Prepared probe snapshot changed before dispatch.'}
+    if($Context.GamePid -ne $Probe.PreparedGamePid -or $Context.GameStartedUtc.ToFileTimeUtc() -ne $Probe.PreparedGameStartFileTime){throw 'Prepared probe target process changed.'}
+    Assert-MineComeProbeContext $Context
+    $Probe | Add-Member NoteProperty LoadAttempted $true
+    $run=$Probe.Run;$EntryPoint=$Probe.EntryPoint;$offset=$Probe.Offset
+    $path=$Probe.Snapshot.Replace('\','/').Replace("'","\'")
     Invoke-MineComeProbeConsole $Context ("#local old=MineCome and MineCome.$EntryPoint; Script.LoadScript('$path'); local ok=MineCome and type(MineCome.$EntryPoint)=='function' and MineCome.$EntryPoint~=old; System.LogAlways('[MineComeProbeContract] $run '..tostring(not not ok))")
     Invoke-MineComeProbeConsole $Context ("#System.LogAlways('[MineComeProbeFlush] $run')")
     $deadline=[DateTime]::UtcNow.AddSeconds(4);$verified=$false
@@ -104,7 +119,7 @@ function New-MineComeProbeRun($Context,[string]$Prefix,[string]$Module,[string]$
         if($verified){break};Start-Sleep -Milliseconds 50
     } while([DateTime]::UtcNow -lt $deadline)
     if(-not $verified) { throw 'No fresh engine source-evaluation contract receipt.' }
-    [pscustomobject]@{Run=$run;Directory=$directory;Source=$source;SourceHash=$sourceHash;Snapshot=$snapshot;SnapshotHash=$snapshotHash;Offset=$offset;EntryPoint=$EntryPoint;FunctionReloadVerified=$verified}
+    $Probe.FunctionReloadVerified=$true
 }
 function Get-MineComeProbeReceipts([string]$Log,[string]$Tag,[string]$Run) {
     if($Tag -notmatch '^[A-Za-z][A-Za-z0-9]{1,60}$' -or $Run -notmatch '^[0-9a-f]{32}$') { throw 'Invalid internal receipt identifier.' }

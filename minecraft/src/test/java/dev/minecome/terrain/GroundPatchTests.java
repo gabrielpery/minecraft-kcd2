@@ -72,6 +72,9 @@ public final class GroundPatchTests {
         wideSequence(GroundPatch.parse(bytes(fixture(9)),true));
         checks+=MovementTraceSinkTests.run();
         checks+=WideWalkingTests.run();
+        checks+=GroundCorridorTests.run();
+        checks+=GroundCorridorSequenceTests.run();
+        checks+=GroundCorridorSyncTests.run();
         System.out.println("GroundPatchTests: "+checks+" checks passed (no Minecraft/game bootstrap)");
     }
     private static GroundMovementSequence.Motion ground(double x){return new GroundMovementSequence.Motion(x,64,0.5,0,0,0,true,true);}

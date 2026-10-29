@@ -32,6 +32,13 @@ inventory and resumed walking on captured KCD terrain. Physical controls and
 HUD composition also pass a combined live check in this area. The starting stone
 now appears ahead of the initial camera view.
 
+A new [two-tile corridor lab](kcd2/MOVEMENT-LAB.md#two-tile-corridor)
+joins captured terrain into a 12×8 metre surface without changing the coordinate
+origin. An automatic actual-Minecraft run crossed the original patch edge, jumped,
+landed and walked back with its real HUD streaming. This is verified in the
+standalone Minecraft lab; live KCD movement across that join and rolling terrain
+updates remain unfinished. Existing live walking limits are unchanged.
+
 ## What works today
 
 | Capability | Verified scope |

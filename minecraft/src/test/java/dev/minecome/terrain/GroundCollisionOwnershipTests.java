@@ -48,6 +48,19 @@ public final class GroundCollisionOwnershipTests {
         check(!GroundCollision.clear(client,patch.run(),false),"Released installation is not claimed again");
         check(GroundCollision.clear(server,patch.run(),true),"Exact server installation released");
         check(GroundCollision.available(false)&&GroundCollision.available(true),"Both sides released");
+        GroundSurface corridor=GroundCorridor.parse(GroundCorridorTests.bytes(GroundCorridorTests.fixture("standalone_fixture",0)));
+        GroundCollision.install(client,corridor,false);GroundCollision.install(server,corridor,true);
+        check(GroundCollision.matches(client,corridor,false)&&GroundCollision.matches(server,corridor,true),"Both worlds publish the same composite owner");
+        check(!GroundCollision.merge(client,new BlockPos(6,63,0),empty).isEmpty(),"Collision exists beyond the original patch boundary");
+        check(GroundCollision.merge(client,new BlockPos(8,63,0),empty)==empty,"Composite collision remains bounded");
+        try{GroundCollision.install(stranger,corridor,false);throw new AssertionError("Corridor replaced existing owner");}
+        catch(IllegalStateException expected){checks++;}
+        check(GroundCollision.matches(client,corridor,false),"Failed composite installation preserves original map");
+        check(!GroundCollision.clear(client,corridor.run(),"0".repeat(64),false),"Wrong manifest digest cannot release composite");
+        check(!GroundCollision.clear(stranger,corridor.run(),corridor.sha256(),false),"Wrong world cannot release composite");
+        check(GroundCollision.clear(client,corridor.run(),corridor.sha256(),false),"Exact composite client owner released");
+        check(GroundCollision.installed(server,true),"Client release preserves composite server");
+        check(GroundCollision.clear(server,corridor.run(),corridor.sha256(),true),"Exact composite server owner released");
         System.out.println("GROUND_COLLISION_OWNERSHIP_TESTS_PASS checks="+checks);
     }
 }

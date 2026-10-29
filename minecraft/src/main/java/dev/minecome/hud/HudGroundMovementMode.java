@@ -6,7 +6,7 @@ import java.util.UUID;
 
 /** Scripted movement with a standalone HUD receiver; never a live input/composition route. */
 public final class HudGroundMovementMode {
-    public enum Mode { NONE,FIXTURE,COUPLED }
+    public enum Mode { NONE,FIXTURE,COUPLED,CORRIDOR }
     private HudGroundMovementMode() {}
     public static boolean require(Properties properties) {
         return mode(properties)==Mode.FIXTURE;
@@ -14,8 +14,11 @@ public final class HudGroundMovementMode {
     public static Mode mode(Properties properties) {
         boolean fixture=Boolean.parseBoolean(properties.getProperty("minecome.hudGroundMovementFixture"));
         boolean coupled=Boolean.parseBoolean(properties.getProperty("minecome.hudGroundMovementCoupled"));
-        if(!fixture && !coupled)return Mode.NONE;
-        if(fixture && coupled)throw new IllegalArgumentException("HUD ground fixture and coupled modes are exclusive");
+        String corridorValue=properties.getProperty("minecome.hudGroundCorridorFixture","false");
+        if(!corridorValue.equals("true")&&!corridorValue.equals("false"))throw new IllegalArgumentException("Explicit corridor selector must be true or false");
+        boolean corridor=corridorValue.equals("true");
+        if(!fixture && !coupled && !corridor)return Mode.NONE;
+        if((fixture?1:0)+(coupled?1:0)+(corridor?1:0)!=1)throw new IllegalArgumentException("HUD ground modes are exclusive");
         if(HudPhysicalMovementMode.wide(properties) && !coupled)
             throw new IllegalArgumentException("Wide scripted ground movement requires the authenticated coupled profile");
         if (!Boolean.parseBoolean(properties.getProperty("minecome.hudStreamLab")) ||
@@ -27,7 +30,7 @@ public final class HudGroundMovementMode {
                 "hudStoneFixture", "hudStoneLive", "hudAimedStoneBridge", "groundMovementLab",
                 "externalInputLab", "externalInputFixture", "aimedStoneLab", "aimedBridgeLab",
                 "hudAimedBridgeLab", "hudExportLab", "interactiveStoneLab", "smokeWorld", "dynamicBridgeSmoke",
-                "hudPhysicalMovement", "hudPhysicalMovementFixture", "hudPhysicalMovementExtended", "hudWalkingAimed", "hudWalkingAimedFixture")) {
+                "hudPhysicalMovement", "hudPhysicalMovementFixture", "hudPhysicalMovementExtended", "hudWalkingAimed", "hudWalkingAimedFixture", "hudFacingSeedFixture")) {
             if (Boolean.parseBoolean(properties.getProperty("minecome." + mode)))
                 throw new IllegalArgumentException("HUD ground fixture cannot combine with " + mode);
         }
@@ -35,9 +38,9 @@ public final class HudGroundMovementMode {
             throw new IllegalArgumentException("HUD ground movement requires its patch file");
         if(coupled && properties.getProperty("minecome.movementTraceFile","").isBlank())
             throw new IllegalArgumentException("HUD coupled movement requires its new movement trace file");
-        if(fixture && !properties.getProperty("minecome.movementTraceFile","").isBlank())
+        if((fixture||corridor) && !properties.getProperty("minecome.movementTraceFile","").isBlank())
             throw new IllegalArgumentException("HUD ground fixture cannot emit a follower trace");
-        return coupled?Mode.COUPLED:Mode.FIXTURE;
+        return corridor?Mode.CORRIDOR:coupled?Mode.COUPLED:Mode.FIXTURE;
     }
     /** A live label is checked here; exact engine capture authentication belongs to the controller. */
     public static void requirePatch(Mode mode,String hudRun,String patchRun,String sourceKind,String save) {
@@ -52,5 +55,8 @@ public final class HudGroundMovementMode {
             throw new IllegalArgumentException("HUD ground fixture requires its same-run synthetic patch");
         if(mode==Mode.COUPLED && !"live_kcd_ground_patch".equals(sourceKind))
             throw new IllegalArgumentException("HUD coupled movement requires a captured live ground patch");
+        if(mode==Mode.CORRIDOR && (patchRun==null || !patchRun.matches("[A-Za-z0-9_-]{1,128}") ||
+                !List.of("standalone_corridor_fixture","live_kcd_ground_corridor").contains(sourceKind)))
+            throw new IllegalArgumentException("HUD corridor requires its explicit composite surface identity");
     }
 }

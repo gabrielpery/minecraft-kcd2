@@ -12,7 +12,7 @@ import java.security.*;
 import java.util.*;
 
 /** Immutable numeric host samples. This is a bounded heightfield approximation, not mesh extraction. */
-public final class GroundPatch {
+public final class GroundPatch implements GroundSurface {
     public static final int GRID_SIZE=5,WIDE_GRID_SIZE=9,MAX_BYTES=65_536;
     public static final double ANCHOR_Y=64,THICKNESS=0.5;
     public record Point(int index,double x,double y,double z,double nx,double ny,double nz) {}
