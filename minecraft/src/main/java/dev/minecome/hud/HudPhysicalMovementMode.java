@@ -27,11 +27,21 @@ public final class HudPhysicalMovementMode {
         if(!value.equals("true") && !value.equals("false"))throw new IllegalArgumentException("Walking aimed option must be true or false");
         return value.equals("true");
     }
+    static double fixtureYaw(Properties p){
+        boolean corridor=corridor(p);
+        double yaw=Double.parseDouble(p.getProperty("minecome.hudPhysicalFixtureYaw",corridor?"-90":"0"));
+        if(!Double.isFinite(yaw)||yaw < -180||yaw > 180)throw new IllegalArgumentException("Fixture yaw outside finite180 degrees");
+        if(corridor&&yaw!= -90)throw new IllegalArgumentException("Corridor crossing fixture requires yaw minus90");
+        if(Boolean.parseBoolean(p.getProperty("minecome.hudWalkingAimedFixture"))&&
+                (!HudMovementSession.selected(p).extended()||yaw!=(corridor?-90:0)))
+            throw new IllegalArgumentException("Walking/aimed fixture requires extended movement and its selected area's heading");
+        return yaw;
+    }
     public static boolean require(Properties p){
         boolean live=Boolean.parseBoolean(p.getProperty("minecome.hudPhysicalMovement")),fixture=fixture(p);
         if(corridor(p)){
             if((!live&&!fixture)||!HudMovementSession.selected(p).extended())throw new IllegalArgumentException("Corridor walking requires extended physical live or fixture movement");
-            for(String conflict:List.of("hudWideWalking","hudWalkingAimed","hudWalkingAimedFixture","hudFacingSeedFixture",
+            for(String conflict:List.of("hudWideWalking","hudFacingSeedFixture",
                     "hudGroundMovementFixture","hudGroundMovementCoupled","hudGroundCorridorFixture","hudGroundCorridorCoupled","hudGroundCorridorWalkOnly"))
                 if(Boolean.parseBoolean(p.getProperty("minecome."+conflict)))throw new IllegalArgumentException("Corridor physical walking conflicts with "+conflict);
         }
@@ -69,6 +79,7 @@ public final class HudPhysicalMovementMode {
             if(Boolean.parseBoolean(p.getProperty("minecome."+conflict)) && !(combined && List.of("hudStoneBridge","hudStoneLive","hudAimedStoneBridge").contains(conflict)))throw new IllegalArgumentException("Physical HUD movement conflicts with "+conflict);
         for(String path:List.of("groundPatchFile","movementTraceFile","hudHostViewFile"))
             if(p.getProperty("minecome."+path,"").isBlank())throw new IllegalArgumentException("Physical HUD movement requires "+path);
+        if(fixture)fixtureYaw(p);
         return true;
     }
 }

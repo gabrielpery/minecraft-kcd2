@@ -40,14 +40,19 @@ function Assert-MineComePhysicalMovementBundle($Manifest,$Profile){
         if($entry.Count -ne 1 -or $entry[0].sha256 -cne $hashes[$path]){throw 'Physical movement artifact hash mismatch.'}
     }
 }
-function Assert-HudPhysicalMovementReady($Ready,[bool]$Expected,[switch]$CorridorWalking){
+function Assert-HudPhysicalMovementReady($Ready,[bool]$Expected,[switch]$CorridorWalking,[switch]$WalkingAimed){
     if($CorridorWalking){
         if(-not $Expected){throw 'Corridor readiness requires its explicit physical walking controller.'}
         Assert-HudWalkingArea $Ready $false -CorridorWalking
         Assert-HudWalkingSession $Ready -ExtendedWalking
-        foreach($name in @('ui_input_walking_aimed','ui_input_aimed_stone_bridge','ui_walking_aimed_fixture','facing_seed','ui_ground_corridor_fixture','ui_ground_corridor_coupled','corridor_walk_only')){
+        foreach($name in @('ui_walking_aimed_fixture','facing_seed','ui_ground_corridor_fixture','ui_ground_corridor_coupled','corridor_walk_only')){
             $marker=$Ready.PSObject.Properties[$name]
             if($marker -and ($marker.Value -isnot [bool] -or $marker.Value)){throw 'Physical corridor cannot use an aimed, facing or scripted producer.'}
+        }
+        foreach($name in @('ui_input_walking_aimed','ui_input_aimed_stone_bridge')){
+            $marker=$Ready.PSObject.Properties[$name]
+            if($WalkingAimed){if(-not $marker -or $marker.Value -isnot [bool] -or -not $marker.Value){throw 'Combined corridor requires explicit aimed producer markers.'}}
+            elseif($marker -and ($marker.Value -isnot [bool] -or $marker.Value)){throw 'Aimed corridor requires its combined controller.'}
         }
     }elseif($Ready.PSObject.Properties['walking_area'] -and $Ready.walking_area -ceq 'corridor'){
         throw 'Corridor readiness requires explicit corridor arming.'

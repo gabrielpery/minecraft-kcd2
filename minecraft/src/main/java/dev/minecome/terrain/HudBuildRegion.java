@@ -16,6 +16,7 @@ import java.util.Set;
 public final class HudBuildRegion {
     public static final int MAX_OWNED=AimGeometry.MAX_OWNED_CELLS;
     private final String patchRun,patchSha256;
+    private final boolean corridor;
     private final Cell support,seed,minimum,maximum;
     private final Set<Cell> imported;
     /** Choose only adjacent, reachable perimeter support; never use imported terrain as a fixture. */
@@ -43,12 +44,19 @@ public final class HudBuildRegion {
         return best;
     }
 
-    public HudBuildRegion(GroundPatch patch,Cell support){
+    /** Fixed side support leaves the expanded +X walking lane and all imported cells untouched. */
+    public static Cell corridorSupport(GroundSurface patch,int supportY){
+        if(patch==null || !patch.corridor())throw new IllegalArgumentException("Explicit corridor surface required");
+        return new Cell(-1,supportY,-5);
+    }
+
+    public HudBuildRegion(GroundSurface patch,Cell support){
         if(patch==null || support==null)throw new IllegalArgumentException("Build region requires a patch and explicit bootstrap support");
         // The one-cell perimeter allows a fixture support immediately beside
         // the sampled footprint without granting a distant arbitrary region.
-        int half=(int)patch.halfExtent();
-        if(support.x()<-half-1 || support.x()>half || support.z()<-half-1 || support.z()>half)
+        corridor=patch.corridor();
+        int half=corridor?4:(int)((GroundPatch)patch).halfExtent();
+        if(support.x()<-half-1 || support.x()>(corridor?8:half) || support.z()<-half-1 || support.z()>half)
             throw new IllegalArgumentException("Bootstrap support is outside sampled footprint/perimeter");
         double lowest=Double.POSITIVE_INFINITY,highest=Double.NEGATIVE_INFINITY;
         for(var slab:patch.slabs()){lowest=Math.min(lowest,slab.minY());highest=Math.max(highest,slab.maxY());}
@@ -67,6 +75,11 @@ public final class HudBuildRegion {
 
     public String patchRun(){return patchRun;}
     public String patchSha256(){return patchSha256;}
+    public boolean corridor(){return corridor;}
+    /** The existing UP-support bootstrap uses an inner point only for the side corridor support. */
+    public dev.minecome.protocol.Protocol.Vec3 bootstrapPoint(){
+        return new dev.minecome.protocol.Protocol.Vec3(support.x()+(corridor?.75:.5),support.y()+1,support.z()+(corridor?.95:.5));
+    }
     public Cell support(){return support;}
     public Cell seed(){return seed;}
     public Cell minimum(){return minimum;}

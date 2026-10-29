@@ -71,6 +71,28 @@ public final class HudBuildRegionTests {
         var sloped=patch(0,true);var slopeRegion=new HudBuildRegion(sloped,support);
         for(var cell:sloped.cells())check(slopeRegion.isImported(new Cell(cell.x(),cell.y(),cell.z())),"Sloping and split imported cells receive the same protection");
         check(!slopeRegion.patchSha256().equals(region.patchSha256()),"Different sampled geometry cannot silently share patch identity");
+        var corridor=GroundCorridorTests.flatCorridor();var corridorSupport=HudBuildRegion.corridorSupport(corridor,63);
+        var corridorRegion=new HudBuildRegion(corridor,corridorSupport);
+        check(corridorSupport.equals(new Cell(-1,63,-5))&&corridorRegion.seed().equals(new Cell(-1,64,-5)),
+                "Corridor fixed side support is reachable without occupying the expanded walking lane");
+        check(corridorRegion.corridor()&&corridorRegion.patchSha256().equals(corridor.sha256()),"Corridor build policy pins the composite identity");
+        check(corridorRegion.importedCells().size()==96,"Composite policy protects both tiles, not just the first footprint");
+        for(var imported:corridor.cells()){
+            var cell=new Cell(imported.x(),imported.y(),imported.z());
+            check(corridorRegion.isImported(cell)&&corridorRegion.placementRejection(cell,Set.of())!=null&&corridorRegion.breakRejection(cell,Set.of(cell))!=null&&corridorRegion.cleanupRejection(cell,Set.of(cell))!=null,
+                    "All composite slab cells remain immutable for placement, break and cleanup");
+        }
+        for(var target:Set.of(new Cell(-1,65,-5),new Cell(0,64,-5)))
+            check(corridorRegion.placementRejection(target,Set.of(corridorRegion.seed()))==null,"Top and east-side targets remain outside every imported cell");
+        check(corridorRegion.targetRejection(corridorSupport)!=null,"Corridor support cannot become a vanilla-owned target");
+        var bootstrap=corridorRegion.bootstrapPoint();var eye=new dev.minecome.protocol.Protocol.Vec3(0,65.73239337921143,0);
+        double dx=bootstrap.x()-eye.x(),dy=bootstrap.y()-eye.y(),dz=bootstrap.z()-eye.z(),distance=Math.sqrt(dx*dx+dy*dy+dz*dz);
+        var hit=dev.minecome.protocol.AimGeometry.intersect(new dev.minecome.protocol.AimGeometry.Ray(eye,new dev.minecome.protocol.Protocol.Vec3(dx/distance,dy/distance,dz/distance),4.5),corridorSupport.bounds());
+        check(hit.isPresent()&&hit.get().face()==dev.minecome.protocol.AimGeometry.Face.UP&&hit.get().distance()<4.5,
+                "Corridor bootstrap inner point reaches the support UP face from the recorded settled height");
+        check(region.bootstrapPoint().equals(new dev.minecome.protocol.Protocol.Vec3(2.5,64,.5)),"Legacy bootstrap retains its original face centre");
+        reject(()->HudBuildRegion.corridorSupport(patch,63),"Ordinary patch cannot request corridor selection");
+        reject(()->new HudBuildRegion(corridor,new Cell(9,63,0)),"Corridor cannot expand beyond its one-cell support perimeter");
         System.out.println("HudBuildRegionTests: "+checks+" checks passed (no Minecraft/game bootstrap)");
     }
 }

@@ -15,9 +15,10 @@ The native standalone receiver accepted 321 real HUD frames, including crossing
 and return frames. Client/server controls and collision proxies were released;
 there were no position corrections after settling. KCD was closed during this
 first Minecraft check. The separate two-game walking route below now passes live
-KCD following. The explicit physical corridor profile below is implemented;
-foreground input/native composition acceptance remains pending. Existing profiles
-keep their original bounds.
+KCD following. The physical corridor profile below also has foreground walking,
+HUD and inventory acceptance. That live run reached X=3.576m, so foreground
+crossing of the old X=4 edge remains unverified. Existing profiles keep their
+original bounds.
 
 ### Physical controller corridor
 
@@ -26,7 +27,8 @@ inventory controller, the two-tile collision surface and a fixed initial settled
 player anchor. It allows 15 seconds of input plus one second to settle, with an
 18-second native deadline. Native playback retains its 200ms delay and 400ms lease.
 The anchor height comes from the grounded player, rather than the scripted lab's
-Y=64. The inset footprint is X[-3.5,7.5], Z[-3.5,3.5]. Aimed blocks are excluded.
+Y=64. The inset footprint is X[-3.5,7.5], Z[-3.5,3.5]. This plain walking entry
+point excludes aimed blocks; use the explicit combined profile below for those.
 
 Automatic actual-Minecraft coverage:
 
@@ -61,8 +63,51 @@ After installing the separately pinned physical HUD bundle, the foreground lab i
 & './scripts/Start-HudWalkingLab.ps1' -ExtendedWalking -CorridorWalking -BundleDirectory './runtime/hud-compositor-walking-corridor-20261029'
 ```
 
-The installed repeat/aimed bundle is preserved. The prepared profile transition
-and remaining acceptance check are documented in `docs/NEXT_SESSION.md`.
+This physical-only command requires its matching installed bundle. The current
+local installation has moved to the repeat/aimed bundle for the combined check
+below; see `docs/NEXT_SESSION.md` before choosing a profile.
+
+### Corridor walking with aimed blocks
+
+The explicit combined profile uses `-CorridorWalking -RepeatSession`. It keeps
+the same 15-second input window, one-second settle period, native deadline and
+immutable player/capture anchor. The seed sits at Minecraft (-1, floor(initial
+player Y), -5), on a separately owned support beside the sampled footprint.
+Top and EAST-face additions remain inside the bounded owned arena. All imported
+terrain cells and the support are protected from placement, breaking and cleanup;
+only confirmed owned stone is mutable. The support is removed by its own verified
+owner after stone cleanup, before native player restoration.
+
+Automatic real-Minecraft coverage, without KCD input or composition:
+
+```powershell
+& './scripts/Test-HudPhysicalMovementFixture.ps1' -ExtendedWalking -CorridorWalking -AimedBlocks
+```
+
+Add `-GroundPatchFile <captured-corridor-manifest>` to exercise captured numeric
+terrain under a separate fixture identity. The corridor fixture uses a -90-degree
+heading; legacy fixtures retain zero degrees. Both flat and captured checks pass
+walking across the old edge and returning, six vanilla block actions (bootstrap,
+top place/break, EAST place/break, seed break), inventory suppression and resumed
+walking. The captured check reached X=4.823781m, returned within0.117886m, captured
+10 crossing and15 block-interaction HUD frames, and preserved all144 imported
+cells. Source hashes, traces and cleanup passed. These scripted fixture results
+do not establish physical input or HUD composition in KCD2.
+
+The local repeat bundle is installed. With a fresh official tools world loaded,
+the combined foreground entry point is:
+
+```powershell
+& './scripts/Start-HudWalkingAimed.ps1' -CorridorWalking -RepeatSession -Scenario TopFaceInventory -BundleDirectory './runtime/hud-compositor-walking-corridor-aimed-20261029'
+```
+
+The wrapper captures fresh terrain from the exact running game, validates the
+live producer, and arms only the matching repeat/aimed profile. Native corridor
+combined acceptance is pending. For a second session in the same KCD process,
+also pass the previous session's printed `-PreviousArmReceipt` path. Repeat
+limits, cleanup requirements and failure/restart rules remain unchanged.
+
+### Standalone corridor capture and walking
 
 With a fresh official tools world loaded and the player still, capture from the
 repository root:
@@ -733,3 +778,10 @@ open, so the guest cannot prove that a physical W press occurred from its absenc
 User confirmation of that action and the visible result remains separate from the
 machine receipt. Scenario proof confirms the face sequence and an inventory/resume
 interval; it does not establish timestamps ordering those two branches.
+
+### Combined corridor cutoff follow-up
+
+The 29 October combined foreground check crossed the old edge (trace X=5.884m)
+and confirmed top placement, then failed at the 12s aiming cutoff with owned-world
+cleanup incomplete. Player/FPS restoration passed. Automate this late-placement
+case before a live retry; see [the checkpoint](../docs/NEXT_SESSION.md).

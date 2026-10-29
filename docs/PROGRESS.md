@@ -1,10 +1,88 @@
 # MineCome progress — 2026-10-29
 
+## Combined live follow-up: cutoff cleanup failure
+
+The user confirmed walking and top placement, then the Minecraft HUD disappeared.
+Run 44fdf3a60e624f0c921598176f9ccb04 reached client/server X=5.8844196m, crossing
+the old edge. 124 frames were forwarded with 119 readbacks; KCD player and FPS
+restoration passed. Bootstrap and top placement were confirmed; no breaks arrived.
+
+The top click arrived 11.155s after first movement. The fixed 12s aim cutoff closed
+logical authority at 12.029s with two stones and incomplete owned-world cleanup.
+Camera lease expiry at 12.802s followed shutdown; it is secondary. The prompt
+incorrectly allowed about 15s. Full combined acceptance remains failed.
+
+Evidence: runtime/evidence/hud-walking-aimed-20261029-233406-8c36e85079df4280baed80031ea905d0/.
+Next: automate late placement at cutoff, then finish bounded cleanup before final
+closure. No more live tests tonight; user is going to bed.
+
+
+## Corridor walking with aimed blocks — ACTUAL-MINECRAFT PASS; KCD LIVE PARTIAL
+
+The explicit `-CorridorWalking -RepeatSession` combined profile is implemented.
+It joins the existing extended walking controller, hotbar/inventory and aimed
+stone bridge over the immutable 12×8m capture. A fixed owned support beside the
+terrain places the seed at (-1, floor(initial player Y), -5); top and EAST-face
+placement stay outside every protected imported cell. The host controller binds
+the same capture, tile hashes, player anchor and corridor follower profile.
+Live capture and standalone fixture provenance remain separate.
+
+Both automatic actual-Minecraft fixtures passed:
+
+- Flat run `6016bca217f14dd68cb1cbf8619287d2`: maximum X=4.961m, return within
+  0.0083m, 160 protected cells and 15 HUD frames during block interactions.
+- Captured-terrain run `3f46a989741d4bde982e7b1e522341b6`: maximum X=4.823781m,
+  return within 0.117886m, 10 crossing HUD frames, 15 block-interaction HUD frames
+  and 144 protected cells. Six vanilla actions confirmed bootstrap, top place,
+  upper break, EAST place, side break and seed break. Inventory suppression,
+  resumed movement, cleanup, source hashes and movement trace verification passed.
+
+Evidence is in `runtime/evidence/hud-physical-fixture-20261029-232349-6016bca217f14dd68cb1cbf8619287d2/verification.json`
+and `runtime/evidence/hud-physical-fixture-20261029-232502-3f46a989741d4bde982e7b1e522341b6/verification.json`.
+These use scripted controls/rays and a standalone HUD receiver. They do not
+establish physical input or HUD composition in KCD2. The first fixture exposed
+an old zero-yaw assumption; mode validation and both constructors now share the
+explicit -90-degree corridor heading while legacy fixtures retain zero degrees.
+The original failed evidence remains intact.
+
+The repeat/aimed bundle `runtime/hud-compositor-walking-corridor-aimed-20261029`
+is now installed with the existing pinned `c5353e4b…` addon. The explicit
+physical-to-repeat transition verified all six owned files and changed only the
+addon; no DLL rebuild was required. Update receipt:
+`runtime/evidence/hud-update-20261029-232323-f10b39f3ff864a2594295efb575eba1d/update.json`.
+The expired plain physical arm was archived with exact hash and dead-process
+checks. A fresh KCD2 world is open for `TopFaceInventory`; combined corridor live
+acceptance did not pass; see the latest cutoff-cleanup result above.
+
+## Physical corridor HUD and controls — LIVE USER ACCEPTANCE
+
+Foreground run `2a2b53983db449b59979f21dd60637d5` passed 157 source points and
+delayed native readbacks, 862 actual Minecraft HUD frames and exact player
+restoration. The user reported: “it worked all fine, still a bit choppy/delayed
+but it's okay. continue”. Walking with the HUD, hotbar controls and inventory
+movement suppression worked. Remaining subjective choppiness is recorded.
+
+Client/server maximum X was 3.5762478m. This check did **not** cross the original
+X=4 edge. The earlier recorded-controller native replay reached 4.82378m; keep
+that separate from foreground input/composition acceptance. Any further live
+crossing check should be batched with the next integrated milestone.
+
+Evidence:
+`runtime/evidence/hud-walking-20261029-230705-6f95a1b3caab42aca886a805b844e9d9/manual-acceptance.json`
+and its adjacent `verification.json`. KCD PID52208 was closed normally afterward.
+At that point, the installed bundle was the plain physical profile in
+`runtime/hud-compositor-walking-corridor-20261029`, with pinned addon `869fc9a8…`.
+The repeat/aimed bundle in `runtime/hud-compositor-walking-corridor-aimed-20261029`
+was staged only. Its subsequent installation is recorded above. The updater
+passed 34 new transition checks and 171 existing profile checks without rebuilding
+a DLL.
+
 ## Physical controller on expanded terrain — AUTOMATIC CONTROLLER/REPLAY PASS
 
 Added an explicit extended physical walking/HUD corridor profile, preserving the
 initial settled anchor, two-tile provenance, rectangular bounds, source timing
-and exact collision cleanup. Aimed blocks remain in the verified 8×8m profile.
+and exact collision cleanup. Combined corridor aimed blocks were added afterward,
+as recorded above; the existing 8×8m combined live result remains valid.
 
 Captured-terrain fixture `d8dfe1edd3724a999ecf91083f4fc6f2` passed: client/server
 X=4.824m, return within0.118m, five W/S pulses, inventory movement suppression,
@@ -21,9 +99,9 @@ the whole player footprint. Production braking and all limits are unchanged.
 The runner also handles empty startup logs and can retain an owned test world
 for setup diagnosis, avoiding repeated reloads. KCD54112 was closed normally.
 
-The physical bundle is staged separately and the exact repeat-to-physical update
-preflight passes. The installed repeat/aimed addon is untouched. Foreground
-acceptance remains pending; commands and evidence are in NEXT_SESSION.md.
+The physical bundle was staged separately with an exact repeat-to-physical
+update preflight. Its subsequent installation and foreground acceptance are
+recorded above; current installation state is in NEXT_SESSION.md.
 
 ## Expanded terrain drives KCD walking — AUTOMATIC TWO-GAME PASS
 

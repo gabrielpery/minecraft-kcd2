@@ -2,10 +2,11 @@
 # Original tools-only update of the owned, disabled MineCome HUD installation.
 # Does not start/stop a game. Preflight is read-only, including when the game is open.
 [CmdletBinding()]
-param([string]$BundleDirectory, [string]$PreviousBundleDirectory, [switch]$PreflightOnly, [switch]$LiveMouse, [switch]$WorldClicks, [switch]$SelectiveMouse, [ValidateSet(1,2,3,4)][int]$SelectiveRevision=1, [switch]$PhysicalMovement, [switch]$WalkingAimed, [switch]$RepeatSession, [switch]$FromWalkingAimedRepeat)
+param([string]$BundleDirectory, [string]$PreviousBundleDirectory, [switch]$PreflightOnly, [switch]$LiveMouse, [switch]$WorldClicks, [switch]$SelectiveMouse, [ValidateSet(1,2,3,4)][int]$SelectiveRevision=1, [switch]$PhysicalMovement, [switch]$WalkingAimed, [switch]$RepeatSession, [switch]$FromWalkingAimedRepeat, [switch]$FromPhysicalMovement)
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 if($FromWalkingAimedRepeat -and -not $PhysicalMovement){throw 'FromWalkingAimedRepeat requires the explicit PhysicalMovement destination profile.'}
+if($FromPhysicalMovement -and (-not $WalkingAimed -or -not $RepeatSession -or $FromWalkingAimedRepeat)){throw 'FromPhysicalMovement requires the explicit WalkingAimed RepeatSession destination.'}
 if($RepeatSession -and -not $WalkingAimed){throw 'RepeatSession requires the WalkingAimed profile.'}
 if($WalkingAimed -and ($PhysicalMovement -or $LiveMouse -or $WorldClicks -or $SelectiveMouse -or $SelectiveRevision -ne 1)){throw 'WalkingAimed is a separate update profile.'}
 if($PhysicalMovement -and ($LiveMouse -or $WorldClicks -or $SelectiveMouse -or $SelectiveRevision -ne 1)){throw 'PhysicalMovement is a separate update profile.'}
@@ -23,7 +24,7 @@ if($WalkingAimed){
     . (Join-Path $PSScriptRoot 'HudWalkingAimedProfile.ps1')
     $mouseProfile=Get-MineComeWalkingAimedProfile -RepeatSession:$RepeatSession;$proxyHash=$mouseProfile.runtime_sha256
     if(-not $PSBoundParameters.ContainsKey('BundleDirectory')){$BundleDirectory=Join-Path $runtimeRoot $(if($RepeatSession){'hud-compositor-walking-repeat'}else{'hud-compositor-walking-aimed'})}
-    if(-not $PSBoundParameters.ContainsKey('PreviousBundleDirectory')){$PreviousBundleDirectory=Join-Path $runtimeRoot $(if($RepeatSession){'hud-compositor-walking-aimed'}else{'hud-compositor-walking'})}
+    if(-not $PSBoundParameters.ContainsKey('PreviousBundleDirectory')){$PreviousBundleDirectory=Join-Path $runtimeRoot $(if($RepeatSession -and -not $FromPhysicalMovement){'hud-compositor-walking-aimed'}else{'hud-compositor-walking'})}
 }elseif($PhysicalMovement){
     . (Join-Path $PSScriptRoot 'HudPhysicalMovement.ps1')
     if($FromWalkingAimedRepeat){. (Join-Path $PSScriptRoot 'HudWalkingAimedProfile.ps1')}
@@ -91,6 +92,25 @@ function Get-MineComePhysicalUpdatePreviousProfile($Manifest,$Receipt,[bool]$Fro
     }
     return $profile
 }
+function Get-MineComeWalkingAimedUpdatePreviousProfile($Manifest,$Receipt,[bool]$RepeatSession,[bool]$FromPhysicalMovement){
+    if($FromPhysicalMovement -and -not $RepeatSession){throw 'Direct physical predecessor is explicit only for the repeat-session destination.'}
+    if($RepeatSession -and -not $FromPhysicalMovement){
+        $profile=Get-MineComeWalkingAimedProfile
+        Assert-MineComeWalkingAimedInstalledBundle $Manifest $Receipt $profile
+    }else{
+        $profile=Get-MineComePhysicalMovementProfile
+        Assert-MineComePhysicalMovementBundle $Manifest $profile
+    }
+    if($Receipt.schema -ne 1 -or $Receipt.kind -cne 'minecome_hud_install_v1' -or @($Receipt.files).Count -ne 6){throw 'Previous walking installation requires its exact six-file receipt.'}
+    foreach($relative in @('dxgi.dll','ReShade.ini','MineComeHudPreset.ini','ReShade-LICENSE.txt',
+        'minecome-hud/addons/MineComeHudCompositor.addon64','minecome-hud/shaders/MineComeHud.fx')){
+        $staged=@($Manifest.files | Where-Object path -CEQ $relative);$owned=@($Receipt.files | Where-Object path -CEQ $relative)
+        if($staged.Count -ne 1 -or $owned.Count -ne 1){throw 'Previous walking bundle requires six exact installed files.'}
+        Assert-Record $staged[0];Assert-Record $owned[0]
+        if($staged[0].sha256 -cne $owned[0].sha256 -or $staged[0].bytes -ne $owned[0].bytes){throw 'Previous walking bundle differs from its installation receipt.'}
+    }
+    return $profile
+}
 function Assert-File([string]$Path,$Record){
     $null=Assert-Unlinked $Path
     $item=Get-Item -LiteralPath $Path -Force
@@ -154,19 +174,7 @@ if($old.schema-ne 1 -or $old.kind-cne'minecome_hud_install_v1' -or $old.exe_sha2
    -not ([IO.Path]::GetFullPath($old.bundle).Equals($PreviousBundleDirectory,[StringComparison]::OrdinalIgnoreCase)) -or @($old.files).Count-ne 6){throw 'Previous receipt does not own this exact six-file tools installation.'}
 if($WalkingAimed){
     $previousManifest=Read-Json (Join-Path $PreviousBundleDirectory 'bundle.json')
-    if($RepeatSession){
-        $previousMouseProfile=Get-MineComeWalkingAimedProfile
-        Assert-MineComeWalkingAimedInstalledBundle $previousManifest $old $previousMouseProfile
-    }else{
-        $previousMouseProfile=Get-MineComePhysicalMovementProfile
-        Assert-MineComePhysicalMovementBundle $previousManifest $previousMouseProfile
-    }
-    foreach($relative in $expected){
-        $staged=@($previousManifest.files | Where-Object path -CEQ $relative);$owned=@($old.files | Where-Object path -CEQ $relative)
-        if($staged.Count -ne 1 -or $owned.Count -ne 1){throw 'Previous walking bundle requires six exact installed files.'}
-        Assert-Record $staged[0];Assert-Record $owned[0]
-        if($staged[0].sha256 -cne $owned[0].sha256 -or $staged[0].bytes -ne $owned[0].bytes){throw 'Previous walking bundle differs from its installation receipt.'}
-    }
+    $previousMouseProfile=Get-MineComeWalkingAimedUpdatePreviousProfile $previousManifest $old ([bool]$RepeatSession) ([bool]$FromPhysicalMovement)
     $previousProxyHash=$previousMouseProfile.runtime_sha256
 }elseif($PhysicalMovement){
     . (Join-Path $PSScriptRoot 'HudMouseProfile.ps1')

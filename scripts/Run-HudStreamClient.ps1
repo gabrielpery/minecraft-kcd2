@@ -54,14 +54,15 @@ function Assert-HudCorridorChildMode([bool]$Corridor,[bool]$Standalone,[string]$
     if(($Corridor -and $Coupled) -or (($Corridor -or $Coupled) -and (-not $Standalone -or -not $Patch -or $OtherMode))){throw 'Corridor requires exactly one standalone HUD mode and immutable manifest.'}
     if(($Coupled -and -not $Trace) -or ($Corridor -and $Trace)){throw 'Only coupled corridor requires a follower trace.'}
 }
-function Assert-HudCorridorPhysicalChildMode([bool]$Corridor,[bool]$Extended,[bool]$Physical,[bool]$Fixture,[bool]$OtherMode) {
-    if($Corridor -and (-not $Extended -or ($Physical -eq $Fixture) -or $OtherMode)){
+function Assert-HudCorridorPhysicalChildMode([bool]$Corridor,[bool]$Extended,[bool]$Physical,[bool]$Fixture,[bool]$OtherMode,[bool]$WalkingAimed=$false) {
+    $selected=[int]$Physical+[int]$Fixture+[int]$WalkingAimed
+    if($Corridor -and (-not $Extended -or $selected -ne 1 -or $OtherMode)){
         throw 'CorridorWalking requires a separate extended physical profile.'
     }
 }
-function Assert-HudWalkingAimedChildMode([bool]$AimedBlocks,[bool]$Standalone,[bool]$PhysicalFixture,[bool]$ExtendedWalking,[bool]$OtherMode,[double]$Yaw=0) {
-    if($AimedBlocks -and (-not $Standalone -or -not $PhysicalFixture -or -not $ExtendedWalking -or $OtherMode -or -not [double]::IsFinite($Yaw) -or $Yaw -ne 0)){
-        throw 'Combined aimed blocks require only the standalone extended physical controller fixture at zero yaw.'
+function Assert-HudWalkingAimedChildMode([bool]$AimedBlocks,[bool]$Standalone,[bool]$PhysicalFixture,[bool]$ExtendedWalking,[bool]$OtherMode,[double]$Yaw=0,[switch]$CorridorWalking) {
+    if($AimedBlocks -and (-not $Standalone -or -not $PhysicalFixture -or -not $ExtendedWalking -or $OtherMode -or -not [double]::IsFinite($Yaw) -or $Yaw -ne $(if($CorridorWalking){-90}else{0}))){
+        throw 'Combined aimed blocks require the selected standalone extended controller fixture and its fixed yaw.'
     }
 }
 function Assert-HudWalkingAimedLiveChildMode([bool]$WalkingAimed,[bool]$ExtendedWalking,[bool]$InputMode,[bool]$LiveMouse,[bool]$OffscreenPresentation,[bool]$OtherMode,[string]$Patch,[string]$Trace,[string]$View,[string]$Token) {
@@ -79,7 +80,7 @@ $producerDirectory=Join-Path $EvidenceDirectory 'capture'
 $exitCode=1
 try {
     Assert-HudWalkingAimedLiveChildMode ([bool]$WalkingAimed) ([bool]$ExtendedWalking) ([bool]$InputMode) ([bool]$LiveMouse) ([bool]$OffscreenPresentation) ([bool]($Standalone -or $PhysicalMovement -or $PhysicalMovementFixture -or $AimedBlocks -or $StoneFixture -or $StoneLive -or $AimedStone -or $GroundMovementFixture -or $GroundMovementCoupled -or $InputFixture -or $InputPointerFixture -or $InputDelayFixture -or $InputBackgroundTrial -or $InputOffscreenTrial)) $GroundPatchFile $MovementTraceFile $HostViewFile $StoneTokenFile
-    Assert-HudWalkingAimedChildMode ([bool]$AimedBlocks) ([bool]$Standalone) ([bool]$PhysicalMovementFixture) ([bool]$ExtendedWalking) ([bool]($PhysicalMovement -or $InputMode -or $LiveMouse -or $OffscreenPresentation -or $GroundMovementFixture -or $GroundMovementCoupled -or $InputFixture -or $InputPointerFixture -or $StoneFixture -or $StoneLive -or $AimedStone -or $InputDelayFixture -or $InputBackgroundTrial -or $InputOffscreenTrial)) $PhysicalFixtureYaw
+    Assert-HudWalkingAimedChildMode ([bool]$AimedBlocks) ([bool]$Standalone) ([bool]$PhysicalMovementFixture) ([bool]$ExtendedWalking) ([bool]($PhysicalMovement -or $InputMode -or $LiveMouse -or $OffscreenPresentation -or $GroundMovementFixture -or $GroundMovementCoupled -or $InputFixture -or $InputPointerFixture -or $StoneFixture -or $StoneLive -or $AimedStone -or $InputDelayFixture -or $InputBackgroundTrial -or $InputOffscreenTrial)) $PhysicalFixtureYaw -CorridorWalking:$CorridorWalking
     if($ExtendedWalking -and -not ($PhysicalMovement -or $PhysicalMovementFixture -or $WalkingAimed)){throw 'Extended walking requires an explicit physical movement profile.'}
     if($WideWalking -and -not ($PhysicalMovement -or $PhysicalMovementFixture -or $WalkingAimed -or $GroundMovementCoupled)){throw 'Wide walking requires an explicit physical or scripted coupled HUD movement profile.'}
     if($WideWalking -and $PhysicalMovementFixture -and -not $ExtendedWalking){throw 'Wide walking fixture requires ExtendedWalking.'}
@@ -95,7 +96,7 @@ try {
     if($InputBackgroundTrial -and (-not $InputFixture -or $InputDelayFixture)){throw 'Background timing requires a standalone fixture without synthetic delays.'}
     if($OffscreenPresentation -and (-not $InputMode -or $InputBackgroundTrial -or $InputDelayFixture)){throw 'Offscreen presentation requires UI input mode without other timing trials.'}
     if($InputOffscreenTrial -and (-not $InputFixture -or -not $OffscreenPresentation)){throw 'Offscreen timing requires an explicit offscreen standalone fixture.'}
-    Assert-HudCorridorPhysicalChildMode ([bool]$CorridorWalking) ([bool]$ExtendedWalking) ([bool]$PhysicalMovement) ([bool]$PhysicalMovementFixture) ([bool]($WideWalking -or $AimedBlocks -or $WalkingAimed -or $FacingSeed -or $GroundCorridorFixture -or $GroundCorridorCoupled -or $GroundMovementFixture -or $GroundMovementCoupled))
+    Assert-HudCorridorPhysicalChildMode ([bool]$CorridorWalking) ([bool]$ExtendedWalking) ([bool]$PhysicalMovement) ([bool]$PhysicalMovementFixture) ([bool]($WideWalking -or $FacingSeed -or $GroundCorridorFixture -or $GroundCorridorCoupled -or $GroundMovementFixture -or $GroundMovementCoupled)) ([bool]$WalkingAimed)
     Assert-HudCorridorChildMode ([bool]$GroundCorridorFixture) ([bool]$Standalone) $GroundPatchFile ([bool]($InputMode -or $LiveMouse -or $InputFixture -or $InputPointerFixture -or $StoneFixture -or $StoneLive -or $AimedStone -or $StoneTokenFile -or $InputDelayFixture -or $InputBackgroundTrial -or $OffscreenPresentation -or $InputOffscreenTrial -or $GroundMovementFixture -or $GroundMovementCoupled -or $PhysicalMovement -or $PhysicalMovementFixture -or $ExtendedWalking -or $WideWalking -or $AimedBlocks -or $FacingSeed -or $WalkingAimed -or $HostViewFile)) ([bool]$GroundCorridorCoupled) $MovementTraceFile ([bool]$GroundCorridorWalkOnly)
     if($GroundCorridorFixture -or $GroundCorridorCoupled){
         # Both use an isolated HUD receiver; only coupled corridor emits server poses.

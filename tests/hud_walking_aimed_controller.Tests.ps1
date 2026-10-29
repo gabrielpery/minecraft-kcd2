@@ -231,6 +231,13 @@ foreach($case in @(@('TopFaceInventory','UP'),@('SideFaceInventory','WEST'))) {
 }
 $g=ScenarioGuest 'WEST';Reject {Assert-HudWalkingAimedScenario $g TopFaceInventory} 'Front-facing placement counted as top-face placement'
 $g=ScenarioGuest 'UP';Reject {Assert-HudWalkingAimedScenario $g SideFaceInventory} 'Top-face placement counted as WEST placement'
+$g=ScenarioGuest 'EAST' -1 -5
+$corridorScenario=Assert-HudWalkingAimedScenario $g SideFaceInventory -CorridorWalking
+Check ($corridorScenario.requested_face -ceq 'EAST') 'Corridor side scenario must stay outside the captured north perimeter'
+Reject {Assert-HudWalkingAimedScenario $g SideFaceInventory} 'Corridor face selection leaked into the legacy perimeter policy'
+$g=ScenarioGuest 'SOUTH' -1 -5
+Check ((Assert-HudWalkingAimedScenario $g SideFaceInventory).requested_face -ceq 'SOUTH') 'Legacy nearest face policy changed for north seed'
+Reject {Assert-HudWalkingAimedScenario $g SideFaceInventory -CorridorWalking} 'Corridor side proof accepted placement toward captured terrain'
 foreach($case in @(@('WEST',4,0),@('EAST',-5,0),@('NORTH',0,4),@('SOUTH',0,-5))){
     $face=$case[0];$x=$case[1];$z=$case[2]
     $g=ScenarioGuest $face $x $z

@@ -26,6 +26,16 @@ public final class HudWalkingAimGateTests {
         for(String key:new String[]{"hudWalkingAimed","hudPhysicalMovement","hudPhysicalMovementExtended","hudStreamLab","hudStreamInput","hudStreamLiveMouse","hudStreamOffscreenPresentation","hudStoneBridge","hudStoneLive","hudAimedStoneBridge"})p.setProperty("minecome."+key,"true");
         for(String key:new String[]{"groundPatchFile","movementTraceFile","hudHostViewFile","tokenFile"})p.setProperty("minecome."+key,"owned-file");
         check(HudPhysicalMovementMode.require(p),"Explicit combined live profile accepted");
+        var corridor=(Properties)p.clone();corridor.setProperty("minecome.hudCorridorWalking","true");
+        check(HudPhysicalMovementMode.require(corridor),"Explicit corridor admits the complete live walking/aimed profile");
+        for(String key:new String[]{"hudPhysicalMovementExtended","hudStoneLive","hudAimedStoneBridge","tokenFile"}){
+            var broken=(Properties)corridor.clone();broken.remove("minecome."+key);
+            try{HudPhysicalMovementMode.require(broken);throw new AssertionError("Missing corridor aimed requirement "+key);}catch(IllegalArgumentException expected){checks++;}
+        }
+        for(String key:new String[]{"hudWideWalking","hudFacingSeedFixture","hudGroundCorridorCoupled"}){
+            var broken=(Properties)corridor.clone();broken.setProperty("minecome."+key,"true");
+            try{HudPhysicalMovementMode.require(broken);throw new AssertionError("Mixed corridor aimed profile "+key);}catch(IllegalArgumentException expected){checks++;}
+        }
         for(String key:new String[]{"hudPhysicalMovement","hudPhysicalMovementExtended","hudStreamInput","hudStoneBridge","hudStoneLive","hudAimedStoneBridge","tokenFile"}){
             var broken=new Properties();broken.putAll(p);broken.remove("minecome."+key);
             try{HudPhysicalMovementMode.require(broken);throw new AssertionError("Missing profile requirement "+key);}catch(IllegalArgumentException expected){checks++;}

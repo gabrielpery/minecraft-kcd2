@@ -3,6 +3,7 @@
 . (Join-Path $PSScriptRoot 'HudBufferedMovement.ps1')
 . (Join-Path $PSScriptRoot 'AimedWorldClicks.ps1')
 . (Join-Path $PSScriptRoot 'HudWorldClicks.ps1')
+. (Join-Path $PSScriptRoot 'MovementTraceReceiver.ps1')
 
 # Exercise first-use parsing/binding before Minecraft starts. This disposable
 # state is never joined to a live controller, permit ledger, or input channel.
@@ -106,7 +107,7 @@ function Assert-HudWalkingInventoryEvidence($Evidence) {
 # guest/native bridge, movement trace, delayed host readbacks and cleanup receipts.
 # The default deliberately adds no requirement to the established WalkingBreak.
 function Assert-HudWalkingAimedScenario {
-    param($Guest,[ValidateSet('WalkingBreak','TopFaceInventory','SideFaceInventory')][string]$Scenario='WalkingBreak')
+    param($Guest,[ValidateSet('WalkingBreak','TopFaceInventory','SideFaceInventory')][string]$Scenario='WalkingBreak',[switch]$CorridorWalking)
     $proof=[ordered]@{schema=1;kind='minecome_hud_walking_aimed_scenario_v1';scenario=$Scenario;result='passed';
         requested_face=$null;confirmed_network_actions=$null;inventory=$null;visual_verified=$false;physical_w_attempt_verified=$false;physical_w_denial_verified=$false}
     if($Scenario -eq 'WalkingBreak'){return [pscustomobject]$proof}
@@ -119,6 +120,7 @@ function Assert-HudWalkingAimedScenario {
     # The bootstrap can lie on any captured perimeter. Select the vertical
     # face toward the immutable Minecraft origin, with X winning exact ties.
     $face=if($Scenario -eq 'TopFaceInventory'){'UP'}
+        elseif($CorridorWalking){'EAST'}
         elseif([Math]::Abs($seed.x+.5) -ge [Math]::Abs($seed.z+.5)){if($seed.x+.5 -gt 0){'WEST'}else{'EAST'}}
         else{if($seed.z+.5 -gt 0){'NORTH'}else{'SOUTH'}}
     $added=[pscustomobject]@{x=$seed.x;y=$seed.y;z=$seed.z}
@@ -176,10 +178,148 @@ function Assert-HudWalkingAimedScenario {
     return [pscustomobject]$proof
 }
 
-function New-HudWalkingAimedAdmission([string]$Run,[string]$ProbeRun,$LivePatch,$Context) {
+# Evidence-only reconstruction: the controller authenticates live capture first;
+# standalone callers retain their separate fixture provenance. Neither route
+# grants block ownership or input permission by reading these cells.
+function Get-HudWalkingAimedCorridorGeometry($Corridor){
+    if($Corridor.Captured -isnot [bool] -or $Corridor.Run -cnotmatch '^[0-9a-f]{32}$' -or
+        $Corridor.Hash -cnotmatch '^[0-9a-f]{64}$' -or @($Corridor.TileHashes).Count -ne 2){throw 'Exact corridor input identity required.'}
+    $item=Get-Item -LiteralPath $Corridor.Path
+    if($item.Length -lt 2 -or $item.Length -gt 192KB){throw 'Corridor geometry input size differs.'}
+    $bytes=[IO.File]::ReadAllBytes($item.FullName)
+    if([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant() -cne $Corridor.Hash){throw 'Corridor geometry manifest bytes changed.'}
+    $encoding=[Text.UTF8Encoding]::new($false,$true)
+    $document=Read-MineComeTraceJson ($encoding.GetString($bytes)) 196608
+    try{
+        Assert-MineComeTraceKeys $document.RootElement @('schema','kind','run','tiles')
+        $manifest=Convert-MineComeTraceValue $document.RootElement
+        if($manifest.schema -ne 1 -or $manifest.kind -cne 'minecome_ground_corridor_v1' -or $manifest.run -cne $Corridor.Run -or @($manifest.tiles).Count -ne 2){throw 'Corridor geometry manifest identity differs.'}
+        $source=if($Corridor.Captured){'live_kcd_ground_patch'}else{'standalone_fixture'}
+        $unique=@{};$center=$null
+        for($tileIndex=0;$tileIndex -lt 2;$tileIndex++){
+            $tile=$manifest.tiles[$tileIndex]
+            if($tile.json -isnot [string] -or $tile.sha256 -cne $Corridor.TileHashes[$tileIndex] -or
+                [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($encoding.GetBytes($tile.json))).ToLowerInvariant() -cne $tile.sha256){throw 'Corridor geometry raw tile identity differs.'}
+            $raw=Read-MineComeTraceJson $tile.json 65536 2048
+            try{$p=Convert-MineComeTraceValue $raw.RootElement}finally{$raw.Dispose()}
+            if($p.schema -ne 1 -or $p.run -cne $Corridor.Run -or $p.provenance.kind -cne $source -or $p.grid_size -ne 9 -or $p.spacing -ne 1 -or
+                $p.walking_area -cne 'wide' -or $p.point_count -ne 81 -or $p.valid_count -ne 81 -or @($p.points).Count -ne 81){throw 'Corridor geometry requires two complete pinned wide tiles.'}
+            $c=Get-HudBufferedVector $p.center 'corridor geometry center'
+            if($null -eq $center){$center=$c}
+            if($c.x -ne $center.x+4*$tileIndex -or $c.y -ne $center.y -or $c.z -ne $center.z){throw 'Corridor geometry moved its fixed anchor.'}
+            $seen=[Collections.Generic.HashSet[long]]::new()
+            foreach($point in $p.points){
+                $index=Get-HudBufferedInteger $point.index 'corridor geometry index' 1 81
+                if(-not $seen.Add($index)){throw 'Repeated corridor geometry point.'}
+                $col=($index-1)%9+4*$tileIndex;$row=[int][Math]::Floor(($index-1)/9)
+                $x=Get-HudBufferedNumber $point.x 'corridor point x' -10000000 10000000
+                $y=Get-HudBufferedNumber $point.y 'corridor point y' -10000000 10000000
+                $z=Get-HudBufferedNumber $point.z 'corridor point z' ($center.z-6.05) ($center.z+2.05)
+                if([Math]::Abs($x-($center.x+$col-4)) -gt .0001 -or [Math]::Abs($y-($center.y+$row-4)) -gt .0001 -or
+                    $point.valid -isnot [bool] -or -not $point.valid -or $point.result -cne 'hit'){throw 'Corridor geometry point coverage differs.'}
+                $key="$col,$row"
+                if($unique.ContainsKey($key)){
+                    foreach($axis in @('x','y','z','nx','ny','nz')){
+                        $value=Get-HudBufferedNumber $point.$axis "corridor overlap $axis" -10000000 10000000
+                        if([Math]::Abs($value-$unique[$key].$axis) -gt .0001){throw 'Corridor geometry overlap differs.'}
+                    }
+                }else{$unique[$key]=$point}
+            }
+        }
+        if($unique.Count -ne 117 -or (Get-HudBufferedDistance $center (Get-HudBufferedVector $Corridor.Anchor 'corridor input anchor')) -gt .000001){throw 'Corridor geometry is incomplete or reanchored.'}
+        $cells=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        for($row=0;$row -lt 8;$row++){for($col=0;$col -lt 12;$col++){
+            $height=($unique["$col,$row"].z+$unique["$($col+1),$row"].z+$unique["$col,$($row+1)"].z+$unique["$($col+1),$($row+1)"].z)/4
+            $top=64+$height-$center.z;$x=$col-4;$z=3-$row
+            for($y=[int][Math]::Floor($top-.5);$y -lt [int][Math]::Ceiling($top);$y++){[void]$cells.Add("$x,$y,$z")}
+        }}
+        if($cells.Count -lt 96 -or $cells.Count -gt 192){throw 'Corridor protected cell count exceeds its immutable footprint.'}
+        return [pscustomobject]@{Cells=$cells;Center=$center;Run=$Corridor.Run;Hash=$Corridor.Hash;SlabCount=96}
+    }finally{$document.Dispose()}
+}
+
+function Assert-HudWalkingAimedCorridorBuild($Guest,$Corridor,$InitialGuestFeet=$null){
+    function Int($O,[string]$K,[long]$Min,[long]$Max){Get-HudBufferedInteger (Get-HudBufferedField $O $K) $K $Min $Max}
+    function Flag($O,[string]$K,[bool]$V){Assert-HudBufferedFlag (Get-HudBufferedField $O $K) $K $V}
+    function Cell($Value){foreach($axis in @('x','y','z')){[void](Int $Value $axis -10000000 10000000)};return "$($Value.x),$($Value.y),$($Value.z)"}
+    $geometry=Get-HudWalkingAimedCorridorGeometry $Corridor
+    $lab=Get-HudBufferedField $Guest 'lab_evidence'
+    $fixtureMarker=$Guest.PSObject.Properties['ui_walking_aimed_fixture']
+    if($fixtureMarker -and $fixtureMarker.Value -isnot [bool]){throw 'Malformed corridor build fixture marker.'}
+    $fixture=[bool]($fixtureMarker -and $fixtureMarker.Value)
+    if($fixture){
+        Flag $Guest standalone $true;Flag $Guest scripted_input $true;Flag $Guest ui_physical_controller_fixture $true
+        Flag $Guest ui_input_physical_movement $false
+        if($Corridor.Captured){throw 'Standalone build proof requires its separately identified fixture manifest.'}
+        $lab=Get-HudBufferedField $lab 'physical_controller_fixture';Flag $lab ui_walking_aimed_fixture $true
+    }elseif(-not $Corridor.Captured){throw 'Live corridor build proof cannot use standalone terrain.'}
+    $movement=Get-HudBufferedField $lab 'physical_movement'
+    Assert-HudWalkingArea $movement $false -CorridorWalking
+    $anchor=Get-HudBufferedVector (Get-HudBufferedField $movement 'anchor_mc') 'corridor aimed settled anchor'
+    if([Math]::Abs($anchor.x) -gt .01 -or [Math]::Abs($anchor.z) -gt .01 -or $anchor.y -lt 57.9 -or $anchor.y -gt 67.5 -or
+        ($null -ne $InitialGuestFeet -and (Get-HudBufferedDistance $anchor $InitialGuestFeet) -gt .000001)){throw 'Corridor aimed settled anchor differs.'}
+    $expectedSource=if($fixture){'standalone_corridor_fixture'}else{'live_kcd_ground_corridor'}
+    if($movement.patch_run -cne $geometry.Run -or $movement.patch_sha256 -cne $geometry.Hash -or $movement.ground_source_kind -cne $expectedSource){throw 'Corridor movement and protected geometry differ.'}
+    $c=Get-HudBufferedField $movement 'corridor'
+    if((Get-HudBufferedDistance (Get-HudBufferedVector $c.anchor 'corridor source anchor') $geometry.Center) -gt .000001 -or
+        (@($c.tile_sha256) -join ',') -cne ($Corridor.TileHashes -join ',')){throw 'Corridor movement source tiles or immutable anchor differ.'}
+    Flag $c client_vanilla_cells_air $true;Flag $c server_vanilla_cells_air $true
+    $stone=Get-HudBufferedField $lab $(if($fixture){'aimed_blocks'}else{'stone_bridge'})
+    $arena=Get-HudBufferedField $stone 'arena';$region=Get-HudBufferedField $arena 'build_region'
+    if($fixture){
+        $support=$stone;$selectedCell=$stone.support;$seed=$stone.seed
+        if($stone.kind -cne 'standalone_hud_walking_aimed_fixture_v1' -or $stone.support_selection -cne 'corridor_side_perimeter'){throw 'Standalone corridor build identity or support selection differs.'}
+        foreach($field in @('scripted_input','synthetic_host_rays','completed','support_client_server_prepared','support_client_server_restored_air','imported_cells_unchanged','final_client_server_air')){Flag $stone $field $true}
+        Flag $stone kcd_connected $false;Flag $stone physical_input_verified $false
+        [void](Int $stone support_fixture_setup_writes 1 1);[void](Int $stone support_fixture_cleanup_writes 1 1)
+    }else{
+        $support=Get-HudBufferedField $stone 'build_support';$selection=Get-HudBufferedField $support 'selection'
+        $selectedCell=$selection.support;$seed=$stone.arena_offer.seed
+        Flag $support prepared $true;Flag $support cleanup_complete $true
+        [void](Int $support direct_support_writes 2 2)
+        if($null -ne $support.failure -or $selection.mode -cne 'corridor_side_perimeter'){throw 'Corridor build support selection or cleanup failed.'}
+    }
+    foreach($evidence in @($region,$support)){
+        if($evidence.patch_run -cne $geometry.Run -or $evidence.patch_sha256 -cne $geometry.Hash){throw 'Corridor build support or region uses a different manifest.'}
+    }
+    [void](Int $region protected_imported_cells $geometry.Cells.Count $geometry.Cells.Count)
+    Flag $region support_editable $false
+    $y=[long][Math]::Floor($anchor.y)-1
+    $expectedSupport="-1,$y,-5";$expectedSeed="-1,$($y+1),-5"
+    if((Cell $region.support) -cne $expectedSupport -or (Cell $selectedCell) -cne $expectedSupport -or
+        (Cell $seed) -cne $expectedSeed -or (Cell $arena.seed) -cne $expectedSeed -or
+        $geometry.Cells.Contains($expectedSupport) -or $geometry.Cells.Contains($expectedSeed)){throw 'Corridor bootstrap is outside its fixed free perimeter.'}
+    foreach($axis in @('x','y','z')){
+        [void](Int $arena.arena_minimum $axis ($seed.$axis-2) ($seed.$axis-2))
+        [void](Int $arena.arena_maximum_inclusive $axis ($seed.$axis+2) ($seed.$axis+2))
+    }
+    foreach($source in @($stone,$arena)){
+        $rows=@($source.confirmations)
+        if($rows.Count -lt 2 -or $rows.Count -gt 16){throw 'Corridor build requires bounded completed block confirmations.'}
+        foreach($row in $rows){
+            $target=Cell $row.target
+            if($geometry.Cells.Contains($target) -or $target -ceq $expectedSupport){throw 'Corridor block action touches immutable collision/support.'}
+            foreach($axis in @('x','y','z')){[void](Int $row.target $axis ($seed.$axis-2) ($seed.$axis+2))}
+            Flag $row client_and_server $true
+        }
+    }
+    if(-not $fixture){
+        Flag $stone guest_world_cleanup_complete $true;Flag $stone logical_closed_before_restore $true
+        Flag $stone pending $false;[void](Int $stone owned_count 0 0)
+    }
+    Flag $arena pending $false;[void](Int $arena owned_count 0 0)
+    if(@($arena.owned_cells).Count -ne 0){throw 'Corridor build left owned blocks behind.'}
+    [pscustomobject]@{schema=1;kind='minecome_hud_walking_aimed_corridor_build_v1';result='passed';patch_run=$geometry.Run;patch_sha256=$geometry.Hash;
+        protected_imported_cells=$geometry.Cells.Count;support=$region.support;seed=$seed;imported_cells_air=$true;owned_cleanup_complete=$true;standalone_fixture=$fixture}
+}
+
+function New-HudWalkingAimedAdmission([string]$Run,[string]$ProbeRun,$LivePatch,$Context,[switch]$CorridorWalking) {
     if($Run -cnotmatch '^[0-9a-f]{32}$' -or $ProbeRun -cnotmatch '^[0-9a-f]{32}$' -or
         $LivePatch.Run -cnotmatch '^[0-9a-f]{32}$' -or $LivePatch.Hash -cnotmatch '^[0-9a-f]{64}$') {throw 'Invalid combined controller identity.'}
-    [pscustomobject]@{Run=$Run;ProbeRun=$ProbeRun;PatchRun=$LivePatch.Run;PatchHash=$LivePatch.Hash;
+    if($CorridorWalking -and ($LivePatch.Captured -isnot [bool] -or -not $LivePatch.Captured -or @($LivePatch.TileHashes).Count -ne 2)){
+        throw 'Combined corridor admission requires the authenticated live composite.'
+    }
+    [pscustomobject]@{Run=$Run;ProbeRun=$ProbeRun;PatchRun=$LivePatch.Run;PatchHash=$LivePatch.Hash;CorridorWalking=[bool]$CorridorWalking;
         TargetPid=$Context.GamePid;TargetStart=$Context.GameStartedUtc.ToFileTimeUtc().ToString();
         Ready=$null;Closed=$null;LastSample=$null;Stationary=[Collections.Generic.List[object]]::new();
         LastSourceMs=-1.0;LastTraceSeq=0L;LastViewSeq=0L;LastClock=0L;Stopping=$false}
@@ -191,8 +331,10 @@ function Assert-HudWalkingAimedIdentity($Receipt,$State,[string]$Save,[string]$K
         $Receipt.patch_run -cne $State.PatchRun -or $Receipt.patch_sha256 -cne $State.PatchHash -or
         $Receipt.target_pid -ne $State.TargetPid -or $Receipt.target_start_filetime -cne $State.TargetStart){throw 'Combined receipt identity differs.'}
 }
-function Assert-HudWalkingAimedProducer($Receipt) {
+function Assert-HudWalkingAimedProducer($Receipt,[switch]$CorridorWalking) {
     Assert-HudWalkingSession $Receipt -ExtendedWalking
+    if($CorridorWalking){Assert-HudWalkingArea $Receipt $false -CorridorWalking}
+    elseif($Receipt.PSObject.Properties['walking_area'] -and $Receipt.walking_area -ceq 'corridor'){throw 'Corridor aimed input requires the explicit corridor controller.'}
     foreach($name in @('ui_input_walking_aimed','ui_input_physical_movement','ui_input_aimed_stone_bridge','ui_input_stone_bridge','ui_input_stone_live','ui_input_live_mouse','ui_input_offscreen_presentation')) {
         Assert-HudBufferedFlag (Get-HudBufferedField $Receipt $name) $name $true
     }
@@ -207,6 +349,9 @@ function Assert-HudWalkingAimedProducer($Receipt) {
 }
 function Set-HudWalkingAimedReady($State,$Receipt,$Receiver,[string]$Save,[long]$MinimumUtcMs,[long]$NowUtcMs) {
     if($State.Ready -or $State.Stopping){throw 'Combined alignment cannot be replaced.'}
+    $receiverCorridor=$Receiver.PSObject.Properties['CorridorWalking']
+    if(($receiverCorridor -and $receiverCorridor.Value -isnot [bool]) -or
+        [bool]($receiverCorridor -and $receiverCorridor.Value) -ne $State.CorridorWalking){throw 'Combined alignment receiver walking area differs.'}
     Assert-HudWalkingAimedIdentity $Receipt $State $Save 'minecome_hud_walking_aim_ready_v1' $MinimumUtcMs $NowUtcMs
     Assert-HudBufferedFlag (Get-HudBufferedField $Receipt 'bootstrap_confirmed') 'bootstrap confirmation' $true
     foreach($name in @('initial_guest_feet','initial_guest_eye','host_anchor','host_player_anchor')) {

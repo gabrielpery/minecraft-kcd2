@@ -52,10 +52,7 @@ final class HudPhysicalMovementFixture implements AutoCloseable {
         ui=new HudVanillaUiAdapter(client,false);server=client.getServer();player=client.player.getUuid();
         patch=corridor?GroundCorridor.read(patchFile):GroundPatch.read(patchFile,wide);
         if(!patch.sourceKind().equals(corridor?"standalone_corridor_fixture":"standalone_ground_fixture")||patch.run().equals(identity.run()))throw new IOException("Fixture patch provenance differs");
-        double yaw=Double.parseDouble(System.getProperty("minecome.hudPhysicalFixtureYaw",corridor?"-90":"0"));
-        if(!Double.isFinite(yaw) || yaw < -180 || yaw > 180)throw new IllegalArgumentException("Fixture yaw outside finite180 degrees");
-        if(aimedMode && (!extended || yaw!=0))throw new IllegalArgumentException("Walking/aimed fixture requires extended yaw-zero movement");
-        if(corridor&&yaw!= -90)throw new IllegalArgumentException("Corridor crossing fixture requires yaw minus90");
+        double yaw=HudPhysicalMovementMode.fixtureYaw(System.getProperties());
         Path parent=viewFile.toAbsolutePath().normalize().getParent().toRealPath();
         Path evidence=client.runDirectory.toPath().toAbsolutePath().normalize().getParent().getParent().resolve("runtime/evidence").toRealPath();
         if(!viewFile.isAbsolute() || !parent.startsWith(evidence) || Files.exists(viewFile,LinkOption.NOFOLLOW_LINKS))
@@ -105,7 +102,7 @@ final class HudPhysicalMovementFixture implements AutoCloseable {
         if(stage==0){
             if(!movement.inputReady(now))return;
             if(aimedMode){
-                if(aimed==null)aimed=new HudWalkingAimedFixture(client,(GroundPatch)patch,client.getServer().getSaveProperties().getLevelName());
+                if(aimed==null)aimed=new HudWalkingAimedFixture(client,patch,client.getServer().getSaveProperties().getLevelName());
                 if(!aimed.prepare(client,now))return;
             }
             origin=client.player.getPos();serverOrigin=observation(now).position();previous=origin;serverPrevious=serverOrigin;started=now;

@@ -63,14 +63,14 @@ function Assert-MineComeWalkingAimedInstalledBundle($Manifest,$Receipt,$Profile)
             ($owned[0].bytes -isnot [int] -and $owned[0].bytes -isnot [long]) -or $owned[0].bytes -ne $entry.bytes){throw 'Walking aimed installed files differ from their bundle.'}
     }
 }
-function Assert-HudWalkingAimedReady($Ready,[bool]$Expected){
+function Assert-HudWalkingAimedReady($Ready,[bool]$Expected,[switch]$CorridorWalking){
     $marker=$Ready.PSObject.Properties['ui_input_walking_aimed']
     if(-not $Expected){
         if($null -ne $marker -and ($marker.Value -isnot [bool] -or $marker.Value)){throw 'Walking aimed producer requires its explicit controller.'}
         return
     }
     if($null -eq $marker -or $marker.Value -isnot [bool] -or -not $marker.Value){throw 'Walking aimed readiness marker missing or malformed.'}
-    Assert-HudPhysicalMovementReady $Ready $true
+    Assert-HudPhysicalMovementReady $Ready $true -CorridorWalking:$CorridorWalking -WalkingAimed
     if($Ready.ui_input_protocol -isnot [int] -and $Ready.ui_input_protocol -isnot [long]){throw 'Walking aimed input protocol must be an integer.'}
     if($Ready.movement_session -cne 'extended' -or $Ready.scripted_input -isnot [bool] -or $Ready.scripted_input){throw 'Walking aimed requires the extended non-scripted live profile.'}
     foreach($field in @('ui_input_stone_bridge','ui_input_stone_live','ui_input_aimed_stone_bridge','ui_input_live_mouse','ui_input_offscreen_presentation')){

@@ -3,8 +3,9 @@
 [CmdletBinding()]
 param([switch]$PreflightOnly,[string]$JavaHome,[string]$BundleDirectory,
     [ValidateSet('WalkingBreak','TopFaceInventory','SideFaceInventory')][string]$Scenario='WalkingBreak',
-    [switch]$RepeatSession,[string]$PreviousArmReceipt,[switch]$WideWalking)
+    [switch]$RepeatSession,[string]$PreviousArmReceipt,[switch]$WideWalking,[switch]$CorridorWalking)
 $ErrorActionPreference='Stop'
+if($WideWalking -and $CorridorWalking){throw 'Wide and corridor walking are separate combined profiles.'}
 if($PSVersionTable.PSVersion.Major -lt 7){
     . (Join-Path $PSScriptRoot 'powershell7.ps1')
     $pwsh=Get-MineComePowerShell7
@@ -14,6 +15,7 @@ if($PSVersionTable.PSVersion.Major -lt 7){
     if($BundleDirectory){$arguments+=@('-BundleDirectory',$BundleDirectory)}
     if($RepeatSession){$arguments+='-RepeatSession'}
     if($WideWalking){$arguments+='-WideWalking'}
+    if($CorridorWalking){$arguments+='-CorridorWalking'}
     if($PreviousArmReceipt){$arguments+=@('-PreviousArmReceipt',$PreviousArmReceipt)}
     $arguments+=@('-Scenario',$Scenario)
     & $pwsh @arguments

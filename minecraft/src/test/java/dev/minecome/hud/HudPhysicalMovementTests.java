@@ -71,11 +71,22 @@ public final class HudPhysicalMovementTests {
         for(var base:List.of(extended,extendedFixture)){
             var corridor=(Properties)base.clone();corridor.setProperty("minecome.hudCorridorWalking","true");
             check(HudPhysicalMovementMode.require(corridor)&&HudPhysicalMovementMode.corridor(corridor),"Explicit corridor retains extended physical live/fixture identity");
-            for(String key:List.of("hudWideWalking","hudWalkingAimed","hudWalkingAimedFixture","hudFacingSeedFixture","hudGroundMovementFixture",
+            for(String key:List.of("hudWideWalking","hudWalkingAimed","hudFacingSeedFixture","hudGroundMovementFixture",
                     "hudGroundMovementCoupled","hudGroundCorridorFixture","hudGroundCorridorCoupled","hudGroundCorridorWalkOnly")){
                 var mixed=(Properties)corridor.clone();mixed.setProperty("minecome."+key,"true");
                 reject(()->HudPhysicalMovementMode.require(mixed),"Physical corridor rejects "+key);
             }
+            var corridorAimed=(Properties)corridor.clone();corridorAimed.setProperty("minecome.hudWalkingAimedFixture","true");
+            if(HudPhysicalMovementMode.fixture(corridor)){
+                check(HudPhysicalMovementMode.require(corridorAimed)&&HudPhysicalMovementMode.fixtureYaw(corridorAimed)==-90,"Corridor aimed fixture retains standalone extended authority and eastward heading");
+                for(String yaw:List.of("0","90","180","NaN","Infinity","-181")){
+                    var invalid=(Properties)corridorAimed.clone();invalid.setProperty("minecome.hudPhysicalFixtureYaw",yaw);
+                    reject(()->HudPhysicalMovementMode.require(invalid),"Corridor aimed fixture rejects incompatible yaw before world construction");
+                }
+                corridorAimed.setProperty("minecome.hudPhysicalFixtureYaw","-90");
+                check(HudPhysicalMovementMode.require(corridorAimed)&&HudPhysicalMovementMode.fixtureYaw(corridorAimed)==-90,"Explicit corridor fixture yaw follows the same validated constructor path");
+            }
+            else reject(()->HudPhysicalMovementMode.require(corridorAimed),"Corridor live input cannot acquire scripted aiming");
             corridor.remove("minecome.hudPhysicalMovementExtended");reject(()->HudPhysicalMovementMode.require(corridor),"Corridor cannot use short timing");
         }
         var corridorOrphan=new Properties();corridorOrphan.setProperty("minecome.hudCorridorWalking","true");
@@ -105,6 +116,11 @@ public final class HudPhysicalMovementTests {
         reject(()->HudPhysicalMovementMode.require(wideFixture),"short fixture cannot claim wide crossing scenario");
         var combined=new Properties();combined.putAll(extendedFixture);combined.setProperty("minecome.hudWalkingAimedFixture","true");
         check(HudPhysicalMovementMode.require(combined),"Combined aimed walking requires explicit standalone extended fixture");
+        check(HudPhysicalMovementMode.fixtureYaw(combined)==0,"Legacy aimed fixture retains yaw zero");
+        var legacyWrongYaw=(Properties)combined.clone();legacyWrongYaw.setProperty("minecome.hudPhysicalFixtureYaw","-90");
+        reject(()->HudPhysicalMovementMode.require(legacyWrongYaw),"Legacy aimed fixture cannot borrow the corridor heading");
+        var genericYaw=(Properties)fixture.clone();genericYaw.setProperty("minecome.hudPhysicalFixtureYaw","90");
+        check(HudPhysicalMovementMode.require(genericYaw)&&HudPhysicalMovementMode.fixtureYaw(genericYaw)==90,"Ordinary non-aimed fixture retains configurable finite yaw");
         for(Properties source:List.of(new Properties(),mode(),extended,fixture)){
             var p=new Properties();p.putAll(source);p.setProperty("minecome.hudWalkingAimedFixture","true");
             reject(()->HudPhysicalMovementMode.require(p),"Combined fixture cannot acquire incomplete or live profile");
@@ -437,6 +453,17 @@ public final class HudPhysicalMovementTests {
         }
         var forwardPoint=HudWalkingAimedFixture.facingTopAimPoint(new dev.minecome.protocol.AimGeometry.Cell(-1,64,4));
         check(forwardPoint.x()==-.5&&forwardPoint.y()==65&&forwardPoint.z()==4.25,"Yaw-zero fixture aims at the nearer north edge of the forward seed top");
+        var corridorSeed=new dev.minecome.protocol.AimGeometry.Cell(-1,64,-5);
+        var corridorPoints=List.of(HudWalkingAimedFixture.corridorTopAimPoint(corridorSeed),HudWalkingAimedFixture.corridorSideAimPoint(corridorSeed));
+        var corridorFaces=List.of(dev.minecome.protocol.AimGeometry.Face.UP,dev.minecome.protocol.AimGeometry.Face.EAST);
+        for(double x:new double[]{.55,.72,.9})for(double feetY:new double[]{63.9,64.04,64.15})for(int action=0;action<2;action++){
+            var eye=new dev.minecome.protocol.Protocol.Vec3(x,feetY+1.62,0);var point=corridorPoints.get(action);
+            double dx=point.x()-eye.x(),dy=point.y()-eye.y(),dz=point.z()-eye.z(),distance=Math.sqrt(dx*dx+dy*dy+dz*dz);
+            var ray=new dev.minecome.protocol.AimGeometry.Ray(eye,new dev.minecome.protocol.Protocol.Vec3(dx/distance,dy/distance,dz/distance),4.5);
+            var hit=dev.minecome.protocol.AimGeometry.intersect(ray,corridorSeed.bounds());
+            check(hit.isPresent()&&hit.get().face()==corridorFaces.get(action)&&hit.get().distance()<4.5,
+                    "Corridor reference ray reaches its actual top/east face after crossing and returning; vanilla OUTLINE still decides in game");
+        }
     }
     public static void main(String[] args)throws Exception{modes();wire();holds();extendedHolds();views();reader();readerRaces();fixturePublication();fixtureAimingGeometry();checks+=HudMovementTimingTests.run();checks+=dev.minecome.terrain.HudMovementBoundaryTests.run();System.out.println("HudPhysicalMovementTests: "+checks+" checks passed");}
 }

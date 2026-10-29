@@ -25,11 +25,12 @@ final class HudWalkingAimedFixture implements AutoCloseable {
     private record Confirmed(String label,AimedStoneArena.Result result,long at,Settled settled) {}
     private static final String[] LABELS={"bootstrap","top_place","upper_break","west_place","west_break","seed_break"};
     private static final String[] FACING_LABELS={"bootstrap","top_place","upper_break","side_place","side_break","seed_break"};
+    private static final String[] CORRIDOR_LABELS={"bootstrap","top_place","upper_break","east_place","east_break","seed_break"};
     private final MinecraftServer server;
     private final Object clientWorld,clientPlayer;
     private final UUID playerId;
     private final String save;
-    private final GroundPatch patch;
+    private final GroundSurface patch;
     private final HudBuildRegion region;
     private final BlockPos support,seed,upper,side;
     private final boolean facingSeed;
@@ -54,26 +55,26 @@ final class HudWalkingAimedFixture implements AutoCloseable {
     private Vec3d beforeInteractions,serverBeforeInteractions,afterInteractions,serverAfterInteractions;
     private double walkBefore,walkAfter;
 
-    HudWalkingAimedFixture(MinecraftClient client,GroundPatch patch,String save){
+    HudWalkingAimedFixture(MinecraftClient client,GroundSurface patch,String save){
         require(Boolean.getBoolean("minecome.hudWalkingAimedFixture") && HudPhysicalMovementMode.fixture(System.getProperties())
                 && !Boolean.getBoolean("minecome.hudStreamInput"),"Explicit standalone walking/aimed fixture required");
         require(client.isOnThread() && client.player!=null && client.world!=null && client.getServer()!=null,"Fixture owner missing");
         require(save!=null && save.matches("MineCome-HudStream-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
                 && save.equals(client.getServer().getSaveProperties().getLevelName()),"Exact owned HUD fixture save required");
-        require(patch.sourceKind().equals("standalone_ground_fixture"),"Fixture terrain provenance differs");
-        require(Double.parseDouble(System.getProperty("minecome.hudPhysicalFixtureYaw","0"))==0,
-                "Walking/aimed fixture requires yaw zero for its fixed adjacent support");
+        require(patch.sourceKind().equals(patch.corridor()?"standalone_corridor_fixture":"standalone_ground_fixture"),"Fixture terrain provenance differs");
+        require(HudPhysicalMovementMode.fixtureYaw(System.getProperties())==(patch.corridor()?-90:0),
+                "Walking/aimed fixture yaw differs from its explicit walking profile");
         this.server=client.getServer();this.clientWorld=client.world;this.clientPlayer=client.player;
         this.playerId=client.player.getUuid();this.patch=patch;this.save=save;initializedAt=System.nanoTime();
         facingSeed=HudPhysicalMovementMode.facingFixture(System.getProperties());
         require(!facingSeed || patch.wide(),"Facing fixture requires the wide terrain profile");
-        labels=facingSeed?FACING_LABELS:LABELS;
+        labels=patch.corridor()?CORRIDOR_LABELS:facingSeed?FACING_LABELS:LABELS;
         initialPosition=client.player.getPos();
         require(Math.abs(initialPosition.x)<.001 && Math.abs(initialPosition.z)<.001,"Fixture alignment must precede walking");
         int supportY=(int)Math.floor(initialPosition.y)-1;
-        region=new HudBuildRegion(patch,facingSeed?HudBuildRegion.facingSupport(patch,supportY,0,1):new AimGeometry.Cell((int)patch.halfExtent(),supportY,0));
+        region=new HudBuildRegion(patch,patch.corridor()?HudBuildRegion.corridorSupport(patch,supportY):facingSeed?HudBuildRegion.facingSupport((GroundPatch)patch,supportY,0,1):new AimGeometry.Cell((int)((GroundPatch)patch).halfExtent(),supportY,0));
         support=pos(region.support());seed=pos(region.seed());upper=seed.up();
-        sideFace=facingSeed?nearFace(cell(seed)):Direction.WEST;side=seed.offset(sideFace);
+        sideFace=patch.corridor()?Direction.EAST:facingSeed?nearFace(cell(seed)):Direction.WEST;side=seed.offset(sideFace);
         require(region.targetRejection(cell(upper))==null && region.targetRejection(cell(side))==null,
                 "Fixture top/side cells overlap protected terrain or lie outside the build region");
         var eye=client.player.getEyePos();
@@ -152,9 +153,9 @@ final class HudWalkingAimedFixture implements AutoCloseable {
         require(client.player.getPos().distanceTo(beforeInteractions)<=.01 && settled.server.position().distanceTo(serverBeforeInteractions)<=.01,
                 "Player moved during settled aimed actions");
         Vec3d point=switch(nextAction){
-            case 1->vec(facingSeed?facingTopAimPoint(cell(seed)):topAimPoint(patch.wide(),cell(seed)));
+            case 1->vec(patch.corridor()?corridorTopAimPoint(cell(seed)):facingSeed?facingTopAimPoint(cell(seed)):topAimPoint(patch.wide(),cell(seed)));
             case 2->Vec3d.ofCenter(upper);
-            case 3->sideAimPoint(seed,sideFace);
+            case 3->patch.corridor()?vec(corridorSideAimPoint(cell(seed))):sideAimPoint(seed,sideFace);
             case 4->Vec3d.ofCenter(side);
             case 5->Vec3d.ofCenter(seed);
             default->throw new IllegalStateException("Unknown fixture action");
@@ -253,6 +254,12 @@ final class HudWalkingAimedFixture implements AutoCloseable {
         double x=seed.x()+.5,z=seed.z()+.5;
         return Math.abs(x)>=Math.abs(z)?(x>=0?Direction.WEST:Direction.EAST):(z>=0?Direction.NORTH:Direction.SOUTH);
     }
+    static Protocol.Vec3 corridorTopAimPoint(AimGeometry.Cell seed){
+        return new Protocol.Vec3(seed.x()+.75,seed.y()+1,seed.z()+.75);
+    }
+    static Protocol.Vec3 corridorSideAimPoint(AimGeometry.Cell seed){
+        return new Protocol.Vec3(seed.x()+1,seed.y()+.5,seed.z()+.85);
+    }
     static Protocol.Vec3 facingTopAimPoint(AimGeometry.Cell seed){
         Direction face=nearFace(seed);
         return new Protocol.Vec3(seed.x()+(face==Direction.WEST?.25:face==Direction.EAST?.75:.5),seed.y()+1,
@@ -270,10 +277,11 @@ final class HudWalkingAimedFixture implements AutoCloseable {
     JsonObject evidence(){
         var e=new JsonObject();e.addProperty("kind","standalone_hud_walking_aimed_fixture_v1");e.addProperty("scripted_input",true);
         if(patch.wide()){
-            e.addProperty("walking_area","wide");e.addProperty("max_host_ray_range",AimedStoneArena.MAX_HOST_RAY_RANGE);
-            var point=facingSeed?facingTopAimPoint(cell(seed)):topAimPoint(true,cell(seed));var top=new JsonObject();top.addProperty("x",point.x());top.addProperty("y",point.y());top.addProperty("z",point.z());
+            e.addProperty("walking_area",patch.corridor()?"corridor":"wide");e.addProperty("max_host_ray_range",AimedStoneArena.MAX_HOST_RAY_RANGE);
+            var point=patch.corridor()?corridorTopAimPoint(cell(seed)):facingSeed?facingTopAimPoint(cell(seed)):topAimPoint(true,cell(seed));var top=new JsonObject();top.addProperty("x",point.x());top.addProperty("y",point.y());top.addProperty("z",point.z());
             e.add("top_aim_point",top);
         }
+        if(patch.corridor())e.addProperty("support_selection","corridor_side_perimeter");
         if(facingSeed){e.addProperty("facing_seed",true);e.addProperty("facing_side",sideFace.name());}
         e.addProperty("synthetic_host_rays",true);e.addProperty("physical_input_verified",false);e.addProperty("kcd_connected",false);
         e.addProperty("completed",cleaned && resumed);e.addProperty("alignment_before_movement",firstMovementAt>initializedAt);

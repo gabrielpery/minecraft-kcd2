@@ -2,6 +2,8 @@ package dev.minecome.hud;
 
 import com.google.gson.*;
 import dev.minecome.terrain.GroundPatch;
+import dev.minecome.terrain.GroundCorridor;
+import dev.minecome.terrain.GroundSurface;
 import com.mojang.blaze3d.systems.RenderSystem;
 import dev.minecome.hud.mixin.HudWindowVsyncAccessor;
 import dev.minecome.terrain.HudGroundMovementFixture;
@@ -357,8 +359,12 @@ public final class HudStreamLab {
                 if(walkingAimedMode && physicalMovement.inputReady(System.nanoTime()) && stoneBridge==null){
                     if(walkingSupport==null){
                         boolean wide=HudPhysicalMovementMode.wide(System.getProperties());
+                        boolean corridor=HudPhysicalMovementMode.corridor(System.getProperties());
                         var heading=physicalMovement.freshBuildHeading(System.nanoTime());
-                        if(!wide || heading!=null)walkingSupport=new HudWalkingBuildSupport(client,GroundPatch.read(Path.of(required("minecome.groundPatchFile")),wide),save,heading);
+                        if(!wide || heading!=null){
+                            GroundSurface surface=corridor?GroundCorridor.read(Path.of(required("minecome.groundPatchFile"))):GroundPatch.read(Path.of(required("minecome.groundPatchFile")),wide);
+                            walkingSupport=new HudWalkingBuildSupport(client,surface,save,heading);
+                        }
                     }
                     if(walkingSupport!=null && walkingSupport.prepare(client))stoneBridge=new HudAimedStoneBridge(Path.of(required("minecome.tokenFile")),save,walkingSupport,physicalMovement,output);
                 }

@@ -8,7 +8,7 @@ Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'HudPhysicalMovement.ps1')
 . (Join-Path $PSScriptRoot 'HudWalkingAimedProfile.ps1')
 . (Join-Path $PSScriptRoot 'HudGroundMovement.ps1')
-if($CorridorWalking -and (-not $PhysicalMovement -or $WideWalking -or $WalkingAimed)){throw 'CorridorWalking requires the separate physical movement profile.'}
+if($CorridorWalking -and (-not ($PhysicalMovement -or $WalkingAimed) -or $WideWalking)){throw 'CorridorWalking requires an explicit physical walking profile.'}
 if($WideWalking -and -not ($PhysicalMovement -or $WalkingAimed)){throw 'WideWalking requires an explicit walking profile.'}
 if($RepeatSession -and -not $WalkingAimed){throw 'RepeatSession requires the WalkingAimed profile.'}
 if($PreviousArmReceipt -and -not $RepeatSession){throw 'PreviousArmReceipt requires explicit RepeatSession.'}
@@ -125,9 +125,9 @@ $ReadyManifest=Assert-Unlinked $ReadyManifest
 if(-not $ReadyManifest.StartsWith($evidenceRoot+'\',[StringComparison]::OrdinalIgnoreCase) -or [IO.Path]::GetFileName($ReadyManifest) -cne 'stream-ready.json') {throw 'Readiness must come from workspace stream evidence.'}
 $ready=Read-Receipt $ReadyManifest
 Assert-HudNonFixtureArm $ready
-Assert-HudWalkingAimedReady $ready ([bool]$WalkingAimed)
+Assert-HudWalkingAimedReady $ready ([bool]$WalkingAimed) -CorridorWalking:$CorridorWalking
 Assert-HudWalkingArea $ready ([bool]$WideWalking) -CorridorWalking:$CorridorWalking
-Assert-HudPhysicalMovementReady $ready ([bool]($PhysicalMovement -or $WalkingAimed)) -CorridorWalking:$CorridorWalking
+Assert-HudPhysicalMovementReady $ready ([bool]($PhysicalMovement -or $WalkingAimed)) -CorridorWalking:$CorridorWalking -WalkingAimed:$WalkingAimed
 if($InputMode){
     if($ready.PSObject.Properties.Name -notcontains 'ui_input_protocol' -or $ready.ui_input_protocol -ne $inputProtocol){throw 'Input mode requires explicit genuine guest readiness.'}
     if($ready.PSObject.Properties.Name -notcontains 'ui_input_fixture' -or $ready.ui_input_fixture -isnot [bool] -or $ready.ui_input_fixture -ne $false){throw 'Fixture producer cannot arm live KCD input.'}

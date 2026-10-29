@@ -19,7 +19,7 @@ work, but this is not yet a complete playable mod or a ready-to-install release.
 The public repository contains source, build scripts and development procedures.
 
 The new [repeat-session development profile](kcd2/MOVEMENT-LAB.md#repeat-sessions-in-one-kcd-process)
-is implemented, compiled and installed in the development test setup, with automated cleanup/rearm checks passing.
+is implemented and compiled, with automated cleanup/rearm checks passing.
 Two bounded sessions now work in the same KCD2 process, with live user confirmation.
 The first retired cleanly; the second exposed a controller completion-record timeout,
 so final retirement acceptance remains pending. This does not provide continuous free roaming.
@@ -41,10 +41,20 @@ uses scripted controls and a standalone HUD receiver. A separate extended physic
 walking/HUD profile now accepts the same corridor. Its automatic Minecraft check
 crosses the old boundary, keeps the HUD rendering, blocks movement in inventory
 and returns to the origin. Replaying its recorded server path through KCD also
-passes native movement and exact restoration. Foreground input/composition
-acceptance is still pending.
-The existing combined blocks/inventory profile retains its verified 8×8m area.
-Rolling terrain remains unfinished.
+passes native movement and exact restoration. A foreground corridor check now
+passes walking, hotbar controls and inventory suppression with Minecraft's HUD
+visible: 157 native readbacks, 862 HUD frames and exact restoration. The user
+reports everything worked, with acceptable remaining choppiness/delay. This live
+run reached X=3.576m, so it did not cross the old X=4 edge; the earlier native
+replay crossed 4.824m. A later combined run crossed the boundary (trace X=5.884m).
+The combined walking, aimed blocks and inventory profile now also accepts this
+corridor with `-CorridorWalking -RepeatSession`. Automatic real-Minecraft checks
+pass on flat and captured terrain: cross the old edge, return, place on top and
+side faces, break the blocks, use inventory and resume walking. All imported
+terrain cells stay unchanged. The repeat bundle is installed; combined corridor
+live check confirmed walking across the old edge and top placement, but stopped
+at the aiming cutoff with cleanup incomplete. Full combined corridor acceptance
+remains failed; cutoff cleanup is next. The earlier 8×8m combined live result remains valid. Rolling terrain remains unfinished.
 The separate jump diagnostic currently exposes a temporary KCD camera-height
 deviation during landing; it is not counted as a passing walking check.
 
@@ -60,7 +70,7 @@ deviation during landing; it is not counted as a passing walking check.
 
 The [physical HUD walking lab](kcd2/MOVEMENT-LAB.md#physical-walking-with-the-hud-in-kcd)
 now passes repeated movement with Minecraft's real HUD, normal return to the
-starting position and cleanup. The latest live run passes all **156 source points
+starting position and cleanup. An earlier live run passes all **156 source points
 and delayed KCD readbacks**. The user confirms it works, with a little delay remaining.
 Camera delivery stays fresh and the native finish restores the exact origin.
 

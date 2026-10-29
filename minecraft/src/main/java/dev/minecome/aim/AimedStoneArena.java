@@ -198,7 +198,9 @@ public final class AimedStoneArena implements AutoCloseable {
         if (reject == null && (!client.player.canInteractWithBlockAt(seed, 0)
                 || !client.player.canInteractWithBlockAt(support, 0))) reject = "out_of_reach";
         if (reject != null) return rejected(id, Protocol.PLACE_STONE, reject, null, null);
-        Hit hit = new Hit(support, Direction.UP, new Vec3d(support.getX() + .5, support.getY() + 1, support.getZ() + .5), false);
+        Vec3d point=buildRegion!=null&&buildRegion.corridor()?vec(buildRegion.bootstrapPoint()):
+                new Vec3d(support.getX()+.5,support.getY()+1,support.getZ()+.5);
+        Hit hit = new Hit(support, Direction.UP, point, false);
         return queue(client, id, Protocol.PLACE_STONE, true, null, seed, hit);
     }
 
