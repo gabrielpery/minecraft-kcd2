@@ -164,7 +164,10 @@ public final class HudStreamProducer implements AutoCloseable {
         r.addProperty("save",save);r.addProperty("source_kind",genuine?"minecraft_vanilla_ui_stream_v1":"standalone_transport_fixture");
         if(groundMovementMode!=HudGroundMovementMode.Mode.NONE){
             if(HudPhysicalMovementMode.wide(System.getProperties()))r.addProperty("walking_area","wide");
-            r.addProperty(groundMovementMode==HudGroundMovementMode.Mode.CORRIDOR?"ui_ground_corridor_fixture":
+            if(groundMovementMode==HudGroundMovementMode.Mode.CORRIDOR_COUPLED)r.addProperty("walking_area","corridor");
+            if(HudGroundMovementMode.corridorWalkOnly(System.getProperties()))r.addProperty("corridor_walk_only",true);
+            r.addProperty(groundMovementMode==HudGroundMovementMode.Mode.CORRIDOR_COUPLED?"ui_ground_corridor_coupled":
+                    groundMovementMode==HudGroundMovementMode.Mode.CORRIDOR?"ui_ground_corridor_fixture":
                     groundMovementMode==HudGroundMovementMode.Mode.FIXTURE?"ui_ground_movement_fixture":"ui_ground_movement_coupled",true);
             r.addProperty("standalone",standalone);
         }

@@ -53,6 +53,37 @@ try{
         Reject {Assert-HudGroundCorridorProof $bad $run $inputRecord} "Reject $change proof"
     }
     Reject {Assert-HudGroundCorridorMarker $guest $false} 'Unrequested corridor marker rejected'
+    $null=Assert-HudGroundCorridorMode $false $true $false $path $true 'new-trace.ndjson'
+    Check $true 'Explicit coupled corridor has separate mode and trace'
+    Reject {Assert-HudGroundCorridorMode $true $true $false $path $true 'trace'} 'Fixture and coupled corridor cannot mix'
+    Reject {Assert-HudGroundCorridorMode $false $true $false $path $true ''} 'Coupled corridor requires trace'
+    Reject {Assert-HudGroundCorridorMode $true $true $false $path $false 'trace'} 'Fixture cannot gain follower authority'
+    $captured=Clone $inputRecord;$captured.Captured=$true
+    $coupled=Clone $guest;$coupled.PSObject.Properties.Remove('ui_ground_corridor_fixture')
+    $coupled | Add-Member ui_ground_corridor_coupled $true
+    $coupled | Add-Member walking_area 'corridor'
+    $p=$coupled.lab_evidence.ground_movement
+    $p.kind='minecome_hud_ground_corridor_coupled_v1';$p.ground_source_kind='live_kcd_ground_corridor'
+    $p | Add-Member trace_file 'trace.ndjson';$p | Add-Member trace_result 'passed'
+    $p | Add-Member trace_records 201;$p | Add-Member trace_closed $true;$p | Add-Member hud_run $run
+    $null=Assert-HudGroundCorridorProof $coupled $run $captured -Coupled -TraceFile 'trace.ndjson'
+    Check $true 'Coupled crossing requires complete same-run trace'
+    Reject {Assert-HudGroundCorridorProof $coupled $run $inputRecord -Coupled -TraceFile 'trace.ndjson'} 'Synthetic corridor cannot authorize KCD following'
+    Reject {Assert-HudGroundCorridorProof $coupled $run $captured -Coupled -TraceFile 'another.ndjson'} 'Trace identity cannot change'
+    $p.trace_closed=$false
+    Reject {Assert-HudGroundCorridorProof $coupled $run $captured -Coupled -TraceFile 'trace.ndjson'} 'Open trace cannot complete'
+    $p.trace_closed=$true
+    Reject {Assert-HudGroundCorridorMarker $coupled $false} 'Unrequested coupled marker rejected'
+    Reject {Assert-HudGroundCorridorMode $true $true $false $path $false '' $true} 'Walk-only cannot alter standalone fixture'
+    $walk=Clone $coupled;$walk | Add-Member corridor_walk_only $true
+    $p=$walk.lab_evidence.ground_movement;$p.kind='minecome_hud_ground_corridor_walk_coupled_v1'
+    foreach($name in @('client_air','server_air','client_land','server_land')){$p.$name=$false}
+    $p.frame_captures.JUMPING=0;$p.frame_captures.LANDING=0
+    $null=Assert-HudGroundCorridorProof $walk $run $captured -Coupled -TraceFile 'trace.ndjson' -WalkOnly
+    Check $true 'Explicit walk-only crossing has separate completion identity'
+    Reject {Assert-HudGroundCorridorProof $walk $run $captured -Coupled -TraceFile 'trace.ndjson'} 'Walk-only cannot masquerade as full jump success'
+    $p.frame_captures.JUMPING=1
+    Reject {Assert-HudGroundCorridorProof $walk $run $captured -Coupled -TraceFile 'trace.ndjson' -WalkOnly} 'Walk-only cannot include jump frames'
     $tokens=$null;$errors=$null
     $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $root 'scripts/Run-HudStreamClient.ps1'),[ref]$tokens,[ref]$errors)
     $function=$ast.Find({param($node)$node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Assert-HudCorridorChildMode'},$true)
@@ -60,10 +91,14 @@ try{
     $null=Assert-HudCorridorChildMode $true $true $path $false
     Reject {Assert-HudCorridorChildMode $true $true $path $true} 'Child rejects live or mixed mode'
     Reject {Assert-HudCorridorChildMode $true $true '' $false} 'Child requires immutable manifest'
+    $null=Assert-HudCorridorChildMode $false $true $path $false $true 'trace'
+    Reject {Assert-HudCorridorChildMode $false $true $path $false $true ''} 'Child coupled mode requires trace'
+    Reject {Assert-HudCorridorChildMode $true $true $path $false $true 'trace'} 'Child coupled and fixture cannot mix'
     $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $root 'scripts/Arm-HudStream.ps1'),[ref]$tokens,[ref]$errors)
     $function=$ast.Find({param($node)$node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -ceq 'Assert-HudNonFixtureArm'},$true)
     Invoke-Expression $function.Extent.Text
     Reject {Assert-HudNonFixtureArm ([pscustomobject]@{ui_ground_corridor_fixture=$true;standalone=$false})} 'Corridor cannot arm live composition even with malformed standalone flag'
+    Reject {Assert-HudNonFixtureArm ([pscustomobject]@{ui_ground_corridor_coupled=$true;standalone=$false})} 'Coupled follower does not authorize live HUD composition'
     Write-Output "HUD_GROUND_CORRIDOR_TESTS_PASS checks=$checks no_game_started=true"
 }finally{
     $resolved=[IO.Path]::GetFullPath($directory)

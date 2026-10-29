@@ -41,6 +41,10 @@ loom {
                 vmArgs '-Dminecome.hudGroundMovementFixture=true'
             if (project.hasProperty('minecomeHudGroundCorridorFixture'))
                 vmArgs '-Dminecome.hudGroundCorridorFixture=true'
+            if (project.hasProperty('minecomeHudGroundCorridorCoupled'))
+                vmArgs '-Dminecome.hudGroundCorridorCoupled=true'
+            if (project.hasProperty('minecomeHudGroundCorridorWalkOnly'))
+                vmArgs '-Dminecome.hudGroundCorridorWalkOnly=true'
             if (project.hasProperty('minecomeHudGroundMovementCoupled'))
                 vmArgs '-Dminecome.hudGroundMovementCoupled=true'
             if (project.hasProperty('minecomeHudPhysicalMovement'))

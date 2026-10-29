@@ -14,8 +14,9 @@ X=4 edge to X=6.044, jumped and landed, then returned within 0.063m of its start
 The native standalone receiver accepted 321 real HUD frames, including crossing
 and return frames. Client/server controls and collision proxies were released;
 there were no position corrections after settling. KCD was closed during this
-Minecraft check. Live KCD following, physical input and native HUD composition
-across the corridor have not been verified; existing live profiles are unchanged.
+first Minecraft check. The separate two-game walking route below now passes live
+KCD following; physical controls and native HUD composition across the corridor
+remain unfinished. Existing physical profiles are unchanged.
 
 With a fresh official tools world loaded and the player still, capture from the
 repository root:
@@ -43,6 +44,36 @@ An expired synthetic hold is released before vanilla movement and may be renewed
 only after another valid observation. Existing input lease, stall, freshness and
 disagreement limits remain in force. This standalone mode cannot enable a live
 HUD arm or be combined with physical/coupled movement modes.
+
+The separate automatic KCD follower route uses only server observations from the
+explicit coupled corridor mode. To launch a fresh official tools world, capture
+the terrain, run both games, verify the crossing/return and close the owned KCD
+world normally:
+
+```powershell
+& './scripts/Test-CoupledGroundCorridor.ps1' -LaunchTestWorld
+```
+
+Omit `-LaunchTestWorld` to use an already-loaded, stationary tools world; that
+world is left open. No F8 countdown or keyboard input is required. The follower
+retains the capture origin, accepts the corridor's inset rectangular bounds and
+restores the exact saved KCD origin. This route uses a standalone HUD receiver;
+it does not enable physical controls or install a new native HUD profile.
+
+The default walking check passed on 29 October: 35 delayed KCD movement readbacks,
+maximum native X displacement 6.076m from the capture origin, return across X=4,
+and exact origin restoration. Camera error stayed below 0.058m against the existing
+0.15m limit; 471 real HUD frames and FPS restoration passed. The controller evidence
+is `runtime/evidence/coupled-movement-20261029-215241-3c51920138ab4cebab27a93304458ed8/verification.json`.
+The complete `-LaunchTestWorld` command also passed on a fresh world with 38 native
+readbacks, camera error below 0.051m, 480 HUD frames and normal owned-game closure.
+
+Use `-IncludeJump` only for the separate, currently failing jump-camera diagnostic.
+Both full-jump runs completed actor movement and restoration, but native camera
+height temporarily differed by 0.295m and 0.363m during landing. A faster follower
+cadence did not solve that issue and was reverted. The walking profile has distinct
+trace/receipt identities, rejects jump phases and keeps the same camera tolerance;
+it does not reinterpret either failed diagnostic as a pass.
 
 ## Repeat sessions in one KCD process
 

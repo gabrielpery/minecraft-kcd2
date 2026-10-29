@@ -362,6 +362,11 @@ local FOLLOWER_LOG_MAX_BYTES = 3798 -- Includes the tag, separating space and CR
 -- reload so existing owned timers retain their original profile.
 local SCRIPTED_LIMITS = { hard_ms=FOLLOWER_MS,source_ms=SOURCE_LIMIT_MS,writes=199,receipts=128,radius=2 }
 local WIDE_SCRIPTED_LIMITS = { hard_ms=FOLLOWER_MS,source_ms=SOURCE_LIMIT_MS,writes=199,receipts=128,radius=4,walking_area="wide" }
+-- Separate scripted corridor authority: two captured tiles share one immutable
+-- origin. Rectangle includes a 0.5m player inset; vertical bounds cover the
+-- inspected anchor+2/down8 ray segment and a bounded vanilla jump above support.
+local CORRIDOR_SCRIPTED_LIMITS = { hard_ms=22000,source_ms=20000,writes=549,receipts=512,max_seq=256,
+    walking_area="corridor",min_x=-3.5,max_x=7.5,min_y=-3.5,max_y=3.5,min_z=-6.1,max_z=3.5 }
 local PHYSICAL_LIMITS = { hard_ms=FOLLOWER_MS,source_ms=SOURCE_LIMIT_MS,writes=511,receipts=128,radius=2 }
 local EXTENDED_LIMITS = { hard_ms=18000,source_ms=16000,writes=2047,receipts=256,session="extended",radius=2 }
 local WIDE_PHYSICAL_LIMITS = { hard_ms=FOLLOWER_MS,source_ms=SOURCE_LIMIT_MS,writes=511,receipts=128,radius=4,walking_area="wide" }
@@ -375,6 +380,18 @@ if state.follower and not follower_profiles[state.follower] then
 end
 local function follower_limits(p) return follower_profiles[p] end
 local function follower_radius(p) return follower_limits(p).radius or 2 end
+local function follower_sequence_limit(p) return follower_limits(p).max_seq or 200 end
+local function follower_target_allowed(p,target)
+    if not vector(target) then return false end
+    local limits=follower_limits(p)
+    if limits.walking_area=="corridor" then
+        return target.x>=p.origin.x+limits.min_x and target.x<=p.origin.x+limits.max_x
+            and target.y>=p.origin.y+limits.min_y and target.y<=p.origin.y+limits.max_y
+            and target.z>=p.origin.z+limits.min_z and target.z<=p.origin.z+limits.max_z
+    end
+    return distance(target,p.origin)<=follower_radius(p) and target.z-p.origin.z >= (p.physical_movement and -1.5 or -0.2)
+        and target.z-p.origin.z<=1.5
+end
 local function follower_tick_ms(p) return p.physical_movement and PHYSICAL_TICK_MS or TICK_MS end
 local function horizontal(v) return vector(v) and math.sqrt(v.x*v.x+v.y*v.y) or math.huge end
 local function source_sample_json(source)
@@ -406,6 +423,9 @@ end
 local function follower_receipt(p,event,result,s,seq,target,readback,follow_error,received,segment,source)
     local limits = follower_limits(p)
     if p.records >= limits.receipts then return false end
+    -- The corridor proof identifies the final restore against the original
+    -- actor position, including when its last source pose stopped elsewhere.
+    if limits.walking_area=="corridor" and p.restoring then target=target or p.origin end
     local clock = now()
     local lease = p.latest and clock and math.max(0,(LEASE_SECONDS-(clock-p.latest.received))*1000) or 0
     local physical,source_fields = "",""
@@ -506,14 +526,16 @@ local function follower_stop(p,reason)
 end
 local function begin_follower(run,physical,buffered,extended,walking_area)
     if not token(run) then return false,"invalid_run" end
-    if walking_area ~= nil and walking_area ~= "wide" then return false,"invalid_walking_area" end
+    if walking_area ~= nil and walking_area ~= "wide" and walking_area ~= "corridor" then return false,"invalid_walking_area" end
+    if walking_area == "corridor" and (physical or buffered or extended) then return false,"invalid_walking_area" end
     if state.active or state.follower then return false,"busy" end
     local s,clock = snapshot(),now()
     local unsafe = guards(s,0.05,true,true)
     if not clock then unsafe = "clock_unavailable" end
     if type(field(s.entity,"SetWorldPos")) ~= "function" then unsafe = "position_writer_unavailable" end
     if not Script or type(Script.SetTimerForFunction) ~= "function" or type(Script.KillTimer) ~= "function" then unsafe = "timer_unavailable" end
-    local limits = walking_area == "wide" and (not physical and WIDE_SCRIPTED_LIMITS or extended and WIDE_EXTENDED_LIMITS or WIDE_PHYSICAL_LIMITS)
+    local limits = walking_area == "corridor" and CORRIDOR_SCRIPTED_LIMITS
+        or walking_area == "wide" and (not physical and WIDE_SCRIPTED_LIMITS or extended and WIDE_EXTENDED_LIMITS or WIDE_PHYSICAL_LIMITS)
         or extended and EXTENDED_LIMITS or physical and PHYSICAL_LIMITS or SCRIPTED_LIMITS
     local p = {run=run,entity=s.entity,id=s.id,created=clock,deadline=clock and clock+limits.hard_ms/1000,origin=copy(s.position.value),
         camera_origin=copy(s.camera.position.value),last_owned=copy(s.position.value),last_snapshot=s,timers={},data={},
@@ -559,16 +581,15 @@ function MineCome.ApplyMovementFollower(run,seq,x,y,z)
     if p.buffered_movement then return reject_buffered_input(p,"buffered_mode_mismatch",seq,{x=x,y=y,z=z}) end
     local target = {x=x,y=y,z=z}
     local invalid
-    if not finite(seq) or seq < 1 or seq > 200 or seq ~= math.floor(seq) then invalid = "sequence_invalid"
+    if not finite(seq) or seq < 1 or seq > follower_sequence_limit(p) or seq ~= math.floor(seq) then invalid = "sequence_invalid"
     elseif seq <= p.last_queued_seq then invalid = "sequence_replayed"
-    elseif not vector(target) or distance(target,p.origin) > follower_radius(p) or z-p.origin.z < (p.physical_movement and -1.5 or -0.2)
-        or z-p.origin.z > 1.5 then invalid = "target_out_of_bounds" end
+    elseif not follower_target_allowed(p,target) then invalid = "target_out_of_bounds" end
     local clock = now()
     if not clock or clock < p.last_clock or (p.physical_movement and p.latest and clock < p.latest.received) then invalid = "clock_unavailable_or_regressed"
     elseif clock >= p.deadline then invalid = "hard_deadline"
     elseif not p.latest and clock-p.created > 0.8 then invalid = "first_pose_expired" end
     if invalid then
-        local reported_seq = finite(seq) and seq >= 1 and seq <= 200 and seq == math.floor(seq) and seq or 0
+        local reported_seq = finite(seq) and seq >= 1 and seq <= follower_sequence_limit(p) and seq == math.floor(seq) and seq or 0
         if p.records >= follower_limits(p).receipts-2 then p.end_requested="receipt_budget" else follower_receipt(p,"rejected",invalid,p.last_snapshot,reported_seq,copy(target),false) end
         return false,invalid
     end

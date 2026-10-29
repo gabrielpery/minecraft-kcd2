@@ -13,6 +13,7 @@ final class GroundMovementSequence {
         static final Held NONE=new Held(false,false);
     }
     private final GroundSurface patch;
+    private final boolean walkOnly;
     private final long startedAt;
     private Phase phase=Phase.SETTLING;
     private long stableSince=-1,phaseAt,correctionBaseline;
@@ -22,7 +23,11 @@ final class GroundMovementSequence {
     private double clientWalk,serverWalk;
     private double clientMaxX=.5,serverMaxX=.5,clientReturnDistance,serverReturnDistance,maxClientServerDistance;
     private String failure="";
-    GroundMovementSequence(GroundSurface patch,long now){this.patch=patch;startedAt=now;phaseAt=now;}
+    GroundMovementSequence(GroundSurface patch,long now){this(patch,now,false);}
+    GroundMovementSequence(GroundSurface patch,long now,boolean walkOnly){
+        if(walkOnly&&!patch.corridor())throw new IllegalArgumentException("Walk-only sequence requires an explicit corridor");
+        this.patch=patch;this.walkOnly=walkOnly;startedAt=now;phaseAt=now;
+    }
     Phase phase(){return phase;}
     String failure(){return failure;}
     double clientWalk(){return clientWalk;}
@@ -82,6 +87,7 @@ final class GroundMovementSequence {
                 if(now-phaseAt>=1_000_000_000L && now-stableSince>=500_000_000L) {
                     double minimumWalk=patch.corridor()?5:patch.wide()?2.5:.3;
                     if(clientWalk<minimumWalk || serverWalk<minimumWalk){fail("Vanilla walk not confirmed on both client and server");return Held.NONE;}
+                    if(walkOnly)return beginReturn(now);
                     clientJump=client;serverJump=server;phase=Phase.JUMPING;phaseAt=now;jumpTicks=1;
                     return new Held(false,true);
                 }
@@ -97,8 +103,7 @@ final class GroundMovementSequence {
                     if(stableSince<0)stableSince=now;
                     if(now-stableSince>=500_000_000L){
                         if(patch.corridor()){
-                            phase=Phase.RETURNING;phaseAt=now;stableSince=-1;returnTicks=1;
-                            return new Held(false,false,true);
+                            return beginReturn(now);
                         }
                         phase=Phase.PASSED;
                     }
@@ -123,6 +128,10 @@ final class GroundMovementSequence {
             default -> {}
         }
         return Held.NONE;
+    }
+    private Held beginReturn(long now){
+        phase=Phase.RETURNING;phaseAt=now;stableSince=-1;returnTicks=1;
+        return new Held(false,false,true);
     }
     private boolean grounded(Motion motion) {
         return motion.onGround() && motion.proxySupport() && Math.abs(motion.y()-patch.groundForFeet(motion.x(),motion.z(),0.3))<0.15;

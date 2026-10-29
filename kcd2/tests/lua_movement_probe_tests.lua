@@ -82,8 +82,8 @@ local function fixture()
         GetViewCameraUpDir=function() return f.up or {x=0,y=0,z=1} end,GetViewCameraFov=function() return 1.1 end,
         SetViewCamera=forbidden,ClearKeyState=forbidden,SpawnEntity=forbidden,RemoveEntity=forbidden}
     Script={SetTimerForFunction=function(ms,name,data,paused)
-        eq(paused,true);assert(ms>=1 and ms<=(name=="MineCome_MovementFollowerExpiry" and 18000 or 750));f.schedules=f.schedules+1
-        if name=="MineCome_MovementFollowerExpiry" then assert(ms==8000 or ms==18000,"unknown native deadline profile") end
+        eq(paused,true);assert(ms>=1 and ms<=(name=="MineCome_MovementFollowerExpiry" and 22000 or 750));f.schedules=f.schedules+1
+        if name=="MineCome_MovementFollowerExpiry" then assert(ms==8000 or ms==18000 or ms==22000,"unknown native deadline profile") end
         if f.fail_schedule==f.schedules then return nil end
         local id=f.nextId;f.nextId=id+1
         if f.userdata_timer and f.schedules==1 then id=io.stderr end
@@ -1206,6 +1206,90 @@ test("wide profile survives module reload and retains bounds and source duration
     f=buffered_fixture(true,"wide");eq(f:point(1,0),true)
     ok,why=f:point(2,16000.01,0);eq(ok,false);eq(why,"source_time_invalid")
     f:advance(.08);eq(player.position.x,120);eq(f:activeTimers(),0)
+end)
+test("corridor authority is explicit and cannot widen legacy or physical profiles",function()
+    local f=fixture();f:verify()
+    for _,begin in ipairs({MineCome.BeginPhysicalMovementFollower,MineCome.BeginBufferedPhysicalMovementFollower,
+        MineCome.BeginExtendedBufferedPhysicalMovementFollower}) do
+        local ok,why=begin("b","corridor");eq(ok,false);eq(why,"invalid_walking_area")
+    end
+    eq(f:activeTimers(),0);eq(#f.writes,0)
+    eq(MineCome.BeginMovementFollower("b"),true)
+    MineCome._movement_probe.follower.walking_area="corridor"
+    local ok,why=MineCome.ApplyMovementFollower("b",1,125.9,2040,56);eq(ok,false);eq(why,"target_out_of_bounds")
+    ok,why=MineCome.ApplyMovementFollower("b",201,120,2040,56);eq(ok,false);eq(why,"sequence_invalid")
+    near(MineCome._movement_probe.follower.deadline,8);assert(not f:contains('"walking_area":"corridor"'))
+    eq(MineCome.EndMovementFollower("b"),true);f:advance(.08)
+    eq(MineCome.BeginMovementFollower("c","corridor"),true);eq(#f.writes,0)
+    near(MineCome._movement_probe.follower.deadline,f.time+22)
+    assert(f:contains('"walking_area":"corridor"'));assert(not f:contains('"physical_movement"'))
+    eq(MineCome.EndMovementFollower("c"),true);f:advance(.08);eq(f:activeTimers(),0)
+end)
+
+test("corridor target rectangle has fixed player inset and bounded vertical capture plus jump range",function()
+    local f=fixture();f:verify();eq(MineCome.BeginMovementFollower("b","corridor"),true)
+    for _,point in ipairs({{116.5,2036.5,49.9},{127.5,2043.5,59.5},{125.9,2039.5,57.3}}) do
+        eq(MineCome.ApplyMovementFollower("b",MineCome._movement_probe.follower.last_queued_seq+1,point[1],point[2],point[3]),true)
+    end
+    for _,point in ipairs({{116.499,2040,56},{127.501,2040,56},{120,2036.499,56},{120,2043.501,56},
+        {120,2040,49.899},{120,2040,59.501},{0/0,2040,56},{120,math.huge,56}}) do
+        local ok,why=MineCome.ApplyMovementFollower("b",4,point[1],point[2],point[3]);eq(ok,false);eq(why,"target_out_of_bounds")
+    end
+    local ok,why=MineCome.ApplyMovementFollower("b",257,120,2040,56);eq(ok,false);eq(why,"sequence_invalid")
+    f:advance(.12);near(player.position.x,125.9);near(player.position.y,2039.5);near(player.position.z,57.3)
+    eq(MineCome.EndMovementFollower("b"),true);f:advance(.08)
+    eq(player.position.x,120);eq(player.position.y,2040);eq(player.position.z,56);eq(f:activeTimers(),0)
+end)
+
+test("corridor supports twenty seconds of phase-free poses and reload without moving the original anchor",function()
+    local f=fixture();f:verify();eq(MineCome.BeginMovementFollower("b","corridor"),true)
+    local p=MineCome._movement_probe.follower;local hard=p.timers.hard
+    for seq=1,201 do
+        local offset=seq<=101 and .5+(seq-1)*.054 or .5+(201-seq)*.054
+        eq(MineCome.ApplyMovementFollower("b",seq,120+offset,2039.5,56+math.sin((seq-1)*math.pi/200)),true)
+        f:advance(.1);eq(MineCome._movement_probe.follower,p);eq(p.timers.hard,hard);near(p.deadline,22)
+        eq(p.origin.x,120);eq(p.origin.y,2040);eq(p.origin.z,56)
+        if seq==101 then assert(player.position.x>125.8,"must cross the original tile's positive X boundary") end
+        if seq==90 then dofile(MINECOME_MODULE_PATH) end
+    end
+    eq(MineCome.EndMovementFollower("b"),true);f:advance(.08)
+    eq(player.position.x,120);eq(player.position.y,2040);eq(player.position.z,56);eq(f:activeTimers(),0)
+    local final=f:last();assert(final:find('"event":"restored"',1,true));assert(final:find('"readback":true',1,true))
+    local target=receipt_vector(final,"target");eq(target.x,120);eq(target.y,2040);eq(target.z,56)
+    target=receipt_vector(final,"player");eq(target.x,120);eq(target.y,2040);eq(target.z,56)
+    eq(receipt_number(final,"hard_deadline_ms"),22000);assert(final:find('"walking_area":"corridor"',1,true))
+    assert(final:find('"end_result":"explicit_end"',1,true));assert(not f:contains('"physical_movement"'))
+end)
+
+test("corridor keeps the four hundred millisecond input lease and exact actor guard",function()
+    local f=fixture();f:verify();eq(MineCome.BeginMovementFollower("b","corridor"),true)
+    eq(MineCome.ApplyMovementFollower("b",1,125.9,2039.5,56.5),true);f:advance(.52)
+    eq(player.position.x,120);eq(player.position.y,2040);eq(player.position.z,56);eq(f:activeTimers(),0)
+    assert(f:contains('"end_result":"frame_lease_expired"'))
+    for _,change in ipairs({function() player.id=io.stderr end,function() player.position.x=126.251 end,
+        function() player.velocity.x=.201 end,function() player.actor.IsDead=function() return true end end}) do
+        f=fixture();f:verify();eq(MineCome.BeginMovementFollower("b","corridor"),true)
+        eq(MineCome.ApplyMovementFollower("b",1,125.9,2039.5,56.5),true);f:advance(.04)
+        local count=#f.writes;change();f:advance(.08)
+        eq(#f.writes,count);eq(f:activeTimers(),0);assert(f:contains('"event":"restore_failed"'))
+    end
+end)
+
+test("corridor hard deadline and write budget never renew under fresh poses",function()
+    local f=fixture();f:verify();eq(MineCome.BeginMovementFollower("b","corridor"),true)
+    local p=MineCome._movement_probe.follower;local hard=p.timers.hard
+    for seq=1,220 do
+        if not MineCome._movement_probe.follower or p.restoring then break end
+        eq(MineCome.ApplyMovementFollower("b",seq,125.9,2039.5,56.5),true)
+        eq(p.timers.hard,hard);near(p.deadline,22);f:advance(.1)
+    end
+    f:advance(.1);eq(MineCome._movement_probe.follower,nil);eq(f:activeTimers(),0);eq(player.position.x,120)
+    assert(#f.writes>500 and #f.writes<=550);assert(f.writes[#f.writes].at<=22)
+    local expiries,receipts=0,0
+    for _,event in ipairs(f.queue) do if event.name=="MineCome_MovementFollowerExpiry" then expiries=expiries+1 end end
+    for _,line in ipairs(f.logs) do if line:find('[MineComeMovementFollower]',1,true) then receipts=receipts+1 end end
+    eq(expiries,1);assert(receipts<=512)
+    assert(f:contains('"end_result":"hard_deadline"') or f:contains('"end_result":"write_budget"'))
 end)
 print(string.format("Verified %d standalone movement-probe cases in %s; engine bindings simulated",passed,_VERSION))
 print(string.format("Maximum tested buffered receipt: %d bytes plus CRLF; serialized subset of eight retained observations",maximum_buffered_receipt_bytes))

@@ -2,12 +2,15 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Bounded real-server-pose follower; does not launch/stop KCD2 or capture its keys.
 [CmdletBinding()]
-param([switch]$PreflightOnly,[switch]$HudWorld,[switch]$WideWalking)
+param([switch]$PreflightOnly,[switch]$HudWorld,[switch]$WideWalking,[switch]$CorridorWalking,[switch]$CorridorWalkOnly)
 $ErrorActionPreference='Stop'
 if($WideWalking -and -not $HudWorld){throw 'Wide scripted walking requires the explicit coupled HUD world.'}
+if($CorridorWalking -and (-not $HudWorld -or $WideWalking)){throw 'Corridor walking requires its separate coupled HUD world.'}
+if($CorridorWalkOnly -and -not $CorridorWalking){throw 'Walk-only requires corridor movement.'}
 . (Join-Path $PSScriptRoot 'KcdToolsProbeHelpers.ps1')
 . (Join-Path $PSScriptRoot 'MovementTraceReceiver.ps1')
 . (Join-Path $PSScriptRoot 'HudGroundMovement.ps1')
+. (Join-Path $PSScriptRoot 'HudGroundCorridor.ps1')
 . (Join-Path $PSScriptRoot 'CoupledMovementProof.ps1')
 . (Join-Path $PSScriptRoot 'powershell7.ps1')
 if($HudWorld){. (Join-Path $PSScriptRoot 'HudGpuBudget.ps1')}
@@ -33,7 +36,7 @@ function Send-FreshPose($Frame,$Target) {
     $culture=[Globalization.CultureInfo]::InvariantCulture
     $x=([double]$Target.x).ToString('R',$culture);$y=([double]$Target.y).ToString('R',$culture);$z=([double]$Target.z).ToString('R',$culture)
     $apply="MineCome.ApplyMovementFollower('$($probe.Run)',$([long]$Frame.seq),$x,$y,$z)"
-    $areaArgument=if($WideWalking){",'wide'"}else{''}
+    $areaArgument=if($CorridorWalking){",'corridor'"}elseif($WideWalking){",'wide'"}else{''}
     $begin="MineCome.BeginMovementFollower('$($probe.Run)'$areaArgument)"
     $command=if($followerStarted){"#$apply"}else{"#if $begin then $apply end"}
     if($HudWorld -and -not $followerStarted){
@@ -74,11 +77,19 @@ try {
         if($noLinkVerified){break};Start-Sleep -Milliseconds 30
     } while([DateTime]::UtcNow -lt $contractDeadline)
     if(-not $noLinkVerified){throw 'The actual actor no-link contract did not acknowledge; no Minecraft launch attempted.'}
-    $captureOutput=@(& (Join-Path $PSScriptRoot 'Test-KcdGroundProbe.ps1') -Patch -WideWalking:$WideWalking)
-    $capture=@($captureOutput | Where-Object { $_ -isnot [string] -and $_.GroundPatchFile })
-    if($capture.Count -ne 1){throw 'One complete live KCD ground patch is required.'}
-    $patchFile=$capture[0].GroundPatchFile
-    if($HudWorld){$livePatch=Read-HudLiveGroundPatch $patchFile $context.ProjectRoot $context -WideWalking:$WideWalking}
+    if($CorridorWalking){
+        $captureOutput=@(& (Join-Path $PSScriptRoot 'Test-KcdGroundCorridor.ps1'))
+        $capture=@($captureOutput | Where-Object { $_ -isnot [string] -and $_.PSObject.Properties['GroundCorridorFile'] })
+        if($capture.Count -ne 1){throw 'One complete live KCD corridor is required.'}
+        $patchFile=$capture[0].GroundCorridorFile
+        $livePatch=Read-HudLiveGroundCorridor $patchFile $context.ProjectRoot $context
+    }else{
+        $captureOutput=@(& (Join-Path $PSScriptRoot 'Test-KcdGroundProbe.ps1') -Patch -WideWalking:$WideWalking)
+        $capture=@($captureOutput | Where-Object { $_ -isnot [string] -and $_.GroundPatchFile })
+        if($capture.Count -ne 1){throw 'One complete live KCD ground patch is required.'}
+        $patchFile=$capture[0].GroundPatchFile
+        if($HudWorld){$livePatch=Read-HudLiveGroundPatch $patchFile $context.ProjectRoot $context -WideWalking:$WideWalking}
+    }
     $traceFile=Join-Path $probe.Directory 'movement.ndjson'
     $traceReader.Path=$traceFile
     $minimumUtcMs=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
@@ -91,9 +102,12 @@ try {
     if($HudWorld){
         $hudDirectory=Join-Path $probe.Directory 'hud-stream'
         [void](Resolve-HudMovementEvidencePath $hudDirectory $context.ProjectRoot)
-        $arguments=@('-NoProfile','-File',(Join-Path $PSScriptRoot 'Start-HudStreamLab.ps1'),'-Standalone','-GroundMovementCoupled',
-            '-GroundPatchFile',$patchFile,'-MovementTraceFile',$traceFile,'-EvidenceDirectory',$hudDirectory)
+        $selector=if($CorridorWalking){'-GroundCorridorCoupled'}else{'-GroundMovementCoupled'}
+        $terrainArgument=if($CorridorWalking){'-GroundCorridorFile'}else{'-GroundPatchFile'}
+        $arguments=@('-NoProfile','-File',(Join-Path $PSScriptRoot 'Start-HudStreamLab.ps1'),'-Standalone',$selector,
+            $terrainArgument,$patchFile,'-MovementTraceFile',$traceFile,'-EvidenceDirectory',$hudDirectory)
         if($WideWalking){$arguments+='-WideWalking'}
+        if($CorridorWalkOnly){$arguments+='-GroundCorridorWalkOnly'}
     }
     if($HudWorld){
         $hostBudgetSession=New-MineComeHudGpuBudget $context
@@ -116,7 +130,7 @@ try {
             if(Test-Path -LiteralPath $readyPath){
                 [void](Resolve-HudMovementEvidencePath $readyPath $context.ProjectRoot)
                 $hudReady=Read-HudMovementJson $readyPath
-                Assert-CoupledHudReady $hudReady $helper.Id $helperStartFileTime $minimumUtcMs -WideWalking:$WideWalking
+                Assert-CoupledHudReady $hudReady $helper.Id $helperStartFileTime $minimumUtcMs -WideWalking:$WideWalking -CorridorWalking:$CorridorWalking -CorridorWalkOnly:$CorridorWalkOnly
                 if($hudReady.expires_utc_ms -le [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()){throw 'HUD readiness already expired.'}
                 $producer=Get-Process -Id $hudReady.producer_pid -ErrorAction Stop
                 try{
@@ -125,7 +139,7 @@ try {
                     $producerIdentity=[pscustomobject]@{Pid=$producer.Id;Path=$producer.Path;StartedUtc=$producer.StartTime.ToUniversalTime()}
                 }finally{$producer.Dispose()}
                 $hudReadyHash=(Get-FileHash -LiteralPath $readyPath).Hash
-                $receiver=New-MineComeTraceReceiver $patchFile $minimumUtcMs -ExpectedHudSave $hudReady.save -ScriptedHudCoupled -WideWalking:$WideWalking
+                $receiver=New-MineComeTraceReceiver $patchFile $minimumUtcMs -ExpectedHudSave $hudReady.save -ScriptedHudCoupled:(-not $CorridorWalking) -WideWalking:$WideWalking -CorridorWalking:$CorridorWalking -CorridorWalkOnly:$CorridorWalkOnly -Corridor $(if($CorridorWalking){$livePatch}else{$null})
                 if($receiver.PatchHash -cne $livePatch.Hash){throw 'Captured terrain changed before HUD trace binding.'}
             }else{
                 if($helper.HasExited){throw 'Owned HUD helper exited before exact save readiness.'}
@@ -136,7 +150,7 @@ try {
             $producer=Get-Process -Id $producerIdentity.Pid -ErrorAction Stop
             try{if($producer.Path -ine $producerIdentity.Path -or $producer.StartTime.ToUniversalTime() -ne $producerIdentity.StartedUtc){throw 'HUD producer process changed during movement.'}}finally{$producer.Dispose()}
         }
-        $lines=@(Read-CoupledTraceLines $traceReader)
+        $lines=@(Read-CoupledTraceLines $traceReader -CorridorWalking:$CorridorWalking)
         if($lines.Count -lt $lineCount) { throw 'Movement trace was replaced/truncated.' }
         $candidate=$null
         for($index=$lineCount;$index -lt $lines.Count;$index++) {
@@ -168,13 +182,13 @@ try {
         if($restored){break}
     } while([DateTime]::UtcNow -lt $restoreDeadline)
     if(-not $restored){throw 'The exact KCD player/camera follower restoration was not verified.'}
-    if($HudWorld){[void](Assert-CoupledFollowerProof $receipts $forwarded.ToArray() $probe.Run $receiver.Center -WideWalking:$WideWalking)}
+    if($HudWorld){[void](Assert-CoupledFollowerProof $receipts $forwarded.ToArray() $probe.Run $receiver.Center -WideWalking:$WideWalking -CorridorWalking:$CorridorWalking -CorridorWalkOnly:$CorridorWalkOnly)}
     $applied=@($receipts | Where-Object { $_.event -eq 'applied' -and $_.readback -eq $true -and $null -ne $_.follow_error -and $_.follow_error -le 0.15 })
     if($applied.Count -lt 3){throw 'Insufficient delayed KCD player/camera readbacks from real server samples.'}
     $phases=@($forwarded | Where-Object { $_.TraceSeq -in @($applied.seq) } | ForEach-Object Phase | Sort-Object -Unique)
-    if('WALKING' -notin $phases -or ('JUMPING' -notin $phases -and 'LANDING' -notin $phases)) { throw 'Walking and airborne trace phases were not both reflected in KCD receipts.' }
+    if('WALKING' -notin $phases -or (-not $CorridorWalkOnly -and 'JUMPING' -notin $phases -and 'LANDING' -notin $phases)) { throw 'Required movement phases were not reflected in KCD receipts.' }
     $xRange=($applied.target.x | Measure-Object -Minimum -Maximum);$zRange=($applied.target.z | Measure-Object -Minimum -Maximum)
-    if($xRange.Maximum-$xRange.Minimum -lt 0.3 -or $zRange.Maximum-$zRange.Minimum -lt 0.5) { throw 'KCD receipts did not reflect sufficient real walking and vertical jumping displacement.' }
+    if($xRange.Maximum-$xRange.Minimum -lt 0.3 -or (-not $CorridorWalkOnly -and $zRange.Maximum-$zRange.Minimum -lt 0.5)) { throw 'KCD receipts did not reflect sufficient real movement displacement.' }
     $finishDeadline=[DateTime]::UtcNow.AddSeconds(130)
     while(-not $helper.HasExited -and [DateTime]::UtcNow -lt $finishDeadline){Start-Sleep -Milliseconds 100}
     if(-not $helper.HasExited){throw 'Owned Minecraft helper normal shutdown remained pending; no game process was stopped.'}
@@ -187,11 +201,11 @@ try {
         if((Get-FileHash -LiteralPath $readyPath).Hash -cne $hudReadyHash -or (Get-FileHash -LiteralPath $patchFile).Hash.ToLowerInvariant() -cne $receiver.PatchHash){
             throw 'Readiness or captured patch changed during the bounded run.'
         }
-        $finalLines=@(Read-CoupledTraceLines $traceReader)
+        $finalLines=@(Read-CoupledTraceLines $traceReader -CorridorWalking:$CorridorWalking)
         if($finalLines.Count -ne $lineCount -or $traceReader.Bytes.Length -eq 0 -or $traceReader.Bytes[-1] -ne 10){
             throw 'Movement trace appended after its end or retained an incomplete tail.'
         }
-        $hudProof=Assert-CoupledHudCompletion $hudVerification $hudReady $guest $receiver $traceFile $helper.Id $helperStartFileTime $helperHash -WideWalking:$WideWalking
+        $hudProof=Assert-CoupledHudCompletion $hudVerification $hudReady $guest $receiver $traceFile $helper.Id $helperStartFileTime $helperHash -WideWalking:$WideWalking -CorridorWalking:$CorridorWalking -CorridorWalkOnly:$CorridorWalkOnly
         $hudVerificationHash=(Get-FileHash -LiteralPath $verificationPath).Hash
         $traceHash=(Get-FileHash -LiteralPath $traceFile).Hash
         $minecraftPassed=$helper.ExitCode -eq 0 -and $log -match ('(?m)^HUD_STREAM_VERIFIED run='+$hudReady.run+' ')
@@ -231,6 +245,8 @@ finally {
         try { $fresh=Read-MineComeProbeLog $context $probe.Offset;$fresh|Set-Content -LiteralPath (Join-Path $probe.Directory 'fresh-kcd.log');@((Get-MineComeProbeReceipts $fresh 'MineComeMovementFollower' $probe.Run))|ConvertTo-Json -Depth 8|Set-Content -LiteralPath (Join-Path $probe.Directory 'kcd-receipts.json') } catch { $_.Exception.Message|Set-Content -LiteralPath (Join-Path $probe.Directory 'capture-error.txt') }
         $verification=[ordered]@{Kind='Bounded real Minecraft server to KCD player/camera follower';Run=$probe.Run;GamePid=$context.GamePid;GamePath=$context.GamePath;GameStartedUtc=$context.GameStartedUtc;GameHash=$context.GameHash;SourceHash=$probe.SourceHash;SnapshotHash=$probe.SnapshotHash;FreshLogOffset=$probe.Offset;FunctionReloadVerified=$probe.FunctionReloadVerified;HelperPid=$(if($helper){$helper.Id}else{$null});HelperStartedUtc=$helperStarted;ForwardedFrames=$forwarded.Count;FollowerStartRequested=$followerStarted;FollowerStarted=(@($receipts | Where-Object { $_.event -eq 'begin' -and $_.result -eq 'awaiting_first_pose' }).Count -eq 1);RestorationVerified=$restored;CleanupConfirmed=$cleanupConfirmed;TracePass=$tracePassed;MinecraftPass=$minecraftPassed;CoupledMovementPass=$coupledPassed;HudWorld=[bool]$HudWorld;HudReady=$hudReady;HudReadySha256=$hudReadyHash;HudVerificationFile=$(if($hudDirectory){Join-Path $hudDirectory 'verification.json'}else{$null});HudVerificationSha256=$hudVerificationHash;HudGroundProof=$hudProof;HostGpuBudget=$hostBudgetEvidence;GroundPatchFile=$patchFile;TraceSha256=$traceHash;KcdHudCompositingVerified=$false;KcdKeyboardForwardingVerified=$false;FullWorldMovementAuthorityVerified=$false;Failure=$failure}
         if($WideWalking){$verification.walking_area='wide'}
+        if($CorridorWalking){$verification.walking_area='corridor'}
+        if($CorridorWalkOnly){$verification.corridor_walk_only=$true}
         $verification | ConvertTo-Json -Depth 12|Set-Content -LiteralPath (Join-Path $probe.Directory 'verification.json')
     }
     if($traceReader.Stream){$traceReader.Stream.Dispose()}

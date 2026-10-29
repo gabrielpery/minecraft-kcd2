@@ -27,6 +27,8 @@ param(
     [switch]$Standalone,
     [switch]$GroundMovementFixture,
     [switch]$GroundCorridorFixture,
+    [switch]$GroundCorridorCoupled,
+    [switch]$GroundCorridorWalkOnly,
     [switch]$GroundMovementCoupled,
     [string]$GroundPatchFile,
     [string]$MovementTraceFile,
@@ -46,8 +48,10 @@ function Assert-HudGroundChildMode([bool]$Fixture,[bool]$Standalone,[string]$Pat
     if(-not ($Fixture -or $Coupled) -and $Patch){throw 'Ground patch requires explicit HUD ground movement.'}
     if(($Coupled -and -not $Trace) -or (-not $Coupled -and $Trace)){throw 'Movement trace requires explicit coupled HUD mode.'}
 }
-function Assert-HudCorridorChildMode([bool]$Corridor,[bool]$Standalone,[string]$Patch,[bool]$OtherMode){
-    if($Corridor -and (-not $Standalone -or -not $Patch -or $OtherMode)){throw 'Corridor requires only its standalone HUD and immutable manifest.'}
+function Assert-HudCorridorChildMode([bool]$Corridor,[bool]$Standalone,[string]$Patch,[bool]$OtherMode,[bool]$Coupled=$false,[string]$Trace='',[bool]$WalkOnly=$false){
+    if($WalkOnly -and -not $Coupled){throw 'Walk-only requires coupled corridor.'}
+    if(($Corridor -and $Coupled) -or (($Corridor -or $Coupled) -and (-not $Standalone -or -not $Patch -or $OtherMode))){throw 'Corridor requires exactly one standalone HUD mode and immutable manifest.'}
+    if(($Coupled -and -not $Trace) -or ($Corridor -and $Trace)){throw 'Only coupled corridor requires a follower trace.'}
 }
 function Assert-HudWalkingAimedChildMode([bool]$AimedBlocks,[bool]$Standalone,[bool]$PhysicalFixture,[bool]$ExtendedWalking,[bool]$OtherMode,[double]$Yaw=0) {
     if($AimedBlocks -and (-not $Standalone -or -not $PhysicalFixture -or -not $ExtendedWalking -or $OtherMode -or -not [double]::IsFinite($Yaw) -or $Yaw -ne 0)){
@@ -85,9 +89,9 @@ try {
     if($InputBackgroundTrial -and (-not $InputFixture -or $InputDelayFixture)){throw 'Background timing requires a standalone fixture without synthetic delays.'}
     if($OffscreenPresentation -and (-not $InputMode -or $InputBackgroundTrial -or $InputDelayFixture)){throw 'Offscreen presentation requires UI input mode without other timing trials.'}
     if($InputOffscreenTrial -and (-not $InputFixture -or -not $OffscreenPresentation)){throw 'Offscreen timing requires an explicit offscreen standalone fixture.'}
-    Assert-HudCorridorChildMode ([bool]$GroundCorridorFixture) ([bool]$Standalone) $GroundPatchFile ([bool]($InputMode -or $LiveMouse -or $InputFixture -or $InputPointerFixture -or $StoneFixture -or $StoneLive -or $AimedStone -or $StoneTokenFile -or $InputDelayFixture -or $InputBackgroundTrial -or $OffscreenPresentation -or $InputOffscreenTrial -or $GroundMovementFixture -or $GroundMovementCoupled -or $MovementTraceFile -or $PhysicalMovement -or $PhysicalMovementFixture -or $ExtendedWalking -or $WideWalking -or $AimedBlocks -or $FacingSeed -or $WalkingAimed -or $HostViewFile))
-    if($GroundCorridorFixture){
-        # Separate standalone surface; never forwarded to the live movement protocol.
+    Assert-HudCorridorChildMode ([bool]$GroundCorridorFixture) ([bool]$Standalone) $GroundPatchFile ([bool]($InputMode -or $LiveMouse -or $InputFixture -or $InputPointerFixture -or $StoneFixture -or $StoneLive -or $AimedStone -or $StoneTokenFile -or $InputDelayFixture -or $InputBackgroundTrial -or $OffscreenPresentation -or $InputOffscreenTrial -or $GroundMovementFixture -or $GroundMovementCoupled -or $PhysicalMovement -or $PhysicalMovementFixture -or $ExtendedWalking -or $WideWalking -or $AimedBlocks -or $FacingSeed -or $WalkingAimed -or $HostViewFile)) ([bool]$GroundCorridorCoupled) $MovementTraceFile ([bool]$GroundCorridorWalkOnly)
+    if($GroundCorridorFixture -or $GroundCorridorCoupled){
+        # Both use an isolated HUD receiver; only coupled corridor emits server poses.
     }elseif($PhysicalMovementFixture){
         if(-not $Standalone -or -not $GroundPatchFile -or -not $MovementTraceFile -or -not $HostViewFile -or
             $PhysicalMovement -or $InputMode -or $LiveMouse -or $OffscreenPresentation -or $GroundMovementFixture -or $GroundMovementCoupled -or $InputFixture -or $InputPointerFixture -or $StoneFixture -or $StoneLive -or $AimedStone -or $InputDelayFixture -or $InputBackgroundTrial -or $InputOffscreenTrial){
@@ -105,6 +109,8 @@ try {
     $arguments=@('-p',$minecraft,'--no-daemon','runClient','-PminecomeHudStreamLab',"-PminecomeHudStreamRun=$Run","-PminecomeHudStreamTargetPid=$TargetPid","-PminecomeHudStreamTargetStart=$TargetStart","-PminecomeHudStreamExpiresUtcMs=$ExpiresUtcMs","-PminecomeHudStreamDirectory=$producerDirectory","-PminecomeHudStreamWidth=$Width","-PminecomeHudStreamHeight=$Height","-PminecomeHudStreamGuiScale=$GuiScale")
     if($Standalone){$arguments+='-PminecomeHudStreamStandalone'}
     if($GroundCorridorFixture){$arguments+=@('-PminecomeHudGroundCorridorFixture',"-PminecomeGroundPatchFile=$GroundPatchFile")}
+    if($GroundCorridorCoupled){$arguments+=@('-PminecomeHudGroundCorridorCoupled',"-PminecomeGroundPatchFile=$GroundPatchFile","-PminecomeMovementTraceFile=$MovementTraceFile")}
+    if($GroundCorridorWalkOnly){$arguments+='-PminecomeHudGroundCorridorWalkOnly'}
     if($GroundMovementFixture){$arguments+=@('-PminecomeHudGroundMovementFixture',"-PminecomeGroundPatchFile=$GroundPatchFile")}
     if($GroundMovementCoupled){$arguments+=@('-PminecomeHudGroundMovementCoupled',"-PminecomeGroundPatchFile=$GroundPatchFile","-PminecomeMovementTraceFile=$MovementTraceFile")}
     if($PhysicalMovement){$arguments+=@('-PminecomeHudPhysicalMovement',"-PminecomeGroundPatchFile=$GroundPatchFile","-PminecomeMovementTraceFile=$MovementTraceFile","-PminecomeHudHostViewFile=$HostViewFile")}

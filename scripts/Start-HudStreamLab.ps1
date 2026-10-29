@@ -5,15 +5,15 @@
 [CmdletBinding()]
 param([string]$JavaHome, [switch]$Standalone, [switch]$Composite, [string]$BundleDirectory, [switch]$PreflightOnly, [switch]$GroundMovementFixture,
     [switch]$GroundMovementCoupled,[switch]$WideWalking,[string]$GroundPatchFile,[string]$MovementTraceFile,[string]$EvidenceDirectory,
-    [switch]$GroundCorridorFixture,[string]$GroundCorridorFile,
+    [switch]$GroundCorridorFixture,[switch]$GroundCorridorCoupled,[switch]$GroundCorridorWalkOnly,[string]$GroundCorridorFile,
     [ValidateRange(320,1920)][int]$Width=1280,[ValidateRange(240,1080)][int]$Height=720,[ValidateRange(1,4)][int]$GuiScale=2)
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'HudGroundMovement.ps1')
 . (Join-Path $PSScriptRoot 'HudGroundCorridor.ps1')
-Assert-HudGroundCorridorMode ([bool]$GroundCorridorFixture) ([bool]$Standalone) ([bool]($Composite -or $GroundMovementFixture -or $GroundMovementCoupled -or $WideWalking -or $GroundPatchFile -or $MovementTraceFile)) $GroundCorridorFile
+Assert-HudGroundCorridorMode ([bool]$GroundCorridorFixture) ([bool]$Standalone) ([bool]($Composite -or $GroundMovementFixture -or $GroundMovementCoupled -or $WideWalking -or $GroundPatchFile)) $GroundCorridorFile ([bool]$GroundCorridorCoupled) $MovementTraceFile ([bool]$GroundCorridorWalkOnly)
 Assert-HudGroundMovementMode ([bool]$GroundMovementFixture) ([bool]$Standalone) ([bool]$Composite) ([bool]$GroundMovementCoupled) -WideWalking:$WideWalking
-Assert-HudGroundMovementPaths ([bool]$GroundMovementCoupled) $GroundPatchFile $MovementTraceFile
+if(-not $GroundCorridorCoupled){Assert-HudGroundMovementPaths ([bool]$GroundMovementCoupled) $GroundPatchFile $MovementTraceFile}
 . (Join-Path $PSScriptRoot 'KcdToolsProbeHelpers.ps1')
 $root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $minecraft=Join-Path $root 'minecraft'
@@ -39,9 +39,10 @@ if($Standalone) {
 } else {$context=Get-MineComeProbeContext}
 $groundContext=$null;$livePatch=$null;$corridorInput=$null
 if($GroundCorridorFile){$corridorInput=Read-HudGroundCorridorInput $GroundCorridorFile $root $true}
-if($GroundMovementCoupled){
+if($GroundMovementCoupled -or $GroundCorridorCoupled){
     $groundContext=Get-MineComeProbeContext
-    $livePatch=Read-HudLiveGroundPatch $GroundPatchFile $root $groundContext -WideWalking:$WideWalking
+    if($GroundCorridorCoupled){$corridorInput=Read-HudLiveGroundCorridor $GroundCorridorFile $root $groundContext}
+    else{$livePatch=Read-HudLiveGroundPatch $GroundPatchFile $root $groundContext -WideWalking:$WideWalking}
     $MovementTraceFile=Resolve-HudMovementEvidencePath $MovementTraceFile $root
     if((Test-Path -LiteralPath $MovementTraceFile) -or -not (Test-Path -LiteralPath (Split-Path -Parent $MovementTraceFile) -PathType Container)){throw 'Coupled HUD trace requires a new file in an existing evidence directory.'}
 }
@@ -92,7 +93,7 @@ try {
         (Get-Item -LiteralPath $patchPath).IsReadOnly=$true
         $arguments+=@('-GroundMovementFixture','-GroundPatchFile',$patchPath)
     }
-    if($GroundCorridorFixture){
+    if($GroundCorridorFixture -or $GroundCorridorCoupled){
         $patchPath=Join-Path $directory 'ground-corridor.json'
         if($corridorInput){
             Copy-Item -LiteralPath $corridorInput.Path -Destination $patchPath
@@ -103,7 +104,10 @@ try {
         }
         $patchHash=$corridorInput.Hash;$patchRun=$corridorInput.Run
         (Get-Item -LiteralPath $patchPath).IsReadOnly=$true
-        $arguments+=@('-GroundCorridorFixture','-GroundPatchFile',$patchPath)
+        $selector=if($GroundCorridorCoupled){'-GroundCorridorCoupled'}else{'-GroundCorridorFixture'}
+        $arguments+=@($selector,'-GroundPatchFile',$patchPath)
+        if($GroundCorridorCoupled){$arguments+=@('-MovementTraceFile',$MovementTraceFile)}
+        if($GroundCorridorWalkOnly){$arguments+='-GroundCorridorWalkOnly'}
     }
     if($GroundMovementCoupled){
         Assert-MineComeProbeContext $groundContext
@@ -126,8 +130,8 @@ try {
         Start-Sleep -Milliseconds 100
     }
     $ready=Read-BoundedJson $readyPath
-    Assert-HudGroundMovementMarkers $ready ([bool]$GroundMovementFixture) ([bool]$GroundMovementCoupled) -WideWalking:$WideWalking
-    Assert-HudGroundCorridorMarker $ready ([bool]$GroundCorridorFixture)
+    if(-not $GroundCorridorCoupled){Assert-HudGroundMovementMarkers $ready ([bool]$GroundMovementFixture) ([bool]$GroundMovementCoupled) -WideWalking:$WideWalking}
+    Assert-HudGroundCorridorMarker $ready ([bool]$GroundCorridorFixture) ([bool]$GroundCorridorCoupled) ([bool]$GroundCorridorWalkOnly)
     if($ready.schema -ne 1 -or $ready.run -cne $run -or $ready.source_kind -cne 'minecraft_vanilla_ui_stream_v1' -or $ready.mapping_bytes -ne 8294656 -or $ready.mapping_name -cne ('Local\MineComeHud_'+$run) -or $ready.mutex_name -cne ('Local\MineComeHudLock_'+$run) -or [string]$ready.target_pid -cne [string]$context.GamePid -or [string]$ready.target_start_filetime -cne $targetStart -or [long]$ready.expires_utc_ms -ne $expires) {throw 'Producer readiness does not match this fresh session.'}
     $producer=Get-Process -Id $ready.producer_pid -ErrorAction Stop
     try {
@@ -146,14 +150,14 @@ try {
     if($client.ExitCode -ne 0 -or $receiver.ExitCode -ne 0) {throw "Client/receiver exit failure: $($client.ExitCode)/$($receiver.ExitCode)"}
     $guest=Read-BoundedJson (Join-Path $producerDirectory 'stream-result.json')
     $native=Read-BoundedJson $receiverOutput
-    if($GroundCorridorFixture -and $guest.result -ceq 'failed'){
+    if(($GroundCorridorFixture -or $GroundCorridorCoupled) -and $guest.result -ceq 'failed'){
         $reason=if($guest.lab_evidence.PSObject.Properties.Name -contains 'failure'){$guest.lab_evidence.failure}else{'No failure detail recorded'}
         throw "Minecraft corridor failed: $reason"
     }
-    Assert-HudGroundMovementMarkers $guest ([bool]$GroundMovementFixture) ([bool]$GroundMovementCoupled) -WideWalking:$WideWalking
-    Assert-HudGroundCorridorMarker $guest ([bool]$GroundCorridorFixture)
+    if(-not $GroundCorridorCoupled){Assert-HudGroundMovementMarkers $guest ([bool]$GroundMovementFixture) ([bool]$GroundMovementCoupled) -WideWalking:$WideWalking}
+    Assert-HudGroundCorridorMarker $guest ([bool]$GroundCorridorFixture) ([bool]$GroundCorridorCoupled) ([bool]$GroundCorridorWalkOnly)
     if($GroundMovementFixture -or $GroundMovementCoupled){$groundProof=Assert-HudGroundMovementProof $guest $run $patchHash ([bool]$GroundMovementCoupled) $patchRun $MovementTraceFile -WideWalking:$WideWalking}
-    if($GroundCorridorFixture){$groundProof=Assert-HudGroundCorridorProof $guest $run $corridorInput}
+    if($GroundCorridorFixture -or $GroundCorridorCoupled){$groundProof=Assert-HudGroundCorridorProof $guest $run $corridorInput -Coupled:$GroundCorridorCoupled -TraceFile $MovementTraceFile -WalkOnly:$GroundCorridorWalkOnly}
     if($guest.run -cne $run -or $guest.result -cne 'passed' -or $native.run -cne $run -or $native.result -cne 'passed' -or $native.accepted_frames -lt 30 -or $native.closed_seen -ne $true -or $native.stale_hidden_verified -ne $true -or $native.fresh_resumption_verified -ne $true) {throw 'Continuous stream or freshness/closure evidence did not pass.'}
     foreach($expectedState in @(@(0,0),@(1,0),@(1,1),@(2,0))) {
         if(@($native.states_seen | Where-Object {$_.selected -eq $expectedState[0] -and $_.screen -eq $expectedState[1]}).Count -ne 1) {throw 'Native receiver did not observe every actual vanilla UI state.'}
@@ -166,6 +170,8 @@ finally {
     $verification=[ordered]@{schema=1;kind='minecome_hud_stream_controller_v1';run=$run;result=$(if($passed){'passed'}else{'failed'});failure=$failure;evidence=$directory;ground_movement_fixture=[bool]$GroundMovementFixture;ground_movement_coupled=[bool]$GroundMovementCoupled;ground_movement=$groundProof;ground_patch_sha256=$patchHash;ground_patch_run=$patchRun;movement_trace_file=$MovementTraceFile;target_kind=$(if($Standalone){'standalone_controller'}else{'kcd_tools'});target_pid=$context.GamePid;target_start_filetime=$targetStart;target_sha256=$context.GameHash;receiver_sha256=$receiverHash;compositor_armed=[bool]$armEvidence;composite_requested=[bool]$Composite;kcd_compositing_verified=$false;interactive_inventory_verified=$false;kcd_launched=$false;kcd_stopped=$false;created_utc_ms=$expires-180000;expires_utc_ms=$expires}
     if($WideWalking){$verification.walking_area='wide'}
     if($GroundCorridorFixture){$verification.ground_corridor_fixture=$true}
+    if($GroundCorridorCoupled){$verification.ground_corridor_coupled=$true;$verification.walking_area='corridor'}
+    if($GroundCorridorWalkOnly){$verification.corridor_walk_only=$true}
     $verification | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $directory 'verification.json') -Encoding utf8NoBOM
     if($receiver) {$receiver.Dispose()};if($client) {$client.Dispose()}
 }

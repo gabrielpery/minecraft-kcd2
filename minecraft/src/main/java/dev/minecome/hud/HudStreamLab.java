@@ -138,7 +138,7 @@ public final class HudStreamLab {
         HudAimedStoneMode.require(lab.aimedStone,lab.stoneMode,lab.stoneLive,lab.stoneFixture,lab.inputMode,lab.inputFixture);
         if(lab.groundMovementMode!=HudGroundMovementMode.Mode.NONE){
             try{lab.groundMovement=new HudGroundMovementFixture(Path.of(required("minecome.groundPatchFile")),identity.run(),lab.save,
-                    lab.groundMovementMode,lab.groundMovementMode==HudGroundMovementMode.Mode.COUPLED?Path.of(required("minecome.movementTraceFile")):null);}
+                    lab.groundMovementMode,lab.groundMovementMode.coupled()?Path.of(required("minecome.movementTraceFile")):null);}
             catch(java.io.IOException e){throw new IllegalArgumentException("HUD ground fixture patch invalid",e);}
         }
         ClientTickEvents.START_CLIENT_TICK.register(lab::timingTick);

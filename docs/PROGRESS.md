@@ -1,5 +1,50 @@
 # MineCome progress — 2026-10-29
 
+## Expanded terrain drives KCD walking — AUTOMATIC TWO-GAME PASS
+
+The new coupled corridor route follows real Minecraft server observations across
+the two-tile 12×8m surface while preserving the original capture alignment.
+It requires terrain from the exact running KCD process, exclusive mode/trace
+identities and the inset rectangle; existing physical/native-HUD profiles are
+unchanged. Paused Minecraft input still publishes advancing, fresh server
+observations, preventing an unnecessary follower lease expiry.
+
+Walking controller `3c51920138ab4cebab27a93304458ed8` passed: 36 forwarded frames,
+35 delayed native movement readbacks, actual KCD X displacement 6.076m from the
+capture origin, a return across the old X=4 edge, settled return and exact saved
+origin restoration. Maximum camera error was 0.058m, below the unchanged 0.15m
+limit. The native standalone receiver accepted 471 actual Minecraft HUD frames;
+collision/input cleanup, normal Minecraft shutdown and original FPS restoration
+passed. KCD PID31304 was then closed normally. No manual test was needed.
+
+Evidence: `runtime/evidence/coupled-movement-20261029-215241-3c51920138ab4cebab27a93304458ed8/verification.json`.
+Fresh terrain capture: `ground-corridor-20261029-215241-996020b00b0a4151aaace5cbe265de63`.
+Run `scripts/Test-CoupledGroundCorridor.ps1 -LaunchTestWorld` to automate a fresh
+world and both-game walking check; omit the launch flag to preserve an existing
+loaded world. PowerShell 7 is selected automatically. This does not establish
+physical input or native HUD composition over the corridor, or rolling terrain.
+
+The optional `-IncludeJump` remains a failing diagnostic. Controllers
+`608fc0a02eeb466c8d2ba61d3846de99` and `0522c94041d54470bfd3fce629a71254` completed
+actor movement, return, restoration and Minecraft/HUD proof, but recorded native
+camera-height deviations of 0.295m and 0.363m during landing. Actor readbacks matched
+every target exactly. A single 1ms-cadence experiment did not solve it and was
+reverted to the original 40ms cadence/budget. Both failures remain intact. The
+explicit walking profile skips jump, rejects jump trace phases and uses a distinct
+proof kind; all camera/position/freshness bounds remain unchanged.
+
+Focused validation passed: Java terrain/trace 2264, mode 183, legacy physical 383;
+Lua follower 96; PowerShell corridor follower 103, legacy coupled 97, trace receiver
+16 groups, wide profile 68, corridor helpers 39 and legacy ground helpers 134.
+An old-process capture was also rejected against the actual new KCD process.
+
+The complete one-command fresh-world route then passed independently as controller
+`123b870a55fe4ff1bdd40d64a8f45588`: 38 forwarded frames and native readbacks, maximum
+actual X displacement 5.872m, camera error below 0.051m, 480 HUD frames, full
+restoration and cleanup. The wrapper closed its owned KCD PID52588 normally;
+no KCD or Minecraft client remained. Evidence:
+`runtime/evidence/coupled-movement-20261029-215918-123b870a55fe4ff1bdd40d64a8f45588/verification.json`.
+
 ## Joined terrain with a fixed origin — STANDALONE ACTUAL-MINECRAFT PASS
 
 Two overlapping wide captures now form one immutable 12×8m collision surface,

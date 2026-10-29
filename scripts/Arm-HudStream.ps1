@@ -28,7 +28,7 @@ function Assert-HudAimedArmMode($Ready,[bool]$AimedExpected){
     }elseif($AimedExpected){throw 'Aimed stone guest readiness marker missing.'}
 }
 function Assert-HudNonFixtureArm($Ready){
-    foreach($field in @('ui_ground_movement_fixture','ui_ground_movement_coupled','ui_ground_corridor_fixture','standalone')){
+    foreach($field in @('ui_ground_movement_fixture','ui_ground_movement_coupled','ui_ground_corridor_fixture','ui_ground_corridor_coupled','corridor_walk_only','standalone')){
         $property=$Ready.PSObject.Properties[$field]
         if($null -ne $property -and ($property.Value -isnot [bool] -or $property.Value)){
             throw 'Standalone/ground fixture producer cannot arm live KCD composition.'

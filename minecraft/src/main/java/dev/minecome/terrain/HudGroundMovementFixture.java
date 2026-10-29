@@ -30,6 +30,7 @@ public final class HudGroundMovementFixture {
     private final GroundSurface patch;
     private final String save,hudRun;
     private final HudGroundMovementMode.Mode mode;
+    private final boolean walkOnly;
     private final Path traceFile;
     private MovementTraceSink trace;
     private String traceResult="not_started";
@@ -58,10 +59,12 @@ public final class HudGroundMovementFixture {
     public HudGroundMovementFixture(Path file,String run,String save,HudGroundMovementMode.Mode mode,Path traceFile) throws IOException {
         boolean wide=HudPhysicalMovementMode.wide(System.getProperties());
         if(wide && mode!=HudGroundMovementMode.Mode.COUPLED)throw new IllegalArgumentException("Wide HUD ground requires explicit coupled movement");
-        patch=mode==HudGroundMovementMode.Mode.CORRIDOR?GroundCorridor.read(file):GroundPatch.read(file,wide);
+        patch=mode.corridor()?GroundCorridor.read(file):GroundPatch.read(file,wide);
         this.save=save;this.hudRun=run;this.mode=mode;this.traceFile=traceFile;
+        walkOnly=HudGroundMovementMode.corridorWalkOnly(System.getProperties());
+        if(walkOnly&&mode!=HudGroundMovementMode.Mode.CORRIDOR_COUPLED)throw new IllegalArgumentException("Walk-only fixture requires coupled corridor mode");
         HudGroundMovementMode.requirePatch(mode,run,patch.run(),patch.sourceKind(),save);
-        if((mode==HudGroundMovementMode.Mode.COUPLED)!=(traceFile!=null) || (traceFile!=null && !traceFile.isAbsolute()))
+        if(mode.coupled()!=(traceFile!=null) || (traceFile!=null && !traceFile.isAbsolute()))
             throw new IllegalArgumentException("Only coupled HUD movement requires an absolute fresh trace path");
     }
     public void positionCorrection(){corrections.incrementAndGet();}
@@ -151,8 +154,8 @@ public final class HudGroundMovementFixture {
                 if(now-setupAt>8_000_000_000L)throw new IllegalStateException("HUD movement initial teleport handoff deadline");
                 return;
             }
-            sequence=new GroundMovementSequence(patch,now);
-            if(mode==HudGroundMovementMode.Mode.COUPLED)openTrace(client,now);
+            sequence=new GroundMovementSequence(patch,now,walkOnly);
+            if(mode.coupled())openTrace(client,now);
         }
         if(passed){release(client);return;}
         if(client.currentScreen!=null || client.getOverlay()!=null || client.isPaused())
@@ -162,7 +165,13 @@ public final class HudGroundMovementFixture {
                 if(corridorSync.pause(now,observed.sequence(),clientMotion,observed.motion())){
                     // Several client ticks can execute before the next integrated
                     // server tick. Release ordinary keys, never copy or alter a pose.
-                    release(client);lastTickAt=now;return;
+                    release(client);lastTickAt=now;
+                    // Key backpressure does not suspend authoritative observation.
+                    // The sink still rejects stale, repeated or premature samples.
+                    if(mode==HudGroundMovementMode.Mode.CORRIDOR_COUPLED && trace!=null &&
+                            (firstTraceSamplePending || sequence.phase()!=GroundMovementSequence.Phase.SETTLING))
+                        writeTrace(observed,firstTraceSamplePending);
+                    return;
                 }
             }catch(IllegalStateException e){sequence.fail(e.getMessage());throw e;}
         }
@@ -174,8 +183,11 @@ public final class HudGroundMovementFixture {
         if(sequence.phase()==GroundMovementSequence.Phase.PASSED){
             release(client);
             if(captures.getOrDefault(GroundMovementSequence.Phase.WALKING,0L)==0 ||
-                    captures.getOrDefault(GroundMovementSequence.Phase.JUMPING,0L)+captures.getOrDefault(GroundMovementSequence.Phase.LANDING,0L)==0)
-                throw new IllegalStateException("HUD was not captured during both walking and jump/landing");
+                    (!walkOnly&&captures.getOrDefault(GroundMovementSequence.Phase.JUMPING,0L)+captures.getOrDefault(GroundMovementSequence.Phase.LANDING,0L)==0))
+                throw new IllegalStateException("HUD was not captured during the required movement phases");
+            if(walkOnly&&(sequence.clientAir()||sequence.serverAir()||sequence.clientLand()||sequence.serverLand()||
+                    captures.getOrDefault(GroundMovementSequence.Phase.JUMPING,0L)+captures.getOrDefault(GroundMovementSequence.Phase.LANDING,0L)!=0))
+                throw new IllegalStateException("Walk-only corridor unexpectedly entered a jump/landing phase");
             if(patch.corridor() && (crossingHudFrames==0 || returnHudFrames==0))
                 throw new IllegalStateException("HUD was not captured beyond the original edge and during the return");
             if(trace!=null){
@@ -184,7 +196,7 @@ public final class HudGroundMovementFixture {
                 if(corrections.get()!=settledCorrections || !grounded(clientMotion) || !grounded(observed.motion()))
                     throw new IllegalStateException("HUD movement final trace lost its grounded correction-free proof");
                 if(!writeTrace(observed,true))return;
-                trace.finish(System.currentTimeMillis(),"passed","PASSED","Actual HUD-world client and server walk/air/landing proof complete");
+                trace.finish(System.currentTimeMillis(),"passed","PASSED",walkOnly?"Actual HUD-world client and server corridor walk/return proof complete":"Actual HUD-world client and server walk/air/landing proof complete");
                 traceResult="passed";
             }
             // Ending here keeps the later20s UI sequence outside the KCD follower.
@@ -280,10 +292,12 @@ public final class HudGroundMovementFixture {
     }
     public JsonObject evidence(MinecraftClient client){
         var e=new JsonObject();e.addProperty("schema",1);e.addProperty("kind",
-                mode==HudGroundMovementMode.Mode.CORRIDOR?"minecome_hud_ground_corridor_fixture_v1":
+                walkOnly?"minecome_hud_ground_corridor_walk_coupled_v1":
+                        mode==HudGroundMovementMode.Mode.CORRIDOR_COUPLED?"minecome_hud_ground_corridor_coupled_v1":
+                        mode==HudGroundMovementMode.Mode.CORRIDOR?"minecome_hud_ground_corridor_fixture_v1":
                         mode==HudGroundMovementMode.Mode.COUPLED?"minecome_hud_ground_movement_coupled_v1":"minecome_hud_ground_movement_fixture_v1");
         e.addProperty("save",save);e.addProperty("patch_run",patch.run());e.addProperty("patch_sha256",patch.sha256());
-        if(mode==HudGroundMovementMode.Mode.COUPLED){
+        if(mode.coupled()){
             e.addProperty("hud_run",hudRun);e.addProperty("trace_file",trace==null?traceFile.toString():trace.path().toString());
             e.addProperty("trace_records",trace==null?0:trace.records());e.addProperty("trace_closed",trace!=null&&trace.closed());
             e.addProperty("trace_result",traceResult);
@@ -338,7 +352,9 @@ public final class HudGroundMovementFixture {
             throw new IOException("HUD movement trace requires the owned workspace run directory");
         String world=save.substring("MineCome-HudStream-".length());
         var context=new MovementTraceSink.Context(patch.run(),patch.sha256(),patch.sourceKind(),save,world,
-                patch.centerX(),patch.centerY(),patch.centerZ(),MovementTraceSink.Profile.HUD_COUPLED,0,64,0,patch.wide());
+                patch.centerX(),patch.centerY(),patch.centerZ(),walkOnly?MovementTraceSink.Profile.HUD_CORRIDOR_WALK_COUPLED:
+                        patch.corridor()?MovementTraceSink.Profile.HUD_CORRIDOR_COUPLED:MovementTraceSink.Profile.HUD_COUPLED,
+                0,64,0,patch.wide()&&!patch.corridor());
         trace=MovementTraceSink.open(traceFile,project.resolve("runtime/evidence"),context,now,System.currentTimeMillis());
         traceResult="pending";firstTraceSamplePending=true;
     }
@@ -346,8 +362,8 @@ public final class HudGroundMovementFixture {
         var c=clientMotion;var s=observed.motion();
         // Timestamp only after selecting the immutable authoritative observation.
         boolean written=trace.sample(System.nanoTime(),System.currentTimeMillis(),sequence.phase().name(),
-                new MovementTraceSink.Motion(c.x(),c.y(),c.z(),c.vx(),c.vy(),c.vz(),c.onGround(),c.proxySupport(),patch.wide()),
-                new MovementTraceSink.Motion(s.x(),s.y(),s.z(),s.vx(),s.vy(),s.vz(),s.onGround(),s.proxySupport(),patch.wide()),
+                new MovementTraceSink.Motion(c.x(),c.y(),c.z(),c.vx(),c.vy(),c.vz(),c.onGround(),c.proxySupport(),patch.wide()&&!patch.corridor(),patch.corridor()),
+                new MovementTraceSink.Motion(s.x(),s.y(),s.z(),s.vx(),s.vy(),s.vz(),s.onGround(),s.proxySupport(),patch.wide()&&!patch.corridor(),patch.corridor()),
                 observed.sequence(),observed.at(),force);
         if(written)firstTraceSamplePending=false;
         return written;

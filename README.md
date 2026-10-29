@@ -34,10 +34,13 @@ now appears ahead of the initial camera view.
 
 A new [two-tile corridor lab](kcd2/MOVEMENT-LAB.md#two-tile-corridor)
 joins captured terrain into a 12×8 metre surface without changing the coordinate
-origin. An automatic actual-Minecraft run crossed the original patch edge, jumped,
-landed and walked back with its real HUD streaming. This is verified in the
-standalone Minecraft lab; live KCD movement across that join and rolling terrain
-updates remain unfinished. Existing live walking limits are unchanged.
+origin. An automatic two-game walking check now moves KCD's player and camera
+across the original patch edge and back from Minecraft server positions, then
+restores the starting position. HUD streaming and cleanup also pass. This route
+uses scripted controls and a standalone HUD receiver; the physical-input/native-HUD
+profiles still use their previous terrain limits. Rolling terrain remains unfinished.
+The separate jump diagnostic currently exposes a temporary KCD camera-height
+deviation during landing; it is not counted as a passing walking check.
 
 ## What works today
 

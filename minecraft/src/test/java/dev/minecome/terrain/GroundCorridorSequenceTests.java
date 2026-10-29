@@ -6,7 +6,10 @@ final class GroundCorridorSequenceTests {
     private static void check(boolean value,String message){checks++;if(!value)throw new AssertionError(message);}
     private static GroundMovementSequence.Motion ground(double x){return new GroundMovementSequence.Motion(x,64,.5,0,0,0,true,true);}
     private static GroundMovementSequence prepared()throws Exception{
-        var sequence=new GroundMovementSequence(GroundCorridorTests.flatCorridor(),0);
+        return prepared(false);
+    }
+    private static GroundMovementSequence prepared(boolean walkOnly)throws Exception{
+        var sequence=new GroundMovementSequence(GroundCorridorTests.flatCorridor(),0,walkOnly);
         sequence.update(0,ground(.5),ground(.5),0);
         check(sequence.update(2_000_000_000L,ground(.5),ground(.5),0).forward(),"Corridor begins with ordinary forward input after stable support");
         return sequence;
@@ -26,6 +29,19 @@ final class GroundCorridorSequenceTests {
         return sequence;
     }
     static int run()throws Exception{
+        var walk=prepared(true);
+        walk.update(2_050_000_000L,ground(5.7),ground(5.7),0);
+        walk.update(2_100_000_000L,ground(5.7),ground(5.7),0);
+        var walkHeld=walk.update(3_100_000_000L,ground(5.7),ground(5.7),0);
+        check(walkHeld.backward()&&!walkHeld.jump()&&walk.phase()==GroundMovementSequence.Phase.RETURNING,
+                "Explicit walk-only variant returns after outward settling without jumping");
+        walk.update(3_200_000_000L,ground(.8),ground(.8),0);
+        walk.update(3_250_000_000L,ground(.8),ground(.8),0);
+        walk.update(3_800_000_000L,ground(.8),ground(.8),0);
+        check(walk.phase()==GroundMovementSequence.Phase.PASSED&&walk.clientMaxX()==5.7&&walk.serverMaxX()==5.7&&
+                walk.clientReturnDistance()<.31&&walk.serverReturnDistance()<.31,
+                "Walk-only preserves both-thread crossing and grounded return proof");
+        check(!walk.clientAir()&&!walk.serverAir()&&!walk.clientLand()&&!walk.serverLand(),"Walk-only does not claim diagnostic jump or landing proof");
         var sequence=returning();
         check(sequence.update(4_550_000_000L,ground(.8),ground(1.1),0).backward(),"Return waits for both authoritative observations");
         check(!sequence.update(4_600_000_000L,ground(.8),ground(.8),0).backward(),"Return releases input before settling");

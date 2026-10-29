@@ -9,9 +9,10 @@ import dev.minecome.hud.HudMovementSession;
 /** Bounded prototype file IPC. Only immutable scalar observations enter this writer. */
 final class MovementTraceSink implements AutoCloseable {
     static final int MAX_RECORDS=200,MAX_BYTES=64*1024,END_RESERVE=2048;
+    static final int CORRIDOR_MAX_RECORDS=256,CORRIDOR_MAX_BYTES=256*1024;
     static final long PERIOD_NS=100_000_000L,MAX_SERVER_AGE_NS=250_000_000L;
     enum Profile {
-        GROUND("MineCome-Ground-"),HUD_COUPLED("MineCome-HudStream-"),
+        GROUND("MineCome-Ground-"),HUD_COUPLED("MineCome-HudStream-"),HUD_CORRIDOR_COUPLED("MineCome-HudStream-"),HUD_CORRIDOR_WALK_COUPLED("MineCome-HudStream-"),
         HUD_PHYSICAL(false,HudMovementSession.SHORT),HUD_PHYSICAL_FIXTURE(true,HudMovementSession.SHORT),
         HUD_PHYSICAL_EXTENDED(false,HudMovementSession.EXTENDED),HUD_PHYSICAL_EXTENDED_FIXTURE(true,HudMovementSession.EXTENDED);
         private final String savePrefix;
@@ -19,6 +20,8 @@ final class MovementTraceSink implements AutoCloseable {
         private final HudMovementSession session;
         Profile(String savePrefix){this.savePrefix=savePrefix;physical=false;fixture=false;session=HudMovementSession.SHORT;}
         Profile(boolean fixture,HudMovementSession session){savePrefix="MineCome-HudStream-";physical=true;this.fixture=fixture;this.session=session;}
+        boolean corridor(){return this==HUD_CORRIDOR_COUPLED||this==HUD_CORRIDOR_WALK_COUPLED;}
+        boolean walkOnly(){return this==HUD_CORRIDOR_WALK_COUPLED;}
         static Profile physical(boolean fixture,HudMovementSession session){
             return session.extended()?(fixture?HUD_PHYSICAL_EXTENDED_FIXTURE:HUD_PHYSICAL_EXTENDED):(fixture?HUD_PHYSICAL_FIXTURE:HUD_PHYSICAL);
         }
@@ -38,19 +41,24 @@ final class MovementTraceSink implements AutoCloseable {
             if(!run.matches("[A-Za-z0-9_-]{1,128}") || !patchSha256.matches("[0-9a-f]{64}") ||
                     !sourceKind.matches("[A-Za-z0-9_-]{1,64}") || !world.equals(UUID.fromString(world).toString()) ||
                     profile==null || (wide&&!profile.physical&&profile!=Profile.HUD_COUPLED) || !save.equals(profile.savePrefix+world) ||
-                    (profile!=Profile.GROUND && !sourceKind.equals(profile.fixture?"standalone_ground_fixture":"live_kcd_ground_patch")) || !finite(centerX,centerY,centerZ,anchorX,anchorY,anchorZ) ||
+                    (profile!=Profile.GROUND && !sourceKind.equals(profile.corridor()?"live_kcd_ground_corridor":profile.fixture?"standalone_ground_fixture":"live_kcd_ground_patch")) || !finite(centerX,centerY,centerZ,anchorX,anchorY,anchorZ) ||
                     Math.abs(anchorX)>.01 || Math.abs(anchorZ)>.01 || anchorY<52 || anchorY>76 ||
                     (!profile.physical && (anchorX!=0 || anchorY!=64 || anchorZ!=0)) ||
                     Math.abs(centerX)>10_000_000 || Math.abs(centerY)>10_000_000 || Math.abs(centerZ)>10_000_000)
                 throw new IllegalArgumentException("Invalid movement trace context");
         }
     }
-    record Motion(double x,double y,double z,double vx,double vy,double vz,boolean onGround,boolean proxySupport,boolean wide) {
+    record Motion(double x,double y,double z,double vx,double vy,double vz,boolean onGround,boolean proxySupport,boolean wide,boolean corridor) {
         Motion(double x,double y,double z,double vx,double vy,double vz,boolean onGround,boolean proxySupport){
             this(x,y,z,vx,vy,vz,onGround,proxySupport,false);
         }
+        Motion(double x,double y,double z,double vx,double vy,double vz,boolean onGround,boolean proxySupport,boolean wide){
+            this(x,y,z,vx,vy,vz,onGround,proxySupport,wide,false);
+        }
         Motion {
-            if(!finite(x,y,z,vx,vy,vz) || Math.abs(x)>(wide?4:2) || Math.abs(z)>(wide?4:2) || y<52 || y>76 ||
+            if(!finite(x,y,z,vx,vy,vz) || (wide&&corridor) ||
+                    (corridor?(x< -3.5 || x>7.5 || Math.abs(z)>3.5 || y<57.9 || y>67.5):
+                            (Math.abs(x)>(wide?4:2) || Math.abs(z)>(wide?4:2) || y<52 || y>76)) ||
                     Math.abs(vx)>4 || Math.abs(vy)>4 || Math.abs(vz)>4)
                 throw new IllegalArgumentException("Invalid/beyond-probe trace motion");
         }
@@ -88,7 +96,9 @@ final class MovementTraceSink implements AutoCloseable {
     /** Returns false for throttled, stale or non-advancing observations; these cannot drive a follower. */
     boolean sample(long nowNs,long utcMs,String phase,Motion client,Motion server,long serverSequence,long receivedAtNs,boolean force) throws IOException {
         if(closed)return false;
-        if(client.wide()!=context.wide()||server.wide()!=context.wide())throw new IllegalArgumentException("Motion and trace walking-area profiles differ");
+        if(client.wide()!=context.wide()||server.wide()!=context.wide() ||
+                client.corridor()!=context.profile().corridor() || server.corridor()!=context.profile().corridor())
+            throw new IllegalArgumentException("Motion and trace walking-area profiles differ");
         validatePhase(phase);
         boolean phaseLocked=context.profile().physical;
         long age=nowNs-receivedAtNs;
@@ -128,14 +138,15 @@ final class MovementTraceSink implements AutoCloseable {
     private String prefix(String kind,long utcMs) {
         if(utcMs<0)throw new IllegalArgumentException("Invalid UTC timestamp");
         return "{\"schema\":1,\"kind\":"+quote(kind)+",\"run\":"+quote(context.run())+
-                ",\"patch_sha256\":"+quote(context.patchSha256())+",\"source_kind\":"+quote(context.profile().physical?context.profile().session.traceSource(context.profile().fixture):context.sourceKind())+
+                ",\"patch_sha256\":"+quote(context.patchSha256())+",\"source_kind\":"+quote(context.profile().walkOnly()?"hud_corridor_walk_coupled":context.profile().corridor()?"hud_corridor_coupled":context.profile().physical?context.profile().session.traceSource(context.profile().fixture):context.sourceKind())+
                 ",\"save\":"+quote(context.save())+",\"world\":"+quote(context.world())+
-                ",\"seq\":"+(sequence+1)+",\"utc_ms\":"+utcMs+(context.wide()?",\"walking_area\":\"wide\"":"");
+                ",\"seq\":"+(sequence+1)+",\"utc_ms\":"+utcMs+(context.profile().corridor()?",\"walking_area\":\"corridor\"":context.wide()?",\"walking_area\":\"wide\"":"");
     }
     private void write(String record,boolean end) throws IOException {
         byte[] line=(record+"\n").getBytes(StandardCharsets.UTF_8);
-        int maximum=context.profile().session.traceBytes(),limit=end?maximum:maximum-END_RESERVE;
-        if(sequence>=(end?MAX_RECORDS:MAX_RECORDS-1) || bytes+line.length>limit)
+        int maximum=context.profile().corridor()?CORRIDOR_MAX_BYTES:context.profile().session.traceBytes(),limit=end?maximum:maximum-END_RESERVE;
+        int records=context.profile().corridor()?CORRIDOR_MAX_RECORDS:MAX_RECORDS;
+        if(sequence>=(end?records:records-1) || bytes+line.length>limit)
             throw new IOException("Movement trace bounded record/byte budget exhausted");
         output.write(line);output.flush();bytes+=line.length;sequence++;
     }
@@ -143,8 +154,11 @@ final class MovementTraceSink implements AutoCloseable {
         return "{\"x\":"+m.x()+",\"y\":"+m.y()+",\"z\":"+m.z()+",\"vx\":"+m.vx()+",\"vy\":"+m.vy()+
                 ",\"vz\":"+m.vz()+",\"on_ground\":"+m.onGround()+",\"proxy_support\":"+m.proxySupport()+"}";
     }
-    private static void validatePhase(String phase) {
-        if(!Set.of("SETTLING","WALKING","RESTING","JUMPING","LANDING","PASSED","FAILED","STOPPED").contains(phase))
+    private void validatePhase(String phase) {
+        if(context.profile().walkOnly()&&Set.of("JUMPING","LANDING").contains(phase))
+            throw new IllegalArgumentException("Walk-only corridor cannot publish a jump/landing phase");
+        if(!Set.of("SETTLING","WALKING","RESTING","JUMPING","LANDING","PASSED","FAILED","STOPPED").contains(phase) &&
+                !(context.profile().corridor() && Set.of("RETURNING","RETURN_REST").contains(phase)))
             throw new IllegalArgumentException("Invalid movement trace phase");
     }
     private static boolean finite(double... values){for(double value:values)if(!Double.isFinite(value))return false;return true;}
