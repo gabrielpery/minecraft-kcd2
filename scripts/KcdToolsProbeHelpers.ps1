@@ -6,20 +6,22 @@ if(-not ('MineCome.Probes.TcpOwner' -as [type])) {
     # IPv4 listeners keeps per-pose ownership checks within the frame lease.
     # https://learn.microsoft.com/windows/win32/api/iphlpapi/nf-iphlpapi-getextendedtcptable
     # https://learn.microsoft.com/windows/win32/api/tcpmib/ns-tcpmib-mib_tcprow_owner_pid
+    # https://learn.microsoft.com/windows/win32/api/iprtrmib/ne-iprtrmib-tcp_table_class
     Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
 namespace MineCome.Probes {
  public static class TcpOwner {
+  const int TcpTableOwnerPidListener=3; // The API returns only listening endpoints.
   [DllImport("iphlpapi.dll", SetLastError=false)]
   static extern uint GetExtendedTcpTable(IntPtr table,ref int size,bool order,int family,int tableClass,uint reserved);
   public static bool OwnsLoopback(int port,int expectedPid) {
-   int size=0; uint result=GetExtendedTcpTable(IntPtr.Zero,ref size,false,2,3,0);
+   int size=0; uint result=GetExtendedTcpTable(IntPtr.Zero,ref size,false,2,TcpTableOwnerPidListener,0);
    if(result!=122 || size<4 || size>1048576) throw new InvalidOperationException("IPv4 listener table sizing failed");
    for(int attempt=0;attempt<3;attempt++) {
     int capacity=size;IntPtr buffer=Marshal.AllocHGlobal(capacity);
     try {
-     result=GetExtendedTcpTable(buffer,ref size,false,2,3,0);
+     result=GetExtendedTcpTable(buffer,ref size,false,2,TcpTableOwnerPidListener,0);
      if(result==122) {if(size<4 || size>1048576) throw new InvalidOperationException("Listener table bound exceeded");continue;}
      if(result!=0 || size<4 || size>capacity) throw new InvalidOperationException("IPv4 listener table read failed");
      int count=Marshal.ReadInt32(buffer);if(count<0 || count>(size-4)/24) throw new InvalidOperationException("Malformed listener table");
@@ -28,7 +30,10 @@ namespace MineCome.Probes {
       IntPtr row=IntPtr.Add(buffer,4+i*24);uint localPort=unchecked((uint)Marshal.ReadInt32(row,8));
       int decoded=(int)(((localPort&255)<<8)|((localPort>>8)&255));if(decoded!=port)continue;
       matches++;
-      owned=Marshal.ReadInt32(row,0)==2 && unchecked((uint)Marshal.ReadInt32(row,4))==0x0100007fU && Marshal.ReadInt32(row,20)==expectedPid;
+      // This host has reported dwState=1 for a working HTTP listener in this
+      // listener-only table. Use the documented table class for listener status;
+      // exact loopback address, port uniqueness and PID ownership remain required.
+      owned=unchecked((uint)Marshal.ReadInt32(row,4))==0x0100007fU && Marshal.ReadInt32(row,20)==expectedPid;
      }
      return matches==1 && owned;
     } finally {Marshal.FreeHGlobal(buffer);}

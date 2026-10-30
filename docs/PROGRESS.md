@@ -1,7 +1,51 @@
 # MineCome progress — 2026-10-30
 
 
-## Cutoff cleanup repaired — ACTUAL-MINECRAFT PASS; KCD CHECK PENDING
+## Focused KCD2 cutoff check passed — user accepted
+
+The user-started `CutoffCleanup` check passed in KCD2. Run
+`c79b036835ea489a9183166bbb2b99ee` confirmed one top-face placement, automatically
+removed both owned stones on client and server, then continued walking and HUD
+publication. The user answered **“worked fine”** to the explicit question about
+automatic disappearance, the HUD remaining visible and the later step.
+
+The controller verified 156 forwarded movement frames / 156 native readbacks,
+144 protected imported cells, completed support/stone cleanup, player restoration
+and restoration of the original FPS cap. Minecraft exited with code 0. Two W
+presses were recorded, including one after block cleanup. Evidence:
+`runtime/evidence/hud-walking-aimed-20261030-135944-4e85c9966916415fa1b48be044b86054/verification.json`
+and the separate `manual-acceptance.json`. The generated proof remains unchanged;
+visual acceptance is explicitly the user's report. This focused northward check
+did not recross the old east boundary or repeat inventory, already covered by
+prior evidence. No repeated cutoff acceptance check is needed.
+
+## Live startup ownership check repaired
+
+The first 30 October retry was blocked before gameplay by the TCP ownership check.
+A direct bounded HTTP capability query succeeded, while Windows' listener-only
+owner table returned the unique 127.0.0.1:1403/KCD PID row with inconsistent
+`dwState` metadata (0/1 instead of 2). Sentinel-prefilled buffers reproduced it.
+The guard now derives listening status from the documented
+`TCP_TABLE_OWNER_PID_LISTENER` selection; exact address, port uniqueness, PID,
+executable hash and process start checks remain. Six actual ephemeral-listener
+checks passed, including wrong PID, wildcard/different loopback, duplicate-port
+and stopped-listener rejection. Fresh KCD preflight passed.
+Evidence: `runtime/evidence/cutoff-startup-20261030-134317/diagnosis.json`.
+
+The assistant-started HUD run `b0ca8e2fffef45ba92f5a11cf6b6c868` then timed out
+waiting for F8: zero input events and zero movement frames. The prompt-window
+check found only 6 seconds remaining, so no late user prompt was sent. Minecraft
+exited normally and the original KCD FPS cap was restored. This is not a test
+of the cutoff repair. Evidence:
+`runtime/evidence/hud-walking-aimed-20261030-135251-daff777e3805480e8b1ff19755b86db5/verification.json`.
+
+The expired arm was archived with its receipt and a fresh world launched.
+The user now starts `Start-HudWalkingAimed.ps1 -Scenario CutoffCleanup` directly;
+a cyan READY line gives instructions in the terminal. This removes chat delivery
+from the activation handoff without extending any lease or deadline. The next
+run passed with user acceptance, as recorded above.
+
+## Cutoff cleanup repaired — automatic and focused KCD checks passed
 
 The 12-second aiming cutoff now drains dispatched actions, removes only the
 confirmed owned stones, waits for matching client/server AIR, and removes the
@@ -28,9 +72,9 @@ Compiled Java and focused checks passed: physical 454, aim gate 32, aimed proof 
 PowerShell fixture 253, relay/closure 238, controller 257 and corridor entry 27.
 The explicit `-LateCutoff` fixture is opt-in. `-Scenario CutoffCleanup` prepares
 one shorter native acceptance check (place once, leave both blocks, watch cutoff
-and later walking). No native DLL change or new KCD launch was needed. Full
-combined corridor acceptance remains pending that check; preserve the failed
-29 October result below. Do not repeat unrelated control/latency checks.
+and later walking). No native DLL change was needed. The focused KCD check has
+now passed above; preserve the failed 29 October result below unchanged. Do not
+repeat unrelated control/latency checks.
 
 ## Combined live follow-up: cutoff cleanup failure
 

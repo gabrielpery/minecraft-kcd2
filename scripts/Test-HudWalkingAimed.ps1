@@ -229,6 +229,11 @@ try{
             if(-not $promptWindow.can_prompt){throw 'Not enough bounded time remains for the full physical HUD check.'}
             $prompt|ConvertTo-Json -Compress|Set-Content -LiteralPath (Join-Path $directory 'capture/input-prompt.json') -Encoding utf8NoBOM
             Write-Output "HUD_WALKING_AIMED_READY run=$run scenario=$Scenario press_F8=true activation_deadline_utc_ms=$($promptWindow.activation_deadline_utc_ms) prompt_deadline_utc_ms=$($promptWindow.effective_deadline_utc_ms) sampled_utc_ms=$($promptWindow.sampled_utc_ms) remaining_seconds_at_sample=$($promptWindow.remaining_seconds) reread_prompt_window_before_asking=true movement_seconds=$($walkingSession.SourceMs/1000) input_seconds=$($walkingSession.InputMs/1000) movement_session=$($walkingSession.Name) hud_seconds=30"
+            if($Scenario -eq 'CutoffCleanup'){
+                Write-Host "READY: switch to KCD2 and press F8 ONCE now (within $($promptWindow.remaining_seconds) seconds)." -ForegroundColor Cyan
+                Write-Host 'Find the north-side stone. Face it, tap/release W, then right-click its TOP once. Leave both blocks in place.'
+                Write-Host 'After both disappear automatically, take one short step. Keep KCD2 focused until the HUD closes after 30 seconds.'
+            }
         }
         if($receiver -and -not $traceEnded){
             $producer=Get-Process -Id $producerIdentity.Pid
