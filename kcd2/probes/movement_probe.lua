@@ -367,6 +367,10 @@ local WIDE_SCRIPTED_LIMITS = { hard_ms=FOLLOWER_MS,source_ms=SOURCE_LIMIT_MS,wri
 -- inspected anchor+2/down8 ray segment and a bounded vanilla jump above support.
 local CORRIDOR_SCRIPTED_LIMITS = { hard_ms=22000,source_ms=20000,writes=549,receipts=512,max_seq=256,
     walking_area="corridor",min_x=-3.5,max_x=7.5,min_y=-3.5,max_y=3.5,min_z=-6.1,max_z=3.5 }
+-- Explicit three-tile scripted extension replay. Same scripted clocks/budgets;
+-- only this profile may reach the admitted third strip. No physical authority.
+local EXTENSION_SCRIPTED_LIMITS = { hard_ms=22000,source_ms=20000,writes=549,receipts=512,max_seq=256,
+    walking_area="extension",min_x=-3.5,max_x=11.5,min_y=-3.5,max_y=3.5,min_z=-6.1,max_z=3.5 }
 local PHYSICAL_LIMITS = { hard_ms=FOLLOWER_MS,source_ms=SOURCE_LIMIT_MS,writes=511,receipts=128,radius=2 }
 local EXTENDED_LIMITS = { hard_ms=18000,source_ms=16000,writes=2047,receipts=256,session="extended",radius=2 }
 local WIDE_PHYSICAL_LIMITS = { hard_ms=FOLLOWER_MS,source_ms=SOURCE_LIMIT_MS,writes=511,receipts=128,radius=4,walking_area="wide" }
@@ -389,7 +393,7 @@ local function follower_sequence_limit(p) return follower_limits(p).max_seq or 2
 local function follower_target_allowed(p,target)
     if not vector(target) then return false end
     local limits=follower_limits(p)
-    if limits.walking_area=="corridor" then
+    if limits.walking_area=="corridor" or limits.walking_area=="extension" then
         return target.x>=p.origin.x+limits.min_x and target.x<=p.origin.x+limits.max_x
             and target.y>=p.origin.y+limits.min_y and target.y<=p.origin.y+limits.max_y
             and target.z>=p.origin.z+limits.min_z and target.z<=p.origin.z+limits.max_z
@@ -430,7 +434,7 @@ local function follower_receipt(p,event,result,s,seq,target,readback,follow_erro
     if p.records >= limits.receipts then return false end
     -- The corridor proof identifies the final restore against the original
     -- actor position, including when its last source pose stopped elsewhere.
-    if limits.walking_area=="corridor" and p.restoring then target=target or p.origin end
+    if (limits.walking_area=="corridor" or limits.walking_area=="extension") and p.restoring then target=target or p.origin end
     local clock = now()
     local lease = p.latest and clock and math.max(0,(LEASE_SECONDS-(clock-p.latest.received))*1000) or 0
     local physical,source_fields = "",""
@@ -531,7 +535,8 @@ local function follower_stop(p,reason)
 end
 local function begin_follower(run,physical,buffered,extended,walking_area)
     if not token(run) then return false,"invalid_run" end
-    if walking_area ~= nil and walking_area ~= "wide" and walking_area ~= "corridor" then return false,"invalid_walking_area" end
+    if walking_area ~= nil and walking_area ~= "wide" and walking_area ~= "corridor" and walking_area ~= "extension" then return false,"invalid_walking_area" end
+    if walking_area == "extension" and (physical or buffered or extended) then return false,"invalid_walking_area" end
     if walking_area == "corridor" and physical and not (buffered and extended) then return false,"invalid_walking_area" end
     if state.active or state.follower then return false,"busy" end
     local s,clock = snapshot(),now()
@@ -539,7 +544,8 @@ local function begin_follower(run,physical,buffered,extended,walking_area)
     if not clock then unsafe = "clock_unavailable" end
     if type(field(s.entity,"SetWorldPos")) ~= "function" then unsafe = "position_writer_unavailable" end
     if not Script or type(Script.SetTimerForFunction) ~= "function" or type(Script.KillTimer) ~= "function" then unsafe = "timer_unavailable" end
-    local limits = walking_area == "corridor" and (physical and CORRIDOR_EXTENDED_LIMITS or CORRIDOR_SCRIPTED_LIMITS)
+    local limits = walking_area == "extension" and EXTENSION_SCRIPTED_LIMITS
+        or walking_area == "corridor" and (physical and CORRIDOR_EXTENDED_LIMITS or CORRIDOR_SCRIPTED_LIMITS)
         or walking_area == "wide" and (not physical and WIDE_SCRIPTED_LIMITS or extended and WIDE_EXTENDED_LIMITS or WIDE_PHYSICAL_LIMITS)
         or extended and EXTENDED_LIMITS or physical and PHYSICAL_LIMITS or SCRIPTED_LIMITS
     local p = {run=run,entity=s.entity,id=s.id,created=clock,deadline=clock and clock+limits.hard_ms/1000,origin=copy(s.position.value),

@@ -61,6 +61,15 @@ automatic removal of both stones, continued HUD and later walking. The user
 confirmed it worked, and the controller verified cleanup and restoration. This
 focused check did not repeat the boundary crossing or inventory sequence. The
 earlier 8×8m combined live result remains valid. Rolling terrain remains unfinished.
+An automatic [terrain-extension check](kcd2/MOVEMENT-LAB.md#terrain-extension)
+now adds a third captured tile while Minecraft is walking, growing collision
+coverage from 12×8 to 16×8 metres without moving the coordinate origin. Both
+Minecraft threads confirm the handoff before walking beyond the old edge. The
+actual Minecraft/HUD check and automatic KCD2 player/camera follower have passed,
+including the return and restoration. This is one bounded tile admission from
+three pre-captured tiles; repeated terrain streaming and connection to the
+physical walking/blocks/inventory profile remain unfinished.
+
 The separate jump diagnostic currently exposes a temporary KCD camera-height
 deviation during landing; it is not counted as a passing walking check.
 

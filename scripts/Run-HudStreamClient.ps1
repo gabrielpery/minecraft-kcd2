@@ -27,6 +27,9 @@ param(
     [switch]$Standalone,
     [switch]$GroundMovementFixture,
     [switch]$GroundCorridorFixture,
+    [switch]$GroundExtensionFixture,
+    [switch]$GroundExtensionCoupled,
+    [switch]$GroundExtensionDelayFixture,
     [switch]$GroundCorridorCoupled,
     [switch]$GroundCorridorWalkOnly,
     [switch]$GroundMovementCoupled,
@@ -85,6 +88,10 @@ $env:GRADLE_USER_HOME=Join-Path $minecraft '.gradle-user-home'
 $producerDirectory=Join-Path $EvidenceDirectory 'capture'
 $exitCode=1
 try {
+    if($GroundExtensionDelayFixture -and -not ($GroundExtensionFixture -or $GroundExtensionCoupled)){throw 'Extension delay fixture requires an explicit extension mode.'}
+    if(($GroundExtensionFixture -or $GroundExtensionCoupled) -and (($GroundExtensionFixture -and $GroundExtensionCoupled) -or -not $Standalone -or -not $GroundPatchFile -or $GroundCorridorFixture -or $GroundCorridorCoupled -or $GroundCorridorWalkOnly -or $GroundMovementFixture -or $GroundMovementCoupled -or ($GroundExtensionFixture -and $MovementTraceFile) -or ($GroundExtensionCoupled -and -not $MovementTraceFile) -or $HostViewFile -or $PhysicalMovement -or $PhysicalMovementFixture -or $ExtendedWalking -or $WideWalking -or $CorridorWalking -or $AimedBlocks -or $FacingSeed -or $LateCutoff -or $WalkingAimed -or $InputMode -or $LiveMouse -or $InputFixture -or $InputPointerFixture -or $InputDelayFixture -or $InputBackgroundTrial -or $InputOffscreenTrial -or $OffscreenPresentation -or $StoneFixture -or $StoneLive -or $AimedStone -or $StoneTokenFile)){
+        throw 'Terrain extension requires one separate standalone scripted HUD profile; only coupled extension requires a new trace.'
+    }
     Assert-HudLateCutoffChildMode ([bool]$LateCutoff) ([bool]$Standalone) ([bool]$PhysicalMovementFixture) ([bool]$ExtendedWalking) ([bool]$CorridorWalking) ([bool]$AimedBlocks) ([bool]($WalkingAimed -or $PhysicalMovement -or $WideWalking -or $FacingSeed))
     Assert-HudWalkingAimedLiveChildMode ([bool]$WalkingAimed) ([bool]$ExtendedWalking) ([bool]$InputMode) ([bool]$LiveMouse) ([bool]$OffscreenPresentation) ([bool]($Standalone -or $PhysicalMovement -or $PhysicalMovementFixture -or $AimedBlocks -or $StoneFixture -or $StoneLive -or $AimedStone -or $GroundMovementFixture -or $GroundMovementCoupled -or $InputFixture -or $InputPointerFixture -or $InputDelayFixture -or $InputBackgroundTrial -or $InputOffscreenTrial)) $GroundPatchFile $MovementTraceFile $HostViewFile $StoneTokenFile
     Assert-HudWalkingAimedChildMode ([bool]$AimedBlocks) ([bool]$Standalone) ([bool]$PhysicalMovementFixture) ([bool]$ExtendedWalking) ([bool]($PhysicalMovement -or $InputMode -or $LiveMouse -or $OffscreenPresentation -or $GroundMovementFixture -or $GroundMovementCoupled -or $InputFixture -or $InputPointerFixture -or $StoneFixture -or $StoneLive -or $AimedStone -or $InputDelayFixture -or $InputBackgroundTrial -or $InputOffscreenTrial)) $PhysicalFixtureYaw -CorridorWalking:$CorridorWalking
@@ -105,7 +112,7 @@ try {
     if($InputOffscreenTrial -and (-not $InputFixture -or -not $OffscreenPresentation)){throw 'Offscreen timing requires an explicit offscreen standalone fixture.'}
     Assert-HudCorridorPhysicalChildMode ([bool]$CorridorWalking) ([bool]$ExtendedWalking) ([bool]$PhysicalMovement) ([bool]$PhysicalMovementFixture) ([bool]($WideWalking -or $FacingSeed -or $GroundCorridorFixture -or $GroundCorridorCoupled -or $GroundMovementFixture -or $GroundMovementCoupled)) ([bool]$WalkingAimed)
     Assert-HudCorridorChildMode ([bool]$GroundCorridorFixture) ([bool]$Standalone) $GroundPatchFile ([bool]($InputMode -or $LiveMouse -or $InputFixture -or $InputPointerFixture -or $StoneFixture -or $StoneLive -or $AimedStone -or $StoneTokenFile -or $InputDelayFixture -or $InputBackgroundTrial -or $OffscreenPresentation -or $InputOffscreenTrial -or $GroundMovementFixture -or $GroundMovementCoupled -or $PhysicalMovement -or $PhysicalMovementFixture -or $ExtendedWalking -or $WideWalking -or $AimedBlocks -or $FacingSeed -or $WalkingAimed -or $HostViewFile)) ([bool]$GroundCorridorCoupled) $MovementTraceFile ([bool]$GroundCorridorWalkOnly)
-    if($GroundCorridorFixture -or $GroundCorridorCoupled){
+    if($GroundCorridorFixture -or $GroundCorridorCoupled -or $GroundExtensionFixture -or $GroundExtensionCoupled){
         # Both use an isolated HUD receiver; only coupled corridor emits server poses.
     }elseif($PhysicalMovementFixture){
         if(-not $Standalone -or -not $GroundPatchFile -or -not $MovementTraceFile -or -not $HostViewFile -or
@@ -123,6 +130,9 @@ try {
     }
     $arguments=@('-p',$minecraft,'--no-daemon','runClient','-PminecomeHudStreamLab',"-PminecomeHudStreamRun=$Run","-PminecomeHudStreamTargetPid=$TargetPid","-PminecomeHudStreamTargetStart=$TargetStart","-PminecomeHudStreamExpiresUtcMs=$ExpiresUtcMs","-PminecomeHudStreamDirectory=$producerDirectory","-PminecomeHudStreamWidth=$Width","-PminecomeHudStreamHeight=$Height","-PminecomeHudStreamGuiScale=$GuiScale")
     if($Standalone){$arguments+='-PminecomeHudStreamStandalone'}
+    if($GroundExtensionDelayFixture){$arguments+='-PminecomeHudGroundExtensionDelayFixture'}
+    if($GroundExtensionCoupled){$arguments+=@('-PminecomeHudGroundExtensionCoupled',"-PminecomeGroundPatchFile=$GroundPatchFile","-PminecomeMovementTraceFile=$MovementTraceFile")}
+    if($GroundExtensionFixture){$arguments+=@('-PminecomeHudGroundExtensionFixture',"-PminecomeGroundPatchFile=$GroundPatchFile")}
     if($GroundCorridorFixture){$arguments+=@('-PminecomeHudGroundCorridorFixture',"-PminecomeGroundPatchFile=$GroundPatchFile")}
     if($GroundCorridorCoupled){$arguments+=@('-PminecomeHudGroundCorridorCoupled',"-PminecomeGroundPatchFile=$GroundPatchFile","-PminecomeMovementTraceFile=$MovementTraceFile")}
     if($GroundCorridorWalkOnly){$arguments+='-PminecomeHudGroundCorridorWalkOnly'}

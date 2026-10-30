@@ -1,6 +1,56 @@
 # MineCome progress — 2026-10-30
 
 
+## Terrain grows during walking — automatic two-game checks passed
+
+Implemented one adjacent-tile admission while Minecraft is walking. A strict
+three-tile capture plan retains the original coordinate anchor and all existing
+collision geometry. At X=4.5 the controller releases its movement keys, installs
+the successor collision map on the server thread, waits for a fresh matching
+observation and installs it on the client thread. Walking then resumes beyond the
+old X=8 edge, reaching at least X=9.5 before returning. Coverage grows from 12×8m
+to 16×8m; cleanup releases the exact generation on each thread. Existing physical
+corridor profiles and their limits are unchanged.
+
+The read-only KCD sampler uses 243 terrain rays. All three tiles are captured
+before walking; only collision admission happens on approach. This is not yet
+repeated streaming or integration with physical walking/blocks/inventory.
+
+Automatic real-Minecraft check on captured KCD terrain passed:
+`runtime/evidence/hud-stream-20261030-141708-0f1698cc05b742ae865fbef561b6abda/verification.json`.
+Both threads reached X=10.044m and returned within 0.166m of their start. Two HUD
+frames covered the handoff, 34 the extended area and 43 the return. All 190 imported
+cells remained literal air, both collision maps were released and Minecraft exited
+normally. No post-settle position corrections occurred.
+
+The automatic two-game follower also passed:
+`runtime/evidence/coupled-ground-extension-20261030-141952-bc914da302d44129b61d2202ebcb02a8/verification.json`.
+It verified 50 fresh real-server frames / 50 delayed KCD receipts, crossing and
+return, exact KCD restoration, normal Minecraft exit and restored FPS settings.
+
+A targeted review caught a handoff wait that could stop publishing poses while
+KCD's 400ms lease remained active. The wait now keeps publishing only fresh advancing
+server observations. The dedicated delayed-handoff regression passed:
+`runtime/evidence/coupled-ground-extension-20261030-142552-c0239cd2416e439f9d2955f733ad642c/verification.json`.
+Its actual 604.25ms handoff published 5 fresh trace samples; 56 frames/receipts reached
+KCD, both Minecraft threads reached X=10.030m, and 11/35/44 HUD frames covered
+handoff/extended area/return. Cleanup and player/FPS restoration passed. The 600ms
+fixture is explicit; normal admission has no artificial delay. Deadlines and
+leases were not enlarged.
+
+Java compilation, focused data/geometry/trace/mode tests, PowerShell capture and
+proof tests, and 104 Lua movement cases passed. Changed shared receiver paths also
+passed the existing corridor/physical regressions. `remapJar` succeeded. Native
+DLLs were unchanged. These runs use scripted controls and a standalone HUD receiver;
+new physical controls and visible KCD composition are deliberately not claimed.
+The assistant-owned fresh KCD world was closed normally after restoration; no
+manual testing was requested.
+
+Automatic entry points and scope: [movement lab](../kcd2/MOVEMENT-LAB.md#terrain-extension).
+Continue integrating the handoff with physical walking and the owned-block ledger,
+using combined automatic fixtures. The user has deferred manual tests to a larger
+milestone.
+
 ## Focused KCD2 cutoff check passed — user accepted
 
 The user-started `CutoffCleanup` check passed in KCD2. Run

@@ -26,6 +26,21 @@ public final class GroundCollision {
             if(serverSide)server=installation;else client=installation;
         }
     }
+    /** Called on the owning world thread after controls are released for the handoff.
+     * A stale owner cannot publish; old geometry is retained exactly by the verified plan.
+     */
+    public static synchronized boolean replace(BlockView world,GroundSurface expected,GroundSurface next,boolean serverSide) {
+        Objects.requireNonNull(world);Objects.requireNonNull(expected);Objects.requireNonNull(next);
+        if(!GroundExpansion.isTransition(expected,next))throw new IllegalArgumentException("Only the verified additive terrain successor is supported");
+        var own=serverSide?server:client;
+        if(own==null || own.world()!=world || !own.run().equals(expected.run()) || !own.sha256().equals(expected.sha256()))return false;
+        var replacement=prepare(world,next);
+        // Preserve lifetime query counters across generations so admission cannot
+        // erase proof that the original collision map was actually consumed.
+        replacement=new Installation(replacement.world(),replacement.run(),replacement.sha256(),replacement.shapes(),own.queries());
+        if(serverSide)server=replacement;else client=replacement;
+        return true;
+    }
     private static Installation prepare(BlockView world,GroundSurface patch){
         Objects.requireNonNull(world);Objects.requireNonNull(patch);
         Map<Long,VoxelShape> shapes=new HashMap<>();

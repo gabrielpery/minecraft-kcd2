@@ -12,7 +12,8 @@ final class GroundMovementSequence {
         Held(boolean forward,boolean jump){this(forward,jump,false);}
         static final Held NONE=new Held(false,false);
     }
-    private final GroundSurface patch;
+    private GroundSurface patch;
+    private final GroundExpansion expansion;
     private final boolean walkOnly;
     private final long startedAt;
     private Phase phase=Phase.SETTLING;
@@ -24,9 +25,18 @@ final class GroundMovementSequence {
     private double clientMaxX=.5,serverMaxX=.5,clientReturnDistance,serverReturnDistance,maxClientServerDistance;
     private String failure="";
     GroundMovementSequence(GroundSurface patch,long now){this(patch,now,false);}
-    GroundMovementSequence(GroundSurface patch,long now,boolean walkOnly){
+    GroundMovementSequence(GroundSurface patch,long now,boolean walkOnly){this(patch,now,walkOnly,null);}
+    GroundMovementSequence(GroundSurface patch,long now,boolean walkOnly,GroundExpansion expansion){
+        if(expansion!=null && (!walkOnly || !patch.sha256().equals(expansion.initial().sha256())))
+            throw new IllegalArgumentException("Extension sequence requires its initial surface and walk-only mode");
+        this.expansion=expansion;
         if(walkOnly&&!patch.corridor())throw new IllegalArgumentException("Walk-only sequence requires an explicit corridor");
         this.patch=patch;this.walkOnly=walkOnly;startedAt=now;phaseAt=now;
+    }
+    void acceptExpansion(GroundSurface next){
+        if(expansion==null || phase!=Phase.WALKING || patch!=expansion.initial() || next!=expansion.expanded())
+            throw new IllegalStateException("Unexpected movement surface handoff");
+        patch=next;
     }
     Phase phase(){return phase;}
     String failure(){return failure;}
@@ -66,8 +76,8 @@ final class GroundMovementSequence {
             case WALKING -> {
                 clientWalk=Math.max(clientWalk,client.distance(clientStart));serverWalk=Math.max(serverWalk,server.distance(serverStart));
                 if(patch.corridor()){
-                    if(client.x()<5.5 || server.x()<5.5){
-                        if(walkTicks++<60)return new Held(true,false);
+                    if(client.x()<(expansion==null?5.5:9.5) || server.x()<(expansion==null?5.5:9.5)){
+                        if(walkTicks++<(expansion==null?60:100))return new Held(true,false);
                         fail("Corridor walk did not cross the original edge on both threads");return Held.NONE;
                     }
                 }else if(patch.wide()){
@@ -85,7 +95,7 @@ final class GroundMovementSequence {
                 if(!grounded || client.horizontalSpeed()>0.015 || server.horizontalSpeed()>0.015){stableSince=-1;return Held.NONE;}
                 if(stableSince<0)stableSince=now;
                 if(now-phaseAt>=1_000_000_000L && now-stableSince>=500_000_000L) {
-                    double minimumWalk=patch.corridor()?5:patch.wide()?2.5:.3;
+                    double minimumWalk=expansion!=null?9:patch.corridor()?5:patch.wide()?2.5:.3;
                     if(clientWalk<minimumWalk || serverWalk<minimumWalk){fail("Vanilla walk not confirmed on both client and server");return Held.NONE;}
                     if(walkOnly)return beginReturn(now);
                     clientJump=client;serverJump=server;phase=Phase.JUMPING;phaseAt=now;jumpTicks=1;
@@ -113,7 +123,7 @@ final class GroundMovementSequence {
             case RETURNING -> {
                 clientReturnDistance=client.distance(clientStart);serverReturnDistance=server.distance(serverStart);
                 if(client.x()>clientStart.x()+.4 || server.x()>serverStart.x()+.4){
-                    if(returnTicks++<60)return new Held(false,false,true);
+                    if(returnTicks++<(expansion==null?60:100))return new Held(false,false,true);
                     fail("Corridor return did not reach both observed starting areas");return Held.NONE;
                 }
                 phase=Phase.RETURN_REST;phaseAt=now;stableSince=-1;

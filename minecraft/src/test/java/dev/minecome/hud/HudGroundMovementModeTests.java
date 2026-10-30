@@ -20,6 +20,12 @@ public final class HudGroundMovementModeTests {
     private static Properties corridor(){
         var p=fixture();p.remove("minecome.hudGroundMovementFixture");p.setProperty("minecome.hudGroundCorridorFixture","true");return p;
     }
+    private static Properties extension(){
+        var p=fixture();p.remove("minecome.hudGroundMovementFixture");p.setProperty("minecome.hudGroundExtensionFixture","true");return p;
+    }
+    private static Properties extensionCoupled(){
+        var p=coupled();p.remove("minecome.hudGroundMovementCoupled");p.setProperty("minecome.hudGroundExtensionCoupled","true");return p;
+    }
     private static Properties corridorCoupled(){
         var p=coupled();p.remove("minecome.hudGroundMovementCoupled");p.setProperty("minecome.hudGroundCorridorCoupled","true");return p;
     }
@@ -71,6 +77,43 @@ public final class HudGroundMovementModeTests {
             var p=corridor();p.setProperty("minecome.hudGroundCorridorFixture",value);reject(p,"malformed corridor selector "+value);
         }
         var corridorTrace=corridor();corridorTrace.setProperty("minecome.movementTraceFile","trace.ndjson");reject(corridorTrace,"corridor cannot send live follower trace");
+        check(HudGroundMovementMode.mode(extension())==HudGroundMovementMode.Mode.EXTENSION,"Extension has a distinct standalone mode");
+        check(HudGroundMovementMode.Mode.EXTENSION.corridor()&&!HudGroundMovementMode.Mode.EXTENSION.coupled(),"Extension uses composite ground without native trace authority");
+        check(!HudGroundMovementMode.require(extension()),"Extension cannot claim the legacy fixture");
+        for(String key:List.of("hudStreamLab","hudStreamStandalone","groundPatchFile")){
+            var p=extension();p.remove("minecome."+key);reject(p,"extension missing "+key);
+        }
+        for(String key:List.of("hudGroundMovementFixture","hudGroundMovementCoupled","hudGroundCorridorFixture","hudGroundCorridorCoupled","hudGroundCorridorWalkOnly","hudWideWalking","hudStreamInput","hudPhysicalMovement","hudPhysicalMovementFixture","hudPhysicalMovementExtended","hudWalkingAimed","hudWalkingAimedFixture","hudFacingSeedFixture","hudCorridorWalking")){
+            var p=extension();p.setProperty("minecome."+key,"true");reject(p,"extension conflict "+key);
+        }
+        for(String value:List.of("TRUE","yes","1","")){
+            var p=extension();p.setProperty("minecome.hudGroundExtensionFixture",value);reject(p,"malformed extension selector "+value);
+        }
+        var extensionTrace=extension();extensionTrace.setProperty("minecome.movementTraceFile","trace.ndjson");reject(extensionTrace,"extension cannot send follower trace");
+        check(HudGroundMovementMode.mode(extensionCoupled())==HudGroundMovementMode.Mode.EXTENSION_COUPLED,"Coupled extension has its explicit mode");
+        check(HudGroundMovementMode.Mode.EXTENSION_COUPLED.extension()&&HudGroundMovementMode.Mode.EXTENSION_COUPLED.coupled(),"Coupled extension selects plan and trace together");
+        for(String key:List.of("hudStreamLab","hudStreamStandalone","groundPatchFile","movementTraceFile")){
+            var p=extensionCoupled();p.remove("minecome."+key);reject(p,"coupled extension missing "+key);
+        }
+        for(String key:List.of("hudGroundMovementFixture","hudGroundMovementCoupled","hudGroundCorridorFixture","hudGroundCorridorCoupled","hudGroundExtensionFixture","hudGroundCorridorWalkOnly","hudWideWalking","hudStreamInput","hudPhysicalMovement","hudPhysicalMovementFixture","hudPhysicalMovementExtended","hudWalkingAimed","hudWalkingAimedFixture","hudFacingSeedFixture","hudCorridorWalking")){
+            var p=extensionCoupled();p.setProperty("minecome."+key,"true");reject(p,"coupled extension conflict "+key);
+        }
+        for(String value:List.of("TRUE","yes","1","")){
+            var p=extensionCoupled();p.setProperty("minecome.hudGroundExtensionCoupled",value);reject(p,"malformed coupled extension selector "+value);
+        }
+        check(!HudGroundMovementMode.extensionDelayFixture(new Properties()),"Delay fixture is inactive by default");
+        for(var p:List.of(extension(),extensionCoupled())){
+            p.setProperty("minecome.hudGroundExtensionDelayFixture","true");
+            check(HudGroundMovementMode.extensionDelayFixture(p),"Explicit extension mode allows controlled handoff delay");
+            p.setProperty("minecome.hudGroundExtensionDelayFixture","false");
+            check(!HudGroundMovementMode.extensionDelayFixture(p),"Extension delay can remain explicitly disabled");
+        }
+        for(var p:List.of(new Properties(),fixture(),coupled(),corridor(),corridorCoupled())){
+            p.setProperty("minecome.hudGroundExtensionDelayFixture","true");reject(p,"delay cannot alter another profile");
+        }
+        for(String value:List.of("TRUE","yes","1","")){
+            var p=extension();p.setProperty("minecome.hudGroundExtensionDelayFixture",value);reject(p,"malformed extension delay "+value);
+        }
         var wide=coupled();wide.setProperty("minecome.hudWideWalking","true");
         check(HudGroundMovementMode.mode(wide)==HudGroundMovementMode.Mode.COUPLED,"Wide opt-in retains authenticated scripted coupled identity");
         check(!HudPhysicalMovementMode.require(wide),"Wide coupled does not claim physical input");
@@ -108,6 +151,13 @@ public final class HudGroundMovementModeTests {
         for(String source:List.of("standalone_corridor_fixture","live_kcd_ground_patch","standalone_fixture","hud_corridor_coupled"))
             rejectPatch(HudGroundMovementMode.Mode.CORRIDOR_COUPLED,hudRun,patchRun,source,save);
         rejectPatch(HudGroundMovementMode.Mode.CORRIDOR_COUPLED,hudRun,"bad run","live_kcd_ground_corridor",save);
+        HudGroundMovementMode.requirePatch(HudGroundMovementMode.Mode.EXTENSION_COUPLED,hudRun,patchRun,"live_kcd_ground_corridor",save);checks++;
+        rejectPatch(HudGroundMovementMode.Mode.EXTENSION_COUPLED,hudRun,patchRun,"standalone_corridor_fixture",save);
+        rejectPatch(HudGroundMovementMode.Mode.EXTENSION_COUPLED,hudRun,patchRun,"live_kcd_ground_patch",save);
+        HudGroundMovementMode.requirePatch(HudGroundMovementMode.Mode.EXTENSION,hudRun,patchRun,"live_kcd_ground_corridor",save);checks++;
+        HudGroundMovementMode.requirePatch(HudGroundMovementMode.Mode.EXTENSION,hudRun,patchRun,"standalone_corridor_fixture",save);checks++;
+        rejectPatch(HudGroundMovementMode.Mode.EXTENSION,hudRun,patchRun,"standalone_fixture",save);
+        rejectPatch(HudGroundMovementMode.Mode.EXTENSION,hudRun,patchRun,"live_kcd_ground_patch",save);
         rejectPatch(HudGroundMovementMode.Mode.CORRIDOR,hudRun,patchRun,"live_kcd_ground_patch",save);
         rejectPatch(HudGroundMovementMode.Mode.CORRIDOR,hudRun,patchRun,"standalone_fixture",save);
         rejectPatch(HudGroundMovementMode.Mode.COUPLED,hudRun,patchRun,"live_kcd_ground_corridor",save);

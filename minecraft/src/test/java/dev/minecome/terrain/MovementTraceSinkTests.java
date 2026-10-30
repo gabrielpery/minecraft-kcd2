@@ -265,6 +265,7 @@ final class MovementTraceSinkTests {
             check(stoppedLines.size()==2 && JsonParser.parseString(stoppedLines.get(1)).getAsJsonObject().get("result").getAsString().equals("stopped"),"implicit close has explicit termination contract");
             String world=context().world(),hudSave="MineCome-HudStream-"+world;
             checks+=CorridorMovementTraceTests.run(root,run,world);
+            checks+=ExtensionMovementTraceTests.run(root,run,world);
             check(context().profile()==MovementTraceSink.Profile.GROUND,"Legacy context retains explicit Ground default");
             var hud=hudContext(hudSave,world,"live_kcd_ground_patch");
             check(hud.profile()==MovementTraceSink.Profile.HUD_COUPLED && hud.save().equals(hudSave),"HUD profile binds exact canonical save");

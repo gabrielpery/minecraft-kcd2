@@ -1353,5 +1353,83 @@ test("physical corridor source lease and ownership remain guarded beyond the old
     f:advance(.32);assert(player.position.x>125.8);local writes=#f.writes;player.id=io.stderr;f:advance(.1)
     eq(#f.writes,writes);eq(f:activeTimers(),0);assert(f:contains('"event":"restore_failed"'))
 end)
+test("extension authority is separate and cannot widen old or physical profiles",function()
+    local f=fixture();f:verify()
+    for _,begin in ipairs({MineCome.BeginPhysicalMovementFollower,MineCome.BeginBufferedPhysicalMovementFollower,MineCome.BeginExtendedBufferedPhysicalMovementFollower}) do
+        local ok,why=begin("e","extension");eq(ok,false);eq(why,"invalid_walking_area")
+    end
+    eq(f:activeTimers(),0);eq(#f.writes,0)
+    eq(MineCome.BeginMovementFollower("c","corridor"),true)
+    MineCome._movement_probe.follower.walking_area="extension"
+    local ok,why=MineCome.ApplyMovementFollower("c",1,129.5,2040,56);eq(ok,false);eq(why,"target_out_of_bounds")
+    eq(MineCome.EndMovementFollower("c"),true);f:advance(.08)
+    eq(MineCome.BeginMovementFollower("e","extension"),true);near(MineCome._movement_probe.follower.deadline,f.time+22)
+    assert(f:last():find('"walking_area":"extension"',1,true));assert(not f:contains('"physical_movement"'))
+    eq(MineCome.EndMovementFollower("e"),true);f:advance(.08);eq(f:activeTimers(),0)
+end)
+
+test("extension rectangle admits only the captured third strip and retains inset and height bounds",function()
+    local f=fixture();f:verify();eq(MineCome.BeginMovementFollower("e","extension"),true)
+    for _,point in ipairs({{116.5,2036.5,49.9},{131.5,2043.5,59.5},{129.5,2039.5,56.5}}) do
+        eq(MineCome.ApplyMovementFollower("e",MineCome._movement_probe.follower.last_queued_seq+1,point[1],point[2],point[3]),true)
+    end
+    for _,point in ipairs({{116.499,2040,56},{131.501,2040,56},{120,2036.499,56},{120,2043.501,56},
+        {120,2040,49.899},{120,2040,59.501},{0/0,2040,56},{120,math.huge,56}}) do
+        local ok,why=MineCome.ApplyMovementFollower("e",4,point[1],point[2],point[3]);eq(ok,false);eq(why,"target_out_of_bounds")
+    end
+    local ok,why=MineCome.ApplyMovementFollower("e",257,120,2040,56);eq(ok,false);eq(why,"sequence_invalid")
+    f:advance(.12);near(player.position.x,129.5);near(player.position.y,2039.5);near(player.position.z,56.5)
+    eq(MineCome.EndMovementFollower("e"),true);f:advance(.08)
+    eq(player.position.x,120);eq(player.position.y,2040);eq(player.position.z,56);eq(f:activeTimers(),0)
+    local target=receipt_vector(f:last(),"target");eq(target.x,120);eq(target.y,2040);eq(target.z,56)
+end)
+
+test("extension walks beyond eight metres and returns across reload with the immutable original anchor",function()
+    local f=fixture();f:verify();eq(MineCome.BeginMovementFollower("e","extension"),true)
+    local p=MineCome._movement_probe.follower;local hard=p.timers.hard
+    for seq=1,201 do
+        local offset=seq<=101 and .5+(seq-1)*.09 or .5+(201-seq)*.09
+        eq(MineCome.ApplyMovementFollower("e",seq,120+offset,2039.5,56),true)
+        f:advance(.1);eq(MineCome._movement_probe.follower,p);eq(p.timers.hard,hard);near(p.deadline,22)
+        eq(p.origin.x,120);eq(p.origin.y,2040);eq(p.origin.z,56)
+        if seq==101 then assert(player.position.x>129.4,"must cross the original corridor's positive X boundary") end
+        if seq==90 then dofile(MINECOME_MODULE_PATH) end
+    end
+    eq(MineCome.EndMovementFollower("e"),true);f:advance(.08)
+    eq(player.position.x,120);eq(player.position.y,2040);eq(player.position.z,56);eq(f:activeTimers(),0)
+    local final=f:last();assert(final:find('"event":"restored"',1,true));assert(final:find('"readback":true',1,true))
+    local target=receipt_vector(final,"target");eq(target.x,120);eq(target.y,2040);eq(target.z,56)
+    eq(receipt_number(final,"hard_deadline_ms"),22000);assert(final:find('"walking_area":"extension"',1,true))
+    assert(final:find('"end_result":"explicit_end"',1,true));assert(not f:contains('"physical_movement"'))
+end)
+
+test("extension retains four hundred millisecond lease and exact actor ownership",function()
+    local f=fixture();f:verify();eq(MineCome.BeginMovementFollower("e","extension"),true)
+    eq(MineCome.ApplyMovementFollower("e",1,129.5,2039.5,56),true);f:advance(.52)
+    eq(player.position.x,120);eq(player.position.y,2040);eq(player.position.z,56);eq(f:activeTimers(),0)
+    assert(f:contains('"end_result":"frame_lease_expired"'))
+    f=fixture();f:verify();eq(MineCome.BeginMovementFollower("e","extension"),true)
+    eq(MineCome.ApplyMovementFollower("e",1,129.5,2039.5,56),true);f:advance(.04)
+    local count=#f.writes;player.id=io.stderr;f:advance(.08)
+    eq(#f.writes,count);eq(f:activeTimers(),0);assert(f:contains('"event":"restore_failed"'))
+end)
+
+test("extension hard deadline and write budget do not renew under fresh poses",function()
+    local f=fixture();f:verify();eq(MineCome.BeginMovementFollower("e","extension"),true)
+    local p=MineCome._movement_probe.follower;local hard=p.timers.hard
+    for seq=1,220 do
+        if not MineCome._movement_probe.follower or p.restoring then break end
+        eq(MineCome.ApplyMovementFollower("e",seq,129.5,2039.5,56),true)
+        eq(p.timers.hard,hard);near(p.deadline,22);f:advance(.1)
+    end
+    f:advance(.1);eq(MineCome._movement_probe.follower,nil);eq(f:activeTimers(),0);eq(player.position.x,120)
+    assert(#f.writes>500 and #f.writes<=550);assert(f.writes[#f.writes].at<=22)
+    local expiries,receipts=0,0
+    for _,event in ipairs(f.queue) do if event.name=="MineCome_MovementFollowerExpiry" then expiries=expiries+1 end end
+    for _,line in ipairs(f.logs) do if line:find('[MineComeMovementFollower]',1,true) then receipts=receipts+1 end end
+    eq(expiries,1);assert(receipts<=512)
+    assert(f:contains('"end_result":"hard_deadline"') or f:contains('"end_result":"write_budget"'))
+end)
+
 print(string.format("Verified %d standalone movement-probe cases in %s; engine bindings simulated",passed,_VERSION))
 print(string.format("Maximum tested buffered receipt: %d bytes plus CRLF; serialized subset of eight retained observations",maximum_buffered_receipt_bytes))

@@ -39,6 +39,12 @@ loom {
                 vmArgs '-Dminecome.hudStreamLab=true'
             if (project.hasProperty('minecomeHudGroundMovementFixture'))
                 vmArgs '-Dminecome.hudGroundMovementFixture=true'
+            if (project.hasProperty('minecomeHudGroundExtensionDelayFixture'))
+                vmArgs '-Dminecome.hudGroundExtensionDelayFixture=true'
+            if (project.hasProperty('minecomeHudGroundExtensionCoupled'))
+                vmArgs '-Dminecome.hudGroundExtensionCoupled=true'
+            if (project.hasProperty('minecomeHudGroundExtensionFixture'))
+                vmArgs '-Dminecome.hudGroundExtensionFixture=true'
             if (project.hasProperty('minecomeHudGroundCorridorFixture'))
                 vmArgs '-Dminecome.hudGroundCorridorFixture=true'
             if (project.hasProperty('minecomeHudGroundCorridorCoupled'))
@@ -337,3 +343,11 @@ tasks.register('hudStreamFixture', JavaExec) {
     if (project.hasProperty('minecomeHudStreamFixtureArgs'))
         args project.property('minecomeHudStreamFixtureArgs').toString().split('\\|', -1)
 }
+
+// Bounded adjacent terrain admission and exact collision ownership.
+tasks.register('groundExpansionTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'dev.minecome.terrain.GroundExpansionTests'
+}
+check.dependsOn groundExpansionTest

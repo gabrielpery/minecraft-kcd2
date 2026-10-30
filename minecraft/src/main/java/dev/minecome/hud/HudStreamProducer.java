@@ -163,10 +163,14 @@ public final class HudStreamProducer implements AutoCloseable {
         r.addProperty("mapping",identity.mappingName());r.addProperty("mapping_name",identity.mappingName());r.addProperty("mutex_name",identity.mutexName());r.addProperty("mapping_bytes",MAPPING_BYTES);
         r.addProperty("save",save);r.addProperty("source_kind",genuine?"minecraft_vanilla_ui_stream_v1":"standalone_transport_fixture");
         if(groundMovementMode!=HudGroundMovementMode.Mode.NONE){
+            if(HudGroundMovementMode.extensionDelayFixture(System.getProperties()))r.addProperty("ui_ground_extension_delay_fixture",true);
             if(HudPhysicalMovementMode.wide(System.getProperties()))r.addProperty("walking_area","wide");
+            if(groundMovementMode==HudGroundMovementMode.Mode.EXTENSION_COUPLED)r.addProperty("walking_area","extension");
             if(groundMovementMode==HudGroundMovementMode.Mode.CORRIDOR_COUPLED)r.addProperty("walking_area","corridor");
             if(HudGroundMovementMode.corridorWalkOnly(System.getProperties()))r.addProperty("corridor_walk_only",true);
-            r.addProperty(groundMovementMode==HudGroundMovementMode.Mode.CORRIDOR_COUPLED?"ui_ground_corridor_coupled":
+            r.addProperty(groundMovementMode==HudGroundMovementMode.Mode.EXTENSION_COUPLED?"ui_ground_extension_coupled":
+                    groundMovementMode==HudGroundMovementMode.Mode.EXTENSION?"ui_ground_extension_fixture":
+                    groundMovementMode==HudGroundMovementMode.Mode.CORRIDOR_COUPLED?"ui_ground_corridor_coupled":
                     groundMovementMode==HudGroundMovementMode.Mode.CORRIDOR?"ui_ground_corridor_fixture":
                     groundMovementMode==HudGroundMovementMode.Mode.FIXTURE?"ui_ground_movement_fixture":"ui_ground_movement_coupled",true);
             r.addProperty("standalone",standalone);

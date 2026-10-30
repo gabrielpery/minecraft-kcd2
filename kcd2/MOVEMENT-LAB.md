@@ -812,3 +812,57 @@ window ends, then keep KCD2 focused until the 30-second HUD session finishes.
 This scenario requires automatic removal of exactly those two stones; it does
 not count cleanup as player breaks. See [the checkpoint](../docs/NEXT_SESSION.md)
 for the installed bundle and evidence paths.
+
+
+## Terrain extension
+
+The explicit extension experiment admits one adjacent tile during actual Minecraft
+walking. It starts with the verified two-tile surface (X[-4,8], Z[-4,4]) and admits
+the third tile to reach X[-4,12]. All three 9×9 terrain captures share the original
+anchor, overlap samples, source and process identity. The plan is bounded to
+288 KiB; it preserves the first 96 collision slabs and adds 32, without writing
+Minecraft blocks. This is a bounded additive handoff, not unbounded streaming or
+a full KCD collision export.
+
+At X=4.5 on both Minecraft threads, the fixture releases its movement keys,
+publishes the new collision map on the server thread, waits for a fresh matching
+server observation, then publishes it on the client thread. The original movement
+sequence resumes to X>=9.5 and returns. HUD publication and fresh server traces
+continue through the handoff. Each world releases only its own surface generation
+on cleanup. The existing physical corridor profile and its bounds are unchanged.
+
+From the project root, with an already loaded official tools test world:
+
+```powershell
+& './scripts/Test-CoupledGroundExtension.ps1'
+```
+
+This needs no F8 or physical controls. It captures terrain, launches a separate
+owned Minecraft world, follows fresh server observations in KCD2, verifies crossing
+and return, restores KCD position/FPS, and closes Minecraft normally. It uses a
+standalone HUD receiver, so it does not establish physical controls or visible
+KCD HUD composition for the extension profile. Existing visual acceptance of the
+fixed corridor remains separate.
+
+The deterministic delayed-handoff regression uses the same limits:
+
+```powershell
+& './scripts/Test-CoupledGroundExtension.ps1' -DelayHandoff
+```
+
+This opt-in fixture holds handoff for at least 600 ms, longer than the native
+400 ms observation lease, and requires fresh trace observations during the wait.
+Neither the two-second handoff deadline nor any native lease is extended.
+
+For a Minecraft-only automatic run, with generated terrain or an authenticated
+capture supplied via `-ExtensionFile`:
+
+```powershell
+& './scripts/Start-HudGroundExtensionLab.ps1'
+```
+
+All public entry points select installed PowerShell 7 automatically. Evidence is
+stored under `runtime/evidence/coupled-ground-extension-*` and `hud-stream-*`.
+Do not reuse the physical buffered replay profile or relabel extension traces as
+physical input. The new scripted profile has its own `extension` area marker,
+X[-3.5,11.5]/Z[-3.5,3.5] limits, 20-second trace and 22-second native lifetime.

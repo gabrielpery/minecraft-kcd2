@@ -26,8 +26,14 @@ import java.util.concurrent.atomic.AtomicReference;
 /** Scripted vanilla movement in the owned HUD world. Optional bounded trace; no KCD calls. */
 public final class HudGroundMovementFixture {
     private static final double SPAWN_X=.5,SPAWN_Z=.5;
-    private record ServerSample(Object world,Object player,long sequence,long at,GroundMovementSequence.Motion motion) {}
-    private final GroundSurface patch;
+    private record ServerSample(Object world,Object player,long sequence,long at,String surfaceHash,GroundMovementSequence.Motion motion) {}
+    private volatile GroundSurface patch,serverSurface;
+    private final GroundExpansion expansion;
+    private final long extensionDelayNs;
+    private final AtomicBoolean extensionServerInstalled=new AtomicBoolean();
+    private boolean extensionRequested,extensionClientInstalled,extensionComplete;
+    private long extensionRequestedAt,extensionWaitNs,handoffTraceSamples,transitionHudFrames,extensionCrossingHudFrames;
+    private static final double EXTENSION_TRIGGER_X=4.5;
     private final String save,hudRun;
     private final HudGroundMovementMode.Mode mode;
     private final boolean walkOnly;
@@ -59,10 +65,13 @@ public final class HudGroundMovementFixture {
     public HudGroundMovementFixture(Path file,String run,String save,HudGroundMovementMode.Mode mode,Path traceFile) throws IOException {
         boolean wide=HudPhysicalMovementMode.wide(System.getProperties());
         if(wide && mode!=HudGroundMovementMode.Mode.COUPLED)throw new IllegalArgumentException("Wide HUD ground requires explicit coupled movement");
-        patch=mode.corridor()?GroundCorridor.read(file):GroundPatch.read(file,wide);
+        expansion=mode.extension()?GroundExpansion.read(file):null;
+        patch=expansion!=null?expansion.initial():mode.corridor()?GroundCorridor.read(file):GroundPatch.read(file,wide);
+        serverSurface=patch;
+        extensionDelayNs=HudGroundMovementMode.extensionDelayFixture(System.getProperties())?600_000_000L:0;
         this.save=save;this.hudRun=run;this.mode=mode;this.traceFile=traceFile;
-        walkOnly=HudGroundMovementMode.corridorWalkOnly(System.getProperties());
-        if(walkOnly&&mode!=HudGroundMovementMode.Mode.CORRIDOR_COUPLED)throw new IllegalArgumentException("Walk-only fixture requires coupled corridor mode");
+        walkOnly=expansion!=null || HudGroundMovementMode.corridorWalkOnly(System.getProperties());
+        if(walkOnly&&mode!=HudGroundMovementMode.Mode.CORRIDOR_COUPLED&&expansion==null)throw new IllegalArgumentException("Walk-only fixture requires coupled corridor mode");
         HudGroundMovementMode.requirePatch(mode,run,patch.run(),patch.sourceKind(),save);
         if(mode.coupled()!=(traceFile!=null) || (traceFile!=null && !traceFile.isAbsolute()))
             throw new IllegalArgumentException("Only coupled HUD movement requires an absolute fresh trace path");
@@ -79,16 +88,22 @@ public final class HudGroundMovementFixture {
         if(!patch.corridor() || clientMotion==null)return;
         var observed=sample.get();if(observed==null)return;
         meta.addProperty("ground_surface_sha256",patch.sha256());
+        if(expansion!=null)meta.addProperty("ground_extension_waiting",extensionRequested&&!extensionComplete);
         meta.addProperty("ground_client_x",clientMotion.x());meta.addProperty("ground_server_x",observed.motion().x());
     }
     public void captured(JsonObject meta){
         String phase=meta.get("ground_movement_phase").getAsString();captured(phase);
         if(!patch.corridor() || !meta.has("ground_surface_sha256"))return;
-        if(!patch.sha256().equals(meta.get("ground_surface_sha256").getAsString()))
+        if(!patch.sha256().equals(meta.get("ground_surface_sha256").getAsString()) &&
+                !(expansion!=null && expansion.initial().sha256().equals(meta.get("ground_surface_sha256").getAsString())))
             throw new IllegalStateException("Corridor capture changed surface identity");
         double cx=meta.get("ground_client_x").getAsDouble(),sx=meta.get("ground_server_x").getAsDouble();
         if(!Double.isFinite(cx)||!Double.isFinite(sx))throw new IllegalStateException("Invalid captured corridor positions");
         if(cx>4.3 && sx>4.3)crossingHudFrames++;
+        if(expansion!=null){
+            if(meta.has("ground_extension_waiting")&&meta.get("ground_extension_waiting").getAsBoolean())transitionHudFrames++;
+            if(expansion.expanded().sha256().equals(meta.get("ground_surface_sha256").getAsString())&&cx>8.3&&sx>8.3)extensionCrossingHudFrames++;
+        }
         if(phase.equals("RETURNING"))returnHudFrames++;
     }
     public void beforeTick(MinecraftClient client,long now) {
@@ -154,7 +169,7 @@ public final class HudGroundMovementFixture {
                 if(now-setupAt>8_000_000_000L)throw new IllegalStateException("HUD movement initial teleport handoff deadline");
                 return;
             }
-            sequence=new GroundMovementSequence(patch,now,walkOnly);
+            sequence=new GroundMovementSequence(patch,now,walkOnly,expansion);
             if(mode.coupled())openTrace(client,now);
         }
         if(passed){release(client);return;}
@@ -168,12 +183,19 @@ public final class HudGroundMovementFixture {
                     release(client);lastTickAt=now;
                     // Key backpressure does not suspend authoritative observation.
                     // The sink still rejects stale, repeated or premature samples.
-                    if(mode==HudGroundMovementMode.Mode.CORRIDOR_COUPLED && trace!=null &&
+                    if((mode==HudGroundMovementMode.Mode.CORRIDOR_COUPLED || mode==HudGroundMovementMode.Mode.EXTENSION_COUPLED) && trace!=null &&
                             (firstTraceSamplePending || sequence.phase()!=GroundMovementSequence.Phase.SETTLING))
                         writeTrace(observed,firstTraceSamplePending);
                     return;
                 }
             }catch(IllegalStateException e){sequence.fail(e.getMessage());throw e;}
+        }
+        if(expansion!=null && extensionHandoff(client,observed,now)){
+            lastTickAt=now;
+            // Releasing controls does not release KCD's short observation lease.
+            // Publish only fresh advancing server observations while waiting.
+            if(trace!=null && writeTrace(observed,false))handoffTraceSamples++;
+            return;
         }
         var previous=sequence.phase();
         held=sequence.update(now,clientMotion,observed.motion(),corrections.get());
@@ -190,6 +212,8 @@ public final class HudGroundMovementFixture {
                 throw new IllegalStateException("Walk-only corridor unexpectedly entered a jump/landing phase");
             if(patch.corridor() && (crossingHudFrames==0 || returnHudFrames==0))
                 throw new IllegalStateException("HUD was not captured beyond the original edge and during the return");
+            if(expansion!=null && (!extensionComplete || transitionHudFrames==0 || extensionCrossingHudFrames==0))
+                throw new IllegalStateException("Extension was not installed and captured before crossing/return");
             if(trace!=null){
                 // The final phase can wait for the next advancing server sample,
                 // but never reuse a previous sample or extend the HUD deadline.
@@ -206,6 +230,42 @@ public final class HudGroundMovementFixture {
                 writeTrace(observed,firstTraceSamplePending);
             apply(client,held);
         }
+    }
+    /** Publish each immutable map on its owning game thread; never teleport at a tile boundary. */
+    private boolean extensionHandoff(MinecraftClient client,ServerSample observed,long now){
+        if(extensionComplete)return false;
+        if(!extensionRequested){
+            if(sequence.phase()!=GroundMovementSequence.Phase.WALKING ||
+                    Math.min(clientMotion.x(),observed.motion().x())<EXTENSION_TRIGGER_X)return false;
+            extensionRequested=true;extensionRequestedAt=now;
+            release(client);
+            server.execute(()->{
+                try{
+                    if(closing)return;
+                    var entity=server.getPlayerManager().getPlayer(playerId);requireServer(server,entity);
+                    var pos=entity.getPos();
+                    if(!expansion.initial().containsFeet(pos.x,pos.z,.5) || !allProxyCellsAir(server.getOverworld(),expansion.expanded()))
+                        throw new IllegalStateException("Extension server footprint/air check failed");
+                    if(!GroundCollision.replace(server.getOverworld(),serverSurface,expansion.expanded(),true))
+                        throw new IllegalStateException("Extension server collision owner changed");
+                    serverSurface=expansion.expanded();extensionServerInstalled.set(true);
+                }catch(Exception e){serverFailure.set("HUD terrain extension: "+e.getMessage());}
+            });
+            return true;
+        }
+        release(client);
+        if(now<extensionRequestedAt || now-extensionRequestedAt>2_000_000_000L)
+            throw new IllegalStateException("Extension client/server handoff exceeded2s");
+        if(now-extensionRequestedAt<extensionDelayNs || !extensionServerInstalled.get() || !observed.surfaceHash().equals(expansion.expanded().sha256()) || transitionHudFrames==0)return true;
+        if(!extensionClientInstalled){
+            if(!expansion.initial().containsFeet(clientMotion.x(),clientMotion.z(),.5) || !allProxyCellsAir(client.world,expansion.expanded()))
+                throw new IllegalStateException("Extension client footprint/air check failed");
+            if(!GroundCollision.replace(client.world,patch,expansion.expanded(),false))
+                throw new IllegalStateException("Extension client collision owner changed");
+            patch=expansion.expanded();extensionClientInstalled=true;
+            sequence.acceptExpansion(patch);
+        }
+        extensionWaitNs=now-extensionRequestedAt;extensionComplete=true;return false;
     }
     private void prepareServer(){
         server.execute(()->{
@@ -242,7 +302,7 @@ public final class HudGroundMovementFixture {
             var entity=source.getPlayerManager().getPlayer(playerId);requireServer(source,entity);
             if(!allProxyCellsAir(source.getOverworld()) || entity.getAbilities().flying)
                 throw new IllegalStateException("HUD server ground air/non-flying contract changed");
-            sample.set(new ServerSample(entity.getWorld(),entity,++serverSequence,System.nanoTime(),motion(entity,hasGround(source.getOverworld(),entity))));
+            sample.set(new ServerSample(entity.getWorld(),entity,++serverSequence,System.nanoTime(),serverSurface.sha256(),motion(entity,hasGround(source.getOverworld(),entity))));
         }catch(Exception e){serverFailure.set("HUD ground observation: "+e.getMessage());}
     }
     private void requireServer(MinecraftServer source,net.minecraft.server.network.ServerPlayerEntity entity){
@@ -250,7 +310,7 @@ public final class HudGroundMovementFixture {
                 entity.getWorld()!=serverWorld || !save.equals(source.getSaveProperties().getLevelName()) ||
                 !GroundCollision.installed(source.getOverworld(),true))
             throw new IllegalStateException("HUD movement server/world/player identity changed");
-        if(patch.corridor() && !GroundCollision.matches(source.getOverworld(),patch,true))
+        if(patch.corridor() && !GroundCollision.matches(source.getOverworld(),serverSurface,true))
             throw new IllegalStateException("Corridor server surface identity changed");
     }
     private void requireOwned(MinecraftClient client){
@@ -292,6 +352,8 @@ public final class HudGroundMovementFixture {
     }
     public JsonObject evidence(MinecraftClient client){
         var e=new JsonObject();e.addProperty("schema",1);e.addProperty("kind",
+                mode==HudGroundMovementMode.Mode.EXTENSION_COUPLED?"minecome_hud_ground_extension_coupled_v1":
+                expansion!=null?"minecome_hud_ground_extension_fixture_v1":
                 walkOnly?"minecome_hud_ground_corridor_walk_coupled_v1":
                         mode==HudGroundMovementMode.Mode.CORRIDOR_COUPLED?"minecome_hud_ground_corridor_coupled_v1":
                         mode==HudGroundMovementMode.Mode.CORRIDOR?"minecome_hud_ground_corridor_fixture_v1":
@@ -305,7 +367,8 @@ public final class HudGroundMovementFixture {
         e.addProperty("ground_source_kind",patch.sourceKind());e.addProperty("synthetic_input",true);e.addProperty("kcd_calls",false);
         e.addProperty("kcd_movement_applied",false);e.addProperty("physical_input_verified",false);e.addProperty("phase",phase());
         e.addProperty("client_walk",sequence==null?0:sequence.clientWalk());e.addProperty("server_walk",sequence==null?0:sequence.serverWalk());
-        if(patch.corridor()){
+        if(expansion!=null){e.add("extension",extensionEvidence());}
+        else if(patch.corridor()){
             var corridor=(GroundCorridor)patch;var proof=new JsonObject();
             var anchor=new JsonObject();anchor.addProperty("x",patch.centerX());anchor.addProperty("y",patch.centerY());anchor.addProperty("z",patch.centerZ());proof.add("anchor",anchor);
             var hashes=new com.google.gson.JsonArray();for(String hash:corridor.tileHashes())hashes.add(hash);proof.add("tile_sha256",hashes);
@@ -344,6 +407,25 @@ public final class HudGroundMovementFixture {
         var observed=sample.get();if(observed!=null)e.add("server_motion",motionJson(observed.motion()));
         return e;
     }
+    private JsonObject extensionEvidence(){
+        var e=new JsonObject();
+        e.addProperty("plan_sha256",expansion.sha256());e.addProperty("initial_sha256",expansion.initial().sha256());
+        e.addProperty("expanded_sha256",expansion.expanded().sha256());
+        var anchor=new JsonObject();anchor.addProperty("x",patch.centerX());anchor.addProperty("y",patch.centerY());anchor.addProperty("z",patch.centerZ());e.add("anchor",anchor);
+        var hashes=new com.google.gson.JsonArray();for(String hash:expansion.tileHashes())hashes.add(hash);e.add("tile_sha256",hashes);
+        e.addProperty("initial_max_x",8);e.addProperty("expanded_max_x",12);e.addProperty("trigger_x",EXTENSION_TRIGGER_X);
+        e.addProperty("client_installed",extensionClientInstalled);e.addProperty("server_installed",extensionServerInstalled.get());
+        e.addProperty("handoff_delay_fixture",extensionDelayNs!=0);e.addProperty("minimum_handoff_wait_ms",extensionDelayNs/1_000_000L);
+        e.addProperty("handoff_wait_ms",extensionWaitNs/1_000_000.0);e.addProperty("handoff_trace_samples",handoffTraceSamples);
+        e.addProperty("handoff_complete",extensionComplete);e.addProperty("coordinate_origin_preserved",true);
+        e.addProperty("client_max_x",sequence==null?0:sequence.clientMaxX());e.addProperty("server_max_x",sequence==null?0:sequence.serverMaxX());
+        e.addProperty("client_return_distance",sequence==null?0:sequence.clientReturnDistance());e.addProperty("server_return_distance",sequence==null?0:sequence.serverReturnDistance());
+        e.addProperty("transition_hud_frames",transitionHudFrames);e.addProperty("crossing_hud_frames",extensionCrossingHudFrames);e.addProperty("return_hud_frames",returnHudFrames);
+        e.addProperty("client_vanilla_cells_air",clientAirAtCleanup);e.addProperty("server_vanilla_cells_air",serverAirAtCleanup);
+        e.addProperty("max_client_server_distance",Math.max(corridorSync.maxDistance(),sequence==null?0:sequence.maxClientServerDistance()));
+        e.addProperty("slab_count",patch.slabs().size());e.addProperty("collision_cell_count",patch.cells().size());
+        return e;
+    }
     private void openTrace(MinecraftClient client,long now) throws IOException {
         Path run=client.runDirectory.toPath().toAbsolutePath().normalize();
         Path minecraft=run.getParent(),project=minecraft==null?null:minecraft.getParent();
@@ -351,8 +433,9 @@ public final class HudGroundMovementFixture {
                 !Files.isRegularFile(project.resolve("minecraft/build.gradle")))
             throw new IOException("HUD movement trace requires the owned workspace run directory");
         String world=save.substring("MineCome-HudStream-".length());
-        var context=new MovementTraceSink.Context(patch.run(),patch.sha256(),patch.sourceKind(),save,world,
-                patch.centerX(),patch.centerY(),patch.centerZ(),walkOnly?MovementTraceSink.Profile.HUD_CORRIDOR_WALK_COUPLED:
+        var traceSurface=expansion==null?patch:expansion.expanded();
+        var context=new MovementTraceSink.Context(traceSurface.run(),traceSurface.sha256(),traceSurface.sourceKind(),save,world,
+                patch.centerX(),patch.centerY(),patch.centerZ(),expansion!=null?MovementTraceSink.Profile.HUD_EXTENSION_WALK_COUPLED:walkOnly?MovementTraceSink.Profile.HUD_CORRIDOR_WALK_COUPLED:
                         patch.corridor()?MovementTraceSink.Profile.HUD_CORRIDOR_COUPLED:MovementTraceSink.Profile.HUD_COUPLED,
                 0,64,0,patch.wide()&&!patch.corridor());
         trace=MovementTraceSink.open(traceFile,project.resolve("runtime/evidence"),context,now,System.currentTimeMillis());
@@ -362,8 +445,8 @@ public final class HudGroundMovementFixture {
         var c=clientMotion;var s=observed.motion();
         // Timestamp only after selecting the immutable authoritative observation.
         boolean written=trace.sample(System.nanoTime(),System.currentTimeMillis(),sequence.phase().name(),
-                new MovementTraceSink.Motion(c.x(),c.y(),c.z(),c.vx(),c.vy(),c.vz(),c.onGround(),c.proxySupport(),patch.wide()&&!patch.corridor(),patch.corridor()),
-                new MovementTraceSink.Motion(s.x(),s.y(),s.z(),s.vx(),s.vy(),s.vz(),s.onGround(),s.proxySupport(),patch.wide()&&!patch.corridor(),patch.corridor()),
+                new MovementTraceSink.Motion(c.x(),c.y(),c.z(),c.vx(),c.vy(),c.vz(),c.onGround(),c.proxySupport(),patch.wide()&&!patch.corridor(),patch.corridor()&&expansion==null,expansion!=null),
+                new MovementTraceSink.Motion(s.x(),s.y(),s.z(),s.vx(),s.vy(),s.vz(),s.onGround(),s.proxySupport(),patch.wide()&&!patch.corridor(),patch.corridor()&&expansion==null,expansion!=null),
                 observed.sequence(),observed.at(),force);
         if(written)firstTraceSamplePending=false;
         return written;
@@ -381,9 +464,11 @@ public final class HudGroundMovementFixture {
         var e=new JsonObject();e.addProperty("x",m.x());e.addProperty("y",m.y());e.addProperty("z",m.z());
         e.addProperty("on_ground",m.onGround());e.addProperty("proxy_support",m.proxySupport());return e;
     }
-    private boolean allProxyCellsAir(BlockView world){for(var c:patch.cells())if(!world.getBlockState(new BlockPos(c.x(),c.y(),c.z())).isAir())return false;return true;}
+    private boolean allProxyCellsAir(BlockView world){return allProxyCellsAir(world,world==serverWorld?serverSurface:patch);}
+    private static boolean allProxyCellsAir(BlockView world,GroundSurface surface){for(var c:surface.cells())if(!world.getBlockState(new BlockPos(c.x(),c.y(),c.z())).isAir())return false;return true;}
     private boolean clearSurface(BlockView world,boolean serverSide){
-        return patch.corridor()?GroundCollision.clear(world,patch.run(),patch.sha256(),serverSide):GroundCollision.clear(world,patch.run(),serverSide);
+        var own=serverSide?serverSurface:patch;
+        return own.corridor()?GroundCollision.clear(world,own.run(),own.sha256(),serverSide):GroundCollision.clear(world,own.run(),serverSide);
     }
     private static boolean hasGround(CollisionView world,Entity player){
         var b=player.getBoundingBox();var below=new Box(b.minX+.001,b.minY-.06,b.minZ+.001,b.maxX-.001,b.minY+.001,b.maxZ-.001);
