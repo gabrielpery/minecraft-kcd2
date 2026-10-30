@@ -53,8 +53,11 @@ pass on flat and captured terrain: cross the old edge, return, place on top and
 side faces, break the blocks, use inventory and resume walking. All imported
 terrain cells stay unchanged. The repeat bundle is installed; combined corridor
 live check confirmed walking across the old edge and top placement, but stopped
-at the aiming cutoff with cleanup incomplete. Full combined corridor acceptance
-remains failed; cutoff cleanup is next. The earlier 8×8m combined live result remains valid. Rolling terrain remains unfinished.
+at the aiming cutoff with cleanup incomplete. That cleanup bug is now repaired
+and passes an automatic Minecraft regression: late placement, owned-block cleanup,
+continued HUD, inventory and later walking. The normal six-action block sequence
+also passes. A focused KCD2 cutoff check remains before full combined corridor
+acceptance. The earlier 8×8m combined live result remains valid. Rolling terrain remains unfinished.
 The separate jump diagnostic currently exposes a temporary KCD camera-height
 deviation during landing; it is not counted as a passing walking check.
 

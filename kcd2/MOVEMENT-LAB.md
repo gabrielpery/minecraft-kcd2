@@ -94,6 +94,14 @@ walking. The captured check reached X=4.823781m, returned within0.117886m, captu
 cells. Source hashes, traces and cleanup passed. These scripted fixture results
 do not establish physical input or HUD composition in KCD2.
 
+Add `-LateCutoff` to the same extended corridor/aimed fixture to reproduce the
+cutoff regression automatically. It places the upper stone at about 11.1 seconds,
+leaves both stones for the unchanged 12-second cutoff, verifies exact owned
+cleanup and support removal, then continues inventory and walking with HUD frames.
+It uses the production cleanup path and preserves all imported cells; cleanup
+writes are recorded separately from gameplay placement/break events. The normal
+six-action fixture remains the default.
+
 The local repeat bundle is installed. With a fresh official tools world loaded,
 the combined foreground entry point is:
 
@@ -783,5 +791,24 @@ interval; it does not establish timestamps ordering those two branches.
 
 The 29 October combined foreground check crossed the old edge (trace X=5.884m)
 and confirmed top placement, then failed at the 12s aiming cutoff with owned-world
-cleanup incomplete. Player/FPS restoration passed. Automate this late-placement
-case before a live retry; see [the checkpoint](../docs/NEXT_SESSION.md).
+cleanup incomplete. Player/FPS restoration passed. The 30 October repair waits
+for confirmed actions, removes only the remaining owned stones on the server
+thread, confirms client/server AIR, and removes the owned support before final
+closure. HUD and camera publication continue through cleanup; the existing
+12-second action window and three-second drain are unchanged.
+
+The captured-terrain `-LateCutoff` regression passed: top placement confirmed at
+11.235s; cutoff at 12.009s with two stones; clean closure at 12.143s. Two actual
+HUD frames were captured during cleanup, all 144 imported cells were preserved,
+and inventory plus later walking passed. The normal six-action captured-terrain
+regression also passed. These are standalone Minecraft results.
+
+For the remaining focused KCD2 check, use the same foreground entry point above
+with `-Scenario CutoffCleanup`. Press F8 once on READY, find the north-side stone, face it and take a small
+step toward it. Release W, then place once on its top within ten seconds of the
+first step. Leave both stones in place. They should disappear at cutoff while
+the HUD stays visible. Take another short step before the 15-second movement
+window ends, then keep KCD2 focused until the 30-second HUD session finishes.
+This scenario requires automatic removal of exactly those two stones; it does
+not count cleanup as player breaks. See [the checkpoint](../docs/NEXT_SESSION.md)
+for the installed bundle and evidence paths.

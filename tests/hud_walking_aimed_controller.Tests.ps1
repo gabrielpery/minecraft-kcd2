@@ -354,4 +354,39 @@ Check ($null -eq (Get-HudWalkingCompletionTail 113000 1000 113000 $tailState @($
 $tail=Get-HudWalkingCompletionTail 1793305393884 1793305281000 1793305393884 $tailState $tailTerminal
 Check ($tail.deadline_utc_ms -eq 1793305398000 -and 1793305397094 -lt $tail.deadline_utc_ms) 'Recorded legitimate HUD completion fits bounded restored-gameplay tail'
 Check ($controllerText.IndexOf('Stop-MineComeHudGpuBudget $budget') -lt $controllerText.IndexOf('$exitDeadline=')) 'Host GPU budget must restore before waiting for JVM shutdown'
+function CutoffGuest {
+    $guest=ScenarioGuest -SeedX -1 -SeedZ -5
+    $stone=$guest.lab_evidence.stone_bridge;$arena=$stone.arena
+    $stone.confirmations=@($stone.confirmations[0],$stone.confirmations[1]);$stone.requests=@($stone.requests[0]);$stone.confirmed_network_actions=1
+    $arena.confirmations=@($arena.confirmations[0],$arena.confirmations[1])
+    $stone | Add-Member NoteProperty confirmed_places 2
+    $stone | Add-Member NoteProperty confirmed_breaks 0
+    $cells=@($stone.confirmations[0].target,$stone.confirmations[1].target)
+    $cleanup=Clone @{kind='minecome_aimed_owned_cleanup_v1';requested=$true;completed=$true;client_and_server=$true;pending=$false;block_writes=2;
+        owned_cells=$cells;confirmed_cells=$cells;started_monotonic_ns=12000000000L;completed_monotonic_ns=12200000000L}
+    $stone | Add-Member NoteProperty owned_cleanup $cleanup
+    $arena | Add-Member NoteProperty owned_cleanup (Clone $cleanup)
+    return $guest
+}
+$proof=Assert-HudWalkingAimedScenario -Guest (CutoffGuest) -Scenario cutoffcleanup -CorridorWalking
+Check ($proof.automatically_cleaned_stones -eq 2 -and $proof.confirmed_network_actions -eq 1 -and $null -eq $proof.inventory) 'Cutoff scenario lost independent two-stone teardown proof'
+foreach($mutation in @(
+    {$args[0].lab_evidence.stone_bridge.confirmed_breaks=1},
+    {$args[0].lab_evidence.stone_bridge.confirmed_places=1},
+    {$args[0].lab_evidence.stone_bridge.confirmations[1].target.x++},
+    {$args[0].lab_evidence.stone_bridge.confirmations[1].face='EAST'},
+    {$args[0].lab_evidence.stone_bridge.arena.confirmations[1].id=19},
+    {$args[0].lab_evidence.stone_bridge.owned_count=2},
+    {$args[0].lab_evidence.stone_bridge.guest_world_cleanup_complete=$false},
+    {$args[0].lab_evidence.stone_bridge.build_support.cleanup_complete=$false},
+    {$args[0].lab_evidence.stone_bridge.owned_cleanup.completed=$false},
+    {$args[0].lab_evidence.stone_bridge.arena.owned_cleanup.pending=$true},
+    {$args[0].lab_evidence.stone_bridge.arena.owned_cleanup.block_writes=1},
+    {$args[0].lab_evidence.stone_bridge.owned_cleanup.confirmed_cells=@($args[0].lab_evidence.stone_bridge.owned_cleanup.confirmed_cells[0])},
+    {$args[0].lab_evidence.stone_bridge.arena.owned_cleanup.owned_cells[1].z++},
+    {$args[0].lab_evidence.stone_bridge.arena.block_writes=2}
+)){
+    $bad=CutoffGuest;& $mutation $bad
+    Reject {Assert-HudWalkingAimedScenario -Guest $bad -Scenario CutoffCleanup -CorridorWalking} 'Malformed cutoff scenario accepted'
+}
 Write-Output "HUD_WALKING_AIMED_CONTROLLER_TESTS_PASS checks=$checks no_game_started=true"

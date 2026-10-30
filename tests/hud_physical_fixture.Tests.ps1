@@ -302,4 +302,63 @@ foreach($value in @(0,15,33,16.5,'16')){
 $bad=Clone $combined;$bad.lab_evidence.physical_controller_fixture.aimed_blocks.arena.arena_maximum_inclusive.x++;Reject {Assert-HudPhysicalFixtureResult $bad $run $hash -ExtendedWalking -AimedBlocks} 'Actual arena cannot expand its bounded cube'
 $bad=Clone $combined;$bad.lab_evidence.physical_controller_fixture.aimed_blocks.arena.live_transport_enabled=$true;Reject {Assert-HudPhysicalFixtureResult $bad $run $hash -ExtendedWalking -AimedBlocks} 'Standalone proof cannot activate live transport'
 $null=Assert-HudPhysicalFixtureResult (Clone $combined) $run $hash -ExtendedWalking -AimedBlocks;Check $true 'Valid combined proof remains idempotently verifiable'
+
+# The cutoff case deliberately keeps two stones until the production cleanup path.
+$late=Clone $combined;$lf=$late.lab_evidence.physical_controller_fixture;$la=$lf.aimed_blocks
+$lf | Add-Member NoteProperty ui_walking_late_cutoff_fixture $true
+$lf | Add-Member NoteProperty cutoff_hud_frames 3
+$la | Add-Member NoteProperty walking_area corridor
+$la | Add-Member NoteProperty late_cutoff_fixture $true
+$la | Add-Member NoteProperty max_host_ray_range 4.5
+$la | Add-Member NoteProperty owned_at_cutoff 2
+$la | Add-Member NoteProperty cutoff_elapsed_ms 12029
+$la | Add-Member NoteProperty logical_closed_elapsed_ms 12300
+$la | Add-Member NoteProperty logical_closed_after_cleanup $true
+$la | Add-Member NoteProperty cleanup_before_movement_finish $true
+$lateSeed=Clone @{x=-1;y=64;z=-5};$lateTop=Clone @{x=-1;y=65;z=-5};$lateSupport=Clone @{x=-1;y=63;z=-5}
+$la.seed=$lateSeed;$la.support=$lateSupport;$la.arena.seed=Clone $lateSeed
+$la | Add-Member NoteProperty top_aim_point (Clone @{x=-.25;y=65;z=-4.25})
+$la.arena.arena_minimum=Clone @{x=-3;y=62;z=-7};$la.arena.arena_maximum_inclusive=Clone @{x=1;y=66;z=-3}
+$la.arena.build_region.support=Clone $lateSupport;$la.arena.build_region.protected_imported_cells=96
+$la.confirmations=@($la.confirmations[0],$la.confirmations[1]);$la.confirmations[1].elapsed_from_first_movement_ms=11155
+$la.arena.requests=@($la.arena.requests[0],$la.arena.requests[1]);$la.arena.confirmations=@($la.arena.confirmations[0],$la.arena.confirmations[1])
+for($i=0;$i -lt 2;$i++){
+    foreach($row in @($la.confirmations[$i],$la.arena.requests[$i],$la.arena.confirmations[$i])){
+        $row.target=Clone $(if($i -eq 0){$lateSeed}else{$lateTop})
+        $row.hit_block=Clone $(if($i -eq 0){$lateSupport}else{$lateSeed})
+    }
+}
+$la.arena | Add-Member NoteProperty owned_cleanup (Clone @{kind='minecome_aimed_owned_cleanup_v1';requested=$true;completed=$true;client_and_server=$true;pending=$false;block_writes=2;owned_cells=@($lateSeed,$lateTop);confirmed_cells=@($lateSeed,$lateTop)})
+$lf.physical_movement.input_timing.events[3].received_monotonic_ns=$lf.physical_movement.input_timing.events[0].received_monotonic_ns+13000000000L
+function LateProof($g){$f=$g.lab_evidence.physical_controller_fixture;Assert-HudWalkingAimedFixtureProof $f.aimed_blocks $f $g $hash -CorridorWalking -LateCutoff}
+LateProof $late;Check $true 'Late placement survives exact two-cell cleanup and resumes movement'
+Reject {Assert-HudWalkingAimedFixtureProof $la $lf $late $hash -CorridorWalking} 'Default fixture accepted late cutoff proof'
+Reject {Assert-HudPhysicalFixtureResult $late $run $hash -ExtendedWalking -AimedBlocks -LateCutoff} 'Late mode inferred corridor'
+foreach($field in @('requested','completed','client_and_server')){
+    $bad=Clone $late;$bad.lab_evidence.physical_controller_fixture.aimed_blocks.arena.owned_cleanup.$field=$false
+    Reject {LateProof $bad} "Cutoff cleanup lacks $field"
+}
+foreach($field in @('logical_closed_after_cleanup','cleanup_before_movement_finish')){
+    $bad=Clone $late;$bad.lab_evidence.physical_controller_fixture.aimed_blocks.$field=$false;Reject {LateProof $bad} 'Closure was published before actual cleanup'
+}
+foreach($value in @(0,1,3,'2')){
+    $bad=Clone $late;$bad.lab_evidence.physical_controller_fixture.aimed_blocks.arena.owned_cleanup.block_writes=$value;Reject {LateProof $bad} 'Cleanup write count differs from exact snapshot'
+}
+foreach($field in @('owned_cells','confirmed_cells')){
+    $bad=Clone $late;$bad.lab_evidence.physical_controller_fixture.aimed_blocks.arena.owned_cleanup.$field[1].x=7;Reject {LateProof $bad} 'Cleanup widened its owned set'
+    $bad=Clone $late;$bad.lab_evidence.physical_controller_fixture.aimed_blocks.arena.owned_cleanup.$field[1]=Clone $lateSeed;Reject {LateProof $bad} 'Duplicate cleanup cell hid a missing owned stone'
+}
+$bad=Clone $late;$bad.lab_evidence.physical_controller_fixture.cutoff_hud_frames=0;Reject {LateProof $bad} 'Cutoff omitted actual HUD frames'
+$bad=Clone $late;$bad.lab_evidence.physical_controller_fixture.aimed_blocks.arena.owned_cleanup.pending=$true;Reject {LateProof $bad} 'Pending cleanup claimed closed'
+$bad=Clone $late;$bad.lab_evidence.physical_controller_fixture.aimed_blocks.owned_at_cutoff=0;Reject {LateProof $bad} 'Case did not reproduce leftover blocks'
+foreach($value in @(11099,12000)){
+    $bad=Clone $late;$bad.lab_evidence.physical_controller_fixture.aimed_blocks.confirmations[1].elapsed_from_first_movement_ms=$value;Reject {LateProof $bad} 'Placement must be late but inside admission window'
+}
+foreach($value in @(11999,15000)){
+    $bad=Clone $late;$bad.lab_evidence.physical_controller_fixture.aimed_blocks.cutoff_elapsed_ms=$value;Reject {LateProof $bad} 'Cutoff clock outside fixed contract'
+}
+foreach($value in @(12000,15000,13100)){
+    $bad=Clone $late;$bad.lab_evidence.physical_controller_fixture.aimed_blocks.logical_closed_elapsed_ms=$value;Reject {LateProof $bad} 'Closure order must follow cleanup and precede later movement'
+}
+
 Write-Output "HUD_PHYSICAL_FIXTURE_TESTS_PASS checks=$script:checks no_game_started=true"

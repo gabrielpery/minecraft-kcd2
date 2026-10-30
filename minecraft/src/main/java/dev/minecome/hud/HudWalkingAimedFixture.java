@@ -34,6 +34,7 @@ final class HudWalkingAimedFixture implements AutoCloseable {
     private final HudBuildRegion region;
     private final BlockPos support,seed,upper,side;
     private final boolean facingSeed;
+    private final boolean lateCutoff=Boolean.getBoolean("minecome.hudWalkingLateCutoffFixture");
     private final Direction sideFace;
     private final String[] labels;
     private final AimGeometry.Alignment alignment;
@@ -54,6 +55,8 @@ final class HudWalkingAimedFixture implements AutoCloseable {
     private volatile String abortCleanup="not_requested";
     private Vec3d beforeInteractions,serverBeforeInteractions,afterInteractions,serverAfterInteractions;
     private double walkBefore,walkAfter;
+    private long cutoffAt,cutoffClosedAt;
+    private int ownedAtCutoff;
 
     HudWalkingAimedFixture(MinecraftClient client,GroundSurface patch,String save){
         require(Boolean.getBoolean("minecome.hudWalkingAimedFixture") && HudPhysicalMovementMode.fixture(System.getProperties())
@@ -66,6 +69,7 @@ final class HudWalkingAimedFixture implements AutoCloseable {
                 "Walking/aimed fixture yaw differs from its explicit walking profile");
         this.server=client.getServer();this.clientWorld=client.world;this.clientPlayer=client.player;
         this.playerId=client.player.getUuid();this.patch=patch;this.save=save;initializedAt=System.nanoTime();
+        require(!lateCutoff || patch.corridor(),"Late-cutoff fixture requires its explicit corridor profile");
         facingSeed=HudPhysicalMovementMode.facingFixture(System.getProperties());
         require(!facingSeed || patch.wide(),"Facing fixture requires the wide terrain profile");
         labels=patch.corridor()?CORRIDOR_LABELS:facingSeed?FACING_LABELS:LABELS;
@@ -132,9 +136,11 @@ final class HudWalkingAimedFixture implements AutoCloseable {
     boolean tickInteractions(MinecraftClient client,long now){
         check(client);require(prepared && firstMovementAt>0,"Walking/aimed interaction started before preparation/walking");
         if(interactionsDone)return true;
-        require(now-firstMovementAt<12_000_000_000L,"Walking/aimed actions exhausted the remaining walking window");
+        require(now-firstMovementAt<(lateCutoff?HudWalkingAimGate.ACTIVE_NS+HudWalkingAimGate.DRAIN_NS:HudWalkingAimGate.ACTIVE_NS),
+                "Walking/aimed actions exhausted the remaining walking window");
         Settled settled=settled(client);
-        arena.tick(client,settled!=null);require(!arena.failed(),"Walking/aimed action: "+arena.failure());
+        if(cutoffAt==0)arena.tick(client,settled!=null && (!lateCutoff || !HudWalkingAimGate.cutoff(firstMovementAt,now)));
+        require(!arena.failed(),"Walking/aimed action: "+arena.failure());
         if(queued){
             if(arena.pending())return false;
             record(client,nextAction,now);nextAction++;
@@ -143,6 +149,22 @@ final class HudWalkingAimedFixture implements AutoCloseable {
                 afterInteractions=client.player.getPos();serverAfterInteractions=observation.get().position();
                 interactionsAt=now;interactionsDone=true;return true;
             }
+        }
+        if(lateCutoff){
+            if(HudWalkingAimGate.cutoff(firstMovementAt,now)){
+                if(cutoffAt==0){
+                    cutoffAt=now;ownedAtCutoff=arena.ownedCells().size();
+                    require(nextAction==2 && ownedAtCutoff==2,"Late cutoff must retain the confirmed seed and upper stone");
+                }
+                // This is the production arena teardown, not synthetic break packets
+                // or fixture-only direct writes. Keep HUD/movement ticking during it.
+                if(!arena.cleanupOwned(client,now))return false;
+                var fresh=observation.get();
+                if(fresh==null || fresh.at()<arena.cleanupCompletedAtNanos() || !cleanupSupport(client,now))return false;
+                afterInteractions=client.player.getPos();serverAfterInteractions=observation.get().position();
+                interactionsAt=now;cutoffClosedAt=now;interactionsDone=true;return true;
+            }
+            if(nextAction>=2 || now-firstMovementAt<11_100_000_000L)return false;
         }
         if(settled==null)return false;
         if(beforeInteractions==null){
@@ -176,9 +198,14 @@ final class HudWalkingAimedFixture implements AutoCloseable {
         if(walkAfter>=.05)resumed=true;
     }
     boolean interactionsComplete(){return interactionsDone;}
+    boolean cutoffDraining(){return lateCutoff && firstMovementAt>0 && !interactionsDone &&
+            HudWalkingAimGate.cutoff(firstMovementAt,System.nanoTime());}
 
     boolean cleanup(MinecraftClient client,long now){
         check(client);require(interactionsDone && resumed,"Walking/aimed cleanup lacks complete interaction and resumed movement");
+        return cleanupSupport(client,now);
+    }
+    private boolean cleanupSupport(MinecraftClient client,long now){
         if(cleaned)return true;
         require(!arena.pending() && arena.ownedCells().isEmpty(),"Walking/aimed cleanup retains unresolved stones");
         var settled=settled(client);if(settled==null)return false;
@@ -282,6 +309,13 @@ final class HudWalkingAimedFixture implements AutoCloseable {
             e.add("top_aim_point",top);
         }
         if(patch.corridor())e.addProperty("support_selection","corridor_side_perimeter");
+        if(lateCutoff){
+            e.addProperty("late_cutoff_fixture",true);e.addProperty("owned_at_cutoff",ownedAtCutoff);
+            e.addProperty("cutoff_elapsed_ms",cutoffAt==0?0:(cutoffAt-firstMovementAt)/1_000_000);
+            e.addProperty("logical_closed_elapsed_ms",cutoffClosedAt==0?0:(cutoffClosedAt-firstMovementAt)/1_000_000);
+            e.addProperty("logical_closed_after_cleanup",cutoffClosedAt>0 && cleaned && arena.ownedCells().isEmpty());
+            e.addProperty("cleanup_before_movement_finish",cutoffClosedAt>0 && cutoffClosedAt-firstMovementAt<15_000_000_000L);
+        }
         if(facingSeed){e.addProperty("facing_seed",true);e.addProperty("facing_side",sideFace.name());}
         e.addProperty("synthetic_host_rays",true);e.addProperty("physical_input_verified",false);e.addProperty("kcd_connected",false);
         e.addProperty("completed",cleaned && resumed);e.addProperty("alignment_before_movement",firstMovementAt>initializedAt);

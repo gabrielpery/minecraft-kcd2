@@ -175,11 +175,11 @@ final class HudAimedStoneBridge implements HudBlockBridge {
         if(walkingClosing){
             require(now-walkingCloseStarted<HudWalkingAimGate.DRAIN_NS,"Walking aimed pending/cleanup deadline");
             if(pending==null && !arena.pending()){
-                boolean clean=arena.ownedCells().isEmpty();
-                if(clean && !walkingSupport.cleanup(client))return;
+                if(!arena.cleanupOwned(client,now) || !walkingSupport.cleanup(client,arena.cleanupCompletedAtNanos()))return;
                 walkingLogicallyClosed=true;
                 var receipt=walkingReceipt("closed");receipt.addProperty("logical_closed",true);receipt.addProperty("pending",false);
-                receipt.addProperty("owned_count",arena.ownedCells().size());receipt.addProperty("guest_world_cleanup_complete",clean);
+                receipt.addProperty("owned_count",arena.ownedCells().size());receipt.addProperty("guest_world_cleanup_complete",true);
+                receipt.add("owned_cleanup",arena.cleanupEvidence());
                 receipt.addProperty("support_cleanup_complete",walkingSupport.cleaned());walkingOutput.offerWalkingAimState("closed",receipt);
             }
         }
@@ -281,6 +281,7 @@ final class HudAimedStoneBridge implements HudBlockBridge {
         if(walkingSupport!=null){
             value.addProperty("walking_aimed",true);value.addProperty("logical_closed_before_restore",walkingLogicallyClosed);
             value.addProperty("aim_cutoff_ms",12000);value.add("build_support",walkingSupport.evidence());
+            if(arena!=null)value.add("owned_cleanup",arena.cleanupEvidence());
         }
         for(String key:new String[]{"inventory_mutated","camera_mutated","engine_mirroring_verified","visual_verified"})value.addProperty(key,false);
         value.add("initial_baseline",initialBaseline);value.add("pre_bootstrap_baseline",preBootstrapBaseline);

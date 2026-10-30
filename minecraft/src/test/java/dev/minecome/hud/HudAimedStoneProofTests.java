@@ -52,6 +52,22 @@ public final class HudAimedStoneProofTests {
         s.addProperty("confirmed_network_actions",2);s.addProperty("confirmed_breaks",1);s.addProperty("owned_count",1);
         s.getAsJsonObject("arena").addProperty("owned_count",1);s.getAsJsonObject("arena").getAsJsonArray("owned_cells").remove(0);return p;
     }
+    private static JsonObject cutoffCleanup(){
+        var p=twoOwnedCells();var s=stone(p);s.addProperty("walking_aimed",true);
+        var cleanup=JsonParser.parseString("""
+            {"kind":"minecome_aimed_owned_cleanup_v1","requested":true,"completed":true,
+             "client_and_server":true,"pending":false,"block_writes":2,
+             "started_monotonic_ns":12000,"completed_monotonic_ns":12200,
+             "owned_cells":[{"x":2,"y":64,"z":0},{"x":3,"y":64,"z":0}],
+             "confirmed_cells":[{"x":2,"y":64,"z":0},{"x":3,"y":64,"z":0}]}
+            """).getAsJsonObject();
+        s.add("owned_cleanup",cleanup);s.addProperty("owned_count",0);s.addProperty("guest_world_cleanup_complete",true);
+        var a=s.getAsJsonObject("arena");a.addProperty("owned_count",0);a.add("owned_cells",new JsonArray());a.add("owned_cleanup",cleanup.deepCopy());return p;
+    }
+    private static void mutateCleanup(Consumer<JsonObject> edit)throws IOException{
+        var p=cutoffCleanup();var cleanup=stone(p).getAsJsonObject("owned_cleanup");edit.accept(cleanup);
+        stone(p).getAsJsonObject("arena").add("owned_cleanup",cleanup.deepCopy());reject(p);
+    }
     private static void reject(JsonObject proof) throws IOException {
         try { HudAimedStoneProof.requireLive(proof); }
         catch(IOException expected){checks++;return;}
@@ -107,6 +123,23 @@ public final class HudAimedStoneProofTests {
         p=twoOwnedCells();stone(p).getAsJsonObject("arena").getAsJsonArray("owned_cells").add(cell(3,64,0));reject(p);
         p=placeThenBreak();HudAimedStoneProof.requireLive(p);checks++;
         stone(p).getAsJsonArray("requests").get(1).getAsJsonObject().getAsJsonObject("wire").addProperty("permitId",1);reject(p);
+        p=cutoffCleanup();HudAimedStoneProof.requireLive(p);checks++;
+        if(stone(p).get("confirmed_breaks").getAsInt()!=0 || stone(p).get("block_events_queued").getAsInt()!=2)
+            throw new AssertionError("Teardown became a gameplay break");checks++;
+        for(String flag:new String[]{"requested","completed","client_and_server"})mutateCleanup(c->c.addProperty(flag,false));
+        mutateCleanup(c->c.addProperty("pending",true));
+        mutateCleanup(c->c.addProperty("block_writes",1));
+        mutateCleanup(c->c.addProperty("block_writes",3));
+        mutateCleanup(c->c.addProperty("completed_monotonic_ns",11999));
+        mutateCleanup(c->c.getAsJsonArray("confirmed_cells").remove(1));
+        mutateCleanup(c->c.getAsJsonArray("confirmed_cells").set(1,cell(4,64,0)));
+        mutateCleanup(c->c.getAsJsonArray("owned_cells").add(cell(4,64,0)));
+        mutateCleanup(c->c.getAsJsonArray("confirmed_cells").add(cell(3,64,0)));
+        p=cutoffCleanup();stone(p).getAsJsonObject("arena").getAsJsonObject("owned_cleanup").addProperty("block_writes",1);reject(p);
+        p=cutoffCleanup();stone(p).remove("walking_aimed");reject(p);
+        p=cutoffCleanup();stone(p).remove("owned_cleanup");reject(p);
+        p=cutoffCleanup();stone(p).getAsJsonObject("arena").remove("owned_cleanup");reject(p);
+        p=cutoffCleanup();stone(p).addProperty("confirmed_breaks",2);reject(p);
         // A refused aiming request with real UI input is a valid completed guest
         // session, but must never count as an authoritative block interaction.
         p=valid();p.addProperty("input_events_applied",4);p.addProperty("input_consumed_sequence",4);

@@ -38,6 +38,7 @@ param(
     [switch]$WideWalking,
     [switch]$CorridorWalking,
     [switch]$AimedBlocks,
+    [switch]$LateCutoff,
     [switch]$FacingSeed,
     [switch]$WalkingAimed,
     [ValidateRange(-180,180)][double]$PhysicalFixtureYaw=0,
@@ -69,6 +70,11 @@ function Assert-HudWalkingAimedLiveChildMode([bool]$WalkingAimed,[bool]$Extended
     if($WalkingAimed -and (-not $ExtendedWalking -or -not $InputMode -or -not $LiveMouse -or -not $OffscreenPresentation -or $OtherMode -or
         -not $Patch -or -not $Trace -or -not $View -or -not $Token)){throw 'Combined live walking/aiming requires its explicit extended input, terrain, view and owned relay profile.'}
 }
+function Assert-HudLateCutoffChildMode([bool]$Enabled,[bool]$Standalone,[bool]$Fixture,[bool]$Extended,[bool]$Corridor,[bool]$Aimed,[bool]$OtherMode){
+    if($Enabled -and (-not $Standalone -or -not $Fixture -or -not $Extended -or -not $Corridor -or -not $Aimed -or $OtherMode)){
+        throw 'LateCutoff requires only the standalone extended corridor aimed fixture.'
+    }
+}
 $root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $minecraft=Join-Path $root 'minecraft'
 $EvidenceDirectory=[IO.Path]::GetFullPath($EvidenceDirectory)
@@ -79,6 +85,7 @@ $env:GRADLE_USER_HOME=Join-Path $minecraft '.gradle-user-home'
 $producerDirectory=Join-Path $EvidenceDirectory 'capture'
 $exitCode=1
 try {
+    Assert-HudLateCutoffChildMode ([bool]$LateCutoff) ([bool]$Standalone) ([bool]$PhysicalMovementFixture) ([bool]$ExtendedWalking) ([bool]$CorridorWalking) ([bool]$AimedBlocks) ([bool]($WalkingAimed -or $PhysicalMovement -or $WideWalking -or $FacingSeed))
     Assert-HudWalkingAimedLiveChildMode ([bool]$WalkingAimed) ([bool]$ExtendedWalking) ([bool]$InputMode) ([bool]$LiveMouse) ([bool]$OffscreenPresentation) ([bool]($Standalone -or $PhysicalMovement -or $PhysicalMovementFixture -or $AimedBlocks -or $StoneFixture -or $StoneLive -or $AimedStone -or $GroundMovementFixture -or $GroundMovementCoupled -or $InputFixture -or $InputPointerFixture -or $InputDelayFixture -or $InputBackgroundTrial -or $InputOffscreenTrial)) $GroundPatchFile $MovementTraceFile $HostViewFile $StoneTokenFile
     Assert-HudWalkingAimedChildMode ([bool]$AimedBlocks) ([bool]$Standalone) ([bool]$PhysicalMovementFixture) ([bool]$ExtendedWalking) ([bool]($PhysicalMovement -or $InputMode -or $LiveMouse -or $OffscreenPresentation -or $GroundMovementFixture -or $GroundMovementCoupled -or $InputFixture -or $InputPointerFixture -or $StoneFixture -or $StoneLive -or $AimedStone -or $InputDelayFixture -or $InputBackgroundTrial -or $InputOffscreenTrial)) $PhysicalFixtureYaw -CorridorWalking:$CorridorWalking
     if($ExtendedWalking -and -not ($PhysicalMovement -or $PhysicalMovementFixture -or $WalkingAimed)){throw 'Extended walking requires an explicit physical movement profile.'}
@@ -128,6 +135,7 @@ try {
     if($CorridorWalking){$arguments+='-PminecomeHudCorridorWalking'}
     if($AimedBlocks){$arguments+='-PminecomeHudWalkingAimedFixture'}
     if($FacingSeed){$arguments+='-PminecomeHudFacingSeedFixture'}
+    if($LateCutoff){$arguments+='-PminecomeHudWalkingLateCutoffFixture'}
     if($PhysicalMovementFixture){$arguments+=@('-PminecomeHudPhysicalMovementFixture',"-PminecomeGroundPatchFile=$GroundPatchFile","-PminecomeMovementTraceFile=$MovementTraceFile","-PminecomeHudHostViewFile=$HostViewFile",('-PminecomeHudPhysicalFixtureYaw='+$PhysicalFixtureYaw.ToString([Globalization.CultureInfo]::InvariantCulture)))}
     if($InputMode){$arguments+='-PminecomeHudStreamInput'}
     if($LiveMouse){$arguments+='-PminecomeHudStreamLiveMouse'}

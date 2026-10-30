@@ -29,6 +29,7 @@ final class HudPhysicalMovementFixture implements AutoCloseable {
     private final boolean wide=HudPhysicalMovementMode.wide(System.getProperties());
     private final boolean corridor=HudPhysicalMovementMode.corridor(System.getProperties());
     private final boolean aimedMode=Boolean.getBoolean("minecome.hudWalkingAimedFixture");
+    private final boolean lateCutoff=Boolean.getBoolean("minecome.hudWalkingLateCutoffFixture");
     private final GroundSurface patch;
     private volatile HudWalkingAimedFixture aimed;
     private volatile boolean closing,cameraStopped;
@@ -40,6 +41,7 @@ final class HudPhysicalMovementFixture implements AutoCloseable {
     private double clientMaxExcursion,serverMaxExcursion;
     private double clientMaxX,serverMaxX,clientReturnDistance,serverReturnDistance;
     private long crossingHudFrames;
+    private long cutoffHudFrames;
     private boolean finished,postWalkInventoryOpened,postWalkInventoryClosed;
 
     HudPhysicalMovementFixture(MinecraftClient client,HudPhysicalMovement movement,Path patchFile,
@@ -68,6 +70,7 @@ final class HudPhysicalMovementFixture implements AutoCloseable {
     String phase(){return switch(stage){case 0->"settling";case 1->"inventory_blocked";case 2->"hotbar_ready";case 3,4->"scripted_walking";case 5->"final_settling";case 7->aimed!=null&&!aimed.interactionsComplete()?"aimed_interactions":"extended_wait";case 8->"post_walk_inventory_blocked";default->"cleanup";};}
     void captured(String phase){if(phase.equals("inventory_blocked"))inventoryFrames++;if(phase.equals("scripted_walking"))walkingFrames++;if(phase.equals("post_walk_inventory_blocked"))postWalkInventoryFrames++;if(phase.equals("aimed_interactions"))aimedFrames++;}
     void captureMetadata(MinecraftClient client,JsonObject meta){
+        if(aimed!=null && aimed.cutoffDraining())meta.addProperty("physical_cutoff_draining",true);
         if(!corridor)return;
         var remote=observed.get();long now=System.nanoTime();
         if(remote==null||now<remote.at()||now-remote.at()>250_000_000L)return;
@@ -76,6 +79,7 @@ final class HudPhysicalMovementFixture implements AutoCloseable {
     }
     void captured(JsonObject meta){
         captured(meta.get("physical_fixture_phase").getAsString());
+        if(meta.has("physical_cutoff_draining") && meta.get("physical_cutoff_draining").getAsBoolean())cutoffHudFrames++;
         if(corridor&&meta.has("physical_corridor_sha256")){
             if(!patch.sha256().equals(meta.get("physical_corridor_sha256").getAsString()))throw new IllegalStateException("Physical corridor captured surface identity changed");
             if(meta.get("physical_corridor_client_x").getAsDouble()>4.3&&meta.get("physical_corridor_server_x").getAsDouble()>4.3)crossingHudFrames++;
@@ -221,6 +225,7 @@ final class HudPhysicalMovementFixture implements AutoCloseable {
             e.addProperty("client_max_horizontal_excursion",clientMaxExcursion);e.addProperty("server_max_horizontal_excursion",serverMaxExcursion);
         }
         if(aimedMode){e.addProperty("ui_walking_aimed_fixture",true);e.addProperty("aimed_hud_frames",aimedFrames);e.add("aimed_blocks",aimed==null?JsonNull.INSTANCE:aimed.evidence());}
+        if(lateCutoff){e.addProperty("ui_walking_late_cutoff_fixture",true);e.addProperty("cutoff_hud_frames",cutoffHudFrames);}
         if(extended){
             e.addProperty("movement_session","extended");e.addProperty("post_walk_inventory_opened",postWalkInventoryOpened);e.addProperty("post_walk_inventory_closed",postWalkInventoryClosed);
             e.addProperty("post_walk_inventory_frames",postWalkInventoryFrames);e.addProperty("post_walk_inventory_client_max_displacement",postWalkInventoryClientMax);

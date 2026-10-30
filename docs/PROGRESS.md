@@ -1,4 +1,36 @@
-# MineCome progress — 2026-10-29
+# MineCome progress — 2026-10-30
+
+
+## Cutoff cleanup repaired — ACTUAL-MINECRAFT PASS; KCD CHECK PENDING
+
+The 12-second aiming cutoff now drains dispatched actions, removes only the
+confirmed owned stones, waits for matching client/server AIR, and removes the
+owned support before publishing final closure. The HUD and camera continue
+through that work. Cleanup retains the original 12s active / 3s drain limits;
+imported terrain remains protected. Cleanup evidence is separate from gameplay
+breaks and is bound to the early closed receipt and final guest/native proof.
+
+Captured-terrain automatic regression `1e3cd9bdc0f14acdb02a255888f9887f` passed:
+upper placement confirmed at 11.235s, cutoff at 12.009s with two stones, complete
+closure at 12.143s. Two HUD frames were captured during cleanup; both client and
+server reached X=4.823781m, all 144 imported cells stayed unchanged, and inventory
+suppression plus 0.995m of later walking passed. Evidence:
+`runtime/evidence/hud-physical-fixture-20261030-132516-1e3cd9bdc0f14acdb02a255888f9887f/verification.json`.
+
+The unchanged six-action captured-terrain sequence also passed after the repair:
+`runtime/evidence/hud-physical-fixture-20261030-132657-f8d29441c7dd49f7b8141d4a0579ad2d/verification.json`.
+Maximum X=5.082572m, 11 crossing and 16 block HUD frames, 144 protected cells,
+top/side place and break, inventory and resumed movement. Both runs verified
+source hashes, movement traces, cleanup and normal Minecraft exit. Their input
+and host rays are scripted; native HUD composition is not established by them.
+
+Compiled Java and focused checks passed: physical 454, aim gate 32, aimed proof 67;
+PowerShell fixture 253, relay/closure 238, controller 257 and corridor entry 27.
+The explicit `-LateCutoff` fixture is opt-in. `-Scenario CutoffCleanup` prepares
+one shorter native acceptance check (place once, leave both blocks, watch cutoff
+and later walking). No native DLL change or new KCD launch was needed. Full
+combined corridor acceptance remains pending that check; preserve the failed
+29 October result below. Do not repeat unrelated control/latency checks.
 
 ## Combined live follow-up: cutoff cleanup failure
 
@@ -13,8 +45,8 @@ Camera lease expiry at 12.802s followed shutdown; it is secondary. The prompt
 incorrectly allowed about 15s. Full combined acceptance remains failed.
 
 Evidence: runtime/evidence/hud-walking-aimed-20261029-233406-8c36e85079df4280baed80031ea905d0/.
-Next: automate late placement at cutoff, then finish bounded cleanup before final
-closure. No more live tests tonight; user is going to bed.
+This was the pre-repair failure. The automatic reproduction and repair above
+supersede its next action; the original failed result remains unchanged.
 
 
 ## Corridor walking with aimed blocks — ACTUAL-MINECRAFT PASS; KCD LIVE PARTIAL

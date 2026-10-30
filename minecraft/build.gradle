@@ -61,6 +61,8 @@ loom {
                 vmArgs '-Dminecome.hudFacingSeedFixture=true'
             if (project.hasProperty('minecomeHudWalkingAimedFixture'))
                 vmArgs '-Dminecome.hudWalkingAimedFixture=true'
+            if (project.hasProperty('minecomeHudWalkingLateCutoffFixture'))
+                vmArgs '-Dminecome.hudWalkingLateCutoffFixture=true'
             if (project.hasProperty('minecomeHudWalkingAimed'))
                 vmArgs '-Dminecome.hudWalkingAimed=true'
             if (project.hasProperty('minecomeHudPhysicalFixtureYaw'))

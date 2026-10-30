@@ -224,6 +224,70 @@ function Send-MineComeHudAimedIntent($Session,$Selection,$Click,[scriptblock]$Be
     catch{$record.failure=$_.Exception.Message;$Session.Failure=$record.failure;throw}
 }
 
+# Cleanup is an owned-world teardown, never a gameplay break or native block event.
+# Validate the whole immutable snapshot before returning any ledger deductions.
+function Get-MineComeAimedOwnedCleanupProof($Cleanup,[Collections.Generic.HashSet[string]]$Owned) {
+    if($null -eq $Cleanup -or $null -eq $Owned -or $Owned.Count -gt 16 -or
+        $Cleanup.kind -cne 'minecome_aimed_owned_cleanup_v1'){throw 'Exact owned cleanup evidence required.'}
+    foreach($name in @('requested','completed','client_and_server','pending')){
+        if($Cleanup.$name -isnot [bool]){throw 'Owned cleanup flags must be Boolean.'}
+    }
+    Assert-MineComeAimedInteger $Cleanup.block_writes 0 16
+    Assert-MineComeAimedInteger $Cleanup.started_monotonic_ns
+    Assert-MineComeAimedInteger $Cleanup.completed_monotonic_ns
+    $snapshot=[Collections.Generic.HashSet[string]]::new()
+    $confirmed=[Collections.Generic.HashSet[string]]::new()
+    foreach($name in @('owned_cells','confirmed_cells')){
+        $cells=$Cleanup.$name
+        if($cells -isnot [Array] -or $cells.Count -gt 16){throw 'Owned cleanup cells require a bounded array.'}
+        $set=$snapshot;if($name -ceq 'confirmed_cells'){$set=$confirmed}
+        foreach($cell in $cells){
+            foreach($axis in @('x','y','z')){Assert-MineComeAimedInteger $cell.$axis ([int]::MinValue) ([int]::MaxValue)}
+            if(-not $set.Add("$($cell.x),$($cell.y),$($cell.z)")){throw 'Duplicate owned cleanup cell.'}
+        }
+    }
+    if(-not $Cleanup.requested){
+        if($Cleanup.completed -or $Cleanup.client_and_server -or $Cleanup.pending -or $Cleanup.block_writes -ne 0 -or
+            $snapshot.Count -ne 0 -or $confirmed.Count -ne 0 -or $Cleanup.started_monotonic_ns -ne 0 -or
+            $Cleanup.completed_monotonic_ns -ne 0){throw 'Unrequested cleanup cannot claim writes or removed cells.'}
+    }else{
+        if(-not $Cleanup.completed -or -not $Cleanup.client_and_server -or $Cleanup.pending -or
+            $Cleanup.block_writes -ne $snapshot.Count -or -not $snapshot.SetEquals($confirmed) -or
+            -not $snapshot.SetEquals($Owned) -or $Cleanup.started_monotonic_ns -le 0 -or
+            $Cleanup.completed_monotonic_ns -lt $Cleanup.started_monotonic_ns){throw 'Owned cleanup must confirm exactly the remaining owned ledger on both threads.'}
+    }
+    return [pscustomobject]@{Requested=$Cleanup.requested;Count=$confirmed.Count;Keys=@($confirmed | Sort-Object);
+        Started=$Cleanup.started_monotonic_ns;Completed=$Cleanup.completed_monotonic_ns}
+}
+
+# Call after the final bridge proof has bound cleanup to gameplay ownership.
+# The early closed receipt must carry that same completed cleanup snapshot.
+function Assert-MineComeAimedOwnedCleanupClosure($Closed,$Stone) {
+    if($null -eq $Closed -or $null -eq $Stone){throw 'Aimed closure and final bridge evidence required.'}
+    $bridgeCleanup=$Stone.PSObject.Properties['owned_cleanup'];$closedCleanup=$Closed.PSObject.Properties['owned_cleanup']
+    $owned=[Collections.Generic.HashSet[string]]::new();$bridgeProof=$null;$closedProof=$null
+    if($null -ne $bridgeCleanup){
+        if($null -eq $bridgeCleanup.Value){throw 'Final bridge cleanup cannot be null.'}
+        foreach($cell in @($bridgeCleanup.Value.owned_cells)){
+            foreach($axis in @('x','y','z')){Assert-MineComeAimedInteger $cell.$axis ([int]::MinValue) ([int]::MaxValue)}
+            [void]$owned.Add("$($cell.x),$($cell.y),$($cell.z)")
+        }
+        $bridgeProof=Get-MineComeAimedOwnedCleanupProof $bridgeCleanup.Value $owned
+    }
+    if($null -ne $closedCleanup){$closedProof=Get-MineComeAimedOwnedCleanupProof $closedCleanup.Value $owned}
+    if($null -eq $bridgeProof){
+        if($null -ne $closedProof -and $closedProof.Requested){throw 'Closure cleanup requires matching final bridge evidence.'}
+        return
+    }
+    if($null -eq $closedProof){
+        if($bridgeProof.Requested){throw 'Final bridge cleanup requires matching closed receipt evidence.'}
+        return
+    }
+    if($bridgeProof.Requested -ne $closedProof.Requested -or $bridgeProof.Count -ne $closedProof.Count -or
+        $bridgeProof.Started -ne $closedProof.Started -or $bridgeProof.Completed -ne $closedProof.Completed -or
+        ($bridgeProof.Keys -join '|') -cne ($closedProof.Keys -join '|')){throw 'Closed receipt and final bridge cleanup evidence differs.'}
+}
+
 function Assert-MineComeHudAimedBridgeProof($Stone) {
     function Cell($Value) {
         foreach($axis in @('x','y','z')){Assert-MineComeAimedInteger $Value.$axis ([int]::MinValue) ([int]::MaxValue)}
@@ -305,6 +369,20 @@ function Assert-MineComeHudAimedBridgeProof($Stone) {
     if($bootstrap -ne 1 -or $matched.Count -ne $confirmed){throw 'Aimed bootstrap or confirmed request count differs.'}
     Assert-MineComeAimedInteger $Stone.confirmed_network_actions $confirmed $confirmed
     Assert-MineComeAimedInteger $Stone.confirmed_places $places $places;Assert-MineComeAimedInteger $Stone.confirmed_breaks $breaks $breaks
+    $bridgeCleanup=$Stone.PSObject.Properties['owned_cleanup'];$arenaCleanup=$Stone.arena.PSObject.Properties['owned_cleanup']
+    if($null -ne $bridgeCleanup -and $null -eq $arenaCleanup){throw 'Bridge cleanup requires matching arena cleanup evidence.'}
+    if($null -eq $bridgeCleanup -and $null -ne $arenaCleanup){
+        $legacyCleanup=Get-MineComeAimedOwnedCleanupProof $arenaCleanup.Value $owned
+        if($legacyCleanup.Requested){throw 'Requested arena cleanup requires matching bridge evidence.'}
+    }
+    if($null -ne $bridgeCleanup){
+        $bridgeProof=Get-MineComeAimedOwnedCleanupProof $bridgeCleanup.Value $owned
+        $arenaProof=Get-MineComeAimedOwnedCleanupProof $arenaCleanup.Value $owned
+        if($bridgeProof.Requested -ne $arenaProof.Requested -or $bridgeProof.Count -ne $arenaProof.Count -or
+            $bridgeProof.Started -ne $arenaProof.Started -or $bridgeProof.Completed -ne $arenaProof.Completed -or
+            ($bridgeProof.Keys -join '|') -cne ($arenaProof.Keys -join '|')){throw 'Bridge and arena owned cleanup evidence differs.'}
+        foreach($key in $bridgeProof.Keys){[void]$owned.Remove($key)}
+    }
     Assert-MineComeAimedInteger $Stone.owned_count $owned.Count $owned.Count;Assert-MineComeAimedInteger $Stone.arena.owned_count $owned.Count $owned.Count
     Assert-MineComeAimedFlag $Stone.guest_world_cleanup_complete ($owned.Count -eq 0)
     $observed=[Collections.Generic.HashSet[string]]::new()

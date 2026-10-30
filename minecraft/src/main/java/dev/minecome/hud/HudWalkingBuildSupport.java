@@ -66,9 +66,13 @@ final class HudWalkingBuildSupport {
         prepared=writes.get()==1 && seen.support()==1 && state(client.world)==1;
         return prepared;
     }
-    boolean cleanup(MinecraftClient client){
+    boolean cleanup(MinecraftClient client){return cleanup(client,0);}
+    boolean cleanup(MinecraftClient client,long stonesCleanedAt){
         check(client);if(cleaned)return true;
         var seen=fresh();if(seen==null)return false;
+        // An observation made before the arena's verified cleanup may still
+        // contain its old stones. Wait for the next server tick, not a failure.
+        if(seen.at()<stonesCleanedAt)return false;
         require(seen.otherwiseAir() && otherwiseAir(client.world),"Preserving build support: unresolved or foreign cells remain");
         if(!cleanupRequested){
             require(prepared && seen.support()==1 && state(client.world)==1,"Preserving changed build support");

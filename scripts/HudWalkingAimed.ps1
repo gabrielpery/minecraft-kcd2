@@ -107,7 +107,7 @@ function Assert-HudWalkingInventoryEvidence($Evidence) {
 # guest/native bridge, movement trace, delayed host readbacks and cleanup receipts.
 # The default deliberately adds no requirement to the established WalkingBreak.
 function Assert-HudWalkingAimedScenario {
-    param($Guest,[ValidateSet('WalkingBreak','TopFaceInventory','SideFaceInventory')][string]$Scenario='WalkingBreak',[switch]$CorridorWalking)
+    param($Guest,[ValidateSet('WalkingBreak','TopFaceInventory','SideFaceInventory','CutoffCleanup')][string]$Scenario='WalkingBreak',[switch]$CorridorWalking)
     $proof=[ordered]@{schema=1;kind='minecome_hud_walking_aimed_scenario_v1';scenario=$Scenario;result='passed';
         requested_face=$null;confirmed_network_actions=$null;inventory=$null;visual_verified=$false;physical_w_attempt_verified=$false;physical_w_denial_verified=$false}
     if($Scenario -eq 'WalkingBreak'){return [pscustomobject]$proof}
@@ -117,6 +117,40 @@ function Assert-HudWalkingAimedScenario {
     function Same($A,$B){if((Cell $A) -cne (Cell $B)){throw 'Scenario target/hit cell differs from requested face.'}}
     $lab=Get-HudBufferedField $Guest 'lab_evidence';$stone=Get-HudBufferedField $lab 'stone_bridge';$arena=$stone.arena
     $seed=$stone.arena_offer.seed;$null=Cell $seed
+    if($Scenario -eq 'CutoffCleanup'){
+        # Full relay/guest ownership proof is validated by the caller first.
+        # This scenario distinguishes automatic teardown from player breaks.
+        $rows=@($stone.confirmations);$components=@($arena.confirmations)
+        if($rows.Count -ne 2 -or $components.Count -ne 2){throw 'Cutoff scenario requires bootstrap and one top placement.'}
+        [void](Int $stone confirmed_network_actions 1 1);[void](Int $stone confirmed_places 2 2);[void](Int $stone confirmed_breaks 0 0)
+        $upper=[pscustomobject]@{x=$seed.x;y=$seed.y+1;z=$seed.z}
+        $support=[pscustomobject]@{x=$seed.x;y=$seed.y-1;z=$seed.z}
+        for($i=0;$i -lt 2;$i++){
+            $row=$rows[$i];$component=$components[$i]
+            [void](Int $row action 1 1);[void](Int $component action 1 1)
+            Flag $row bootstrap ($i -eq 0);Flag $row client_and_server $true;Flag $row block_event_queued $true
+            [void](Int $component id $row.component_request_id $row.component_request_id)
+            Same $row.target $(if($i -eq 0){$seed}else{$upper});Same $component.target $row.target
+            Same $row.hit_block $(if($i -eq 0){$support}else{$seed});Same $component.hit_block $row.hit_block
+            if($row.face -cne 'UP' -or $component.face -cne 'UP'){throw 'Cutoff placement must use the top face.'}
+        }
+        foreach($target in @($stone,$arena)){
+            [void](Int $target owned_count 0 0);Flag $target pending $false
+            $cleanup=Get-HudBufferedField $target 'owned_cleanup'
+            if($cleanup.kind -cne 'minecome_aimed_owned_cleanup_v1'){throw 'Owned cutoff cleanup proof missing.'}
+            foreach($flag in @('requested','completed','client_and_server')){Flag $cleanup $flag $true};Flag $cleanup pending $false
+            [void](Int $cleanup block_writes 2 2)
+            foreach($name in @('owned_cells','confirmed_cells')){
+                $cells=@($cleanup.$name);if($cells.Count -ne 2){throw 'Cutoff cleanup must cover exactly both remaining stones.'}
+                $keys=@($cells | ForEach-Object {Cell $_})
+                if((Cell $seed) -cnotin $keys -or (Cell $upper) -cnotin $keys){throw 'Cutoff cleanup cells differ from placements.'}
+            }
+        }
+        Flag $stone guest_world_cleanup_complete $true;Flag $stone logical_closed_before_restore $true;Flag $stone.build_support cleanup_complete $true
+        foreach($field in @('block_writes','inventory_writes','camera_writes')){[void](Int $arena $field 0 0)}
+        $proof.requested_face='UP';$proof.confirmed_network_actions=1;$proof.automatically_cleaned_stones=2
+        return [pscustomobject]$proof
+    }
     # The bootstrap can lie on any captured perimeter. Select the vertical
     # face toward the immutable Minecraft origin, with X winning exact ties.
     $face=if($Scenario -eq 'TopFaceInventory'){'UP'}

@@ -2,7 +2,7 @@
 # Explicit combined15-second movement/aiming session and30-second HUD.
 [CmdletBinding()]
 param([switch]$PreflightOnly,[string]$JavaHome,[string]$BundleDirectory,
-    [ValidateSet('WalkingBreak','TopFaceInventory','SideFaceInventory')][string]$Scenario='WalkingBreak',
+    [ValidateSet('WalkingBreak','TopFaceInventory','SideFaceInventory','CutoffCleanup')][string]$Scenario='WalkingBreak',
     [switch]$RepeatSession,[string]$PreviousArmReceipt,[switch]$WideWalking,[switch]$CorridorWalking)
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
@@ -323,6 +323,7 @@ try{
     if(-not $traceEnded -or -not $tracePassed -or -not $followerStarted){throw 'No completed real physical movement trace.'}
     if(-not $aimCleanupBeforeRestore -or -not $aimState.Closed -or $aimCleanupUtcMs -gt $finishRequestUtcMs){throw 'Combined cleanup ordering was not verified.'}
     Assert-MineComeHudAimedRelayGuest $aimRelay $guest
+    Assert-MineComeAimedOwnedCleanupClosure $aimState.Closed $guest.lab_evidence.stone_bridge
     Assert-HudWalkingAimedClicks $aimClicks $aimRelay
     if($guest.lab_evidence.stone_bridge.confirmed_network_actions -lt 1){throw 'Combined session did not confirm an aimed interaction.'}
     if((Get-FileHash -LiteralPath $aimReadyPath).Hash -cne $aimReadyHash -or (Get-FileHash -LiteralPath $aimClosedPath).Hash -cne $aimClosedHash){throw 'Combined alignment or closure receipt changed.'}

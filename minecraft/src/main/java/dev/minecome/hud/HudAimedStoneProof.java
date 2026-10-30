@@ -73,16 +73,52 @@ final class HudAimedStoneProof {
         equal(bootstrap,1,"bootstrap count");equal(network,matched.size(),"confirmed wire correlation");
         equal(count(stone,"confirmed_network_actions"),network,"network confirmation count");
         equal(count(stone,"confirmed_places"),places,"placement count");equal(count(stone,"confirmed_breaks"),breaks,"break count");
+        var arena=object(stone,"arena");
+        long cleaned=confirmedCleanup(stone,arena,replayedOwned,minimum,maximum);
         long owned=count(stone,"owned_count");if(breaks>places || owned>16)throw invalid("Invalid owned count");
-        equal(owned,places-breaks,"owned balance");flag(stone,"guest_world_cleanup_complete",owned==0);
+        equal(owned,places-breaks-cleaned,"owned balance");flag(stone,"guest_world_cleanup_complete",owned==0);
         equal(owned,replayedOwned.size(),"replayed owned count");
-        var arena=object(stone,"arena");equal(count(arena,"owned_count"),owned,"component owned count");
+        equal(count(arena,"owned_count"),owned,"component owned count");
         Set<Cell> observedOwned=new HashSet<>();
         for(var item:array(arena,"owned_cells")){
             if(!item.isJsonObject())throw invalid("Owned cell object missing");Cell observed=cell(item.getAsJsonObject());
             if(!observed.inside(minimum,maximum) || !observedOwned.add(observed))throw invalid("Invalid/duplicate owned cell");
         }
         if(!observedOwned.equals(replayedOwned))throw invalid("Component owned cells disagree with confirmed transitions");
+    }
+    private static long confirmedCleanup(JsonObject stone,JsonObject arena,Set<Cell> remaining,Cell minimum,Cell maximum)throws IOException{
+        if(!stone.has("owned_cleanup")){
+            if(arena.has("owned_cleanup"))requireUnusedCleanup(object(arena,"owned_cleanup"));
+            return 0;
+        }
+        flag(stone,"walking_aimed",true);
+        var cleanup=object(stone,"owned_cleanup");
+        if(!cleanup.equals(object(arena,"owned_cleanup")))throw invalid("Bridge/component cleanup differs");
+        if(!bool(cleanup,"requested")){requireUnusedCleanup(cleanup);return 0;}
+        text(cleanup,"kind","minecome_aimed_owned_cleanup_v1");
+        for(String key:List.of("completed","client_and_server"))flag(cleanup,key,true);
+        flag(cleanup,"pending",false);
+        long began=count(cleanup,"started_monotonic_ns"),ended=count(cleanup,"completed_monotonic_ns");
+        if(began==0 || ended<began)throw invalid("Cleanup completion clock differs");
+        Set<Cell> snapshot=cleanupCells(cleanup,"owned_cells",minimum,maximum);
+        Set<Cell> confirmed=cleanupCells(cleanup,"confirmed_cells",minimum,maximum);
+        if(!snapshot.equals(remaining) || !confirmed.equals(snapshot))throw invalid("Cleanup does not match confirmed-owned ledger");
+        equal(count(cleanup,"block_writes"),confirmed.size(),"cleanup write count");
+        remaining.removeAll(confirmed);return confirmed.size();
+    }
+    private static Set<Cell> cleanupCells(JsonObject cleanup,String key,Cell minimum,Cell maximum)throws IOException{
+        Set<Cell> result=new HashSet<>();
+        for(var value:array(cleanup,key)){
+            if(!value.isJsonObject())throw invalid("Cleanup cell object missing");var cell=cell(value.getAsJsonObject());
+            if(!cell.inside(minimum,maximum) || !result.add(cell) || result.size()>16)throw invalid("Invalid/duplicate cleanup cell");
+        }
+        return result;
+    }
+    private static void requireUnusedCleanup(JsonObject cleanup)throws IOException{
+        text(cleanup,"kind","minecome_aimed_owned_cleanup_v1");
+        for(String key:List.of("requested","completed","client_and_server","pending"))flag(cleanup,key,false);
+        for(String key:List.of("block_writes","started_monotonic_ns","completed_monotonic_ns"))equal(count(cleanup,key),0,"unused cleanup");
+        for(String key:List.of("owned_cells","confirmed_cells"))equal(array(cleanup,key).size(),0,"unused cleanup cells");
     }
     static boolean hasConfirmedLiveInteraction(JsonObject proof){
         if(proof==null)return false;

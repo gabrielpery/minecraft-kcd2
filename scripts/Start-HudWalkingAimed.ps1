@@ -2,7 +2,7 @@
 # Fresh, explicitly combined15-second walking/aiming session and30-second HUD.
 [CmdletBinding()]
 param([switch]$PreflightOnly,[string]$JavaHome,[string]$BundleDirectory,
-    [ValidateSet('WalkingBreak','TopFaceInventory','SideFaceInventory')][string]$Scenario='WalkingBreak',
+    [ValidateSet('WalkingBreak','TopFaceInventory','SideFaceInventory','CutoffCleanup')][string]$Scenario='WalkingBreak',
     [switch]$RepeatSession,[string]$PreviousArmReceipt,[switch]$WideWalking,[switch]$CorridorWalking)
 $ErrorActionPreference='Stop'
 if($WideWalking -and $CorridorWalking){throw 'Wide and corridor walking are separate combined profiles.'}

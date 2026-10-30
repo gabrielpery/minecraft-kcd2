@@ -79,6 +79,16 @@ public final class HudPhysicalMovementTests {
             var corridorAimed=(Properties)corridor.clone();corridorAimed.setProperty("minecome.hudWalkingAimedFixture","true");
             if(HudPhysicalMovementMode.fixture(corridor)){
                 check(HudPhysicalMovementMode.require(corridorAimed)&&HudPhysicalMovementMode.fixtureYaw(corridorAimed)==-90,"Corridor aimed fixture retains standalone extended authority and eastward heading");
+                var late=(Properties)corridorAimed.clone();late.setProperty("minecome.hudWalkingLateCutoffFixture","true");
+                check(HudPhysicalMovementMode.require(late)&&HudPhysicalMovementMode.lateCutoffFixture(late),"Explicit late cutoff uses standalone corridor authority");
+                for(String required:List.of("hudPhysicalMovementFixture","hudPhysicalMovementExtended","hudCorridorWalking","hudWalkingAimedFixture")){
+                    var missing=(Properties)late.clone();missing.setProperty("minecome."+required,"false");
+                    reject(()->HudPhysicalMovementMode.require(missing),"Late cleanup requires "+required);
+                }
+                for(String malformed:List.of("TRUE","1","")){
+                    var invalid=(Properties)late.clone();invalid.setProperty("minecome.hudWalkingLateCutoffFixture",malformed);
+                    reject(()->HudPhysicalMovementMode.require(invalid),"Late cleanup flag is strict boolean");
+                }
                 for(String yaw:List.of("0","90","180","NaN","Infinity","-181")){
                     var invalid=(Properties)corridorAimed.clone();invalid.setProperty("minecome.hudPhysicalFixtureYaw",yaw);
                     reject(()->HudPhysicalMovementMode.require(invalid),"Corridor aimed fixture rejects incompatible yaw before world construction");

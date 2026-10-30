@@ -7,6 +7,11 @@ import java.util.Properties;
 public final class HudPhysicalMovementMode {
     private HudPhysicalMovementMode(){}
     public static boolean fixture(Properties p){return Boolean.parseBoolean(p.getProperty("minecome.hudPhysicalMovementFixture"));}
+    public static boolean lateCutoffFixture(Properties p){
+        String value=p.getProperty("minecome.hudWalkingLateCutoffFixture","false");
+        if(!value.equals("true")&&!value.equals("false"))throw new IllegalArgumentException("Late cutoff fixture option must be true or false");
+        return value.equals("true");
+    }
     public static boolean facingFixture(Properties p){
         String value=p.getProperty("minecome.hudFacingSeedFixture","false");
         if(!value.equals("true")&&!value.equals("false"))throw new IllegalArgumentException("Facing seed fixture option must be true or false");
@@ -59,6 +64,8 @@ public final class HudPhysicalMovementMode {
         if(!aimed.equals("true") && !aimed.equals("false"))throw new IllegalArgumentException("Walking aimed fixture option must be true or false");
         if(aimed.equals("true") && (!fixture || live || !HudMovementSession.selected(p).extended()))
             throw new IllegalArgumentException("Walking aimed blocks require the standalone extended physical fixture");
+        if(lateCutoffFixture(p) && (!fixture || live || !corridor(p) || !aimed.equals("true") || !HudMovementSession.selected(p).extended()))
+            throw new IllegalArgumentException("Late cutoff requires the standalone extended corridor aimed fixture");
         if(facingFixture(p) && (!fixture || live || !wide(p) || !aimed.equals("true")))
             throw new IllegalArgumentException("Facing seed fixture requires wide standalone aimed walking");
         if(wide(p)&&fixture&&!HudMovementSession.selected(p).extended())

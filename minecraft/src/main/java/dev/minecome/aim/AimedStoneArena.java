@@ -5,6 +5,7 @@ import com.google.gson.JsonObject;
 import dev.minecome.protocol.AimGeometry;
 import dev.minecome.protocol.Protocol;
 import dev.minecome.terrain.HudBuildRegion;
+import net.minecraft.block.Block;
 import net.minecraft.block.Blocks;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.entity.player.PlayerEntity;
@@ -23,12 +24,15 @@ import net.minecraft.world.World;
 
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Real vanilla selection/interaction in an explicitly owned fresh Creative test save.
  * Owns at most sixteen confirmed stones inside a five-block cube around one seed.
- * It never writes blocks, changes inventory/camera, or grants a transport capability.
+ * Gameplay never writes blocks, changes inventory/camera, or grants a transport capability.
+ * Explicit HUD teardown can remove only its frozen, confirmed-owned stones after
+ * checking the whole bounded region on both game threads.
  */
 public final class AimedStoneArena implements AutoCloseable {
     public static final long MAX_RAY_AGE_NS = 500_000_000L;
@@ -71,6 +75,7 @@ public final class AimedStoneArena implements AutoCloseable {
                         BlockPos target, Hit hit, Stack selected, Map<BlockPos, CellState> before) {}
     private record Observation(long id, String phase, long at, Map<BlockPos, CellState> cells,
                                Stack selected, Stack originalSlot, Hit hit, String failure) {}
+    private record CleanupObservation(long at, Map<BlockPos, CellState> cells, String failure) {}
 
     private final AimGeometry.Alignment alignment;
     private final String ownedHudSave;
@@ -89,6 +94,15 @@ public final class AimedStoneArena implements AutoCloseable {
     private boolean baseline, bootstrapped, dispatched, closed;
     private long lastId, dispatchedAt, lastReadAt;
     private int omittedReceipts;
+    private CellState pinnedSupport;
+    private Set<BlockPos> cleanupSnapshot=Set.of(),cleanupObserved=Set.of();
+    private Map<BlockPos,CellState> cleanupBefore=Map.of();
+    private final AtomicReference<CleanupObservation> cleanupObservation=new AtomicReference<>();
+    private final AtomicBoolean cleanupReading=new AtomicBoolean();
+    private final AtomicInteger cleanupWrites=new AtomicInteger();
+    private boolean cleanupRequested,cleanupCompleted;
+    private volatile boolean cleanupApplied;
+    private long cleanupStarted,cleanupFinished,cleanupLastRead;
 
     public AimedStoneArena(AimGeometry.Alignment alignment) {
         this.alignment = Objects.requireNonNull(alignment); this.ownedHudSave = null;
@@ -115,7 +129,7 @@ public final class AimedStoneArena implements AutoCloseable {
 
     /** Revocation cancels only actions not dispatched to vanilla; dispatched actions still need proof. */
     public void tick(MinecraftClient client, boolean actionsEnabled) {
-        if (closed || failure != null) return;
+        if (closed || failure != null || cleanupRequested) return;
         if (!client.isOnThread()) { fail("arena_client_thread_required"); return; }
         try {
             if (world == null) {
@@ -150,7 +164,7 @@ public final class AimedStoneArena implements AutoCloseable {
                             || !proof.cells.get(seed).air || !proof.cells.get(support).solidUp) {
                         fail("baseline_client_server_disagreement"); return;
                     }
-                    baseline = true;
+                    pinnedSupport=proof.cells.get(support);baseline = true;
                 } else if (pending != null && proof.id == pending.id) {
                     if (proof.phase.equals("pre")) dispatchProved(client, proof, now);
                     else if (proof.phase.equals("post")) confirm(client, proof, now);
@@ -252,6 +266,7 @@ public final class AimedStoneArena implements AutoCloseable {
 
     private String gate(MinecraftClient client) {
         if (!client.isOnThread()) return "client_thread_required";
+        if (cleanupRequested) return "arena_unavailable";
         if (!ready() || !owner(client)) return "arena_unavailable";
         if (pending != null) return "action_pending";
         if (buildRegion != null && buildRegion.ownedRejection(regionOwned()) != null) {
@@ -446,6 +461,103 @@ public final class AimedStoneArena implements AutoCloseable {
         if (pending != null) finishRejected(pending, reason);
         baseline = false;
     }
+
+    /**
+     * Explicit bounded teardown, not a gameplay break. New actions are revoked
+     * before the immutable owned snapshot is taken. No arbitrary target list,
+     * camera movement, reach bypass for gameplay, or client-side writes exist.
+     * Callers must finish this and support cleanup within their existing drain.
+     */
+    public boolean cleanupOwned(MinecraftClient client,long now) {
+        try {
+            if(!client.isOnThread() || !owner(client) || buildRegion==null || ownedHudSave==null
+                    || !client.player.isCreative() || client.interactionManager.getCurrentGameMode()!=GameMode.CREATIVE)
+                throw new IllegalStateException("Owned HUD cleanup identity unavailable");
+            if(cleanupCompleted)return true;
+            if(pending!=null || reading.get())return false;
+            if(!cleanupRequested){
+                if(!baseline || pinnedSupport==null || owned.size()>AimGeometry.MAX_OWNED_CELLS)
+                    throw new IllegalStateException("Owned HUD cleanup baseline unavailable");
+                var snapshot=Set.copyOf(owned);
+                for(var target:snapshot)if(buildRegion.cleanupRejection(cell(target),regionOwned())!=null)
+                    throw new IllegalStateException("Owned HUD cleanup target refused");
+                var observed=new LinkedHashSet<BlockPos>();
+                var lo=buildRegion.minimum();var hi=buildRegion.maximumInclusive();
+                for(int x=lo.x();x<=hi.x();x++)for(int y=lo.y();y<=hi.y();y++)for(int z=lo.z();z<=hi.z();z++)observed.add(new BlockPos(x,y,z));
+                buildRegion.importedCells().forEach(p->observed.add(blockPos(p)));observed.add(support);
+                if(!loaded(client.world,observed))throw new IllegalStateException("Owned HUD cleanup chunks unavailable");
+                var before=states(client.world,observed);
+                for(var entry:before.entrySet()){
+                    var at=entry.getKey();var state=entry.getValue();
+                    if(at.equals(support)?!state.equals(pinnedSupport):snapshot.contains(at)?!state.stone:!state.air)
+                        throw new IllegalStateException("Preserving changed or foreign cleanup cell");
+                }
+                cleanupSnapshot=snapshot;cleanupObserved=Set.copyOf(observed);cleanupBefore=before;
+                cleanupRequested=true;cleanupStarted=now;cleanupLastRead=now;
+                readCleanupServer(true);return false;
+            }
+            if(now<cleanupStarted || now-cleanupStarted>=PROOF_TIMEOUT_NS)
+                throw new IllegalStateException("Owned HUD cleanup proof timeout");
+            var seen=cleanupObservation.get();
+            if(seen!=null){
+                if(seen.failure()!=null)throw new IllegalStateException(seen.failure());
+                if(cleanupApplied && now>=seen.at() && now-seen.at()<=MAX_RAY_AGE_NS
+                        && loaded(client.world,cleanupObserved) && states(client.world,cleanupObserved).equals(seen.cells())){
+                    if(cleanupWrites.get()!=cleanupSnapshot.size() || !owned.equals(cleanupSnapshot))
+                        throw new IllegalStateException("Owned HUD cleanup ledger changed");
+                    for(var target:cleanupSnapshot)if(!seen.cells().get(target).air)
+                        throw new IllegalStateException("Owned HUD cleanup did not reach AIR");
+                    owned.clear();cleanupCompleted=true;cleanupFinished=now;return true;
+                }
+            }
+            if(cleanupApplied && now-cleanupLastRead>=50_000_000L && !cleanupReading.get()){
+                cleanupLastRead=now;readCleanupServer(false);
+            }
+            return false;
+        }catch(RuntimeException error){fail("owned_cleanup: "+error.getMessage());throw error;}
+    }
+    private void readCleanupServer(boolean apply) {
+        if(!cleanupReading.compareAndSet(false,true))return;
+        server.execute(()->{
+            try {
+                var authoritative=server.getOverworld();var entity=server.getPlayerManager().getPlayer(playerId);
+                if(!save.equals(server.getSaveProperties().getLevelName()) || authoritative!=serverWorld || entity!=serverPlayer
+                        || entity==null || entity.getWorld()!=authoritative || !entity.isCreative() || !loaded(authoritative,cleanupObserved))
+                    throw new IllegalStateException("Owned HUD cleanup server identity changed");
+                if(apply){
+                    // Validate every cell before the first write. Foreign cells,
+                    // protected imported cells and the original support survive.
+                    if(!states(authoritative,cleanupObserved).equals(cleanupBefore))
+                        throw new IllegalStateException("Preserving changed server cleanup region");
+                    for(var target:cleanupSnapshot){
+                        if(!authoritative.getBlockState(target).isOf(Blocks.STONE)
+                                || !authoritative.setBlockState(target,Blocks.AIR.getDefaultState(),Block.NOTIFY_ALL))
+                            throw new IllegalStateException("Owned HUD cleanup stone removal refused");
+                        cleanupWrites.incrementAndGet();
+                    }
+                    cleanupApplied=true;
+                }
+                var after=states(authoritative,cleanupObserved);
+                for(var entry:cleanupBefore.entrySet()){
+                    var state=after.get(entry.getKey());
+                    if(cleanupSnapshot.contains(entry.getKey())?!state.air:!state.equals(entry.getValue()))
+                        throw new IllegalStateException("Unrequested cleanup region transition");
+                }
+                cleanupObservation.set(new CleanupObservation(System.nanoTime(),after,null));
+            }catch(Exception error){cleanupObservation.set(new CleanupObservation(System.nanoTime(),Map.of(),error.getMessage()));}
+            finally{cleanupReading.set(false);}
+        });
+    }
+    public JsonObject cleanupEvidence(){
+        var value=new JsonObject();value.addProperty("kind","minecome_aimed_owned_cleanup_v1");
+        value.addProperty("requested",cleanupRequested);value.addProperty("completed",cleanupCompleted);
+        value.addProperty("client_and_server",cleanupCompleted);value.addProperty("pending",cleanupRequested&&!cleanupCompleted);
+        value.addProperty("block_writes",cleanupWrites.get());value.addProperty("started_monotonic_ns",cleanupStarted);
+        value.addProperty("completed_monotonic_ns",cleanupFinished);
+        var snapshot=new JsonArray();cleanupSnapshot.forEach(p->snapshot.add(pos(p)));value.add("owned_cells",snapshot);
+        value.add("confirmed_cells",cleanupCompleted?snapshot.deepCopy():new JsonArray());return value;
+    }
+    public long cleanupCompletedAtNanos(){return cleanupFinished;}
     private void append(JsonArray array, JsonObject value) { if (array.size() < MAX_RECEIPTS) array.add(value); else omittedReceipts++; }
     private static JsonObject receipt(Result result) {
         var value = new JsonObject(); value.addProperty("id", result.id); value.addProperty("action", result.action);
@@ -495,6 +607,7 @@ public final class AimedStoneArena implements AutoCloseable {
         value.addProperty("max_ray_age_ms", MAX_RAY_AGE_NS / 1_000_000L); value.addProperty("omitted_receipts", omittedReceipts);
         value.addProperty("vanilla_outline_raycast", true); value.addProperty("fluid_raycast", "NONE");
         value.addProperty("block_writes", 0); value.addProperty("inventory_writes", 0); value.addProperty("camera_writes", 0);
+        value.add("owned_cleanup",cleanupEvidence());
         value.addProperty("live_transport_enabled", false); value.add("requests", requests.deepCopy()); value.add("confirmations", confirmations.deepCopy());
         if (buildRegion != null) {
             var region = new JsonObject(); region.addProperty("patch_run", buildRegion.patchRun());

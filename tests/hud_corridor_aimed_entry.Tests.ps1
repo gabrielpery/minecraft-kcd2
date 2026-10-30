@@ -18,7 +18,7 @@ foreach($name in @('ui_input_walking_aimed','ui_input_aimed_stone_bridge')){
 }
 $errors=$null;$ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $root 'scripts/Run-HudStreamClient.ps1'),[ref]$null,[ref]$errors)
 Check ($errors.Count -eq 0) 'Child parser failed'
-foreach($name in @('Assert-HudCorridorPhysicalChildMode','Assert-HudWalkingAimedChildMode')){
+foreach($name in @('Assert-HudCorridorPhysicalChildMode','Assert-HudWalkingAimedChildMode','Assert-HudLateCutoffChildMode')){
     $function=$ast.Find({param($n)$n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -ceq $name},$true)
     . ([scriptblock]::Create($function.Extent.Text))
 }
@@ -29,4 +29,11 @@ Reject {Assert-HudCorridorPhysicalChildMode $true $true $false $true $false $tru
 Reject {Assert-HudCorridorPhysicalChildMode $true $false $false $false $false $true} 'Short session selected'
 Reject {Assert-HudWalkingAimedChildMode $true $true $true $true $false -90} 'Legacy profile accepted corridor yaw'
 Reject {Assert-HudWalkingAimedChildMode $true $true $true $true $false 0 -CorridorWalking} 'Corridor fixture missed the X edge'
+Assert-HudLateCutoffChildMode $true $true $true $true $true $true $false;Check $true 'Explicit late-cutoff fixture admitted'
+for($i=1;$i -le 5;$i++){
+    $flags=@($true,$true,$true,$true,$true,$true,$false);$flags[$i]=$false
+    Reject {Assert-HudLateCutoffChildMode @flags} 'Incomplete late-cutoff fixture admitted'
+}
+Reject {Assert-HudLateCutoffChildMode $true $true $true $true $true $true $true} 'Late-cutoff fixture accepted a live/other mode'
+Assert-HudLateCutoffChildMode $false $false $false $false $false $false $true;Check $true 'Ordinary modes gained late-cutoff requirements'
 Write-Output "HUD_CORRIDOR_AIMED_ENTRY_TESTS_PASS checks=$checks no_game_started=true"

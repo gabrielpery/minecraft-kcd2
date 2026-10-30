@@ -122,6 +122,103 @@ $refused.requests[0].component_request_id=0;$refused.requests[0].vanilla_queued=
 $refused.confirmations=@($refused.confirmations[0]);$refused.confirmed_actions=1;$refused.confirmed_network_actions=0;$refused.confirmed_breaks=0;$refused.block_events_queued=1
 $refused.owned_count=1;$refused.guest_world_cleanup_complete=$false;$refused.arena.owned_count=1;$refused.arena.owned_cells=@($refused.arena_offer.seed)
 Assert-MineComeHudAimedBridgeProof $refused;Check $true 'Legitimate stale refusal records old ray and retained guest stone truthfully'
+# A teardown removes only the final confirmed-owned set; it is not a third
+# gameplay action or a synthetic network/engine break.
+function Cleanup-Proof([object[]]$Cells=@(),[bool]$Requested=$true) {
+    Clone @{kind='minecome_aimed_owned_cleanup_v1';requested=$Requested;completed=$Requested;client_and_server=$Requested;pending=$false;
+        block_writes=$Cells.Count;owned_cells=$Cells;confirmed_cells=$Cells;started_monotonic_ns=$(if($Requested){1000L}else{0L});completed_monotonic_ns=$(if($Requested){2000L}else{0L})}
+}
+function Cleaned-Stone {
+    $s=Valid-Stone;$seed=$s.arena_offer.seed;$upper=Clone $seed;$upper.y++
+    $s.requests[0].wire.action=1;$s.confirmations[1].action=1;$s.confirmations[1].target=$upper
+    $s.confirmed_places=2;$s.confirmed_breaks=0
+    $cleanup=Cleanup-Proof @($seed,$upper)
+    $s | Add-Member owned_cleanup $cleanup
+    $s.arena | Add-Member owned_cleanup (Clone $cleanup)
+    return $s
+}
+$s=Cleaned-Stone;$before=$s | ConvertTo-Json -Depth 32 -Compress
+Assert-MineComeHudAimedBridgeProof $s;Assert-MineComeHudAimedBridgeProof $s
+Check (($s | ConvertTo-Json -Depth 32 -Compress) -ceq $before) 'Verified cleanup proof changed gameplay evidence'
+Check ($s.confirmed_network_actions -eq 1 -and $s.confirmed_breaks -eq 0 -and $s.block_events_queued -eq 2) 'Cleanup was miscounted as a gameplay or block event'
+$s.arena.owned_cleanup.owned_cells=@($s.arena.owned_cleanup.owned_cells[1],$s.arena.owned_cleanup.owned_cells[0])
+$s.owned_cleanup.confirmed_cells=@($s.owned_cleanup.confirmed_cells[1],$s.owned_cleanup.confirmed_cells[0])
+Assert-MineComeHudAimedBridgeProof $s;Check $true 'Equivalent cleanup sets must not depend on array order'
+foreach($name in @('requested','completed','client_and_server','pending')){
+    $s=Cleaned-Stone;$s.owned_cleanup.$name=1;$s.arena.owned_cleanup=Clone $s.owned_cleanup
+    Reject {Assert-MineComeHudAimedBridgeProof $s} 'Numeric cleanup flag was coerced into a Boolean'
+}
+$cleanupMutations=@(
+    {param($c)$c.kind='other'}, {param($c)$c.requested='true'}, {param($c)$c.completed=$false},
+    {param($c)$c.client_and_server=$false}, {param($c)$c.pending=$true}, {param($c)$c.block_writes=1},
+    {param($c)$c.block_writes='2'}, {param($c)$c.owned_cells+=@($c.owned_cells[0]);$c.block_writes=3},
+    {param($c)$c.confirmed_cells+=@($c.confirmed_cells[0])}, {param($c)$c.owned_cells[0].x++},
+    {param($c)$c.confirmed_cells[0].z++}, {param($c)$c.owned_cells=@($c.owned_cells[0]);$c.confirmed_cells=@($c.confirmed_cells[0]);$c.block_writes=1},
+    {param($c)$c.owned_cells=@();$c.confirmed_cells=@();$c.block_writes=0},
+    {param($c)$c.owned_cells=$null}, {param($c)$c.confirmed_cells=$c.confirmed_cells[0]},
+    {param($c)$c.confirmed_cells[0].x=12.5}, {param($c)$c.owned_cells=@($c.owned_cells[0])*17;$c.block_writes=17},
+    {param($c)$c.started_monotonic_ns=0}, {param($c)$c.completed_monotonic_ns=999},
+    {param($c)$c.completed_monotonic_ns='2000'}, {param($c)$c.requested=$false}
+)
+foreach($mutate in $cleanupMutations){
+    $s=Cleaned-Stone;& $mutate $s.owned_cleanup;$s.arena.owned_cleanup=Clone $s.owned_cleanup
+    Reject {Assert-MineComeHudAimedBridgeProof $s} 'Malformed or incomplete owned cleanup changed the ledger'
+}
+$s=Cleaned-Stone;$s.arena.owned_cleanup.completed_monotonic_ns++
+Reject {Assert-MineComeHudAimedBridgeProof $s} 'Bridge and arena cleanup timestamps disagreed'
+$s=Cleaned-Stone;$s.PSObject.Properties.Remove('owned_cleanup')
+Reject {Assert-MineComeHudAimedBridgeProof $s} 'Active cleanup was accepted without bridge confirmation'
+$s=Cleaned-Stone;$s.arena.PSObject.Properties.Remove('owned_cleanup')
+Reject {Assert-MineComeHudAimedBridgeProof $s} 'Bridge cleanup was accepted without arena confirmation'
+$s=Cleaned-Stone;$s.owned_cleanup=$null
+Reject {Assert-MineComeHudAimedBridgeProof $s} 'Null cleanup field was treated as legacy absence'
+$s=Cleaned-Stone;$s.PSObject.Properties.Remove('owned_cleanup');$s.arena.PSObject.Properties.Remove('owned_cleanup')
+Reject {Assert-MineComeHudAimedBridgeProof $s} 'Absent legacy cleanup erased the remaining gameplay-owned ledger'
+$s=Valid-Stone;$s.arena | Add-Member owned_cleanup (Cleanup-Proof @() $false)
+Assert-MineComeHudAimedBridgeProof $s;Check $true 'Legacy bridge retains unrequested zero arena cleanup without changing balance'
+$s=Clone $refused;$s.arena | Add-Member owned_cleanup (Cleanup-Proof @() $false)
+Assert-MineComeHudAimedBridgeProof $s;Check ($s.owned_count -eq 1) 'Unrequested cleanup erased a legacy remaining stone'
+$s=Valid-Stone;$s.arena | Add-Member owned_cleanup (Cleanup-Proof @() $false);$s.arena.owned_cleanup.block_writes=1
+Reject {Assert-MineComeHudAimedBridgeProof $s} 'Unrequested cleanup claimed a write'
+$s=Valid-Stone;$s.arena | Add-Member owned_cleanup (Cleanup-Proof @() $false);$s.arena.owned_cleanup.owned_cells=@($s.arena_offer.seed)
+Reject {Assert-MineComeHudAimedBridgeProof $s} 'Unrequested cleanup claimed an owned snapshot'
+$s=Valid-Stone;$s | Add-Member owned_cleanup (Cleanup-Proof @());$s.arena | Add-Member owned_cleanup (Cleanup-Proof @())
+Assert-MineComeHudAimedBridgeProof $s;Check $true 'Verified empty cleanup preserves a manually emptied arena'
+$s.arena.owned_cleanup=Cleanup-Proof @() $false
+Reject {Assert-MineComeHudAimedBridgeProof $s} 'Bridge and arena disagreed whether cleanup was requested'
+# Bind the earlier closed receipt to the final, already ledger-validated bridge.
+$s=Cleaned-Stone;$closed=Clone @{owned_cleanup=$s.owned_cleanup}
+Assert-MineComeHudAimedBridgeProof $s;Assert-MineComeAimedOwnedCleanupClosure $closed $s
+Check $true 'Closed receipt must accept the exact final owned cleanup snapshot'
+$closed.owned_cleanup.owned_cells=@($closed.owned_cleanup.owned_cells[1],$closed.owned_cleanup.owned_cells[0])
+Assert-MineComeAimedOwnedCleanupClosure $closed $s;Check $true 'Closure cleanup comparison is set-based'
+foreach($mutate in $cleanupMutations){
+    $s=Cleaned-Stone;$closed=Clone @{owned_cleanup=$s.owned_cleanup};& $mutate $closed.owned_cleanup
+    Reject {Assert-MineComeAimedOwnedCleanupClosure $closed $s} 'Malformed early closure cleanup was accepted'
+}
+foreach($name in @('started_monotonic_ns','completed_monotonic_ns')){
+    $s=Cleaned-Stone;$closed=Clone @{owned_cleanup=$s.owned_cleanup};$closed.owned_cleanup.$name++
+    Reject {Assert-MineComeAimedOwnedCleanupClosure $closed $s} 'Closure cleanup timestamp differs from final proof'
+}
+$s=Cleaned-Stone
+Reject {Assert-MineComeAimedOwnedCleanupClosure ([pscustomobject]@{}) $s} 'Active final cleanup accepted a missing closure snapshot'
+Reject {Assert-MineComeAimedOwnedCleanupClosure ([pscustomobject]@{owned_cleanup=$null}) $s} 'Null closure cleanup was treated as legacy absence'
+$closed=Clone @{owned_cleanup=$s.owned_cleanup}
+Reject {Assert-MineComeAimedOwnedCleanupClosure $closed (Valid-Stone)} 'Active closure cleanup accepted a missing final snapshot'
+$s=Valid-Stone;Assert-MineComeAimedOwnedCleanupClosure ([pscustomobject]@{}) $s
+Check $true 'Legacy receipts without cleanup retain their original proof rules'
+$s.arena | Add-Member owned_cleanup (Cleanup-Proof @() $false)
+Assert-MineComeAimedOwnedCleanupClosure ([pscustomobject]@{}) $s;Check $true 'Legacy arena-only unrequested evidence is accepted'
+$s | Add-Member owned_cleanup (Cleanup-Proof @() $false)
+Assert-MineComeAimedOwnedCleanupClosure ([pscustomobject]@{}) $s
+Assert-MineComeAimedOwnedCleanupClosure (Clone @{owned_cleanup=(Cleanup-Proof @() $false)}) (Valid-Stone)
+Check $true 'An unrequested empty cleanup on only one side cannot erase ownership'
+$s.owned_cleanup=Cleanup-Proof @();$closed=Clone @{owned_cleanup=(Cleanup-Proof @())}
+Assert-MineComeAimedOwnedCleanupClosure $closed $s;Check $true 'Matching completed empty cleanup is still bound to closure'
+$closed.owned_cleanup=Cleanup-Proof @() $false
+Reject {Assert-MineComeAimedOwnedCleanupClosure $closed $s} 'Empty closure and final cleanup disagreed on requested state'
+$closed.owned_cleanup=Cleanup-Proof @();$s.PSObject.Properties.Remove('owned_cleanup')
+Reject {Assert-MineComeAimedOwnedCleanupClosure $closed $s} 'Even empty active closure cleanup needs a final snapshot'
 foreach($case in @('legacy','false_server','wrong_world','wrong_reset','wrong_arena','same_permit','bad_component','bad_bootstrap','bad_owned','fraction_cell','outside','bad_balance','bad_alignment','bad_baseline','stale_baseline','stale_ray','bad_ray','pending','claimed_visual','unmatched_result','no_result','bad_count','oversized_id')){
     $s=Valid-Stone
     switch($case){

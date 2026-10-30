@@ -1,180 +1,107 @@
-# Resume checkpoint — 29 October 2026
+# Resume checkpoint — 30 October 2026
 
-## Current capability
+## Current capability and next decision
 
-The fixed 12×8m corridor is implemented in the physical walking/HUD controller,
-selected with `-CorridorWalking -ExtendedWalking`. It preserves the initial
-settled player anchor and both tile hashes, installs collision on both Minecraft
-threads, and releases the exact owned surface. The combined walking/aimed profile
-now also accepts the corridor through `-CorridorWalking -RepeatSession` and has
-passed automatic real-Minecraft checks on flat and captured terrain. Its native combined check crossed the old edge and placed on top, then failed at
-aim-cutoff cleanup. Full combined live acceptance remains incomplete.
-Foreground walking, HUD controls and inventory suppression now have user
-acceptance within this corridor profile. The live run did not reach the old
-X=4 edge. The existing repeat/aimed DLL is now installed; no native DLL was rebuilt.
+The fixed 12×8m corridor combines Minecraft walking, HUD/inventory and aimed
+stone placement in KCD2. Physical walking/HUD/inventory has user acceptance.
+The latest combined native run crossed the old edge and placed on top, but
+stopped at the 12-second aim cutoff because two stones remained uncleaned.
+That specific bug is now repaired and passes automatic real-Minecraft coverage.
+Full combined corridor native acceptance still needs one focused cutoff check.
+Do not repeat the full top/side/inventory sequence or reopen latency tuning.
 
-The previous scripted corridor two-game walk passed in bf48df8. Its 20s source /
-22s host contract is unchanged. The new physical profile uses 15s input + 1s
-settling, an 18s host deadline, 200ms playback, 400ms lease, 200 records / 256KiB.
-Bounds are X[-3.5,7.5], Z[-3.5,3.5]; raw Y[57.9,67.5] intersects the settled-anchor
-relative range [-6.1,+3.5]. No freshness, braking or readback limit was relaxed.
+No games are left running from this iteration. No native DLL was changed.
+The installed repeat/aimed bundle remains:
+`runtime/hud-compositor-walking-corridor-aimed-20261029/installed.json`
+with addon SHA256 `c5353e4bc21fd512838160cd3196f23f17b0fd6d0dc412178037dd56426c0196`.
+Reinspect actual processes and arm files before resuming.
 
-## Combined live follow-up: cutoff cleanup failure
+## Repair and automatic evidence
 
-The user confirmed walking and top placement, then the Minecraft HUD disappeared.
-Run 44fdf3a60e624f0c921598176f9ccb04 reached client/server X=5.8844196m, crossing
-the old edge. 124 frames were forwarded with 119 readbacks; KCD player and FPS
-restoration passed. Bootstrap and top placement were confirmed; no breaks arrived.
+Production `AimedStoneArena.cleanupOwned` freezes the exact confirmed-owned
+set (at most 16), validates the prepared/imported region and identities on both
+owning threads, removes only those stones on the server, then awaits matching
+client/server AIR. The support requires a fresh observation after stone cleanup.
+`HudAimedStoneBridge` emits final closure only after both cleanups. HUD/camera
+publication continues; the 12s active / 3s drain, leases and native limits remain
+unchanged. Cleanup is separate from gameplay breaks. Final Java/PowerShell proof
+balances the owned ledger and binds the early closed snapshot to final evidence.
 
-The top click arrived 11.155s after first movement. The fixed 12s aim cutoff closed
-logical authority at 12.029s with two stones and incomplete owned-world cleanup.
-Camera lease expiry at 12.802s followed shutdown; it is secondary. The prompt
-incorrectly allowed about 15s. Full combined acceptance remains failed.
+Actual captured-terrain late-cutoff fixture passed:
+`runtime/evidence/hud-physical-fixture-20261030-132516-1e3cd9bdc0f14acdb02a255888f9887f/verification.json`
 
-Evidence: runtime/evidence/hud-walking-aimed-20261029-233406-8c36e85079df4280baed80031ea905d0/.
-Next: automate late placement at cutoff, then finish bounded cleanup before final
-closure. No more live tests tonight; user is going to bed.
+- Upper placement confirmed at 11.235s after first movement.
+- Cutoff at 12.009s with two stones; clean closure at 12.143s.
+- Two HUD frames during cleanup; 144 imported cells unchanged.
+- Client/server maximum X=4.823781m; inventory suppression and 0.995m later walking passed.
 
-### Exact next investigation
+Normal six-action captured-terrain regression also passed:
+`runtime/evidence/hud-physical-fixture-20261030-132657-f8d29441c7dd49f7b8141d4a0579ad2d/verification.json`
 
-First accepted W: 1793316894760; top click: 1793316905915.
-`walking-aim-closed.json` at 1793316906789 reports logical_closed=true,
-owned_count=2, guest_world_cleanup_complete=false, support_cleanup_complete=false.
-The controller rejects cleanup before follower finish. Camera lease expiry at
-1793316907562 and later server-identity errors follow shutdown. Keep the original
-failed result; manual-acceptance.json records the partial human result separately.
+Maximum X=5.082572m, 11 crossing/16 block HUD frames, 144 protected cells. Top and side
+placement/breaking, inventory and subsequent walking passed. Both runs verified
+source hashes, trace, cleanup and normal Minecraft exit. They use scripted input
+and rays; they do not claim native composition/input acceptance.
 
-Automate the late-place/owned-block-at-cutoff case, then ensure bounded cleanup
-finishes before final closure and follower finish. Preserve ownership, imported
-terrain protection and authority limits; do not just raise timeouts. Only then
-schedule one live check with correct limits. Do not chase camera latency here.
+Java compiled; focused checks passed: physical 454, aim gate 32, aimed proof 67.
+PS fixture 253, relay/closure 238, controller 257, corridor entry 27. Do not rerun
+unchanged tests. Logs: `runtime/cutoff-java-checks.log`,
+`runtime/cutoff-actual-fixture.log`, `runtime/cutoff-normal-regression.log`.
 
-The earlier preparation 232854-8e80ddc5c57846b0b3f32073c2c7c32c expired before the
-assistant sent its F8 prompt; no human test occurred. Its exact-hash expired arm
-was archived there, and the game was restarted. Avoid repeating this by sending
-the prompt immediately on READY, with its live remaining-time bound.
-
-## Earlier passing foreground evidence
-
-    runtime/evidence/hud-walking-20261029-230705-6f95a1b3caab42aca886a805b844e9d9/manual-acceptance.json
-
-Adjacent verification.json passed run `2a2b53983db449b59979f21dd60637d5` with
-157 native readbacks, 862 HUD frames and exact restoration. User: “it worked all
-fine, still a bit choppy/delayed but it's okay. continue”. Walking/HUD controls
-and inventory suppression worked. Both players reached X=3.5762478m, so this is
-not a foreground crossing of the old X=4 boundary. The replay below crossed
-4.82378m. Batch any further live crossing with the next integrated milestone.
-KCD PID52208 was closed normally after the accepted session.
-
-## Latest passing automatic evidence
-
-Combined corridor walking/blocks/inventory:
-
-    runtime/evidence/hud-physical-fixture-20261029-232349-6016bca217f14dd68cb1cbf8619287d2/verification.json
-    runtime/evidence/hud-physical-fixture-20261029-232502-3f46a989741d4bde982e7b1e522341b6/verification.json
-
-Flat: maximum X4.961m, return0.0083m, 160 protected cells, 15 block HUD frames.
-Captured: maximum X4.823781m, return0.117886m, 10 crossing/15 block HUD frames,
-144 protected cells. Six vanilla actions (bootstrap, top placement/break, EAST
-placement/break, seed break), inventory suppression, movement afterward, cleanup,
-source hashes and trace verification passed. These are standalone scripted
-fixtures, not native input/composition acceptance. The old zero-yaw constructor
-assumption was repaired; both constructors and mode selection use -90 for corridor,
-zero for legacy. Do not repeat these unchanged automatic checks.
-
-Earlier physical-only captured-terrain fixture and native replay:
-
-Captured-terrain Minecraft fixture:
-
-    runtime/evidence/hud-physical-fixture-20261029-223141-d8dfe1edd3724a999ecf91083f4fc6f2/verification.json
-
-Both players reached X=4.824, fully crossing the old X=4 edge, and returned within
-0.118m. Five W/S pulses, inventory suppression before/after walking, 253 real HUD
-frames (10 crossing frames), 158 trace records, source hashes and cleanup passed.
-
-Native replay of those actual server observations:
-
-    runtime/evidence/buffered-movement-replay-20261029-223230-fbfc11b45b9843a9b2fc467ba2ae2275/verification.json
-
-156 forwarded / 156 native readbacks passed. Actual KCD displacement reached
-4.824m; maximum actor error was 0.000031m. Every buffered source point drained,
-exact starting-position restoration and the original FPS restoration passed.
-This was recorded controller replay, not simultaneous physical input or native
-HUD composition. KCD PID54112 was closed normally afterward; both games closed.
-Complete log: runtime/physical-corridor-coupled-running.log.
-
-Earlier captured fixture 97e91b7da1ee45f3adf16f10bf511513 failed its original X=5.5
-turnaround: conservative airborne-coast braking released W during a small slab
-descent, stopping at X=5.083. Fresh server samples and 27 crossing frames ruled out
-a crash or CPU delay. The fixture now turns at X=4.5, placing the whole 0.6m player
-footprint outside the old edge. Production limits stayed unchanged. Preserve the
-failed evidence. Flat fixture44e56ce3c6f84bab81888968bdaf0ab4 passed before this fix.
-
-Focused checks: Java terrain/trace2290, mode183, physical418; Lua99; PS corridor57,
-buffered114, physical161, wide68, scripted corridor103, fixture227, replay24 and
-update profile171. Do not rerun unchanged suites.
-
-## Automatic entry points
-
-From repository root (wrappers select PowerShell7 automatically):
+Automatic entry point from repo root (PowerShell 7 selected automatically):
 
 ```powershell
-& './scripts/Test-HudPhysicalMovementFixture.ps1' -ExtendedWalking -CorridorWalking
-& './scripts/Test-HudPhysicalMovementFixture.ps1' -ExtendedWalking -CorridorWalking -AimedBlocks
-& './scripts/Test-CoupledGroundCorridor.ps1' -PhysicalController -LaunchTestWorld
+& './scripts/Test-HudPhysicalMovementFixture.ps1' -ExtendedWalking -CorridorWalking -AimedBlocks -LateCutoff
 ```
 
-The final command captures current KCD terrain, runs Minecraft's controller with scripted
-keys/view, then replays the recorded server path through the extended KCD follower.
-It validates capture/fixture/source/trace hashes, crossing, source draining and
-restoration. Omit LaunchTestWorld to preserve an existing loaded world. Optional
-KeepTestWorld retains an owned launch for debugging; default closes it normally.
+Optional `-GroundPatchFile` takes an ABSOLUTE manifest path. The captured source
+used above is `runtime/evidence/ground-corridor-20261029-230706-cf12bc71de6841fbb21ad1fe2b33b4ff/ground-corridor.json`.
+Omit `-LateCutoff` for the ordinary six-action fixture. Legacy profiles remain unchanged.
 
-A fresh world can take about two minutes and may need its window brought forward
-through Computer Use. One attempt timed out before RUNNING; another had a setup
-HTTP timeout after capture. Neither reached movement. An empty startup-log race
-was fixed. Keep the owned world open when diagnosing setup, instead of repeatedly
-restarting it. No F8 countdown is needed for these automated checks.
+## One remaining live check
 
-## Installed state and next live check
+After a fresh official tools world is loaded, use:
 
-Installed repeat/aimed bundle:
-`runtime/hud-compositor-walking-corridor-aimed-20261029/installed.json`, using the
-existing pinned `c5353e4bc21fd512838160cd3196f23f17b0fd6d0dc412178037dd56426c0196` addon.
-`Update-HudCompositor.ps1 -WalkingAimed -RepeatSession -FromPhysicalMovement`
-completed against `runtime/hud-compositor-walking-corridor-20261029`: all six
-owned files verified; only the addon changed. Receipt:
+```powershell
+& './scripts/Start-HudWalkingAimed.ps1' -CorridorWalking -RepeatSession -Scenario CutoffCleanup -BundleDirectory './runtime/hud-compositor-walking-corridor-aimed-20261029'
+```
+
+Prefer user-started repeatable entry; otherwise confirm availability before
+arming and send the prompt immediately on READY. F8 once, find the north-side seed, face it and take a small step toward it.
+Release W, then place once on its TOP within ten seconds of first movement.
+Leave both stones. They should disappear around 12s while HUD remains. Take a
+short later step before 15s, then keep KCD2 focused until HUD closes at 30s.
+No manual breaking/inventory repetition is needed. This scenario proves exact
+two-stone automatic cleanup, rather than counting teardown as gameplay breaks.
+A second same-process session needs its printed `-PreviousArmReceipt` path.
+
+Preserve original failed evidence:
+`runtime/evidence/hud-walking-aimed-20261029-233406-8c36e85079df4280baed80031ea905d0/`
+Run 44fdf3a60e624f0c921598176f9ccb04: maximum X=5.8844196m; 124 forwarded/119 readbacks;
+top click at 11.155s, premature closure at 12.029s with owned_count=2. Camera lease expiry
+12.802s was secondary to shutdown. Player/FPS restoration passed. The user saw
+walking and placement before HUD disappeared. Keep its failure unchanged.
+
+## Bounds, installed state and unfinished work
+
+Physical contract: 15s input + 1s settle, 18s host deadline, 200ms playback, 400ms
+lease, 200 records/256KiB. Corridor X[-3.5,7.5], Z[-3.5,3.5]; raw Y[57.9,67.5]
+intersects anchor-relative[-6.1,+3.5]. Two immutable 9×9 captures: 117 unique
+samples/96 slabs. Fixed support (-1,floor(initialY)-1,-5); imported cells protected.
+
+Installed update receipt:
 `runtime/evidence/hud-update-20261029-232323-f10b39f3ff864a2594295efb575eba1d/update.json`.
-The expired plain physical arm was archived in the previous live evidence as
-`retired-MineComeHudMovement.ini`, with exact hash/dead-PID/expiry checks. Original
-installation receipts remain immutable. Transition tests34 and profile tests171 passed.
-
-KCD PID35908 was left open after the failed combined check; Minecraft closed
-normally. Reinspect processes tomorrow. Escape stopped Computer Use this turn.
-Do not run another live test tonight. The command below is for AFTER the cleanup fix.
-The prepared entry point is:
-
-```powershell
-& './scripts/Start-HudWalkingAimed.ps1' -CorridorWalking -RepeatSession -Scenario TopFaceInventory -BundleDirectory './runtime/hud-compositor-walking-corridor-aimed-20261029'
-```
-
-Check for newer controller/arm evidence and actual process state before resuming
-or starting another session. A second repeat session must use its printed
-`-PreviousArmReceipt` path; do not reuse a consumed generation implicitly.
-
-## Retained unfinished work
-
-Rolling terrain and arbitrary placement against KCD terrain remain unfinished.
-The corridor is one immutable map. Earlier jump-camera landing errors0.295/0.363m
-remain failures; the 1ms cadence trial did not fix them and was reverted. Do not
-reopen that tuning loop. Repeat gameplay worked twice, but final generation2
-exhaustion and third-session refusal remain unverified after repair87217b9.
+Earlier physical live acceptance:
+`runtime/evidence/hud-walking-20261029-230705-6f95a1b3caab42aca886a805b844e9d9/manual-acceptance.json`.
+The earlier 8×8m combined/repeat results remain valid. Rolling terrain and
+placement against arbitrary host terrain remain unfinished. Jump-camera landing
+errors remain recorded failures; do not reopen that tuning loop. Generation 2
+exhaustion/third-session refusal still needs native acceptance after 87217b9.
 
 Workspace: C:/Users/xephi/Documents/ChatGPT/New project/MineCome
 Public repo: https://github.com/gabrielpery/minecraft-kcd2; branch codex/initial-import.
-Official Steam tools2429020/build1.5.5 only; never load retail1.5.6 saves.
+Official Steam tools 2429020/build 1.5.5 only; never load retail 1.5.6 saves.
 JDK: C:/Program Files/Java/jdk-24; Gradle cache: minecraft/.gradle-user-home.
 PS7: C:/Users/xephi/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/powershell/pwsh.exe
-Routine changes/tests/launches/pushes are authorized. Follow AGENTS.md: integrated
-progress, focused automation, minimal manual requests; format commands separately
-from questions. Inspect Git status/log and process state before resuming.
+Routine edits/tests/launches/pushes authorized. Follow AGENTS.md: integrated
+progress, focused automation, minimal human tests; commands separate from questions.
