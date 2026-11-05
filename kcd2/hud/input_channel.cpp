@@ -7,8 +7,8 @@ Writer::~Writer() {if(mapped_&&status_.state!=2)finish("host_shutdown");dispose(
 void Writer::dispose() {if(mapped_){UnmapViewOfFile(mapped_);mapped_=nullptr;}mapping_.reset();mutex_.reset();producer_.reset();}
 bool Writer::create(const Identity &id,Profile profile) {
     if(consumed_)return false;consumed_=true;
-    if((profile!=Profile::ui&&profile!=Profile::movement&&profile!=Profile::gameplay&&profile!=Profile::gameplay_movement)||
-        ((profile==Profile::gameplay||profile==Profile::gameplay_movement)!=(id.schema==3))){reason_="input_profile";return false;}
+    if((profile!=Profile::ui&&profile!=Profile::movement&&profile!=Profile::gameplay&&profile!=Profile::gameplay_movement&&profile!=Profile::gameplay_blocks)||
+        ((profile==Profile::gameplay||profile==Profile::gameplay_movement||profile==Profile::gameplay_blocks)!=(id.schema==3))){reason_="input_profile";return false;}
     profile_=profile;
     const auto utc=stream::utc_ms();begun_=stream::steady_ms();
     if(!stream::valid_identity(id)||id.target_pid!=GetCurrentProcessId()||id.target_start!=stream::process_start()||

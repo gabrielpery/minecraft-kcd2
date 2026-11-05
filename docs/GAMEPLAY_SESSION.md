@@ -16,9 +16,10 @@ UI-only connected profile leaves walking with KCD2. A separate `-Movement` profi
 now implements Minecraft-authoritative walking on captured host collision, with
 KCD2's player and camera following actual Minecraft server observations. Scripted
 Minecraft walking/resume and native sustained attachment/HUD pass; physical
-walking in this new profile still needs acceptance. Block mirroring, Steve's body/hands, command typing
-from KCD2, cross-game health/combat and flight remain unfinished in this sustained
-path. Existing bounded gameplay labs remain separate.
+walking in this new profile still needs acceptance. The `-Blocks` profile extends
+it with persistent owned stones and a native mirror. General blocks, Steve's
+body/hands, command typing from KCD2, cross-game health/combat and flight remain
+unfinished in this sustained path. Existing bounded gameplay labs remain separate.
 
 ## Run the standalone guest
 
@@ -141,6 +142,69 @@ survive. To restore the preceding renderer installation after closing KCD2:
 A restored bundle remains immutable evidence; prepare a new bundle directory
 before reinstalling. The profile is restricted to the exact official Steam tools
 1.5.5 executable, as with the UI-only entry.
+
+## Connect sustained building, walking and the HUD
+
+`-Blocks` implies `-Movement` and selects input protocol 5. Use it consistently
+when preparing, installing, starting and restoring its separate native bundle:
+
+```powershell
+$bundle = Join-Path (Get-Location) ('runtime/hud-gameplay-blocks-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+& './scripts/Prepare-GameplayHud.ps1' -Blocks -BundleDirectory $bundle
+& './scripts/Install-GameplayHud.ps1' -Blocks -BundleDirectory $bundle
+& './scripts/Start-Kcd2ToolsTest.ps1'
+```
+
+After the fresh tools world loads, keep the player still and run:
+
+```powershell
+& './scripts/Start-GameplaySession.ps1' -Blocks -BundleDirectory $bundle
+```
+
+Activation is automatic. In a new Creative world, use E to select stone from the
+normal inventory. Right-click places held stone on sampled ground or an owned
+stone face; left-click mines owned stone. In Survival, placement consumes the
+held stack and mining requires holding attack for the vanilla tool/break time;
+releasing early cancels it. Native camera look remains active
+outside inventory. Inventory mouse clicks are separate from world clicks, and
+opening inventory releases world actions and movement. F8 stops and saves.
+
+Placement and breaking use actual vanilla interaction packets and server-confirmed
+block states. The session does not seed a demo cube or replenish inventory. Up to
+64 owned stone blocks can persist within the captured 8×8m patch, Y56–80 in the
+mapped Minecraft coordinates. Imported terrain remains temporary collision rather
+than saved blocks. Placing the first stone occupies the air cell containing the
+native terrain hit; sloping ground can partially cover that cube. Native terrain
+mining and other block types are not implemented here.
+
+`minecome-blocks.json` inside the owned save records construction ownership and
+the exact terrain binding. Normal stop preserves Minecraft construction and
+removes only the session's native display entities. Reopening reconciles that
+ledger against the actual server world and republishes the remaining stones.
+An expired native heartbeat also removes those owned display entities.
+
+This profile retains the movement bounds and one-session-per-KCD-process
+limitation described above. After closing KCD2, restore with:
+
+```powershell
+& './scripts/Install-GameplayHud.ps1' -Blocks -BundleDirectory $bundle -Restore
+```
+
+The paired automatic check runs actual Minecraft twice with scripted controls:
+
+```powershell
+& './scripts/Test-GameplayBlocks.ps1'
+```
+
+It verifies ground/top/side placement, breaking, walking, inventory suppression,
+normal save/cleanup, then the same world's block, inventory and location on
+reopen before breaking the retained block. This proves the Minecraft/controller
+path; it does not claim physical KCD input or the complete product scope.
+
+`Test-GameplayBlocksSurvival.ps1` runs a separate actual Minecraft check of
+Survival placement consumption, early-release cancellation and held pickaxe
+mining. It uses vanilla commands only to prepare its isolated fixture world;
+command typing from the KCD2 window is still unfinished.
 
 ## Automatic sustained movement check
 

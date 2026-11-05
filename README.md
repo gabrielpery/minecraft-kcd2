@@ -33,9 +33,14 @@ origin and the saved player location between launches. This path has no timed
 return to the origin or 15-second walking cutoff; it pauses at the captured edge.
 Automatic walking, inventory suppression and saved-location resume pass in actual
 Minecraft. A 40-second KCD2 check passes sustained attachment/HUD and cleanup;
-physical walking acceptance in this new profile remains pending. Blocks,
-command typing from KCD2, Steve rendering, combat and flight are still unfinished
-in this path. The existing bounded walking/block tests remain available.
+physical walking acceptance in this new profile remains pending. The new `-Blocks`
+profile adds persistent stone construction using vanilla placement/mining, exact
+native camera targeting and an owned KCD entity mirror. An automatic real-Minecraft
+check passes ground/top/side placement, breaking, walking, inventory suppression
+and saved-block restoration/removal across two launches. This first sustained
+building implementation supports 64 stones within the captured patch; general
+block rendering, rolling terrain, command typing from KCD2, Steve, combat and
+flight remain unfinished. The existing bounded walking/block tests remain available.
 
 The new [repeat-session development profile](kcd2/MOVEMENT-LAB.md#repeat-sessions-in-one-kcd-process)
 is implemented and compiled, with automated cleanup/rearm checks passing.

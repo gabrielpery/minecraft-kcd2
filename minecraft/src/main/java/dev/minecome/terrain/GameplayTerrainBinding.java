@@ -18,10 +18,14 @@ public final class GameplayTerrainBinding {
     private final GroundPatch surface;
     private String previous;
     private Position resume;
+    private boolean blockSupport;
     private GameplayTerrainBinding(GameplayWorld save,Path directory,GroundPatch surface,String previous,Position resume){
         this.save=save;this.directory=directory;this.marker=directory.resolve("binding.json");this.surface=surface;this.previous=previous;this.resume=resume;
     }
     public static GameplayTerrainBinding open(GameplayWorld save,Path source,boolean fixture)throws IOException{
+        return open(save,source,fixture,false);
+    }
+    public static GameplayTerrainBinding open(GameplayWorld save,Path source,boolean fixture,boolean blocks)throws IOException{
         save.verifyOwnership();GroundPatch requested=GroundPatch.read(source,true);
         String kind=requested.sourceKind();
         if(!(fixture?kind.equals("standalone_ground_fixture")||kind.equals("standalone_fixture"):kind.equals("live_kcd_ground_patch")))throw new IOException("Gameplay terrain provenance differs");
@@ -46,8 +50,8 @@ public final class GameplayTerrainBinding {
                 !value.get("patch_run").getAsString().equals(cached.run())||!cached.sha256().equals(requested.sha256())||
                 value.get("host_x").getAsDouble()!=cached.centerX()||value.get("host_y").getAsDouble()!=cached.centerY()||value.get("host_z").getAsDouble()!=cached.centerZ())throw new IOException("Persistent terrain origin/identity changed");
             Position position=null;
-            if(value.has("resume")){JsonObject p=value.getAsJsonObject("resume");position=new Position(p.get("x").getAsDouble(),p.get("y").getAsDouble(),p.get("z").getAsDouble(),p.get("yaw").getAsFloat(),p.get("pitch").getAsFloat());validate(cached,position);}
-            return new GameplayTerrainBinding(save,dir,cached,text,position);
+            if(value.has("resume")){JsonObject p=value.getAsJsonObject("resume");position=new Position(p.get("x").getAsDouble(),p.get("y").getAsDouble(),p.get("z").getAsDouble(),p.get("yaw").getAsFloat(),p.get("pitch").getAsFloat());validate(cached,position,blocks);}
+            var binding=new GameplayTerrainBinding(save,dir,cached,text,position);binding.blockSupport=blocks;return binding;
         }catch(RuntimeException e){throw new IOException("Invalid gameplay terrain binding",e);}
     }
     public GroundPatch surface(){return surface;}
@@ -55,14 +59,18 @@ public final class GameplayTerrainBinding {
     public Path patchFile(){return directory.resolve("ground-patch.json");}
     /** Runs on the bounded file worker, never the ongoing game tick. */
     public synchronized void checkpoint(Position position)throws IOException{
-        validate(surface,position);save.verifyOwnership();
+        validate(surface,position,blockSupport);save.verifyOwnership();
         if(!Files.readString(marker,StandardCharsets.UTF_8).equals(previous))throw new IOException("Terrain binding changed before checkpoint");
         String next=json(save,surface,position).toString();Path temp=directory.resolve("binding-"+UUID.randomUUID()+".tmp");
         Files.writeString(temp,next,StandardCharsets.UTF_8,StandardOpenOption.CREATE_NEW);
         Files.move(temp,marker,StandardCopyOption.ATOMIC_MOVE,StandardCopyOption.REPLACE_EXISTING);previous=next;resume=position;
     }
     static void validate(GroundSurface s,Position p)throws IOException{
-        if(!s.containsFeet(p.x(),p.z(),.31)||Math.abs(p.y()-s.groundForFeet(p.x(),p.z(),.3))>.2)throw new IOException("Resume position is outside sampled ground");
+        validate(s,p,false);
+    }
+    private static void validate(GroundSurface s,Position p,boolean blocks)throws IOException{
+        double ground=s.groundForFeet(p.x(),p.z(),.3);
+        if(!s.containsFeet(p.x(),p.z(),.31)||p.y()<ground-.2||(blocks?p.y()>81.2:Math.abs(p.y()-ground)>.2))throw new IOException("Resume position is outside sampled ground/block coverage");
     }
     private static JsonObject json(GameplayWorld save,GroundPatch patch,Position position){
         var j=new JsonObject();j.addProperty("schema",1);j.addProperty("kind","minecome_gameplay_terrain_v1");j.addProperty("world_id",save.id().toString());

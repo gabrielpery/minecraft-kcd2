@@ -45,6 +45,49 @@ public final class GameplayWireTests {
         GameplayMode.requireExclusive(p);check(true);
         p.setProperty("minecome.hudStreamLab","true");rejects(()->GameplayMode.requireExclusive(p));
         check(GameplayMode.MAX_LEASE_MS==86_400_000L);
+        worldButtons(id);
         System.out.println("GameplayWireTests: "+checks+" checks passed; no games");
+    }
+    private static void worldButtons(HudInputProtocol.Identity id){
+        var b=ByteBuffer.allocate(HudInputProtocol.MAPPING_BYTES).order(ByteOrder.LITTLE_ENDIAN);
+        b.put("MCHUDI05".getBytes(StandardCharsets.US_ASCII)).putInt(5).putInt(HudInputProtocol.MAPPING_BYTES);
+        b.put(id.run().getBytes(StandardCharsets.US_ASCII)).putInt(id.producerPid()).putInt(id.targetPid()).putLong(id.producerStart()).putLong(id.targetStart()).putLong(id.expires());
+        b.putLong(2).putLong(1000).putInt(1).putInt(2);
+        b.position(HudInputProtocol.HEADER_BYTES);
+        b.putLong(1).putLong(1000).putInt(7).putInt(1).putFloat(0).putFloat(0).putInt(0).putInt(0);
+        b.putLong(2).putLong(1000).putInt(8).putInt(1).putFloat(0).putFloat(0).putInt(0).putInt(0);
+        var snapshot=HudInputProtocol.decode(b.array(),id,0,1000,0,true,true,true);
+        check(snapshot.events().size()==2&&snapshot.events().getFirst().kind()==7&&snapshot.events().getLast().kind()==8);
+        for(boolean movement:new boolean[]{false,true})for(boolean gameplay:new boolean[]{false,true}){
+            rejects(()->HudInputProtocol.decode(b.array(),id,0,1000,0,movement,gameplay,false));
+            if(!movement||!gameplay)rejects(()->HudInputProtocol.decode(b.array(),id,0,1000,0,movement,gameplay,true));
+        }
+        rejects(()->HudInputProtocol.decode(b.array(),id,0,1251,0,true,true,true));
+        for(int code=0;code<2;code++)for(int kind=7;kind<=8;kind++){
+            var event=new HudInputProtocol.Event(1,1000,kind,code,0,0,0);
+            HudInputProtocol.validateEvent(event,1250,true,true,true);check(true);
+            rejects(()->HudInputProtocol.validateEvent(event,1251,true,true,true));
+            rejects(()->HudInputProtocol.validateEvent(event,1000,true,true,false));
+        }
+        for(var event:new HudInputProtocol.Event[]{
+            new HudInputProtocol.Event(1,1000,7,2,0,0,0),new HudInputProtocol.Event(1,1000,7,0,.1f,0,0),
+            new HudInputProtocol.Event(1,1000,8,1,0,.1f,0),new HudInputProtocol.Event(1,1000,8,1,0,0,1),
+            new HudInputProtocol.Event(1,1000,9,0,0,0,0),new HudInputProtocol.Event(1,1000,7,-1,0,0,0)})
+            rejects(()->HudInputProtocol.validateEvent(event,1000,true,true,true));
+        var gate=new HudInputGate(true,true);
+        gate.apply(new HudInputProtocol.Event(1,1000,7,0,0,0,0),1000);
+        gate.apply(new HudInputProtocol.Event(2,1000,4,0,.5f,.5f,0),1000);
+        check(gate.heldButtonCount()==2); // Inventory and world channels cannot consume each other's release.
+        gate.apply(new HudInputProtocol.Event(3,1000,8,0,0,0,0),1000);check(gate.heldButtonCount()==1);
+        rejects(()->gate.apply(new HudInputProtocol.Event(4,1000,8,0,0,0,0),1000));
+        gate.apply(new HudInputProtocol.Event(4,1000,5,0,.5f,.5f,0),1000);check(gate.heldButtonCount()==0);
+        gate.apply(new HudInputProtocol.Event(5,1000,7,1,0,0,0),1000);
+        rejects(()->gate.apply(new HudInputProtocol.Event(6,1000,7,1,0,0,0),1000));
+        rejects(()->gate.apply(new HudInputProtocol.Event(7,1000,8,1,0,0,0),1000));
+        gate.apply(new HudInputProtocol.Event(6,1000,1,'W',0,0,0),1000);
+        gate.releaseAll();check(gate.heldButtonCount()==0&&gate.heldKeyCount()==0&&gate.sequence()==6);
+        for(var old:new HudInputGate[]{new HudInputGate(),new HudInputGate(true)})rejects(()->old.apply(new HudInputProtocol.Event(1,1000,7,0,0,0,0),1000));
+        b.putInt(96,2);
+        check(HudInputProtocol.decode(b.array(),id,0,3000,1,true,true,true).events().isEmpty());
     }
 }

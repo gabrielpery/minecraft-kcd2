@@ -3,6 +3,7 @@
 #include "gameplay_keyboard_policy.hpp"
 #include "movement_forwarding.hpp"
 #include "selective_forwarding.hpp"
+#include "gameplay_world_buttons.hpp"
 #include <cstring>
 #include <iostream>
 #include <stdexcept>
@@ -99,6 +100,44 @@ void input_tests(){
     check(world_mouse.update(true,false,0,0,false,0,false)==mouse::Mode::full,"inventory exit first neutral frame");
     check(world_mouse.update(true,false,0,0,false,0,false)==mouse::Mode::buttons,"inventory exit restores native mouse after neutral");
 }
+void world_button_tests(){
+    ui::GameplayWorldButtons buttons;
+    check(buttons.update(true,1,1000).count==0&&!buttons.active(),"held entry cannot attack");
+    check(buttons.update(true,0,1001).count==0&&!buttons.active(),"world needs first neutral frame");
+    check(buttons.update(true,0,1002).count==0&&buttons.active(),"world armed after two neutral frames");
+    auto batch=buttons.update(true,1,1003);
+    check(batch.count==1&&batch.events[0].kind==ui::Kind::world_button_down&&batch.events[0].code==0,"left world press emitted");
+    check(buttons.update(true,1,61003).count==0&&buttons.held()==1,"sustained held button neither repeats nor expires after thirty seconds");
+    batch=buttons.update(true,3,61004);
+    check(batch.count==1&&batch.events[0].code==1&&batch.events[0].kind==ui::Kind::world_button_down,"right press retains held left");
+    batch=buttons.update(false,3,61005);
+    check(batch.count==2&&batch.events[0].kind==ui::Kind::world_button_up&&batch.events[1].kind==ui::Kind::world_button_up&&!buttons.held(),"inventory or lost capture releases both world buttons");
+    batch.add({61005,ui::Kind::key_down,0x45});
+    check(batch.count==3&&batch.events[2].code==0x45,"world releases precede inventory toggle in ordered mailbox");
+    buttons.update(true,3,61006);check(!buttons.active(),"held inventory exit cannot start new world attack");
+    buttons.update(true,0,61007);buttons.update(true,0,61008);
+    for(unsigned click=0;click<100;++click){
+        batch=buttons.update(true,1u<<(click%2),62000+click*2);
+        check(batch.count==1&&batch.events[0].kind==ui::Kind::world_button_down,"world actions continue past diagnostic sixteen click limit");
+        batch=buttons.update(true,0,62001+click*2);
+        check(batch.count==1&&batch.events[0].kind==ui::Kind::world_button_up,"physical release emits only once");
+    }
+    buttons.update(true,1,63000);batch=buttons.update(true,4,63001);
+    check(batch.count==1&&!buttons.active()&&batch.events[0].kind==ui::Kind::world_button_up,"invalid observed buttons release and require neutral reacquisition");
+    const st::Identity id{"0123456789abcdef0123456789abcdef",17,19,100,200,100000+st::gameplay_max_lease_ms,3};
+    std::array<std::uint8_t,128> encoded{};ui::encode_host(encoded,id,0,0,0,ui::Profile::gameplay_blocks);
+    check(!std::memcmp(encoded.data(),"MCHUDI05",8)&&encoded[8]==5,"world profile has separate v5 mapping");
+    for(const auto kind:{ui::Kind::world_button_down,ui::Kind::world_button_up})for(unsigned code=0;code<2;++code){
+        const ui::Event e{1000,kind,code,0,0,0};
+        check(ui::valid_event(e,1250,ui::Profile::gameplay_blocks)&&!ui::valid_event(e,1251,ui::Profile::gameplay_blocks),"world edges retain strict250ms freshness");
+        for(const auto profile:{ui::Profile::ui,ui::Profile::movement,ui::Profile::gameplay,ui::Profile::gameplay_movement})
+            check(!ui::valid_event(e,1000,profile),"old profiles cannot accept world buttons");
+    }
+    for(const auto e:{ui::Event{1000,ui::Kind::world_button_down,2},ui::Event{1000,ui::Kind::world_button_down,0,.5f,0,0},ui::Event{1000,ui::Kind::world_button_up,1,0,0,1}})
+        check(!ui::valid_event(e,1000,ui::Profile::gameplay_blocks),"world button code position and wheel cannot smuggle UI data");
+    check(ui::valid_event({1000,ui::Kind::button_down,0,.5f,.6f,0},1000,ui::Profile::gameplay_blocks),"inventory pointer contract unchanged in world profile");
+    for(auto code:ui::movement_keys)check(ui::valid_event({1000,ui::Kind::key_down,code},1000,ui::Profile::gameplay_blocks),"world profile retains physical walking");
+}
 void keyboard_mask_tests(){
     namespace gk=minecome::gameplay_keyboard;
     gk::Policy p;
@@ -120,4 +159,4 @@ void keyboard_mask_tests(){
     check(gk::ui_scan(1)&&gk::ui_scan(2)&&gk::ui_scan(10)&&gk::ui_scan(0x12)&&!gk::ui_scan(0x11),"DirectInput scan mask matches UI keys only");
 }
 }
-int main(){try{stream_tests();input_tests();keyboard_mask_tests();std::cout<<"HUD_GAMEPLAY_SESSION_TESTS checks="<<checks<<" PASS\n";return 0;}catch(const std::exception&e){std::cerr<<e.what()<<'\n';return 1;}}
+int main(){try{stream_tests();input_tests();world_button_tests();keyboard_mask_tests();std::cout<<"HUD_GAMEPLAY_SESSION_TESTS checks="<<checks<<" PASS\n";return 0;}catch(const std::exception&e){std::cerr<<e.what()<<'\n';return 1;}}

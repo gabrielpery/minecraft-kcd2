@@ -2,6 +2,7 @@ package dev.minecome.terrain;
 
 import com.google.gson.JsonObject;
 import dev.minecome.gameplay.GameplayWorld;
+import dev.minecome.gameplay.GameplayBlocks;
 import dev.minecome.hud.HudInputProtocol;
 import dev.minecome.hud.HudMovementViewReader;
 import net.minecraft.client.MinecraftClient;
@@ -17,7 +18,7 @@ import java.util.concurrent.atomic.*;
 
 /** Ongoing vanilla walking on ephemeral host collision; inventory/mode/player state stay vanilla. */
 public final class GameplayMovement {
-    private record Observation(Object world,Object player,long seq,long at,long utc,GameplayBoundary.Motion motion,float yaw,float pitch){}
+    private record Observation(Object world,Object player,long seq,long at,long utc,GameplayBoundary.Motion motion,float yaw,float pitch,boolean grounded){}
     private final GameplayWorld save;private final GroundPatch surface;
     private final GameplayTerrainBinding binding;private final GameplayTerrainBinding.Position resume;
     private final HudInputProtocol.Identity identity;private final HudMovementViewReader views;
@@ -33,8 +34,10 @@ public final class GameplayMovement {
     private volatile boolean closing,ready;private boolean clientInstalled,clientReleased,teleportRequested,authority,controlsOwned;
     private long setupAt,stableAt,sequence,events,heldTicks,boundaryPauses;private double clientWalk,serverWalk;
     private GameplayBoundary.Motion anchor;private String paused="starting";
+    private GameplayBlocks blocks;
+    public void blockController(GameplayBlocks controller){if(clientWorld!=null||serverInstalled.get())throw new IllegalStateException("Block controller must precede world load");blocks=controller;}
     public GameplayMovement(Path root,GameplayWorld save,Path groundFile,boolean fixture,HudInputProtocol.Identity identity,Path evidenceDirectory)throws IOException{
-        this.save=save;this.fixture=fixture;this.identity=identity;binding=GameplayTerrainBinding.open(save,groundFile,fixture);surface=binding.surface();resume=binding.resume();
+        this.save=save;this.fixture=fixture;this.identity=identity;binding=GameplayTerrainBinding.open(save,groundFile,fixture,Boolean.getBoolean("minecome.gameplayBlocks"));surface=binding.surface();resume=binding.resume();
         boundary=new GameplayBoundary(surface);views=new HudMovementViewReader(evidenceDirectory.resolve("host-view.json"),root.resolve("runtime/evidence"),identity,surface.run(),surface.sha256(),fixture);
         files=new GameplayMotionFiles(root,evidenceDirectory,binding);views.start();files.start();
     }
@@ -94,7 +97,7 @@ public final class GameplayMovement {
         }
         var o=fresh(now);var current=motion(client.player);
         if(!ready){
-            boolean stable=teleported.get()&&o!=null&&grounded(current)&&grounded(o.motion())&&distance(current,o.motion())<.01&&views.current(System.currentTimeMillis(),now)!=null;
+            boolean stable=teleported.get()&&o!=null&&grounded(current,(BlockView)clientWorld)&&o.grounded()&&distance(current,o.motion())<.01&&views.current(System.currentTimeMillis(),now)!=null;
             if(!stable)stableAt=0;else if(stableAt==0)stableAt=now;else if(now-stableAt>=250_000_000L){
                 ready=true;anchor=o.motion();var proof=evidence(client);proof.addProperty("ready",true);files.ready(proof);
             }
@@ -115,8 +118,8 @@ public final class GameplayMovement {
             }
             if(playerId==null)return;var p=source.getPlayerManager().getPlayer(playerId);requireServer(source,p);
             if(!teleported.get())return;
-            var m=motion(p);var o=new Observation(p.getWorld(),p,++sequence,System.nanoTime(),System.currentTimeMillis(),m,p.getYaw(),p.getPitch());observation.set(o);
-            if(grounded(m)&&surface.containsFeet(m.x(),m.z(),.31))lastGrounded.set(o);
+            var m=motion(p);var o=new Observation(p.getWorld(),p,++sequence,System.nanoTime(),System.currentTimeMillis(),m,p.getYaw(),p.getPitch(),grounded(m,(BlockView)serverWorld));observation.set(o);
+            if(o.grounded()&&surface.containsFeet(m.x(),m.z(),.31))lastGrounded.set(o);
             if(ready&&!closing)publish(o);
         }catch(Exception e){failure.compareAndSet(null,"Gameplay server observation: "+e);}
     }
@@ -133,9 +136,9 @@ public final class GameplayMovement {
         if(serverPlayer==null)serverPlayer=p;else if(serverPlayer!=p)throw new IllegalStateException("Gameplay server player changed");
     }
     private static GameplayBoundary.Motion motion(Entity e){var p=e.getPos();var v=e.getVelocity();return new GameplayBoundary.Motion(p.x,p.y,p.z,v.x,v.y,v.z,e.isOnGround());}
-    private boolean grounded(GameplayBoundary.Motion m){return m.ground()&&surface.containsFeet(m.x(),m.z(),.3)&&Math.abs(m.y()-surface.groundForFeet(m.x(),m.z(),.3))<.15;}
+    private boolean grounded(GameplayBoundary.Motion m,BlockView world){return m.ground()&&surface.containsFeet(m.x(),m.z(),.3)&&Math.abs(m.y()-(blocks==null?surface.groundForFeet(m.x(),m.z(),.3):blocks.groundForFeet(world,m.x(),m.y(),m.z(),.3)))<.15;}
     private static double distance(GameplayBoundary.Motion a,GameplayBoundary.Motion b){return Math.sqrt(Math.pow(a.x()-b.x(),2)+Math.pow(a.y()-b.y(),2)+Math.pow(a.z()-b.z(),2));}
-    private boolean allAir(BlockView w){for(var c:surface.cells())if(!w.getBlockState(new BlockPos(c.x(),c.y(),c.z())).isAir())return false;return true;}
+    private boolean allAir(BlockView w){for(var c:surface.cells()){var p=new BlockPos(c.x(),c.y(),c.z());if(blocks!=null?!blocks.terrainCellAllowed(w,p,w==serverWorld):!w.getBlockState(p).isAir())return false;}return true;}
     private void release(MinecraftClient c){if(!controlsOwned)return;c.options.forwardKey.setPressed(false);c.options.backKey.setPressed(false);c.options.leftKey.setPressed(false);c.options.rightKey.setPressed(false);c.options.jumpKey.setPressed(false);controlsOwned=false;}
     public void close(MinecraftClient client){
         if(closing)return;closing=true;authority=false;keys.close();release(client);views.close();
@@ -161,7 +164,10 @@ public final class GameplayMovement {
         var checkpoint=binding.resume();j.addProperty("resume_checkpoint_present",checkpoint!=null);
         if(checkpoint!=null){var p=new JsonObject();p.addProperty("x",checkpoint.x());p.addProperty("y",checkpoint.y());p.addProperty("z",checkpoint.z());j.add("resume_checkpoint",p);}
         j.addProperty("controls_released",!controlsOwned);j.addProperty("client_collision_released",clientReleased);j.addProperty("server_collision_released",serverReleased.get());j.addProperty("cleanup_complete",cleanupComplete());
-        j.addProperty("failure",failure.get()!=null?failure.get():files.failure());j.addProperty("blocks_written",0);j.addProperty("ground_cells_air",clientWorld!=null&&allAir((BlockView)clientWorld));return j;
+        j.addProperty("failure",failure.get()!=null?failure.get():files.failure());j.addProperty("blocks_written",0);
+        j.addProperty("terrain_cells_valid",clientWorld!=null&&allAir((BlockView)clientWorld));
+        boolean air=clientWorld!=null;if(air)for(var c:surface.cells())if(!((BlockView)clientWorld).getBlockState(new BlockPos(c.x(),c.y(),c.z())).isAir()){air=false;break;}
+        j.addProperty("ground_cells_air",air);return j;
     }
     private static JsonObject positionJson(GameplayBoundary.Motion m){var p=new JsonObject();p.addProperty("x",m.x());p.addProperty("y",m.y());p.addProperty("z",m.z());return p;}
 }

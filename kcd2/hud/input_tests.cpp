@@ -317,7 +317,7 @@ void channels() {
     Guest legacy_peer(legacy_id);legacy_peer.write(0);legacy.poll();legacy.arm();
     forward.captured=st::utc_ms();
     check(!legacy.append(std::span<const ui::Event>(&forward,1))&&legacy.reason()=="invalid_or_stale_event","v1 writer rejects movement even on valid fresh session");
-    ui::Writer invalid;check(!invalid.create(identity(9),static_cast<ui::Profile>(5))&&invalid.reason()=="input_profile","unsupported writer profile refused");
+    ui::Writer invalid;check(!invalid.create(identity(9),static_cast<ui::Profile>(6))&&invalid.reason()=="input_profile","unsupported writer profile refused");
     auto game_id=identity(10);game_id.schema=3;game_id.expires_utc_ms=st::utc_ms()+st::gameplay_max_lease_ms;
     ui::Writer game;check(game.create(game_id,ui::Profile::gameplay),"explicit gameplay writer accepts24h outer identity");
     Guest game_peer(game_id);game_peer.write(0);check(game.poll()&&game.arm(),"gameplay acknowledgement arms");
@@ -338,6 +338,16 @@ void channels() {
     game_movement.finish("explicit_stop");game_movement_peer.write(2,2);
     check(game_movement.poll()&&game_movement.status().ack.state==2,"sustained movement explicit stop rendezvous");
     ui::Writer wrong_game_movement;check(!wrong_game_movement.create(identity(13),ui::Profile::gameplay_movement),"sustained movement rejects legacy stream identity");
+    auto blocks_id=identity(14);blocks_id.schema=3;blocks_id.expires_utc_ms=st::utc_ms()+st::gameplay_max_lease_ms;
+    ui::Writer blocks;check(blocks.create(blocks_id,ui::Profile::gameplay_blocks),"explicit sustained blocks writer");
+    Guest blocks_peer(blocks_id);blocks_peer.write(0);check(blocks.poll()&&blocks.arm(),"sustained blocks acknowledgement arms");
+    check(!std::memcmp(blocks_peer.bytes,"MCHUDI05",8)&&blocks_peer.bytes[8]==5,"actual world mapping is v5");
+    ui::Event world{st::utc_ms(),ui::Kind::world_button_down,1};
+    check(blocks.append(std::span<const ui::Event>(&world,1))&&blocks.status().sequence==1,"actual v5 world down published");
+    blocks_peer.write(1);blocks.poll();world.kind=ui::Kind::world_button_up;world.captured=st::utc_ms();
+    check(blocks.append(std::span<const ui::Event>(&world,1))&&blocks.status().sequence==2,"actual v5 world release published");
+    blocks.finish("explicit_stop");blocks_peer.write(2,2);check(blocks.poll()&&blocks.status().ack.state==2,"blocks stop acknowledges through real mapping");
+    ui::Writer wrong_blocks;check(!wrong_blocks.create(identity(15),ui::Profile::gameplay_blocks),"blocks rejects legacy stream identity");
 
 }
 }

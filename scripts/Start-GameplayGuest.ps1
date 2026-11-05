@@ -1,8 +1,8 @@
 # Persistent guest foundation. Actual Minecraft window; no KCD launch or input capture.
 [CmdletBinding()]
 param([string]$JavaHome='C:/Program Files/Java/jdk-24',[string]$InstanceDirectory,
- [string]$EvidenceDirectory,[string]$ReceiverPath,[ValidateSet('','create','resume','walking','walking-resume')][string]$FixturePhase='',
- [switch]$Movement,[string]$GroundPatchFile,[switch]$PreflightOnly)
+ [string]$EvidenceDirectory,[string]$ReceiverPath,[ValidateSet('','create','resume','walking','walking-resume','blocks','blocks-resume','blocks-survival')][string]$FixturePhase='',
+ [switch]$Movement,[switch]$Blocks,[string]$GroundPatchFile,[switch]$PreflightOnly)
 . (Join-Path $PSScriptRoot 'powershell7.ps1')
 if($PSVersionTable.PSVersion.Major -lt 7){
  $code=Invoke-MineComePowerShell7 -ScriptPath $PSCommandPath -BoundParameters $PSBoundParameters
@@ -11,6 +11,8 @@ if($PSVersionTable.PSVersion.Major -lt 7){
 $ErrorActionPreference='Stop';Set-StrictMode -Version Latest
 $root=[IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
 . (Join-Path $PSScriptRoot 'HudGroundMovement.ps1')
+if($Blocks){$Movement=$true}
+if($FixturePhase.StartsWith('blocks') -and -not $Blocks){throw 'Block fixtures require -Blocks.'}
 if($Movement){
  if(-not $GroundPatchFile){throw 'Gameplay movement requires its persistent captured ground patch.'}
  $GroundPatchFile=[IO.Path]::GetFullPath($GroundPatchFile)
@@ -43,6 +45,7 @@ try{
  '-InstanceDirectory',$InstanceDirectory,'-Run',$run,'-TargetPid',[string]$PID,'-TargetStart',$targetStart,'-Expires',[string]$expires,'-JavaHome',$JavaHome)
  if($FixturePhase){$childArgs+=@('-FixturePhase',$FixturePhase)}
  if($Movement){$childArgs+=@('-Movement','-GroundPatchFile',$GroundPatchFile)}
+ if($Blocks){$childArgs+='-Blocks'}
  $helper=Start-GameplayChild $powerShell $childArgs 'client'
  $deadline=[DateTime]::UtcNow.AddSeconds(120)
  $readyPath=Join-Path $EvidenceDirectory 'capture/stream-ready.json'
@@ -86,7 +89,8 @@ try{
  if($Movement -and ($session.movement.failure -or -not $session.movement.cleanup_complete -or
   -not $session.movement.controls_released -or -not $session.movement.client_collision_released -or
   -not $session.movement.server_collision_released -or $session.movement.blocks_written -ne 0 -or
-  -not $session.movement.ground_cells_air)){throw 'Gameplay movement did not release its controls and ephemeral collision cleanly.'}
+  -not $session.movement.terrain_cells_valid)){throw 'Gameplay movement did not release its controls and ephemeral collision cleanly.'}
+ if($Blocks -and ($session.blocks.failure -or -not $session.blocks.cleanup_complete -or -not $session.blocks.controls_released)){throw 'Gameplay block ledger did not save or release controls cleanly.'}
  $passed=$true
 }catch{$failure=$_.Exception.Message;throw}
 finally{
@@ -95,7 +99,7 @@ finally{
   [void]$helper.WaitForExit(10000)
  }
  [ordered]@{schema=1;kind='minecome_gameplay_guest_session_v1';run=$run;result=$(if($passed){'passed'}else{'failed'});failure=$failure;
-  instance=$InstanceDirectory;fixture=$FixturePhase;movement=[bool]$Movement;kcd_connected=$false;normal_client_exit=($helper -and $helper.HasExited -and $helper.ExitCode -eq 0)}|
+  instance=$InstanceDirectory;fixture=$FixturePhase;movement=[bool]$Movement;blocks=[bool]$Blocks;kcd_connected=$false;normal_client_exit=($helper -and $helper.HasExited -and $helper.ExitCode -eq 0)}|
   ConvertTo-Json|Set-Content -LiteralPath (Join-Path $EvidenceDirectory 'verification.json') -Encoding utf8NoBOM
 }
 [pscustomobject]@{EvidenceDirectory=$EvidenceDirectory;VerificationFile=(Join-Path $EvidenceDirectory 'verification.json')}

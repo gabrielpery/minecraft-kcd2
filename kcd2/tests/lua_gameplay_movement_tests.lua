@@ -7,6 +7,7 @@ local function test(name,fn)local ok,err=pcall(fn);if not ok then error(name..':
 local function copy(v)return{x=v.x,y=v.y,z=v.z}end
 local function fixture()
  local f={time=10,position={x=1,y=2,z=3},velocity={x=0,y=0,z=0},timers={},logs={},writes=0,serial=0,callback=false}
+ Physics=nil;ent_all=15;ent_terrain=1
  local retained={marker='untouched'};MineCome={_movement_probe=retained}
  player={id=17,actor={IsDead=function()return false end,IsUnconscious=function()return false end,GetLinkedEntity=function()return nil end},
   player={IsSitting=function()return false end,IsLaying=function()return false end},human={IsMounted=function()return false end},
@@ -74,5 +75,54 @@ test('native binding failure cleans up and preserves changed world position',fun
  local f=fixture();f:begin();f.write_error=true;f:pose(1,0,5,2,3);f:fire('tick',.01)
  f:lastReason('position_write_failed');eq(f.position.x,5);eq(f:activeTimers(),0)
  f=fixture();f.fail_timer=2;eq(f:begin(),false);eq(f:activeTimers(),0);eq(f.writes,0)
+end)
+local function aim_fixture(all_distance,terrain_distance)
+ local f=fixture();f.rays={};f:begin()
+ Physics={RayWorldIntersection=function(origin,direction,maximum,mask,skip,skip2,hits)
+  eq(maximum,16);eq(skip,17);eq(skip2,nil)
+  assert(math.abs(direction.x^2+direction.y^2+direction.z^2-4.5^2)<.000001)
+  f.rays[#f.rays+1]={origin=copy(origin),direction=copy(direction),mask=mask}
+  local d=mask==ent_all and all_distance or terrain_distance
+  if d and d>=0 then hits[1]={pos={x=origin.x+direction.x*d/4.5,y=origin.y+direction.y*d/4.5,z=origin.z+direction.z*d/4.5},dist=d} end
+  -- Bindings may mutate their argument copies; the captured origin is immutable.
+  origin.x=999;direction.y=999
+  return d and d>=0 and 1 or 0
+ end}
+ function f:sample(seq)
+  eq(MineCome.GameplayMovementSample(A,seq or 1,true),true)
+  return self.logs[#self.logs]
+ end
+ return f
+end
+test('aim samples use camera origin and normalized direction without native writes',function()
+ local f=aim_fixture(2,2);System.GetViewCameraDir=function()return{x=0,y=1.01,z=0}end
+ local line=f:sample();assert(line:find('"aim":{"known":true,"distance":2,"terrain_hit":true,"range":4.5}',1,true),line)
+ eq(#f.rays,2);eq(f.rays[1].origin.x,1);eq(f.rays[1].origin.z,4.6);eq(f.rays[1].direction.y,4.5)
+ assert(line:find('"forward":{"x":0,"y":1,"z":0}',1,true),line);eq(f.writes,0)
+ MineCome.GameplayMovementEnd(A)
+end)
+test('aim distinguishes clear ground and nearer native obstruction',function()
+ for _,case in ipairs({{-1,-1,false},{1,2,false},{2,2,true}})do
+  local f=aim_fixture(case[1],case[2]);local line=f:sample()
+  assert(line:find('"known":true,"distance":'..case[1]..',"terrain_hit":'..tostring(case[3]),1,true),line)
+  eq(f.writes,0);MineCome.GameplayMovementEnd(A)
+ end
+end)
+test('uncertain rays never authorize native obstruction bypass',function()
+ local faults={
+  function(f)Physics=nil end,
+  function(f)ent_terrain=2147483648 end,
+  function(f)Physics.RayWorldIntersection=function()error('binding unavailable')end end,
+  function(f)Physics.RayWorldIntersection=function()return 16 end end,
+  function(f)Physics.RayWorldIntersection=function(o,d,n,m,s,s2,h)h[1]={pos={x=20,y=20,z=20},dist=1};return 1 end end,
+  function(f)Physics.RayWorldIntersection=function(o,d,n,m,s,s2,h)h[1]={pos=copy(o),dist=0};return 0 end end,
+  function(f)local ray=Physics.RayWorldIntersection;Physics.RayWorldIntersection=function(...)f.time=f.time+.2;return ray(...)end end,
+  function(f)local ray=Physics.RayWorldIntersection;Physics.RayWorldIntersection=function(...)local count=ray(...);player.id=18;return count end end
+ }
+ for _,fault in ipairs(faults)do
+  local f=aim_fixture(2,2);fault(f);local line=f:sample()
+  assert(line:find('"aim":{"known":false,"distance":-1,"terrain_hit":false',1,true),line);eq(f.writes,0)
+ end
+ local f=aim_fixture(2,1);local line=f:sample();assert(line:find('"known":false',1,true),line)
 end)
 print('PASS '..passed..' gameplay movement tests (simulated bindings)')

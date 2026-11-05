@@ -1,7 +1,7 @@
 # Sustained HUD/inventory, with an explicit Minecraft walking profile.
 [CmdletBinding()]
 param([string]$BundleDirectory,[string]$InstanceDirectory,[string]$JavaHome='C:/Program Files/Java/jdk-24',
- [ValidateRange(0,300)][int]$SmokeSeconds=0,[switch]$PreflightOnly,[switch]$Movement,[string]$GroundPatchFile)
+ [ValidateRange(0,300)][int]$SmokeSeconds=0,[switch]$PreflightOnly,[switch]$Movement,[switch]$Blocks,[string]$GroundPatchFile)
 . (Join-Path $PSScriptRoot 'powershell7.ps1')
 if($PSVersionTable.PSVersion.Major -lt 7){
  $code=Invoke-MineComePowerShell7 -ScriptPath $PSCommandPath -BoundParameters $PSBoundParameters
@@ -12,9 +12,10 @@ $root=[IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
 . (Join-Path $PSScriptRoot 'GameplayHudProfile.ps1')
 . (Join-Path $PSScriptRoot 'KcdToolsProbeHelpers.ps1')
 . (Join-Path $PSScriptRoot 'GameplayMovementHost.ps1')
+if($Blocks){$Movement=$true}
 if(-not $Movement -and $GroundPatchFile){throw 'GroundPatchFile requires Movement.'}
-if(-not $BundleDirectory){$BundleDirectory=Join-Path $root $(if($Movement){'runtime/hud-compositor-gameplay-movement'}else{'runtime/hud-compositor-gameplay'})}
-$installation=Get-MineComeGameplayInstallation -BundleDirectory $BundleDirectory -RequireUnarmed -Movement:$Movement
+if(-not $BundleDirectory){$BundleDirectory=Join-Path $root $(if($Blocks){'runtime/hud-compositor-gameplay-blocks'}elseif($Movement){'runtime/hud-compositor-gameplay-movement'}else{'runtime/hud-compositor-gameplay'})}
+$installation=Get-MineComeGameplayInstallation -BundleDirectory $BundleDirectory -RequireUnarmed -Movement:$Movement -Blocks:$Blocks
 $context=Get-MineComeProbeContext
 if($context.GamePath -ine $installation.ToolsExe){throw 'Installed HUD and running game differ.'}
 if(-not $InstanceDirectory){$InstanceDirectory=Join-Path $root 'runtime/gameplay/instance'}
@@ -62,6 +63,7 @@ try{
   '-InstanceDirectory',$InstanceDirectory,'-Run',$run,'-TargetPid',[string]$context.GamePid,'-TargetStart',$targetStart,
   '-Expires',[string]$expires,'-JavaHome',$JavaHome,'-Connected')
  if($Movement){$arguments+=@('-Movement','-GroundPatchFile',$patch.Path)}
+ if($Blocks){$arguments+='-Blocks'}
  $quoted=@($arguments|ForEach-Object {ConvertTo-MineComeWindowsArgument $_})
  $helper=Start-Process -FilePath (Get-MineComePowerShell7) -ArgumentList ([string]::Join(' ',$quoted)) -WorkingDirectory $root -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $directory 'client.log') -RedirectStandardError (Join-Path $directory 'client-errors.log')
  $deadline=[DateTime]::UtcNow.AddSeconds(120);$ready=$null
@@ -73,13 +75,13 @@ try{
  }while([DateTime]::UtcNow -lt $deadline)
  if(-not $ready -or $ready.schema -ne 3 -or $ready.session_kind -cne 'gameplay' -or $ready.run -cne $run -or
   $ready.save -cne 'MineCome-Gameplay' -or $ready.target_pid -ne $context.GamePid -or $ready.target_start_filetime -cne $targetStart -or $ready.expires_utc_ms -ne $expires){throw 'Gameplay stream readiness identity differs.'}
- if($ready.ui_input_protocol -ne $(if($Movement){4}else{3})){throw 'Gameplay input profile differs.'}
+ if($ready.ui_input_protocol -ne $(if($Blocks){5}elseif($Movement){4}else{3})){throw 'Gameplay input profile differs.'}
  $producer=Get-Process -Id $ready.producer_pid
  try{if($producer.StartTime.ToUniversalTime().ToFileTimeUtc().ToString() -cne $ready.producer_start_filetime -or $producer.Path -ine (Join-Path $JavaHome 'bin/java.exe')){throw 'Gameplay producer identity changed.'}}finally{$producer.Dispose()}
  Assert-MineComeProbeContext $context
  if($Movement){
   $guest=Read-MineComeGameplayJson (Join-Path $directory 'gameplay-ready.json')
-  $hostFollower=Start-GameplayMovementHost -Context $context -Run $run -WorldId $guest.world_id -Patch $patch -PoseFile (Join-Path $directory 'gameplay-pose.json') -ViewFile (Join-Path $directory 'host-view.json') -ExpiresUtcMs $expires
+  $hostFollower=Start-GameplayMovementHost -Context $context -Run $run -WorldId $guest.world_id -Patch $patch -PoseFile (Join-Path $directory 'gameplay-pose.json') -ViewFile (Join-Path $directory 'host-view.json') -ExpiresUtcMs $expires -Blocks:$Blocks
   $movementPath=Join-Path $directory 'gameplay-movement-ready.json';$until=[DateTime]::UtcNow.AddSeconds(12)
   while(-not (Test-Path -LiteralPath $movementPath)){
    $state=Get-GameplayMovementHostState $hostFollower
@@ -95,7 +97,7 @@ try{
  try{$bytes=[Text.Encoding]::UTF8.GetBytes($armText);$file.Write($bytes,0,$bytes.Length);$file.Flush($true);$armWritten=$true}finally{$file.Dispose()}
  [IO.File]::WriteAllText((Join-Path $directory 'arm.ini'),$armText)
  Write-Output "GAMEPLAY_READY run=$run stop_file=$(Join-Path $directory 'session.stop')"
- Write-Output $(if($Movement){'Focus KCD2 with controls released. Minecraft walking and HUD activate automatically. F8 stops and saves at the last safe position. Walking is limited to the captured terrain; blocks, commands and flight are not connected in this path yet.'}else{'Focus KCD2 with controls released. HUD activates automatically; F8 stops and saves. KCD owns walking; Minecraft commands/flight are not connected yet.'})
+ Write-Output $(if($Blocks){'Focus KCD2 with controls released. Walking, HUD and stone controls activate automatically: right-click places held stone, left-click mines owned stone. E opens inventory; F8 stops and saves. Terrain coverage and owned stone capacity are bounded.'}elseif($Movement){'Focus KCD2 with controls released. Minecraft walking and HUD activate automatically. F8 stops and saves at the last safe position. Walking is limited to the captured terrain; blocks, commands and flight are not connected in this path yet.'}else{'Focus KCD2 with controls released. HUD activates automatically; F8 stops and saves. KCD owns walking; Minecraft commands/flight are not connected yet.'})
  $smokeDeadline=[DateTime]::UtcNow.AddSeconds($SmokeSeconds)
  while(-not $helper.HasExited){
   if($hostFollower){
@@ -123,6 +125,7 @@ try{
   -not $session.producer_finished -or $session.producer_failure -or -not $session.controls_released -or -not $session.normal_shutdown_requested -or
   -not $session.input_connected -or -not $session.input_armed_seen){throw 'Gameplay native input/save/shutdown proof failed.'}
  if($Movement -and (-not $session.movement.ready -or $session.movement.failure -or -not $session.movement.cleanup_complete)){throw 'Gameplay movement/save/cleanup proof failed.'}
+ if($Blocks -and (-not $session.blocks.ready -or $session.blocks.failure -or -not $session.blocks.cleanup_complete)){throw 'Gameplay block ledger/save proof failed.'}
  if($SmokeSeconds -gt 0 -and (-not $smokeStop -or $session.active_ms -lt $SmokeSeconds*1000)){throw 'Gameplay smoke ended before the requested sustained duration.'}
  $passed=$true
 }catch{$failure=$_.Exception.Message;throw}
@@ -133,6 +136,7 @@ finally{
    $hostProof=Stop-GameplayMovementHost $hostFollower
    $hostProof|ConvertTo-Json -Depth 10|Set-Content -LiteralPath (Join-Path $directory 'host-movement.json') -Encoding utf8NoBOM
    if(-not $hostProof.ResourcesClosed -or -not $hostProof.Terminal -or $hostProof.PoseCount -lt 1 -or $hostProof.Failure){$passed=$false;$failure='Gameplay host cleanup/pose proof incomplete: '+$hostProof.Failure}
+   if($Blocks -and (-not $hostProof.Blocks -or -not $hostProof.Blocks.CleanupComplete -or $hostProof.Blocks.Failure)){$passed=$false;$failure='Gameplay native block cleanup proof incomplete.'}
   }catch{$passed=$false;$failure='Gameplay host cleanup: '+$_.Exception.Message}
  }
  if($armWritten -and (Test-Path -LiteralPath $arm)){
@@ -148,7 +152,7 @@ finally{
  }
  [ordered]@{schema=1;kind='minecome_gameplay_kcd_session_v1';run=$run;result=$(if($passed){'passed'}else{'failed'});failure=$failure;
   target_pid=$context.GamePid;target_start_filetime=$targetStart;instance=$InstanceDirectory;smoke_seconds=$SmokeSeconds;
-  minecraft_movement_connected=[bool]($Movement -and $passed);movement_profile=[bool]$Movement;host_command_typing_verified=$false;normal_client_exit=($helper -and $helper.HasExited -and $helper.ExitCode -eq 0)}|
+  minecraft_movement_connected=[bool]($Movement -and $passed);movement_profile=[bool]$Movement;blocks_profile=[bool]$Blocks;host_command_typing_verified=$false;normal_client_exit=($helper -and $helper.HasExited -and $helper.ExitCode -eq 0)}|
   ConvertTo-Json|Set-Content -LiteralPath (Join-Path $directory 'verification.json') -Encoding utf8NoBOM
 }
 if(-not $passed){throw $failure}

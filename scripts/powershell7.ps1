@@ -54,7 +54,7 @@ function Get-MineComePowerShell7 {
 function Get-MineComePowerShell7Arguments([string]$ScriptPath,[Collections.IDictionary]$BoundParameters) {
     $arguments=[Collections.Generic.List[string]]::new()
     foreach($argument in @('-NoLogo','-NoProfile','-File',[IO.Path]::GetFullPath($ScriptPath))){$arguments.Add($argument)}
-    $switchNames=@('PreflightOnly','WithoutMods','CorridorWalking','ExtensionWalking','ExtendedWalking','AimedBlocks','WideWalking','FacingSeed','LateCutoff','DelayHandoff','Movement')
+    $switchNames=@('PreflightOnly','WithoutMods','CorridorWalking','ExtensionWalking','ExtendedWalking','AimedBlocks','WideWalking','FacingSeed','LateCutoff','DelayHandoff','Movement','Blocks')
     $valueNames=@('GameRoot','Level','JavaHome','BundleDirectory','TraceDirectory','GroundPatchFile','GroundCorridorFile','GroundExtensionFile','YawDegrees','InstanceDirectory','EvidenceDirectory','ReceiverPath','FixturePhase','SmokeSeconds')
     foreach($name in @($valueNames)+@($switchNames)){
         if($BoundParameters.Keys -notcontains $name){continue}

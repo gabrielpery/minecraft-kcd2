@@ -45,11 +45,43 @@ local function safe(s,p)
  return nil
 end
 local function inside(p,v,margin) local b=p.bounds;return vector(v) and v.x>=b[1]-margin and v.x<=b[2]+margin and v.y>=b[3]-margin and v.y<=b[4]+margin and v.z>=b[5]-margin and v.z<=b[6]+margin end
+-- Same inspected RayWorldIntersection signature and hit validation as
+-- probes/aim_probe.lua; the second ent_terrain ray classifies ground placement.
+local function aim_sample(s)
+ local unknown={known=false,distance=-1,terrain_hit=false};local began=clock()
+ if not began or not Physics or type(Physics.RayWorldIntersection)~='function' then return unknown end
+ -- The camera guard permits small length error; ray distances are metres, so
+ -- publish and intersect the same exactly normalized direction.
+ local length=math.sqrt(s.forward.x^2+s.forward.y^2+s.forward.z^2)
+ s.forward={x=s.forward.x/length,y=s.forward.y/length,z=s.forward.z/length}
+ local function ray(mask)
+  if not finite(mask) or mask<=0 or mask>2147483647 or mask~=math.floor(mask) then return nil end
+  local hits={};local d={x=s.forward.x*4.5,y=s.forward.y*4.5,z=s.forward.z*4.5}
+  local ok,count=pcall(Physics.RayWorldIntersection,copy(s.camera),d,16,mask,s.id,nil,hits)
+  if not ok or not finite(count) or count<0 or count>=16 or count~=math.floor(count) then return nil end
+  local nearest=-1
+  for i=1,16 do local h=hits[i]
+   if i>count then if h~=nil then return nil end
+   else
+    if type(h)~='table' or not vector(h.pos) or not finite(h.dist) or h.dist<0 or h.dist>4.5 then return nil end
+    local expected={x=s.camera.x+s.forward.x*h.dist,y=s.camera.y+s.forward.y*h.dist,z=s.camera.z+s.forward.z*h.dist}
+    if distance(h.pos,expected)>.01 then return nil end
+    if nearest<0 or h.dist<nearest then nearest=h.dist end
+   end
+  end
+  if hits[17]~=nil then return nil end;return nearest
+ end
+ local all,terrain=ray(ent_all),ray(ent_terrain);local ended=clock()
+ if all==nil or terrain==nil or not ended or ended<began or ended-began>.25 or s.entity~=player or field(s.entity,'id')~=s.id then return unknown end
+ if terrain>=0 and (all<0 or terrain<all-.03) then return unknown end
+ return {known=true,distance=all,terrain_hit=terrain>=0 and math.abs(terrain-all)<=.03}
+end
 local function emit(p,event,result,s,seq)
  if not System or type(System.LogAlways)~='function' then return false end
  local t='{"schema":1,"run":'..quote(p.run)..',"event":'..quote(event)..',"result":'..quote(result)..',"seq":'..number(seq or 0)
   ..',"active":'..tostring(not p.terminal)..',"pose_seq":'..number(p.sequence or 0)..',"applied_seq":'..number(p.applied or 0)..',"writes":'..number(p.writes or 0)
-  ..',"sampled_engine_seconds":'..number(clock())..',"player":'..vec(s and s.position)..',"forward":'..vec(s and s.forward)..',"up":'..vec(s and s.up)
+  ..',"sampled_engine_seconds":'..number(clock())..',"player":'..vec(s and s.position)..',"camera":'..vec(s and s.camera)..',"forward":'..vec(s and s.forward)..',"up":'..vec(s and s.up)
+  ..(s and s.aim and (',"aim":{"known":'..tostring(s.aim.known)..',"distance":'..number(s.aim.distance)..',"terrain_hit":'..tostring(s.aim.terrain_hit)..',"range":4.5}') or '')
   ..',"camera_basis_valid":'..tostring(s~=nil and normal(s))..',"timers_cancelled":'..tostring(p.timers_cancelled==true)..',"position_restored":false,"control_state_changed":false}'
  local ok,v=pcall(System.LogAlways,'[MineComeGameplayMovement] '..t);return ok and v~=false
 end
@@ -104,12 +136,13 @@ function MineCome.GameplayMovementPose(run,seq,source_ms,x,y,z)
  p.segment={from=copy(p.last_owned),started=t};p.latest={seq=seq,source_ms=source_ms,target=copy(target),received=t,first=p.sequence==0};p.sequence=seq
  return true,'queued'
 end
-function MineCome.GameplayMovementSample(run,seq)
+function MineCome.GameplayMovementSample(run,seq,with_aim)
  local p=state.active;if not token(run) or not p or p.run~=run then return false,'inactive' end
  if not finite(seq) or seq<1 or seq>1000000 or seq~=math.floor(seq) or seq<=p.view_sequence then return false,'view_sequence_invalid' end
  local s,t=snapshot(),clock();local reason=safe(s,p)
  if not t or t<p.last_clock or t>=p.deadline then reason='clock_or_deadline' end
  if reason then finish(p,reason);return false,reason end
+ if with_aim==true then s.aim=aim_sample(s) end
  p.view_sequence=seq
  return emit(p,'view','sampled',s,seq),'sampled'
 end

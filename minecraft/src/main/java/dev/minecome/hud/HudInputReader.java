@@ -28,11 +28,14 @@ public final class HudInputReader implements AutoCloseable {
     private volatile long closedAckWaitMs;
     private volatile String closedAckFailure="not_closed";
     private Thread worker;
-    private final boolean movement,gameplay;
+    private final boolean movement,gameplay,blocks;
     public HudInputReader(HudInputProtocol.Identity identity){this(identity,false);}
     public HudInputReader(HudInputProtocol.Identity identity,boolean movement){this(identity,movement,false);}
     public HudInputReader(HudInputProtocol.Identity identity,boolean movement,boolean gameplay){
-        this.identity=identity;this.movement=movement;this.gameplay=gameplay;
+        this(identity,movement,gameplay,false);
+    }
+    public HudInputReader(HudInputProtocol.Identity identity,boolean movement,boolean gameplay,boolean blocks){
+        this.identity=identity;this.movement=movement;this.gameplay=gameplay;this.blocks=blocks;
     }
     public synchronized void start(){if(worker!=null)throw new IllegalStateException("Input reader cannot restart");worker=new Thread(this::read,"MineComeHudInputReader");worker.start();}
     public HudInputProtocol.Event poll(){return queue.poll();}
@@ -86,7 +89,7 @@ public final class HudInputReader implements AutoCloseable {
                 // or possible OS descheduling. Fresh host data must not look future.
                 now=System.currentTimeMillis();mono=System.nanoTime();
                 if(now>=identity.expires() || mono>=deadline)throw new IllegalStateException("Input immutable lease expired");
-                var snapshot=HudInputProtocol.decode(bytes,identity,lastFetched,now,state,movement,gameplay);state=snapshot.hostState();
+                var snapshot=HudInputProtocol.decode(bytes,identity,lastFetched,now,state,movement,gameplay,blocks);state=snapshot.hostState();
                 if(snapshot.heartbeat()<heartbeat)throw new IllegalStateException("Host heartbeat regressed");
                 maxHostAgeMs=Math.max(maxHostAgeMs,now-snapshot.heartbeat());
                 if(state==0 && now-snapshot.heartbeat()>250)prearmOldHeartbeatPolls++;

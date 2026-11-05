@@ -4,6 +4,8 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.mojang.blaze3d.systems.RenderSystem;
 import dev.minecome.gameplay.GameplayWorld;
+import dev.minecome.gameplay.GameplayBlocks;
+import dev.minecome.gameplay.GameplayAimReader;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
@@ -36,10 +38,11 @@ public final class GameplaySession {
     private final HudStreamProducer.Identity identity;
     private final boolean standalone=Boolean.getBoolean("minecome.gameplayStandalone");
     private final String fixtureMode=System.getProperty("minecome.gameplayFixture","");
-    private final boolean movementMode=Boolean.getBoolean("minecome.gameplayMovement");
+    private final boolean blocksMode=Boolean.getBoolean("minecome.gameplayBlocks");
+    private final boolean movementMode=blocksMode||Boolean.getBoolean("minecome.gameplayMovement");
     private final HudStreamLayout layout=HudStreamLayout.configured();
     private final HudReadback readback=new HudReadback();
-    private final HudInputGate gate=new HudInputGate(movementMode);
+    private final HudInputGate gate=new HudInputGate(movementMode,blocksMode);
     private final long initializedAt=System.nanoTime();
     private GameplayWorld save;
     private HudStreamProducer output;
@@ -48,6 +51,9 @@ public final class GameplaySession {
     private GameplayPersistenceFixture fixture;
     private GameplayMovement movement;
     private GameplayMovementFixture movementFixture;
+    private GameplayBlocks blocks;
+    private GameplayAimReader aimReader;
+    private GameplayBlocksFixture blocksFixture;
     private Object world,player,server;
     private boolean opening,ready,stopping,writerFinished,shutdownRequested,frameTransparent,sessionReportWritten;
     private long readyAt,stopAt,writerAt,lastCaptureAt,inputEvents;
@@ -92,7 +98,7 @@ public final class GameplaySession {
             active=session;
             ClientTickEvents.START_CLIENT_TICK.register(session::beforeTick);
             ClientTickEvents.END_CLIENT_TICK.register(session::tick);
-            ServerTickEvents.END_SERVER_TICK.register(source->{var m=session.movement;if(m!=null)m.observe(source);});
+            ServerTickEvents.END_SERVER_TICK.register(source->{var b=session.blocks;if(b!=null)b.observe(source);var m=session.movement;if(m!=null)m.observe(source);});
             ClientLifecycleEvents.CLIENT_STOPPING.register(session::onClientStopping);
             LOG.info("GAMEPLAY_INITIALIZED run={} standalone={} persistentSave={}",identity.run(),session.standalone,GameplayWorld.SAVE_NAME);
         }catch(IOException e){throw new IllegalArgumentException("Gameplay session paths invalid",e);}
@@ -106,10 +112,11 @@ public final class GameplaySession {
     }
     private void beforeTick(MinecraftClient client){
         if(stopping||movement==null)return;
-        try{if(movementFixture!=null)movementFixture.beforeTick(client);movement.beforeTick(client,System.nanoTime());}
+        try{if(blocksFixture!=null)blocksFixture.beforeTick(client);if(movementFixture!=null)movementFixture.beforeTick(client);movement.beforeTick(client,System.nanoTime());}
         catch(Exception e){requestStop(client,"movement_failure",e.toString());}
     }
     private boolean owns(MinecraftClient client){return ready&&!stopping&&client.world==world&&client.player==player&&client.getServer()==server&&client.isIntegratedServerRunning();}
+    public static boolean preserveBlockBreaking(){var s=active;var client=MinecraftClient.getInstance();return s!=null&&s.blocks!=null&&s.owns(client)&&s.blocks.needsVanillaBreakPreserved(client);}
     public static boolean suppressWorld(){var s=active;return s!=null&&!s.standalone&&s.owns(MinecraftClient.getInstance());}
     public static boolean transparentFrame(){var s=active;return s!=null&&s.frameTransparent&&s.owns(MinecraftClient.getInstance());}
     public static Double virtualMouseX(){var s=active;var c=MinecraftClient.getInstance();return s!=null&&s.ui!=null&&s.owns(c)?s.ui.windowX(c):null;}
@@ -158,6 +165,14 @@ public final class GameplaySession {
                 if(movementMode){
                     var wire=wireIdentity();
                     movement=new GameplayMovement(root,save,Path.of(required("minecome.gameplayGroundFile")),standalone,wire,directory.getParent());
+                    if(blocksMode){
+                        blocks=new GameplayBlocks(root,save,movement.surface(),wire,directory.getParent());
+                        movement.blockController(blocks);
+                        if(!standalone)aimReader=new GameplayAimReader(directory.getParent(),wire,movement.surface(),save.id().toString());
+                        if(fixtureMode.startsWith("blocks"))blocksFixture=new GameplayBlocksFixture(fixtureMode,blocks,movement,save,wire,directory.getParent(),proof->{
+                            fixtureResult=proof.deepCopy();requestStop(MinecraftClient.getInstance(),"blocks_fixture_complete",proof.get("result").getAsString().equals("passed")?null:proof.toString());
+                        });
+                    }
                     if(fixtureMode.startsWith("walking"))movementFixture=new GameplayMovementFixture(fixtureMode,movement,save,wire,directory.getParent(),proof->{
                         fixtureResult=proof.deepCopy();requestStop(MinecraftClient.getInstance(),"movement_fixture_complete",proof.get("result").getAsString().equals("passed")?null:proof.toString());
                     });
@@ -173,7 +188,7 @@ public final class GameplaySession {
                 if(!standalone){ui=new HudVanillaUiAdapter(client,true);hideOwnedWindow(client);}
                 output=new HudStreamProducer(root,directory,identity,save.saveName(),true,standalone?0:1);output.start();
                 ready=true;readyAt=System.nanoTime();
-                if(!fixtureMode.isEmpty()&&!fixtureMode.startsWith("walking"))fixture=new GameplayPersistenceFixture(fixtureMode,save,directory.getParent(),proof->{
+                if(!fixtureMode.isEmpty()&&!fixtureMode.startsWith("walking")&&!fixtureMode.startsWith("blocks"))fixture=new GameplayPersistenceFixture(fixtureMode,save,directory.getParent(),proof->{
                     fixtureResult=proof.deepCopy();boolean passed=proof.has("result")&&proof.get("result").getAsString().equals("passed");
                     requestStop(MinecraftClient.getInstance(),"fixture_complete",passed?null:proof.toString());
                 });
@@ -197,6 +212,9 @@ public final class GameplaySession {
             }
             if(movement!=null)movement.afterTick(client,System.nanoTime());
             if(!standalone)inputTick(client);
+            if(aimReader!=null&&!stopping){if(aimReader.failure()!=null)throw new IllegalStateException("Native aim: "+aimReader.failure());blocks.aim(aimReader.current());}
+            if(blocksFixture!=null&&!stopping)blocksFixture.tick(client);
+            if(blocks!=null&&!stopping)blocks.tick(client,standalone||input!=null&&input.connected()&&input.hostState()==1);
             if(movementFixture!=null&&!stopping)movementFixture.tick(client);
             if(fixture!=null&&output.isReady()&&output.publishedFrames()>0&&!stopping)fixture.tick(client);
         }catch(Exception e){requestStop(client,"failure",e.toString());}
@@ -204,7 +222,7 @@ public final class GameplaySession {
 
     private void inputTick(MinecraftClient client){
         if(input==null&&output.publishedFrames()>0){
-            input=new HudInputReader(new HudInputProtocol.Identity(identity.run(),output.producerPid(),output.producerStart(),identity.targetPid(),identity.targetStart(),identity.expiresUtcMs()),movementMode,true);
+            input=new HudInputReader(new HudInputProtocol.Identity(identity.run(),output.producerPid(),output.producerStart(),identity.targetPid(),identity.targetStart(),identity.expiresUtcMs()),movementMode,true,blocksMode);
             input.start();
         }
         if(input==null||stopForClosedInput(client))return;
@@ -219,8 +237,9 @@ public final class GameplaySession {
             if(now-output.lastPublishedAt()>250_000_000L)throw new IllegalStateException("Gameplay HUD publication stale");
             for(int i=0;i<64;i++){
                 var event=input.poll();if(event==null)break;gate.apply(event,System.currentTimeMillis());
-                if(movement!=null&&event.kind()<=2&&HudMovementKeys.movement(event.code()))movement.event(client,event,System.nanoTime());
-                else{if(movement!=null&&(event.code()==0x45||event.code()==0x1b))movement.suspend(client);ui.apply(client,event);}
+                if(blocks!=null&&event.kind()>=7)blocks.event(client,event);
+                else if(movement!=null&&event.kind()<=2&&HudMovementKeys.movement(event.code()))movement.event(client,event,System.nanoTime());
+                else{if(event.kind()<=2&&(event.code()==0x45||event.code()==0x1b)){if(blocks!=null)blocks.suspend(client);if(movement!=null)movement.suspend(client);}ui.apply(client,event);}
                 inputEvents++;
             }
         }
@@ -353,6 +372,8 @@ public final class GameplaySession {
         e.addProperty("terrain_collision_attached",attached);
         e.addProperty("kcd_terrain_imported",attached&&!standalone);e.addProperty("kcd_movement_connected",attached&&!standalone&&inputArmedSeen);e.addProperty("host_command_typing_verified",false);
         if(motion!=null)e.add("movement",motion);
+        if(blocks!=null)e.add("blocks",blocks.evidence(client));
+        e.addProperty("blocks_enabled",blocksMode);
         e.addProperty("normal_shutdown_requested",stopping);e.addProperty("controls_released",gate.heldKeyCount()==0&&gate.heldButtonCount()==0);
         e.addProperty("producer_finished",output!=null&&output.isFinished());e.addProperty("producer_failure",output==null?null:output.failure());
         if(!standalone){
@@ -374,6 +395,7 @@ public final class GameplaySession {
             Files.writeString(temporary,notice.toString(),StandardCharsets.UTF_8,StandardOpenOption.CREATE_NEW);
             Files.move(temporary,directory.getParent().resolve("gameplay-stopping.json"),java.nio.file.StandardCopyOption.ATOMIC_MOVE);
         }catch(Exception e){if(failure==null)failure="Stop notice: "+e;}
+        try{if(blocksFixture!=null)blocksFixture.close();if(aimReader!=null)aimReader.close();if(blocks!=null)blocks.close(client);}catch(Exception e){if(failure==null)failure=e.toString();}
         try{if(movementFixture!=null)movementFixture.close();if(movement!=null){if(failure==null)movement.close(client);else movement.abort(client,failure);}}catch(Exception e){if(failure==null)failure=e.toString();}
         try{if(ui!=null)ui.releaseAndClose(client);}catch(Exception e){if(failure==null)failure=e.toString();}
         gate.releaseAll();
@@ -387,6 +409,8 @@ public final class GameplaySession {
     private void finishStop(MinecraftClient client){
         if(shutdownRequested)return;
         if(!writerFinished){
+            if(blocks!=null&&!blocks.cleanupComplete()&&System.nanoTime()-stopAt<2_000_000_000L)return;
+            if(blocks!=null&&!blocks.cleanupComplete()&&failure==null)failure="Block ledger cleanup incomplete";
             if(movement!=null&&!movement.cleanupComplete()&&System.nanoTime()-stopAt<2_000_000_000L)return;
             if(movement!=null&&!movement.cleanupComplete()&&failure==null)failure="Movement cleanup incomplete";
             if(input!=null&&!input.isFinished()&&System.nanoTime()-stopAt<2_000_000_000L)return;
@@ -418,6 +442,10 @@ public final class GameplaySession {
             // already-requested shutdown here before recording its final state.
             // No UI/input dispatch occurs after these bounded waits begin.
             if(!writerFinished){
+                if(blocks!=null){
+                    awaitShutdown(blocks::cleanupComplete,2_000_000_000L);
+                    if(!blocks.cleanupComplete()&&failure==null)failure="Block ledger cleanup incomplete";
+                }
                 if(movement!=null){
                     awaitShutdown(movement::cleanupComplete,2_000_000_000L);
                     if(!movement.cleanupComplete()&&failure==null)failure="Movement cleanup incomplete";

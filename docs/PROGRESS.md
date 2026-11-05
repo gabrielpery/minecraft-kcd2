@@ -1,5 +1,64 @@
 # MineCome progress — 2026-11-05
 
+## Persistent stone construction in the sustained session
+
+Implemented and compiled a separate `-Blocks` gameplay profile (input protocol 5,
+HUD schema 3). It implies sustained movement and uses normal vanilla placement
+and mining packets, exact native camera rays, server-confirmed stone ownership
+and a persistent ledger bound to the same world/terrain origin. No seeded cube,
+inventory reset, block-action demo cutoff or deletion of Minecraft construction
+on stop. The native mirror owns at most 64 corner-aligned entities and removes
+only those display entities when the session ends or its heartbeat expires.
+Inventory and world mouse events are distinct; native camera look is preserved.
+
+Actual Minecraft paired check PASS on the first attempt:
+`runtime/evidence/gameplay-blocks-20261105-182327-bc99a613c7d245f0849181bd7549a97c/verification.json`.
+The first launch used actual vanilla ground/top/side placement (3), broke the two
+added stones, walked before/after inventory, verified 22 inventory suppression
+ticks and saved one owned stone. Zero rejected actions; 0.857m client/server walk.
+The second launch retained world/player identity, the stone, inventory and player
+location, then broke the saved stone. Both normal saves and collision/ledger
+cleanup passed. These were scripted standalone controls, not physical KCD input.
+
+Native input/profile tests passed: 328 gameplay and 397 channel/contract checks.
+Java checks: blocks/aim 61, wire 56, movement 14 and world 21 passed; `assemble`
+passed. UI-only input 3 and movement-only input 4 artifacts remain unchanged.
+A scoped Survival-mining mixin prevents the vanilla client from cancelling an
+admitted held action each tick. Actual Survival check PASS on the first attempt:
+`runtime/evidence/gameplay-blocks-survival-20261105-183226-f248758e20ea483394859d689b53ada4/verification.json`.
+Placement consumed one stone (64→63); an early release retained the block; a
+second held attack mined it with an iron pickaxe (10 preserved ticks). Normal
+save, ledger and collision cleanup passed. This does not establish NPC combat,
+native drops rendering or the complete Survival loop.
+
+The new native profile ran for 92.242s with 1,650 uploaded HUD frames, zero drops,
+1,045 server pose updates and 826 exact native camera/aim samples. Computer Use
+saw the hotbar/crosshair and moved the native camera down; the dual ray correctly
+classified terrain at approximately 1.79m. Two mouse edges were acknowledged;
+the empty-world attack was rejected as expected. Its E key tap was not recorded,
+so this is not a keyboard/inventory or block-placement acceptance result.
+Evidence: `runtime/evidence/gameplay-kcd-20261105-182859-d32d4ea23f7d42b7874b830b3a280ecc`.
+The guest saved/closed cleanly, but the session's overall verification failed:
+the host missed the asynchronous block-terminal log record, even though KCD
+logged explicit stop, zero entities and cancelled timers. The worker now emits
+a read-only flush while awaiting cleanup records; a regression reproducing the
+unterminated final line passes. Preserve the failed receipt as evidence.
+
+Native mirror follow-up PASS in 1.004s:
+`runtime/evidence/gameplay-block-mirror-20261105-183456-8ca9a1db2e6a49be986c9b889a85bf76/verification.json`.
+Two synthetic native cells were created with exact corner-pivot local/world
+boxes and zero rotation. Reconciliation removed the upper stone; explicit stop
+removed both owned entities, count zero and timers cancelled. This verifies the
+native mirror and terminal readback, not a coupled Minecraft placement or new
+physical block-input acceptance. Focused PowerShell checks: movement host 9,
+blocks host 9, combined worker 2. Registered Lua suites: movement 11, blocks 7.
+Both games closed normally. All six prior renderer files restored/hash-verified:
+`runtime/evidence/gameplay-hud-restore-20261105-183621-994152be36fc4bbe891dc2ef1a9d0a4f`.
+
+Scope remains stone only on one fixed captured 8×8m patch, mapped Y56–80.
+Rolling terrain, general blocks, commands from KCD, Steve/hands, health/combat
+integration and flight remain required unfinished product work.
+
 ## Sustained walking, terrain binding and saved location
 
 The separate `-Movement` gameplay profile now connects vanilla Minecraft walking

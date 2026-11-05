@@ -35,6 +35,12 @@
 #if defined(MINECOME_HUD_GAMEPLAY_MOVEMENT) && (!defined(MINECOME_HUD_GAMEPLAY) || !defined(MINECOME_HUD_PHYSICAL_MOVEMENT) || !defined(MINECOME_HUD_SELECTIVE_MOUSE) || defined(MINECOME_HUD_WORLD_CLICKS))
 #error Gameplay movement requires its explicit gameplay, physical movement and selective inventory profile without world clicks.
 #endif
+#if defined(MINECOME_HUD_GAMEPLAY_BLOCKS) && !defined(MINECOME_HUD_GAMEPLAY_MOVEMENT)
+#error Gameplay world buttons require the sustained movement profile.
+#endif
+#ifdef MINECOME_HUD_GAMEPLAY_BLOCKS
+#include "gameplay_world_buttons.hpp"
+#endif
 #ifdef MINECOME_HUD_PHYSICAL_MOVEMENT
 #include "movement_forwarding.hpp"
 #endif
@@ -255,7 +261,9 @@ struct Service {
     explicit Service(HMODULE module) {
         const auto path = st::module_path(module); const auto slash = path.find_last_of(L"/\\");
         if (slash != path.npos) config = path.substr(0,slash+1)+
-#ifdef MINECOME_HUD_GAMEPLAY_MOVEMENT
+#ifdef MINECOME_HUD_GAMEPLAY_BLOCKS
+            L"MineComeHudGameplayBlocks.ini";
+#elif defined(MINECOME_HUD_GAMEPLAY_MOVEMENT)
             L"MineComeHudGameplayMovement.ini";
 #elif defined(MINECOME_HUD_GAMEPLAY)
             L"MineComeHudGameplay.ini";
@@ -482,7 +490,9 @@ struct Service {
             receipt("arm","accepted",identity.run);
             ui::Writer inputs;
             bool input_created=inputs.create(identity
-#ifdef MINECOME_HUD_GAMEPLAY_MOVEMENT
+#ifdef MINECOME_HUD_GAMEPLAY_BLOCKS
+                ,ui::Profile::gameplay_blocks
+#elif defined(MINECOME_HUD_GAMEPLAY_MOVEMENT)
                 ,ui::Profile::gameplay_movement
 #elif defined(MINECOME_HUD_GAMEPLAY)
                 ,ui::Profile::gameplay
@@ -632,6 +642,9 @@ struct RuntimeState {
 #ifdef MINECOME_HUD_LIVE_MOUSE
     api::effect_uniform_variable cursor_visible{},cursor{};
     ui::PointerForwarder pointer;
+#ifdef MINECOME_HUD_GAMEPLAY_BLOCKS
+    ui::GameplayWorldButtons world_buttons;
+#endif
     hud::Rect rectangle;
     std::uint32_t target_width=0,target_height=0,uploaded_screen=0;
     std::uint64_t forwarded_events=0,transition_sequence=0,mouse_generation=0;
@@ -803,6 +816,9 @@ void capture_keyboard(api::effect_runtime *runtime,RuntimeState &state,bool comp
 #ifdef MINECOME_HUD_WORLD_CLICKS
         state.world_click.suspend();
 #endif
+#ifdef MINECOME_HUD_GAMEPLAY_BLOCKS
+        if(!queue_pointer(state,state.world_buttons.update(false,0,utc))){close_keyboard(runtime,ui::CloseCause::mailbox_overflow);release_mouse(runtime,state);return;}
+#endif
         state.observation_recovery.defer();
         return;
     }
@@ -811,7 +827,7 @@ void capture_keyboard(api::effect_runtime *runtime,RuntimeState &state,bool comp
     const bool toggle_edge=!state.observation_recovery.pending()&&((held&~state.previous_keys)&((1u<<9)|(1u<<10)))!=0;
     const auto desired=state.selective_mode.update(step==ui::KeyboardGate::Step::active&&peer->state==1,
         state.transition,peer->ack.screen,state.uploaded_screen,toggle_edge,mouse_buttons,
-#ifdef MINECOME_HUD_GAMEPLAY_MOVEMENT
+#if defined(MINECOME_HUD_GAMEPLAY_MOVEMENT) && !defined(MINECOME_HUD_GAMEPLAY_BLOCKS)
         // Once neutral world passthrough is established, ordinary native clicks
         // must not reacquire full mouse capture or interrupt walking. Inventory
         // still owns a mouse lease until held buttons drain on screen close.
@@ -833,9 +849,15 @@ void capture_keyboard(api::effect_runtime *runtime,RuntimeState &state,bool comp
         close_keyboard(runtime,ui::CloseCause::eligibility_lost);release_mouse(runtime,state);return;
     }
     state.gameplay_keyboard_leased=true;
+#ifdef MINECOME_HUD_GAMEPLAY_BLOCKS
+    // World capture absorbs buttons, not camera motion. Inventory still uses
+    // the established full capture and device drain before any UI dispatch.
+    if(full_capture)runtime->block_input_next_frame();
+#else
     if(!full_capture)release_mouse(runtime,state);
     else {
         runtime->block_input_next_frame();
+#endif
 #endif
     const auto requested=state.selective_lease.request_mode(desired);
     mouse::Snapshot world_capture;
@@ -855,7 +877,7 @@ void capture_keyboard(api::effect_runtime *runtime,RuntimeState &state,bool comp
     state.mouse_leased=state.selective_lease.owned();state.mouse_generation=state.selective_lease.generation();
     if(!previously_owned||old_generation!=state.mouse_generation||previously_pending!=state.selective_lease.pending())
         mouse_receipt(state.selective_lease.pending()?"selective_mouse_pending":"selective_mouse_ready",capture_result,world_capture);
-#ifdef MINECOME_HUD_GAMEPLAY
+#if defined(MINECOME_HUD_GAMEPLAY) && !defined(MINECOME_HUD_GAMEPLAY_BLOCKS)
     }
 #endif
 #elif defined(MINECOME_HUD_WORLD_CLICKS)
@@ -912,13 +934,19 @@ void capture_keyboard(api::effect_runtime *runtime,RuntimeState &state,bool comp
     // Movement must release before the UI toggle, including simultaneous W+E.
     // Wait for both actual guest screen and its composed pixels to agree.
     const bool movement_ready=!state.transition&&!toggle_edge&&peer->ack.screen==0&&state.uploaded_screen==0&&
-#ifdef MINECOME_HUD_GAMEPLAY_MOVEMENT
+#if defined(MINECOME_HUD_GAMEPLAY_MOVEMENT) && !defined(MINECOME_HUD_GAMEPLAY_BLOCKS)
         state.gameplay_keyboard_leased&&!full_capture;
 #else
         state.selective_lease.allows(mouse::Mode::buttons);
 #endif
     if(!queue_movement(state,state.movement.update(movement_ready,held>>ui_key_count),utc)){
         close_keyboard(runtime,ui::CloseCause::mailbox_overflow);release_mouse(runtime,state);return;
+    }
+#endif
+#ifdef MINECOME_HUD_GAMEPLAY_BLOCKS
+    // Release held world actions before E/Esc is put into the same ordered ring.
+    if(state.transition||toggle_edge||peer->ack.screen!=0||state.uploaded_screen!=0||!state.selective_lease.allows(mouse::Mode::buttons)){
+        if(!queue_pointer(state,state.world_buttons.update(false,0,utc))){close_keyboard(runtime,ui::CloseCause::mailbox_overflow);release_mouse(runtime,state);return;}
     }
 #endif
     const auto changed=held^state.previous_keys;
@@ -954,7 +982,10 @@ void capture_keyboard(api::effect_runtime *runtime,RuntimeState &state,bool comp
         // Closing inventory while dragging releases the guest first. Keep the
         // bounded native lease until the physical buttons are neutral so a
         // still-held click cannot become a KCD attack on screen close.
-#ifdef MINECOME_HUD_WORLD_CLICKS
+#ifdef MINECOME_HUD_GAMEPLAY_BLOCKS
+        const bool buttons_ready=state.uploaded_screen==0&&state.mouse_leased&&state.selective_lease.allows(mouse::Mode::buttons);
+        if(!queue_pointer(state,state.world_buttons.update(buttons_ready,mouse_buttons,utc))){close_keyboard(runtime,ui::CloseCause::mailbox_overflow);release_mouse(runtime,state);return;}
+#elif defined(MINECOME_HUD_WORLD_CLICKS)
         auto click=state.world_click.update(state.uploaded_screen==0&&state.mouse_leased
 #ifdef MINECOME_HUD_SELECTIVE_MOUSE
             &&state.selective_lease.allows(mouse::Mode::buttons)
@@ -1277,7 +1308,10 @@ void on_begin(api::effect_runtime *runtime, api::command_list *commands, api::re
     } catch (...) { fail(state,5); hide(runtime,state); }
 }
 } // namespace
-#if defined(MINECOME_HUD_GAMEPLAY_MOVEMENT)
+#if defined(MINECOME_HUD_GAMEPLAY_BLOCKS)
+extern "C" __declspec(dllexport) const char *NAME="MineCome continuous Minecraft HUD walking and blocks";
+extern "C" __declspec(dllexport) const char *DESCRIPTION="Gameplay input v5 with held world buttons, WASD/Space and inventory, automatic neutral activation and F8 stop. Native camera passes outside inventory; no diagnostic click or duration cap.";
+#elif defined(MINECOME_HUD_GAMEPLAY_MOVEMENT)
 extern "C" __declspec(dllexport) const char *NAME="MineCome continuous Minecraft HUD and walking";
 extern "C" __declspec(dllexport) const char *DESCRIPTION="Opt-in gameplay input v4 with v5 keyboard capture; neutral activation, F8 stop, WASD/Space and inventory forwarding. KCD camera and world mouse remain native; no world-click bridge or demo timer.";
 #elif defined(MINECOME_HUD_GAMEPLAY)

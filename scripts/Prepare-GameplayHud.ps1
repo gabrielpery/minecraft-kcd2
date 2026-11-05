@@ -1,11 +1,11 @@
 #Requires -Version 5.1
 # Stage the exact built v5 proxy and gameplay addon in the workspace only.
 [CmdletBinding()]
-param([string]$BundleDirectory,[switch]$Movement)
+param([string]$BundleDirectory,[switch]$Movement,[switch]$Blocks)
 $ErrorActionPreference='Stop';Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'GameplayHudProfile.ps1')
-if(-not $BundleDirectory){$BundleDirectory=Join-Path $script:mcGameplayRoot $(if($Movement){'runtime/hud-compositor-gameplay-movement'}else{'runtime/hud-compositor-gameplay'})}
-$bundle=Resolve-MineComeGameplayPath $BundleDirectory -InRuntime;$profile=Get-MineComeGameplayProfile -Movement:$Movement
+if(-not $BundleDirectory){$BundleDirectory=Join-Path $script:mcGameplayRoot $(if($Blocks){'runtime/hud-compositor-gameplay-blocks'}elseif($Movement){'runtime/hud-compositor-gameplay-movement'}else{'runtime/hud-compositor-gameplay'})}
+$bundle=Resolve-MineComeGameplayPath $BundleDirectory -InRuntime;$profile=Get-MineComeGameplayProfile -Movement:$Movement -Blocks:$Blocks
 if(Test-Path -LiteralPath $bundle){$null=Assert-MineComeGameplayBundle $bundle $profile;Write-Output "GAMEPLAY_HUD_PREPARED existing_verified=true bundle=$bundle game_changed=false";return}
 $previous=Resolve-MineComeGameplayPath (Join-Path $script:mcGameplayRoot $profile.previous_bundle) -InRuntime
 if((Get-MineComeGameplayHash (Join-Path $previous 'bundle.json')) -cne $profile.previous_manifest_sha256 -or (Get-MineComeGameplayHash (Join-Path $previous 'installed.json')) -cne $profile.previous_receipt_sha256){throw 'Previous owned bundle/receipt differs from its pinned provenance.'}
@@ -23,7 +23,7 @@ foreach($r in $profile.files){
 [IO.Directory]::CreateDirectory($bundle)|Out-Null
 foreach($r in $profile.files){$target=Join-Path $bundle $r.path;[IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($target))|Out-Null;[IO.File]::Copy($sources[$r.path],$target,$false);Assert-MineComeGameplayFile $target $r}
 [IO.File]::Copy($buildPath,(Join-Path $bundle 'proxy-build-receipt.json'),$false)
-$manifest=[ordered]@{schema=3;kind='minecome_gameplay_hud_bundle_v3';tools_only=$true;stream_protocol=3;ui_input_protocol=(Get-MineComeGameplayInputProtocol $profile);mouse_capture_api=2;gameplay_keyboard_api=5;selective_revision=5;profile_sha256=(Get-MineComeGameplayHash (Get-MineComeGameplayProfilePath -Movement:$Movement));arm_config_relative_path=$profile.arm_config_relative_path;files=$profile.files;build_receipt_sha256=$profile.build_receipt_sha256;preview_armed=$false;game_installation_modified=$false;game_launched=$false;live_kcd_compositing_verified=$false;created_utc=[DateTime]::UtcNow.ToString('o')}
+$manifest=[ordered]@{schema=3;kind='minecome_gameplay_hud_bundle_v3';tools_only=$true;stream_protocol=3;ui_input_protocol=(Get-MineComeGameplayInputProtocol $profile);mouse_capture_api=2;gameplay_keyboard_api=5;selective_revision=5;profile_sha256=(Get-MineComeGameplayHash (Get-MineComeGameplayProfilePath -Movement:$Movement -Blocks:$Blocks));arm_config_relative_path=$profile.arm_config_relative_path;files=$profile.files;build_receipt_sha256=$profile.build_receipt_sha256;preview_armed=$false;game_installation_modified=$false;game_launched=$false;live_kcd_compositing_verified=$false;created_utc=[DateTime]::UtcNow.ToString('o')}
 Write-MineComeGameplayJson (Join-Path $bundle 'bundle.json') $manifest
 $null=Assert-MineComeGameplayBundle $bundle $profile
 Write-Output "GAMEPLAY_HUD_PREPARED bundle=$bundle files=6 game_changed=false"
