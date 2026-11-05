@@ -14,6 +14,11 @@ owns its blocks, inventory and interactions; KCD2 provides the host world. The
 architecture draws on [SkyCraft and EldenCraft](docs/research/MASHUPS.md), including
 capturing Minecraft's actual HUD and inventory pixels for display in the host renderer.
 
+The [product target](docs/PRODUCT.md) includes Minecraft's Steve, hands and equipment,
+Survival health/hunger and combat with KCD2 NPCs, general building/mining, crafting,
+commands such as `/gamemode survival`, Creative flight and Elytra flight. These are
+required goals; the current prototype has not implemented most of them yet.
+
 **Status: experimental development prototype.** Several bounded two-game tests
 work, but this is not yet a complete playable mod or a ready-to-install release.
 The public repository contains source, build scripts and development procedures.
@@ -67,8 +72,11 @@ coverage from 12×8 to 16×8 metres without moving the coordinate origin. Both
 Minecraft threads confirm the handoff before walking beyond the old edge. The
 actual Minecraft/HUD check and automatic KCD2 player/camera follower have passed,
 including the return and restoration. This is one bounded tile admission from
-three pre-captured tiles; repeated terrain streaming and connection to the
-physical walking/blocks/inventory profile remain unfinished.
+three pre-captured tiles. Admission now works in the physical walking controller's
+automatic Minecraft test with blocks and inventory: both sides cross X=8.837m and
+return, the owned stone survives admission, and all 190 imported cells stay unchanged.
+Native replay support for this combined profile is implemented but its live run is
+pending. Repeated terrain acquisition and a sustained gameplay session remain unfinished.
 
 The separate jump diagnostic currently exposes a temporary KCD camera-height
 deviation during landing; it is not counted as a passing walking check.

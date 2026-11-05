@@ -1,4 +1,45 @@
-# MineCome progress — 2026-10-30
+# MineCome progress — 2026-11-05
+
+## Product target and physical-controller admission checkpoint
+
+The user confirmed Steve/hands/equipment, Minecraft health/hunger and combat with
+KCD2 NPCs, general building/mining and reference parity, including vanilla commands,
+Creative flight and Elytra/rockets. [PRODUCT.md](PRODUCT.md) defines the required
+scope and delivery order. These are not established by current Creative stone labs.
+Next: a sustained reusable gameplay session, general visuals and Survival/combat.
+Manual acceptance remains deferred to a larger milestone.
+
+Terrain admission now connects the existing physical walking controller, HUD,
+owned-block ledger and inventory. The stable original origin and full planned
+imported-cell reservation survive server-first, then client admission. Held input
+resumes after the pause; the existing seed survives and uses the same block ledger.
+
+Fresh actual-Minecraft evidence:
+`runtime/evidence/hud-physical-fixture-20261105-161657-96911b0ddfd345fabdbc5851d073af57/verification.json`.
+Client/server reach X=8.836764818m and return within 0.029064m. Five movement pulses,
+six block actions, inventory suppression/resumption and cleanup pass. Admission
+takes 100ms with advancing trace; there are 113 walking HUD frames and 10 beyond
+the old edge. All 190 imported cells remain air. Source hashes/trace are verified
+and Minecraft exits normally. Inputs/rays are scripted; this does not verify new
+native physical input or visible KCD composition.
+
+The October30 run completed its game sequence but its validator wrongly demanded
+one binding application per press. Admission releases and reapplies a held key.
+Validation now preserves first-application latency and requires an intervening
+release for reapplication; missing/unordered/misattributed bindings still fail.
+The old failed receipt is unchanged; the fresh run establishes the pass.
+
+Explicit native buffered extension replay and `Test-CoupledPhysicalExtension.ps1`
+are implemented but the new native run is pending. The wrapper captures terrain,
+runs Minecraft, then replays its server trace in an already-open tools world.
+It claims sequential replay, not simultaneous HUD composition. PowerShell5
+forwarding now preserves fixture/replay parameters. Existing corridor bounds,
+15s+1s physical duration and 400ms host lease are unchanged.
+
+Java `check` and `remapJar` passed during implementation; the fresh fixture build
+and game run passed. Focused PS checks: fixture258, wrapper36, extension entry18,
+buffered receipts126 and replay26. Lua:106 simulated-engine movement cases.
+No manual test requested or native DLL changed; latest Minecraft session closed.
 
 
 ## Terrain grows during walking — automatic two-game checks passed

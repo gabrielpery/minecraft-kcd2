@@ -14,6 +14,13 @@ Do not claim a placeholder cube or mock peer demonstrates Minecraft rendering in
 
 The user prioritizes playable progress per unit of time/usage and minimal manual testing.
 
+- Follow the user-confirmed product scope in `docs/PRODUCT.md`: Steve/hands/equipment,
+  Minecraft survival/combat, general blocks, commands, Creative flight and Elytra
+  are required. Do not redefine completion as a HUD/stone/walking demonstration.
+- The next deliverable is a sustained, reusable gameplay session. Preserve working
+  controls while replacing demo-only cutoffs, fixed arenas and disposable worlds
+  in a separate gameplay path; keep bounded diagnostic profiles for regression.
+
 - Deliver integrated, user-visible capabilities. Do not count standalone policies, new diagnostics or test counts as completed gameplay features.
 - Preserve verified behavior and batch related changes into a feature milestone. Defer non-blocking polish instead of repeatedly stopping feature work for another small live comparison.
 - Reuse existing actual-Minecraft fixtures and coupled-game checks. Run focused checks once per relevant change; broaden or repeat only for a new failure, changed code or unresolved concern.
