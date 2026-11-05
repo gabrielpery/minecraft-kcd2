@@ -2,6 +2,7 @@ package dev.minecome.gameplay;
 
 import com.google.gson.*;
 import dev.minecome.terrain.GroundSurface;
+import dev.minecome.terrain.GameplayTerrain;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
@@ -13,7 +14,7 @@ final class GameplayBlocksLedger {
     record Cell(int x,int y,int z) implements Comparable<Cell> {
         public int compareTo(Cell c){int n=Integer.compare(x,c.x);if(n==0)n=Integer.compare(y,c.y);return n==0?Integer.compare(z,c.z):n;}
     }
-    final GameplayWorld save;final GroundSurface surface;final Path path;
+    final GameplayWorld save;volatile GroundSurface surface;final Path path;
     final Set<Cell> initial;final long initialRevision;
     private String previous;private long persistedRevision;
     GameplayBlocksLedger(GameplayWorld save,GroundSurface surface)throws IOException {
@@ -35,7 +36,10 @@ final class GameplayBlocksLedger {
     static java.math.BigDecimal number(JsonObject j,String key){var v=j.get(key);if(v==null||!v.isJsonPrimitive()||!v.getAsJsonPrimitive().isNumber())throw new IllegalArgumentException("Numeric "+key+" required");return v.getAsBigDecimal();}
     static int integer(JsonObject j,String key){return number(j,key).intValueExact();}
     static String string(JsonObject j,String key){var v=j.get(key);if(v==null||!v.isJsonPrimitive()||!v.getAsJsonPrimitive().isString())throw new IllegalArgumentException("String "+key+" required");return v.getAsString();}
-    static boolean allowed(GroundSurface surface,Cell c){return c.x>=-4&&c.x<=3&&c.z>=-4&&c.z<=3&&c.y>=56&&c.y<=80&&surface.containsFeet(c.x+.5,c.z+.5,.5);}
+    static boolean allowed(GroundSurface surface,Cell c){
+        int min=surface instanceof GameplayTerrain?-68:-4,max=surface instanceof GameplayTerrain?67:3;
+        return c.x>=min&&c.x<=max&&c.z>=min&&c.z<=max&&c.y>=56&&c.y<=80&&surface.containsFeet(c.x+.5,c.z+.5,.5);
+    }
     static JsonArray blocks(Set<Cell> cells){var a=new JsonArray();for(var c:new TreeSet<>(cells)){var j=new JsonObject();j.addProperty("x",c.x);j.addProperty("y",c.y);j.addProperty("z",c.z);j.addProperty("state","minecraft:stone");a.add(j);}return a;}
     JsonObject json(long revision,Set<Cell> cells){var j=new JsonObject();j.addProperty("schema",1);j.addProperty("kind","minecome_gameplay_block_ledger_v1");j.addProperty("world_id",save.id().toString());
         j.addProperty("patch_run",surface.run());j.addProperty("patch_sha256",surface.sha256());j.addProperty("revision",revision);j.add("blocks",blocks(cells));return j;}

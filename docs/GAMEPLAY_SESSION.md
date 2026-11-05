@@ -17,8 +17,10 @@ now implements Minecraft-authoritative walking on captured host collision, with
 KCD2's player and camera following actual Minecraft server observations. Scripted
 Minecraft walking/resume and native sustained attachment/HUD pass; physical
 walking in this new profile still needs acceptance. The `-Blocks` profile extends
-it with persistent owned stones and a native mirror. General blocks, Steve's
-body/hands, command typing from KCD2, cross-game health/combat and flight remain
+it with persistent owned stones and a native mirror. `-Explore` adds on-demand
+terrain tiles and persists the admitted coverage, using the same blocks bundle.
+General blocks, Steve's body/hands, command typing from KCD2, cross-game
+health/combat and flight remain
 unfinished in this sustained path. Existing bounded gameplay labs remain separate.
 
 ## Run the standalone guest
@@ -184,7 +186,8 @@ ledger against the actual server world and republishes the remaining stones.
 An expired native heartbeat also removes those owned display entities.
 
 This profile retains the movement bounds and one-session-per-KCD-process
-limitation described above. After closing KCD2, restore with:
+limitation described above. Use `-Explore` below to grow beyond the initial patch.
+After closing KCD2, restore with:
 
 ```powershell
 & './scripts/Install-GameplayHud.ps1' -Blocks -BundleDirectory $bundle -Restore
@@ -205,6 +208,65 @@ path; it does not claim physical KCD input or the complete product scope.
 Survival placement consumption, early-release cancellation and held pickaxe
 mining. It uses vanilla commands only to prepare its isolated fixture world;
 command typing from the KCD2 window is still unfinished.
+
+## Grow captured terrain during a session
+
+`-Explore` implies both `-Blocks` and `-Movement`. It reuses the blocks native
+bundle: input protocol 5 and HUD stream protocol 3. Prepare and install with
+`-Blocks` as shown above; there is no separate Explore add-on or native rebuild.
+If that matching bundle is already installed, keep using it. Once a fresh supported
+KCD2 tools world is loaded, keep the player still and start:
+
+```powershell
+& './scripts/Start-GameplaySession.ps1' -Explore -BundleDirectory $bundle
+```
+
+Controls and stop/save behavior are unchanged. As the player approaches the
+coverage frontier, the host requests neighbouring 8×8 metre terrain tiles on a
+fixed grid around the original capture. Admission preserves the base coordinate
+origin and requires matching shared edges. Both Minecraft collision threads and
+the durable terrain cache must accept a tile before movement can enter it.
+Unknown, steep or refused terrain remains a movement boundary; release movement
+controls before trying an allowed direction after a boundary pause.
+
+Coverage grows additively to at most **64 tiles including the base**, with tile
+offsets limited to ±8 on either axis. Gaps and unadmitted corners remain closed.
+The 64-stone capacity and mapped Minecraft Y56–80 limits remain, but owned blocks
+may now occupy any admitted terrain cell. This is sampled terrain collision;
+native buildings and other objects are not imported as full collision meshes.
+There is no tile eviction or unlimited world streaming.
+
+The owned save stores coverage in
+`MineCome-Gameplay/minecome-terrain/coverage.json`, including the admitted tile
+bytes, hashes and coverage identity. The base binding, saved player position and
+block ledger retain the same coordinates. **Reopen an expanded world with
+`-Explore` again.** Single-patch mode cannot restore the expanded coverage and
+refuses saved positions or owned blocks beyond its original patch. The
+one-session-per-KCD-process restriction still applies;
+restart KCD2 before reconnecting and restore the installation with `-Blocks`.
+
+The automatic check uses a separate owned instance and launches actual Minecraft
+twice:
+
+```powershell
+& './scripts/Test-GameplayTerrain.ps1'
+```
+
+Passed receipt:
+`runtime/evidence/gameplay-terrain-20261105-191017-ee2686489a414ba49e3ab306887d2b3e/verification.json`.
+The first phase admits an east tile while walking, crosses the old X=4 boundary
+to X=5.821, places two stones on new coverage, breaks the upper stone, suppresses
+movement in inventory and resumes walking. It saves the player at X=5.179 and
+retains the base stone at (7,64,0). The second phase restores both tiles, the player
+and stone without a new admission, then walks again and breaks the retained stone.
+Both launches save and clean up normally.
+
+This proof uses explicitly synthetic terrain tiles and scripted input in actual
+Minecraft. A separate live KCD2 capture check passes all 81 samples, shared-edge
+validation, admission-file publication and native timer cleanup in 693ms:
+`runtime/evidence/gameplay-terrain-capture-20261105-191937-77679be45b4d4619be9b208946fca580/verification.json`.
+It uses a scripted frontier request without moving the native player or connecting
+Minecraft. Coupled frontier-crossing and physical-control acceptance remain pending.
 
 ## Automatic sustained movement check
 

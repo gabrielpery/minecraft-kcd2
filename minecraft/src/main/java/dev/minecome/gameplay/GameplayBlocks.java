@@ -3,6 +3,7 @@ package dev.minecome.gameplay;
 import com.google.gson.*;
 import dev.minecome.hud.HudInputProtocol;
 import dev.minecome.terrain.GroundSurface;
+import dev.minecome.terrain.GameplayTerrain;
 import net.minecraft.block.Blocks;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.entity.player.PlayerEntity;
@@ -34,7 +35,7 @@ public final class GameplayBlocks {
     private record Plan(long id,int action,Aim aim,Selection selection,int slot,String item,int count,boolean creative,long at){}
     private record Intent(Plan plan,long dispatchedAt){}
     private record Observation(long at,long utc,long planId,boolean admitted,String reason,int targetState,long confirmed,Set<GameplayBlocksLedger.Cell> cells){}
-    private final GameplayWorld save;private final GroundSurface surface;private final HudInputProtocol.Identity identity;
+    private final GameplayWorld save;private volatile GroundSurface surface;private final HudInputProtocol.Identity identity;
     private final GameplayBlocksLedger ledger;private final GameplayBlocksFiles files;
     private final Set<GameplayBlocksLedger.Cell> serverCells=new TreeSet<>();
     private final AtomicReference<Set<GameplayBlocksLedger.Cell>> owned=new AtomicReference<>();
@@ -51,6 +52,15 @@ public final class GameplayBlocks {
         serverCells.addAll(ledger.initial);owned.set(Set.copyOf(serverCells));revision=ledger.initialRevision;files=new GameplayBlocksFiles(root,evidenceDirectory,ledger);
     }
     public void aim(Aim next){aim=next;}
+    /** Called while gameplay is paused, after both collision owners attach the same additive coverage. */
+    public void terrain(GroundSurface next){
+        var before=surface;
+        if(closing||next==null||!before.run().equals(next.run())||!before.sha256().equals(next.sha256())||
+            before.centerX()!=next.centerX()||before.centerY()!=next.centerY()||before.centerZ()!=next.centerZ()||
+            !(before instanceof GameplayTerrain old)||!(next instanceof GameplayTerrain grown)||(grown!=old&&!grown.isSuccessorOf(old))||
+            owned.get().stream().anyMatch(c->!GameplayBlocksLedger.allowed(next,c)))throw new IllegalArgumentException("Block terrain identity or owned coverage changed");
+        ledger.surface=next;surface=next;
+    }
     public boolean ready(){return ready&&!closing&&failure.get()==null;}
     public Set<BlockPos> ownedBlocks(){var result=new HashSet<BlockPos>();for(var c:owned.get())result.add(pos(c));return Set.copyOf(result);}
     private void check(){if(files.failure()!=null)failure.compareAndSet(null,files.failure());if(failure.get()!=null)throw new IllegalStateException(failure.get());}

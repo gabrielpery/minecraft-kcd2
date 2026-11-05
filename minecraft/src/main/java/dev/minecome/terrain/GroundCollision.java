@@ -9,7 +9,7 @@ import net.minecraft.world.BlockView;
 
 /** Shapes are built on each owning game thread, then published as immutable world-scoped maps. */
 public final class GroundCollision {
-    private record Installation(BlockView world,String run,String sha256,Map<Long,VoxelShape> shapes,AtomicLong queries) {}
+    private record Installation(BlockView world,String run,String sha256,GroundSurface surface,Map<Long,VoxelShape> shapes,AtomicLong queries) {}
     private static volatile Installation client,server;
     private GroundCollision() {}
     public static void install(BlockView world,GroundPatch patch,boolean serverSide) {
@@ -19,7 +19,7 @@ public final class GroundCollision {
     /** A composite surface is published only after its complete map is built; it cannot replace an owner. */
     public static void install(BlockView world,GroundSurface surface,boolean serverSide) {
         if(surface instanceof GroundPatch patch){install(world,patch,serverSide);return;}
-        if(!(surface instanceof GroundCorridor))throw new IllegalArgumentException("Unsupported collision surface");
+        if(!(surface instanceof GroundCorridor)&&!(surface instanceof GameplayTerrain))throw new IllegalArgumentException("Unsupported collision surface");
         var installation=prepare(world,surface);
         synchronized(GroundCollision.class){
             if((serverSide?server:client)!=null)throw new IllegalStateException("Existing collision installation preserved");
@@ -31,13 +31,14 @@ public final class GroundCollision {
      */
     public static synchronized boolean replace(BlockView world,GroundSurface expected,GroundSurface next,boolean serverSide) {
         Objects.requireNonNull(world);Objects.requireNonNull(expected);Objects.requireNonNull(next);
-        if(!GroundExpansion.isTransition(expected,next))throw new IllegalArgumentException("Only the verified additive terrain successor is supported");
+        boolean gameplay=expected instanceof GameplayTerrain before&&next instanceof GameplayTerrain after&&after.isSuccessorOf(before);
+        if(!gameplay&&!GroundExpansion.isTransition(expected,next))throw new IllegalArgumentException("Only the verified additive terrain successor is supported");
         var own=serverSide?server:client;
-        if(own==null || own.world()!=world || !own.run().equals(expected.run()) || !own.sha256().equals(expected.sha256()))return false;
+        if(own==null || own.world()!=world || !own.run().equals(expected.run()) || !own.sha256().equals(expected.sha256()) || gameplay&&own.surface()!=expected)return false;
         var replacement=prepare(world,next);
         // Preserve lifetime query counters across generations so admission cannot
         // erase proof that the original collision map was actually consumed.
-        replacement=new Installation(replacement.world(),replacement.run(),replacement.sha256(),replacement.shapes(),own.queries());
+        replacement=new Installation(replacement.world(),replacement.run(),replacement.sha256(),replacement.surface(),replacement.shapes(),own.queries());
         if(serverSide)server=replacement;else client=replacement;
         return true;
     }
@@ -49,7 +50,7 @@ public final class GroundCollision {
             var slab=VoxelShapes.cuboid(0,cell.minY(),0,1,cell.maxY(),1);
             shapes.merge(key,slab,VoxelShapes::union);
         }
-        return new Installation(world,patch.run(),patch.sha256(),Map.copyOf(shapes),new AtomicLong());
+        return new Installation(world,patch.run(),patch.sha256(),patch,Map.copyOf(shapes),new AtomicLong());
     }
     public static VoxelShape merge(BlockView world,BlockPos pos,VoxelShape original) {
         Installation own=client;
@@ -68,7 +69,7 @@ public final class GroundCollision {
     }
     public static boolean matches(BlockView world,GroundSurface patch,boolean serverSide) {
         var own=serverSide?server:client;
-        return own!=null && own.world()==world && own.run().equals(patch.run()) && own.sha256().equals(patch.sha256());
+        return own!=null && own.world()==world && own.run().equals(patch.run()) && own.sha256().equals(patch.sha256()) && (!(patch instanceof GameplayTerrain)||own.surface()==patch);
     }
     public static long queries(boolean serverSide){var own=serverSide?server:client;return own==null?0:own.queries().get();}
     public static boolean available(boolean serverSide){return (serverSide?server:client)==null;}

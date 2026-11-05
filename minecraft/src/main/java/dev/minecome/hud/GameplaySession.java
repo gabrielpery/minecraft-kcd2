@@ -54,6 +54,7 @@ public final class GameplaySession {
     private GameplayBlocks blocks;
     private GameplayAimReader aimReader;
     private GameplayBlocksFixture blocksFixture;
+    private GameplayTerrainFixture terrainFixture;
     private Object world,player,server;
     private boolean opening,ready,stopping,writerFinished,shutdownRequested,frameTransparent,sessionReportWritten;
     private long readyAt,stopAt,writerAt,lastCaptureAt,inputEvents;
@@ -112,7 +113,7 @@ public final class GameplaySession {
     }
     private void beforeTick(MinecraftClient client){
         if(stopping||movement==null)return;
-        try{if(blocksFixture!=null)blocksFixture.beforeTick(client);if(movementFixture!=null)movementFixture.beforeTick(client);movement.beforeTick(client,System.nanoTime());}
+        try{if(terrainFixture!=null)terrainFixture.beforeTick(client);if(blocksFixture!=null)blocksFixture.beforeTick(client);if(movementFixture!=null)movementFixture.beforeTick(client);movement.beforeTick(client,System.nanoTime());}
         catch(Exception e){requestStop(client,"movement_failure",e.toString());}
     }
     private boolean owns(MinecraftClient client){return ready&&!stopping&&client.world==world&&client.player==player&&client.getServer()==server&&client.isIntegratedServerRunning();}
@@ -172,6 +173,9 @@ public final class GameplaySession {
                         if(fixtureMode.startsWith("blocks"))blocksFixture=new GameplayBlocksFixture(fixtureMode,blocks,movement,save,wire,directory.getParent(),proof->{
                             fixtureResult=proof.deepCopy();requestStop(MinecraftClient.getInstance(),"blocks_fixture_complete",proof.get("result").getAsString().equals("passed")?null:proof.toString());
                         });
+                        if(fixtureMode.startsWith("terrain"))terrainFixture=new GameplayTerrainFixture(fixtureMode,blocks,movement,save,wire,directory.getParent(),proof->{
+                            fixtureResult=proof.deepCopy();requestStop(MinecraftClient.getInstance(),"terrain_fixture_complete",proof.get("result").getAsString().equals("passed")?null:proof.toString());
+                        });
                     }
                     if(fixtureMode.startsWith("walking"))movementFixture=new GameplayMovementFixture(fixtureMode,movement,save,wire,directory.getParent(),proof->{
                         fixtureResult=proof.deepCopy();requestStop(MinecraftClient.getInstance(),"movement_fixture_complete",proof.get("result").getAsString().equals("passed")?null:proof.toString());
@@ -188,7 +192,7 @@ public final class GameplaySession {
                 if(!standalone){ui=new HudVanillaUiAdapter(client,true);hideOwnedWindow(client);}
                 output=new HudStreamProducer(root,directory,identity,save.saveName(),true,standalone?0:1);output.start();
                 ready=true;readyAt=System.nanoTime();
-                if(!fixtureMode.isEmpty()&&!fixtureMode.startsWith("walking")&&!fixtureMode.startsWith("blocks"))fixture=new GameplayPersistenceFixture(fixtureMode,save,directory.getParent(),proof->{
+                if(!fixtureMode.isEmpty()&&!fixtureMode.startsWith("walking")&&!fixtureMode.startsWith("blocks")&&!fixtureMode.startsWith("terrain"))fixture=new GameplayPersistenceFixture(fixtureMode,save,directory.getParent(),proof->{
                     fixtureResult=proof.deepCopy();boolean passed=proof.has("result")&&proof.get("result").getAsString().equals("passed");
                     requestStop(MinecraftClient.getInstance(),"fixture_complete",passed?null:proof.toString());
                 });
@@ -214,7 +218,8 @@ public final class GameplaySession {
             if(!standalone)inputTick(client);
             if(aimReader!=null&&!stopping){if(aimReader.failure()!=null)throw new IllegalStateException("Native aim: "+aimReader.failure());blocks.aim(aimReader.current());}
             if(blocksFixture!=null&&!stopping)blocksFixture.tick(client);
-            if(blocks!=null&&!stopping)blocks.tick(client,standalone||input!=null&&input.connected()&&input.hostState()==1);
+            if(terrainFixture!=null&&!stopping)terrainFixture.tick(client);
+            if(blocks!=null&&!stopping)blocks.tick(client,!movement.terrainTransition()&&(standalone||input!=null&&input.connected()&&input.hostState()==1));
             if(movementFixture!=null&&!stopping)movementFixture.tick(client);
             if(fixture!=null&&output.isReady()&&output.publishedFrames()>0&&!stopping)fixture.tick(client);
         }catch(Exception e){requestStop(client,"failure",e.toString());}
@@ -395,7 +400,7 @@ public final class GameplaySession {
             Files.writeString(temporary,notice.toString(),StandardCharsets.UTF_8,StandardOpenOption.CREATE_NEW);
             Files.move(temporary,directory.getParent().resolve("gameplay-stopping.json"),java.nio.file.StandardCopyOption.ATOMIC_MOVE);
         }catch(Exception e){if(failure==null)failure="Stop notice: "+e;}
-        try{if(blocksFixture!=null)blocksFixture.close();if(aimReader!=null)aimReader.close();if(blocks!=null)blocks.close(client);}catch(Exception e){if(failure==null)failure=e.toString();}
+        try{if(terrainFixture!=null)terrainFixture.close();if(blocksFixture!=null)blocksFixture.close();if(aimReader!=null)aimReader.close();if(blocks!=null)blocks.close(client);}catch(Exception e){if(failure==null)failure=e.toString();}
         try{if(movementFixture!=null)movementFixture.close();if(movement!=null){if(failure==null)movement.close(client);else movement.abort(client,failure);}}catch(Exception e){if(failure==null)failure=e.toString();}
         try{if(ui!=null)ui.releaseAndClose(client);}catch(Exception e){if(failure==null)failure=e.toString();}
         gate.releaseAll();

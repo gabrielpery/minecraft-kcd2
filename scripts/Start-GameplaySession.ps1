@@ -1,7 +1,7 @@
 # Sustained HUD/inventory, with an explicit Minecraft walking profile.
 [CmdletBinding()]
 param([string]$BundleDirectory,[string]$InstanceDirectory,[string]$JavaHome='C:/Program Files/Java/jdk-24',
- [ValidateRange(0,300)][int]$SmokeSeconds=0,[switch]$PreflightOnly,[switch]$Movement,[switch]$Blocks,[string]$GroundPatchFile)
+ [ValidateRange(0,300)][int]$SmokeSeconds=0,[switch]$PreflightOnly,[switch]$Movement,[switch]$Blocks,[switch]$Explore,[string]$GroundPatchFile)
 . (Join-Path $PSScriptRoot 'powershell7.ps1')
 if($PSVersionTable.PSVersion.Major -lt 7){
  $code=Invoke-MineComePowerShell7 -ScriptPath $PSCommandPath -BoundParameters $PSBoundParameters
@@ -12,7 +12,7 @@ $root=[IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
 . (Join-Path $PSScriptRoot 'GameplayHudProfile.ps1')
 . (Join-Path $PSScriptRoot 'KcdToolsProbeHelpers.ps1')
 . (Join-Path $PSScriptRoot 'GameplayMovementHost.ps1')
-if($Blocks){$Movement=$true}
+if($Explore){$Blocks=$true};if($Blocks){$Movement=$true}
 if(-not $Movement -and $GroundPatchFile){throw 'GroundPatchFile requires Movement.'}
 if(-not $BundleDirectory){$BundleDirectory=Join-Path $root $(if($Blocks){'runtime/hud-compositor-gameplay-blocks'}elseif($Movement){'runtime/hud-compositor-gameplay-movement'}else{'runtime/hud-compositor-gameplay'})}
 $installation=Get-MineComeGameplayInstallation -BundleDirectory $BundleDirectory -RequireUnarmed -Movement:$Movement -Blocks:$Blocks
@@ -64,6 +64,7 @@ try{
   '-Expires',[string]$expires,'-JavaHome',$JavaHome,'-Connected')
  if($Movement){$arguments+=@('-Movement','-GroundPatchFile',$patch.Path)}
  if($Blocks){$arguments+='-Blocks'}
+ if($Explore){$arguments+='-Explore'}
  $quoted=@($arguments|ForEach-Object {ConvertTo-MineComeWindowsArgument $_})
  $helper=Start-Process -FilePath (Get-MineComePowerShell7) -ArgumentList ([string]::Join(' ',$quoted)) -WorkingDirectory $root -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $directory 'client.log') -RedirectStandardError (Join-Path $directory 'client-errors.log')
  $deadline=[DateTime]::UtcNow.AddSeconds(120);$ready=$null
@@ -81,7 +82,7 @@ try{
  Assert-MineComeProbeContext $context
  if($Movement){
   $guest=Read-MineComeGameplayJson (Join-Path $directory 'gameplay-ready.json')
-  $hostFollower=Start-GameplayMovementHost -Context $context -Run $run -WorldId $guest.world_id -Patch $patch -PoseFile (Join-Path $directory 'gameplay-pose.json') -ViewFile (Join-Path $directory 'host-view.json') -ExpiresUtcMs $expires -Blocks:$Blocks
+  $hostFollower=Start-GameplayMovementHost -Context $context -Run $run -WorldId $guest.world_id -Patch $patch -PoseFile (Join-Path $directory 'gameplay-pose.json') -ViewFile (Join-Path $directory 'host-view.json') -ExpiresUtcMs $expires -Blocks:$Blocks -Explore:$Explore -TerrainCacheFile (Join-Path $bindingDirectory 'coverage.json')
   $movementPath=Join-Path $directory 'gameplay-movement-ready.json';$until=[DateTime]::UtcNow.AddSeconds(12)
   while(-not (Test-Path -LiteralPath $movementPath)){
    $state=Get-GameplayMovementHostState $hostFollower
@@ -97,6 +98,7 @@ try{
  try{$bytes=[Text.Encoding]::UTF8.GetBytes($armText);$file.Write($bytes,0,$bytes.Length);$file.Flush($true);$armWritten=$true}finally{$file.Dispose()}
  [IO.File]::WriteAllText((Join-Path $directory 'arm.ini'),$armText)
  Write-Output "GAMEPLAY_READY run=$run stop_file=$(Join-Path $directory 'session.stop')"
+ if($Explore){Write-Output 'Terrain grows automatically toward your movement, up to 64 captured tiles. Saved terrain and construction keep their original coordinates.'}
  Write-Output $(if($Blocks){'Focus KCD2 with controls released. Walking, HUD and stone controls activate automatically: right-click places held stone, left-click mines owned stone. E opens inventory; F8 stops and saves. Terrain coverage and owned stone capacity are bounded.'}elseif($Movement){'Focus KCD2 with controls released. Minecraft walking and HUD activate automatically. F8 stops and saves at the last safe position. Walking is limited to the captured terrain; blocks, commands and flight are not connected in this path yet.'}else{'Focus KCD2 with controls released. HUD activates automatically; F8 stops and saves. KCD owns walking; Minecraft commands/flight are not connected yet.'})
  $smokeDeadline=[DateTime]::UtcNow.AddSeconds($SmokeSeconds)
  while(-not $helper.HasExited){
@@ -137,6 +139,7 @@ finally{
    $hostProof|ConvertTo-Json -Depth 10|Set-Content -LiteralPath (Join-Path $directory 'host-movement.json') -Encoding utf8NoBOM
    if(-not $hostProof.ResourcesClosed -or -not $hostProof.Terminal -or $hostProof.PoseCount -lt 1 -or $hostProof.Failure){$passed=$false;$failure='Gameplay host cleanup/pose proof incomplete: '+$hostProof.Failure}
    if($Blocks -and (-not $hostProof.Blocks -or -not $hostProof.Blocks.CleanupComplete -or $hostProof.Blocks.Failure)){$passed=$false;$failure='Gameplay native block cleanup proof incomplete.'}
+   if($Explore -and (-not $hostProof.Terrain -or -not $hostProof.Terrain.CleanupComplete -or $hostProof.Terrain.Failure)){$passed=$false;$failure='Gameplay native terrain cleanup proof incomplete.'}
   }catch{$passed=$false;$failure='Gameplay host cleanup: '+$_.Exception.Message}
  }
  if($armWritten -and (Test-Path -LiteralPath $arm)){
@@ -152,7 +155,7 @@ finally{
  }
  [ordered]@{schema=1;kind='minecome_gameplay_kcd_session_v1';run=$run;result=$(if($passed){'passed'}else{'failed'});failure=$failure;
   target_pid=$context.GamePid;target_start_filetime=$targetStart;instance=$InstanceDirectory;smoke_seconds=$SmokeSeconds;
-  minecraft_movement_connected=[bool]($Movement -and $passed);movement_profile=[bool]$Movement;blocks_profile=[bool]$Blocks;host_command_typing_verified=$false;normal_client_exit=($helper -and $helper.HasExited -and $helper.ExitCode -eq 0)}|
+  minecraft_movement_connected=[bool]($Movement -and $passed);movement_profile=[bool]$Movement;blocks_profile=[bool]$Blocks;explore_profile=[bool]$Explore;host_command_typing_verified=$false;normal_client_exit=($helper -and $helper.HasExited -and $helper.ExitCode -eq 0)}|
   ConvertTo-Json|Set-Content -LiteralPath (Join-Path $directory 'verification.json') -Encoding utf8NoBOM
 }
 if(-not $passed){throw $failure}

@@ -61,7 +61,7 @@ local function spawn(p,key,c)
 end
 function MineCome.GameplayBlocksBegin(run,duration_ms,x,y,z,minx,maxx,minz,maxz)
  if not token(run) or not integer(duration_ms,1000,86400000) or not finite(x) or not finite(y) or not finite(z) or math.abs(x)>10000000 or math.abs(y)>10000000 or math.abs(z)>10000000 or
-  not integer(minx,-1024,1024) or not integer(maxx,-1024,1024) or not integer(minz,-1024,1024) or not integer(maxz,-1024,1024) or maxx<minx or maxz<minz or maxx-minx>8 or maxz-minz>8 then return false,'invalid_identity_or_bounds' end
+  not integer(minx,-68,67) or not integer(maxx,-68,67) or not integer(minz,-68,67) or not integer(maxz,-68,67) or maxx<minx or maxz<minz then return false,'invalid_identity_or_bounds' end
  if state.active then return false,'session_owned' end
  if not System or type(System.SpawnEntity)~='function' or type(System.RemoveEntity)~='function' or type(System.GetEntity)~='function' or type(System.GetEntityByName)~='function' or not Script or type(Script.SetTimerForFunction)~='function' or type(Script.KillTimer)~='function' then return false,'api_unavailable' end
  if not player or not player.id then return false,'player_unavailable' end

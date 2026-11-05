@@ -45,7 +45,7 @@ function Test-GameplayBlocksAssets($Context){
 function Test-GameplayBlockInteger($Value,[long]$Minimum,[long]$Maximum){
     return $Value -is [ValueType] -and $Value -isnot [bool] -and [double]::IsFinite([double]$Value) -and $Value -eq [Math]::Floor([double]$Value) -and $Value -ge $Minimum -and $Value -le $Maximum
 }
-function Read-GameplayBlocksSnapshot([string]$Path,$Identity,$Bounds,[long]$Now){
+function Read-GameplayBlocksSnapshot([string]$Path,$Identity,$Bounds,[long]$Now,$TerrainState=$null){
     if(-not [IO.File]::Exists($Path)){return $null}
     $file=$null
     try{
@@ -77,11 +77,15 @@ function Read-GameplayBlocksSnapshot([string]$Path,$Identity,$Bounds,[long]$Now)
         -not(Test-GameplayBlockInteger $value.seq 1 10000000) -or -not(Test-GameplayBlockInteger $value.revision 0 10000000) -or
         -not(Test-GameplayBlockInteger $value.utc_ms 1 ($Now+50))){throw 'Block snapshot sequence/clock differs.'}
     $blocks=@($value.blocks);if($blocks.Count -gt 64){throw 'Stone snapshot capacity exceeds64.'}
+    # The guest may publish its durable ack between this worker's initial ack
+    # read and this snapshot read. Recheck after reading the snapshot bytes.
+    if($TerrainState -and $TerrainState.Pending -and $TerrainState.Pending.Tile){Read-GameplayTerrainAck $TerrainState}
     $seen=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal);$flat=[Collections.Generic.List[string]]::new()
     foreach($b in $blocks){
         if((($b.PSObject.Properties.Name|Sort-Object)-join ',') -cne 'state,x,y,z' -or $b.state -cne 'minecraft:stone' -or
             -not(Test-GameplayBlockInteger $b.x $Bounds.MinX $Bounds.MaxX) -or -not(Test-GameplayBlockInteger $b.y 56 80) -or
             -not(Test-GameplayBlockInteger $b.z $Bounds.MinZ $Bounds.MaxZ)){throw 'Only complete captured stone cells are supported.'}
+        if($TerrainState -and -not (Test-GameplayTerrainCell $TerrainState ([int]$b.x) ([int]$b.z))){throw 'Stone leaves admitted terrain coverage.'}
         $cell=([string]$b.x)+','+([string]$b.y)+','+([string]$b.z)
         if(-not $seen.Add($cell)){throw 'Duplicate stone coordinate.'};$flat.Add($cell)
     }
@@ -92,18 +96,18 @@ function Read-GameplayBlocksSnapshot([string]$Path,$Identity,$Bounds,[long]$Now)
     [pscustomobject]@{Sequence=[long]$value.seq;UtcMs=[long]$value.utc_ms;Revision=[long]$value.revision;Count=$blocks.Count;Cells=$canonical}
 }
 function New-GameplayBlocksHost {
-    param($Context,[string]$Run,[string]$WorldId,$Patch,[string]$SnapshotFile,[long]$ExpiresUtcMs)
+    param($Context,[string]$Run,[string]$WorldId,$Patch,[string]$SnapshotFile,[long]$ExpiresUtcMs,$TerrainState=$null)
     if($Run -cnotmatch '^[0-9a-f]{32}$' -or $WorldId -cnotmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' -or $Patch.Run -cnotmatch '^[0-9a-f]{32}$' -or $Patch.Hash -cnotmatch '^[0-9a-f]{64}$'){throw 'Gameplay blocks identity invalid.'}
     $SnapshotFile=Resolve-HudMovementEvidencePath $SnapshotFile $Context.ProjectRoot
     if((Get-FileHash -LiteralPath $Patch.Path).Hash -ine $Patch.Hash){throw 'Gameplay block terrain changed.'}
     $data=Get-Content -LiteralPath $Patch.Path -Raw|ConvertFrom-Json -Depth 12
     if($data.grid_size -ne 9 -or $data.spacing -ne 1 -or @($data.points).Count -ne 81 -or $data.provenance.kind -cne 'live_kcd_ground_patch'){throw 'Block mirror requires the captured wide patch.'}
-    $bounds=[pscustomobject]@{MinX=-4;MaxX=3;MinZ=-4;MaxZ=3}
+    $bounds=if($TerrainState){[pscustomobject]@{MinX=-68;MaxX=67;MinZ=-68;MaxZ=67}}else{[pscustomobject]@{MinX=-4;MaxX=3;MinZ=-4;MaxZ=3}}
     $now=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds();if($ExpiresUtcMs-$now -lt 1000 -or $ExpiresUtcMs-$now -gt 86400000){throw 'Gameplay blocks expiry differs.'}
     $assets=Test-GameplayBlocksAssets $Context
     $probe=New-MineComeProbeRun $Context 'gameplay-blocks' (Join-Path $Context.ProjectRoot 'kcd2/gameplay/blocks_session.lua') 'GameplayBlocksBegin'
     [pscustomobject]@{Identity=[pscustomobject]@{Run=$Run;WorldId=$WorldId;Pid=$Context.GamePid;Start=$Context.GameStartedUtc.ToFileTimeUtc().ToString();PatchRun=$Patch.Run;PatchHash=$Patch.Hash};
-        SnapshotFile=$SnapshotFile;Bounds=$bounds;Center=$data.center;ExpiresUtcMs=$ExpiresUtcMs;StartedUtcMs=$now;Probe=$probe;Assets=$assets;
+        SnapshotFile=$SnapshotFile;Bounds=$bounds;TerrainState=$TerrainState;Center=$data.center;ExpiresUtcMs=$ExpiresUtcMs;StartedUtcMs=$now;Probe=$probe;Assets=$assets;
         BeginSent=$false;Begin=$null;Terminal=$null;Failure=$null;Stopping=$false;LastSendUtcMs=0L;LastSnapshotUtcMs=0L;Sequence=0L;Revision=-1L;Cells=$null;
         PendingRevision=-1L;PendingSinceUtcMs=0L;PendingCount=0;AppliedRevision=-1L;AppliedCount=0;Applications=0L;Spawned=0L;Removed=0L}
 }
@@ -118,7 +122,8 @@ function Get-GameplayBlocksCommands($State,[long]$Now){
         return "MineCome.GameplayBlocksBegin('$run',$([string]::Join(',',$numbers)))"
     }
     if(-not $State.Begin){if($Now-$State.LastSendUtcMs -gt 1500){throw 'Gameplay block begin was not acknowledged.'};return ''}
-    $snapshot=Read-GameplayBlocksSnapshot $State.SnapshotFile $State.Identity $State.Bounds $Now
+    $terrainState=if($State.PSObject.Properties['TerrainState']){$State.TerrainState}else{$null}
+    $snapshot=Read-GameplayBlocksSnapshot $State.SnapshotFile $State.Identity $State.Bounds $Now $terrainState
     if($snapshot){
         if($snapshot.Sequence -lt $State.Sequence -or $snapshot.Revision -lt $State.Revision -or $snapshot.UtcMs -lt $State.LastSnapshotUtcMs -or
             ($snapshot.Sequence -eq $State.Sequence -and ($snapshot.UtcMs -ne $State.LastSnapshotUtcMs -or $snapshot.Revision -ne $State.Revision -or $State.Cells -cne $snapshot.Cells)) -or

@@ -23,24 +23,26 @@ required goals; the current prototype has not implemented most of them yet.
 work, but this is not yet a complete playable mod or a ready-to-install release.
 The public repository contains source, build scripts and development procedures.
 
-The separate [gameplay session](docs/GAMEPLAY_SESSION.md) keeps a Minecraft world
-between launches. An automated two-launch check preserves inventory, Survival
-mode, health and hunger, and executes vanilla game-mode commands. Its HUD/inventory
-profile replaces the demo countdown with automatic activation and explicit
-stop/save. An additional `-Movement` profile now implements Minecraft-authoritative
-walking on one captured 8×8 metre KCD2 terrain patch, retaining its coordinate
-origin and the saved player location between launches. This path has no timed
-return to the origin or 15-second walking cutoff; it pauses at the captured edge.
-Automatic walking, inventory suppression and saved-location resume pass in actual
-Minecraft. A 40-second KCD2 check passes sustained attachment/HUD and cleanup;
-physical walking acceptance in this new profile remains pending. The new `-Blocks`
-profile adds persistent stone construction using vanilla placement/mining, exact
-native camera targeting and an owned KCD entity mirror. An automatic real-Minecraft
-check passes ground/top/side placement, breaking, walking, inventory suppression
-and saved-block restoration/removal across two launches. This first sustained
-building implementation supports 64 stones within the captured patch; general
-block rendering, rolling terrain, command typing from KCD2, Steve, combat and
-flight remain unfinished. The existing bounded walking/block tests remain available.
+The separate [gameplay session](docs/GAMEPLAY_SESSION.md) preserves the Minecraft
+world, player state and construction between launches, with automatic activation
+and explicit stop/save. `-Movement` adds Minecraft-authoritative walking on captured
+terrain; `-Blocks` adds vanilla placement/mining for up to 64 owned stones. These
+paths have no demo walking cutoff or timed return. Actual-Minecraft checks pass
+walking, inventory suppression, placement on different faces, Survival mining and
+saved-world restoration. Sustained native HUD attachment and cleanup also pass;
+physical walking/building acceptance in these new profiles remains pending.
+
+The new [`-Explore` entry](docs/GAMEPLAY_SESSION.md#grow-captured-terrain-during-a-session)
+adds on-demand 8×8 metre terrain tiles, keeps the original coordinate origin and
+saves admitted coverage for later launches. It includes walking and blocks and
+reuses the `-Blocks` native bundle. An automatic two-launch Minecraft check passes
+tile admission, walking beyond the old edge, building on the new terrain,
+inventory suppression and saved coverage/player/block restoration. That check
+uses synthetic tiles and scripted input. A separate live KCD2 check passes actual
+terrain capture, shared-edge validation and cleanup; coupled frontier-crossing
+acceptance remains pending. Coverage is capped at 64 tiles; unknown terrain stays
+a boundary. General blocks, full host collision, Steve, cross-game combat,
+command typing from KCD2 and flight remain unfinished. Bounded labs remain available.
 
 The new [repeat-session development profile](kcd2/MOVEMENT-LAB.md#repeat-sessions-in-one-kcd-process)
 is implemented and compiled, with automated cleanup/rearm checks passing.
@@ -84,7 +86,8 @@ also passes. The focused KCD2 follow-up now passes too: one top-face placement,
 automatic removal of both stones, continued HUD and later walking. The user
 confirmed it worked, and the controller verified cleanup and restoration. This
 focused check did not repeat the boundary crossing or inventory sequence. The
-earlier 8×8m combined live result remains valid. Rolling terrain remains unfinished.
+earlier 8×8m combined live result remains valid. These bounded labs retain fixed
+coverage; the separate gameplay `-Explore` entry implements on-demand growth.
 An automatic [terrain-extension check](kcd2/MOVEMENT-LAB.md#terrain-extension)
 now adds a third captured tile while Minecraft is walking, growing collision
 coverage from 12×8 to 16×8 metres without moving the coordinate origin. Both
@@ -95,7 +98,8 @@ three pre-captured tiles. Admission now works in the physical walking controller
 automatic Minecraft test with blocks and inventory: both sides cross X=8.837m and
 return, the owned stone survives admission, and all 190 imported cells stay unchanged.
 Native replay support for this combined profile is implemented but its live run is
-pending. Repeated terrain acquisition and sustained block gameplay remain unfinished.
+pending. This historical lab performs one prepared admission; sustained building
+and on-demand terrain acquisition now have separate gameplay entries above.
 
 The separate jump diagnostic currently exposes a temporary KCD camera-height
 deviation during landing; it is not counted as a passing walking check.
@@ -108,7 +112,7 @@ deviation during landing; it is not counted as a passing walking check.
 | Hotbar and Creative inventory | Minecraft's real UI is composited inside KCD2. Physical slot selection, inventory opening/closing, clicks, dragging and scrolling have passed live tests. |
 | Camera and block controls together | KCD camera look works outside inventory and stays still inside it. Right-click/place and left-click/break work in one fixed nearby cell during a bounded live session. |
 | Minecraft aiming | After fixing KCD's default stone rotation, a live right-click places on the original block's top face and the next two clicks break both blocks, with matching Minecraft/KCD records and user confirmation. The standalone actual-Minecraft lab passes 28 targeting/control scenarios with synthetic host rays, including hotbar changes while an action finishes. |
-| Movement groundwork | In an automatic two-game test, KCD follows walking/jumping from the Minecraft HUD world over sampled KCD ground, then returns the player to the starting position. The same save completes its HUD/inventory sequence. This bounded scripted mode uses a standalone HUD receiver; continuous shared movement remains unfinished. |
+| Movement groundwork | In an automatic two-game test, KCD follows walking/jumping from the Minecraft HUD world over sampled KCD ground, then returns the player to the starting position. The same save completes its HUD/inventory sequence. This bounded scripted lab uses a standalone HUD receiver; the separate gameplay path removes its timed return. |
 
 The [physical HUD walking lab](kcd2/MOVEMENT-LAB.md#physical-walking-with-the-hud-in-kcd)
 now passes repeated movement with Minecraft's real HUD, normal return to the
@@ -148,11 +152,12 @@ Live checks above use the **official KCD2 1.5.5 development build**. The native
 **retail 1.5.6 route remains blocked** by its verified address-library/loader
 prerequisites. A successful development-world test does not establish retail support.
 
-General block rendering, reliable aiming across block faces, continuous shared movement,
-world persistence, survival integration and multiplayer remain unfinished. KCD's
-own HUD and health systems still exist; selective widget replacement and showing
-KCD health in Minecraft's HUD are separate work. Current sessions are isolated,
-single-player development labs with explicit time and scope limits.
+General block rendering, full host collision, Steve, cross-game survival/combat,
+command typing from KCD2, flight and multiplayer remain unfinished. KCD's own HUD
+and health systems still exist; selective widget replacement and health-system
+integration are separate work. Sessions remain isolated, experimental single-player
+development worlds. Bounded labs keep their explicit time limits; the persistent
+gameplay path runs until stop or peer loss within its supported coverage.
 
 See [progress and evidence](docs/PROGRESS.md) for source/build/standalone/live
 verification, including earlier failures, and [known issues](docs/KNOWN_ISSUES.md)

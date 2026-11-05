@@ -16,6 +16,7 @@ public final class GameplayTerrainBinding {
     private final GameplayWorld save;
     private final Path directory,marker;
     private final GroundPatch surface;
+    private GameplayTerrainStore coverage;
     private String previous;
     private Position resume;
     private boolean blockSupport;
@@ -26,6 +27,9 @@ public final class GameplayTerrainBinding {
         return open(save,source,fixture,false);
     }
     public static GameplayTerrainBinding open(GameplayWorld save,Path source,boolean fixture,boolean blocks)throws IOException{
+        return open(save,source,fixture,blocks,false);
+    }
+    public static GameplayTerrainBinding open(GameplayWorld save,Path source,boolean fixture,boolean blocks,boolean explore)throws IOException{
         save.verifyOwnership();GroundPatch requested=GroundPatch.read(source,true);
         String kind=requested.sourceKind();
         if(!(fixture?kind.equals("standalone_ground_fixture")||kind.equals("standalone_fixture"):kind.equals("live_kcd_ground_patch")))throw new IOException("Gameplay terrain provenance differs");
@@ -49,17 +53,20 @@ public final class GameplayTerrainBinding {
                 !value.get("world_id").getAsString().equals(save.id().toString())||!value.get("patch_sha256").getAsString().equals(cached.sha256())||
                 !value.get("patch_run").getAsString().equals(cached.run())||!cached.sha256().equals(requested.sha256())||
                 value.get("host_x").getAsDouble()!=cached.centerX()||value.get("host_y").getAsDouble()!=cached.centerY()||value.get("host_z").getAsDouble()!=cached.centerZ())throw new IOException("Persistent terrain origin/identity changed");
+            GameplayTerrainStore coverage=explore?GameplayTerrainStore.open(save,cached):null;
             Position position=null;
-            if(value.has("resume")){JsonObject p=value.getAsJsonObject("resume");position=new Position(p.get("x").getAsDouble(),p.get("y").getAsDouble(),p.get("z").getAsDouble(),p.get("yaw").getAsFloat(),p.get("pitch").getAsFloat());validate(cached,position,blocks);}
-            var binding=new GameplayTerrainBinding(save,dir,cached,text,position);binding.blockSupport=blocks;return binding;
+            if(value.has("resume")){JsonObject p=value.getAsJsonObject("resume");position=new Position(p.get("x").getAsDouble(),p.get("y").getAsDouble(),p.get("z").getAsDouble(),p.get("yaw").getAsFloat(),p.get("pitch").getAsFloat());validate(coverage==null?cached:coverage.surface(),position,blocks);}
+            var binding=new GameplayTerrainBinding(save,dir,cached,text,position);binding.blockSupport=blocks;binding.coverage=coverage;return binding;
         }catch(RuntimeException e){throw new IOException("Invalid gameplay terrain binding",e);}
     }
     public GroundPatch surface(){return surface;}
+    public GameplayTerrainStore coverage(){return coverage;}
+    public GroundSurface currentSurface(){return coverage==null?surface:coverage.surface();}
     public synchronized Position resume(){return resume;}
     public Path patchFile(){return directory.resolve("ground-patch.json");}
     /** Runs on the bounded file worker, never the ongoing game tick. */
     public synchronized void checkpoint(Position position)throws IOException{
-        validate(surface,position,blockSupport);save.verifyOwnership();
+        validate(currentSurface(),position,blockSupport);save.verifyOwnership();
         if(!Files.readString(marker,StandardCharsets.UTF_8).equals(previous))throw new IOException("Terrain binding changed before checkpoint");
         String next=json(save,surface,position).toString();Path temp=directory.resolve("binding-"+UUID.randomUUID()+".tmp");
         Files.writeString(temp,next,StandardCharsets.UTF_8,StandardOpenOption.CREATE_NEW);

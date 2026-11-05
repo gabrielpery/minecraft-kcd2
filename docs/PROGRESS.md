@@ -1,5 +1,51 @@
 # MineCome progress — 2026-11-05
 
+## On-demand terrain in sustained gameplay
+
+Implemented and compiled `-Explore`, which implies blocks/movement and reuses the
+existing input5/HUD3 native profile. The same console worker requests neighboring
+8×8m terrain tiles when actual server movement approaches an uncovered edge.
+The base origin and protocol identity stay fixed. Both Minecraft collision owners
+must install the immutable successor and the coverage cache must persist before
+controls resume. Block ownership and native bounds grow with acknowledged terrain.
+Up to64 tiles, offsets[-8,8] and64 owned stones; no eviction or full-world collision.
+Unknown/steep terrain remains a boundary rather than fabricated ground.
+
+Actual Minecraft paired test PASS:
+`runtime/evidence/gameplay-terrain-20261105-191017-ee2686489a414ba49e3ab306887d2b3e/verification.json`.
+The first launch admitted a synthetic east tile during play, crossed the former
+X4 boundary to X5.821, placed ground/top stones on added terrain, broke the upper
+stone, verified20 inventory suppression ticks and later walking, and saved X5.179
+plus stone(7,64,0). Reopen retained the same two-tile digest/world/player, walked
+again and broke the saved stone without another admission. Zero block rejections;
+normal saves, terrain ownership and collision/ledger cleanup passed.
+
+Live KCD2 acquisition PASS in693ms:
+`runtime/evidence/gameplay-terrain-capture-20261105-191937-77679be45b4d4619be9b208946fca580/verification.json`.
+81 actual terrain rays, nine numbered batches, exact lattice/shared-edge checks,
+one published admission and explicit native timer cleanup. This is a read-only
+capture component test with a scripted frontier request. No native player movement
+or coupled Minecraft admission is claimed. No manual test was requested.
+
+The checks caught and fixed three integration issues: frontier acquisition began
+after the conservative walking guard stopped movement (now requests at3.25m from
+the edge); KCD's logger truncates long records (now nine bounded batches plus a
+compact final receipt); native intermediate coordinate arithmetic rounded the
+last row across a float boundary (now adds one combined integer offset, preserving
+the requested lattice). Tolerances were not loosened. Earlier failed receipts
+remain under `runtime/evidence/gameplay-terrain*`; no false success replacement.
+Admission close/drain and pending-generation publication races were also fixed.
+The host rereads durable acknowledgement after reading a block snapshot to cover
+concurrent publication. All cleanup commands remain independent on failure.
+
+Focused checks passed: Java terrain42/admission42/blocks68/movement14/world21,
+Gradle assemble, six combined-worker scenarios, terrain host9, movement host9,
+blocks host9, and all three registered gameplay Lua suites (movement11/blocks8/
+terrain8). KCD closed normally; no renderer deployment changes this iteration.
+Physical expanded walking/building acceptance remains deferred to a larger
+milestone. Commands from KCD, Creative flight, general blocks, Steve/hands,
+cross-game Survival/combat and Elytra remain required unfinished product work.
+
 ## Persistent stone construction in the sustained session
 
 Implemented and compiled a separate `-Blocks` gameplay profile (input protocol 5,

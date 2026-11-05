@@ -16,6 +16,7 @@ final class GameplayBoundary {
         double maxX=Math.max(m.x(),m.x()+(m.vx()+Math.max(0,ax)+Math.max(0,kx))*factor)+.02;
         double minZ=Math.min(m.z(),m.z()+(m.vz()+Math.min(0,az)+Math.min(0,kz))*factor)-.02;
         double maxZ=Math.max(m.z(),m.z()+(m.vz()+Math.max(0,az)+Math.max(0,kz))*factor)+.02;
+        if(surface instanceof GameplayTerrain terrain)return terrain.containsRectangle(minX-.31,minZ-.31,maxX+.31,maxZ+.31);
         return surface.containsFeet(minX,minZ,.31)&&surface.containsFeet(maxX,maxZ,.31);
     }
 }

@@ -85,7 +85,29 @@ public final class GameplayBlocksTests {
         Path outside=Files.createDirectories(root.resolve("outside-evidence"));
         reject(()->new GameplayBlocksFiles(root,outside,finalLedger),"Session output stays in evidence directory");
         aimTests(root,save);
+        terrainLedgerTests(root);
         System.out.println("GameplayBlocksTests: "+checks+" checks passed; no game calls");
+    }
+    private static void terrainLedgerTests(Path root)throws Exception{
+        var seed=GameplayTerrain.initial(tile(0));var grown=seed.admit(1,0,tile(1));
+        var cell=new GameplayBlocksLedger.Cell(7,64,0);
+        check(!GameplayBlocksLedger.allowed(seed,cell)&&GameplayBlocksLedger.allowed(grown,cell),"Block permission opens only on actually admitted terrain");
+        check(!GameplayBlocksLedger.allowed(grown,new GameplayBlocksLedger.Cell(7,64,7)),"An unadmitted corner remains closed for blocks");
+        check(!GameplayBlocksLedger.allowed(grown,new GameplayBlocksLedger.Cell(12,64,0)),"New outer terrain frontier remains closed for blocks");
+        var save=GameplayWorld.prepare(root.resolve("expanded-instance/saves"),root);var ledger=new GameplayBlocksLedger(save,seed);
+        reject(()->ledger.persist(1,Set.of(cell)),"Old ledger surface cannot claim expanded blocks");
+        ledger.surface=grown;ledger.persist(1,Set.of(cell));
+        check(new GameplayBlocksLedger(save,grown).initial.equals(Set.of(cell)),"Expanded block ownership reopens with admitted saved coverage");
+        reject(()->new GameplayBlocksLedger(save,seed),"Missing saved tile cannot silently adopt expanded block ownership");
+        var reopened=new GameplayBlocksLedger(save,grown);reopened.persist(2,Set.of());
+        check(new GameplayBlocksLedger(save,grown).initial.isEmpty(),"Removing expanded-terrain block persists normally");
+    }
+    private static GroundPatch tile(int tx)throws IOException{
+        var j=new JsonObject();j.addProperty("schema",1);j.addProperty("run",String.format("%032x",tx+1));j.addProperty("grid_size",9);j.addProperty("spacing",1);j.addProperty("walking_area","wide");
+        var center=new JsonObject();center.addProperty("x",120+8*tx);center.addProperty("y",2040);center.addProperty("z",56);j.add("center",center);
+        var provenance=new JsonObject();provenance.addProperty("kind","standalone_fixture");j.add("provenance",provenance);var points=new JsonArray();
+        for(int row=0;row<9;row++)for(int col=0;col<9;col++){var p=new JsonObject();p.addProperty("index",row*9+col+1);p.addProperty("x",120+8*tx+col-4);p.addProperty("y",2040+row-4);p.addProperty("z",56);p.addProperty("nx",0);p.addProperty("ny",0);p.addProperty("nz",1);points.add(p);}j.add("points",points);
+        return GroundPatch.parse(j.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8),true);
     }
     private static JsonObject aimJson(HudInputProtocol.Identity id,GameplayWorld save,long utc){
         var j=new JsonObject();j.addProperty("schema",1);j.addProperty("kind","minecome_gameplay_aim_v1");j.addProperty("run",id.run());j.addProperty("world_id",save.id().toString());

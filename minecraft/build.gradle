@@ -23,6 +23,8 @@ loom {
                     vmArgs '-Dminecome.gameplayMovement=true'
                 if (project.hasProperty('minecomeGameplayBlocks'))
                     vmArgs '-Dminecome.gameplayBlocks=true'
+                if (project.hasProperty('minecomeGameplayExplore'))
+                    vmArgs '-Dminecome.gameplayExplore=true'
                 if (project.hasProperty('minecomeGameplayGroundFile'))
                     vmArgs "-Dminecome.gameplayGroundFile=${project.property('minecomeGameplayGroundFile')}"
             }
@@ -392,3 +394,15 @@ tasks.register('gameplayBlocksTest', JavaExec) {
     mainClass = 'dev.minecome.gameplay.GameplayBlocksTests'
 }
 tasks.named('check') { dependsOn 'gameplayWorldTest', 'gameplayWireTest', 'gameplayMovementTest', 'gameplayBlocksTest' }
+
+tasks.register('gameplayTerrainTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'dev.minecome.terrain.GameplayTerrainTests'
+}
+tasks.register('gameplayTerrainAdmissionTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'dev.minecome.terrain.GameplayTerrainAdmissionTests'
+}
+tasks.named('check') { dependsOn 'gameplayTerrainTest', 'gameplayTerrainAdmissionTest' }
