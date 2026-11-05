@@ -1,5 +1,69 @@
 # MineCome progress — 2026-11-05
 
+## Vanilla chat and commands in sustained gameplay
+
+Implemented and compiled the separate `-Chat` profile, which includes walking
+and blocks and can combine with `-Explore`. Input 6 extends the frozen input 5
+contract with T/slash openers, Unicode scalars and explicit editing keys. The
+existing v5 ReShade proxy is reused. Minecraft receives real `ChatScreen`
+`charTyped`/`keyPressed` calls on its client thread; vanilla handles command
+parsing, submission, completion and history. No direct command-execution shortcut.
+ACK screen 2 identifies chat; the unchanged HUD 3 frame represents it as screen 1.
+Movement/mining release before entry, typing cannot select hotbar slots, and
+held controls must release before returning to gameplay. Old profiles stay separate.
+
+Actual Minecraft paired check PASS:
+`runtime/evidence/gameplay-chat-20261105-194848-15b871e71c884ede940e105526e4f985/verification.json`.
+142 typed scalar events and 14 editing actions cover Unicode/surrogate deletion,
+Home/End/Delete, cancellation, `/gamemode survival`, `/give @s minecraft:stone 7`,
+invalid-command recovery and return to Creative/Survival. Twenty chat suppression
+ticks keep the player still, followed by 0.642m authoritative walking. The second
+launch retains the same player/world, Survival, seven stone and checkpoint, then
+executes commands and walks again. Both save and clean up normally. This is
+scripted real Minecraft UI evidence, not native keyboard acceptance.
+
+An automatic combined `-Chat -Explore` KCD2 run exposed a pre-existing console
+batch truncation: a Lua EOF parse error preceded camera lease expiry. Harmless
+native probes established that the encoded request length, not decoded Lua
+length, determines truncation. `GameplayMovementHost` now splits between complete
+generated statements at a 2,000-character encoded-path bound, including endpoint
+and flush overhead. Seventeen focused checks exercise the real worker/runspace,
+four simultaneous calls, complete ordering, maximum 64-block payload and cleanup.
+No source freshness limits or Lua motion behavior changed. Failed evidence and
+exact probe requests remain in
+`runtime/evidence/gameplay-kcd-20261105-195328-5cef5bd5d2cc496f9250bb9b1ecd87c7`.
+
+The repaired combined native session PASS:
+`runtime/evidence/gameplay-kcd-20261105-200138-efb79224a520488c99a493134b2a3a50/verification.json`.
+89.538 seconds active, 1,595 uploaded HUD frames, 941 poses, 764 camera views and 1,231 console
+requests, maximum encoded path 1,728. HUD composition was visually observed;
+normal save and movement/block/terrain cleanup all passed. Computer Use taps of
+T, slash and 2 produced zero native events, so this run does not prove physical
+chat or movement. `chat-observation.json` records that limitation explicitly.
+
+Native addon build and 648 chat checks pass, alongside existing gameplay/input
+suites. Java gameplay wire 185 and legacy HUD input 353 pass; Gradle assemble and
+PowerShell parsing/bootstrap forwarding pass. Actual Win32 translation verifies
+plain/Shift/Caps behavior using nonmutating `ToUnicodeEx` flag 4. Keyboard-only chat
+does not support clipboard, modifier selection, IME, dead-key composition, AltGr
+or chat mouse clicks. The new profile also recovers a short unmodified tap when
+ReShade reports a fresh release between two eligible up samples. It emits one
+text event or a balanced editor/UI pair, without repeat state or transition
+replay. Physical held-state sampling remains separate. Ambiguous modifier taps
+are suppressed; this is not a queued character stream or complete event history.
+
+The rebuilt native input then passed an automated live KCD2 command check:
+`runtime/evidence/gameplay-kcd-20261105-201229-cf98ac724f5f4ce2a7b84e588b1f4bee/chat-observation.json`.
+Computer Use opened slash, typed `/gamemode survival`, and pressed Enter through
+the native bridge. The real server logged Survival and the visible KCD2 frame
+showed vanilla command feedback, hearts and hunger. All 21 native events were
+acknowledged: 17 text scalars, one opener pair and one submit pair. This establishes
+native command entry with automated key taps, not human typing speed or flight.
+The session ran 206.458 seconds, uploaded 3,737 HUD frames with zero drops, and
+saved/cleaned up normally; 2,947 console requests stayed within the encoded bound.
+KCD2 was closed normally and the prior renderer restored with the matching Chat
+bundle. No manual user test was required.
+
 ## On-demand terrain in sustained gameplay
 
 Implemented and compiled `-Explore`, which implies blocks/movement and reuses the

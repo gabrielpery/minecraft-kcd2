@@ -1,11 +1,11 @@
 #Requires -Version 5.1
 # Explicit reversible tools-only replacement. Never launches/stops games or arms HUD.
 [CmdletBinding()]
-param([string]$BundleDirectory,[switch]$PreflightOnly,[switch]$Restore,[switch]$Movement,[switch]$Blocks)
+param([string]$BundleDirectory,[switch]$PreflightOnly,[switch]$Restore,[switch]$Movement,[switch]$Blocks,[switch]$Chat)
 $ErrorActionPreference='Stop';Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'GameplayHudProfile.ps1')
-if(-not $BundleDirectory){$BundleDirectory=Join-Path $script:mcGameplayRoot $(if($Blocks){'runtime/hud-compositor-gameplay-blocks'}elseif($Movement){'runtime/hud-compositor-gameplay-movement'}else{'runtime/hud-compositor-gameplay'})}
-$bundle=Resolve-MineComeGameplayPath $BundleDirectory -InRuntime;$profile=Get-MineComeGameplayProfile -Movement:$Movement -Blocks:$Blocks;$manifest=Assert-MineComeGameplayBundle $bundle $profile
+if(-not $BundleDirectory){$BundleDirectory=Join-Path $script:mcGameplayRoot $(if($Chat){'runtime/hud-compositor-gameplay-chat'}elseif($Blocks){'runtime/hud-compositor-gameplay-blocks'}elseif($Movement){'runtime/hud-compositor-gameplay-movement'}else{'runtime/hud-compositor-gameplay'})}
+$bundle=Resolve-MineComeGameplayPath $BundleDirectory -InRuntime;$profile=Get-MineComeGameplayProfile -Movement:$Movement -Blocks:$Blocks -Chat:$Chat;$manifest=Assert-MineComeGameplayBundle $bundle $profile
 $bin=Get-MineComeGameplayToolsBin $profile;$exe=Join-Path $bin 'KingdomCome.exe'
 $previous=Resolve-MineComeGameplayPath (Join-Path $script:mcGameplayRoot $profile.previous_bundle) -InRuntime
 $oldManifestPath=Join-Path $previous 'bundle.json';$oldReceiptPath=Join-Path $previous 'installed.json'
@@ -16,8 +16,8 @@ Assert-MineComeGameplayRecords $old.files;Assert-MineComeGameplayRecords $oldRec
 foreach($record in $old.files){$installed=@($oldReceipt.files|Where-Object{$_.path -ceq $record.path})[0];if($record.sha256 -cne $installed.sha256 -or $record.bytes -ne $installed.bytes){throw 'Previous bundle and installed receipt differ.'}}
 $installedPath=Join-Path $bundle 'installed.json';$restorePath=Join-Path $bundle 'restored.json'
 $receipt=$null
-if($Restore){$current=Get-MineComeGameplayInstallation -BundleDirectory $bundle -RequireUnarmed -Movement:$Movement -Blocks:$Blocks;$receipt=$current.InstalledReceipt}
-elseif(Test-Path -LiteralPath $installedPath){$null=Get-MineComeGameplayInstallation -BundleDirectory $bundle -RequireUnarmed -Movement:$Movement -Blocks:$Blocks;Write-Output "GAMEPLAY_HUD_ALREADY_INSTALLED verified=true bundle=$bundle no_changes=true";return}
+if($Restore){$current=Get-MineComeGameplayInstallation -BundleDirectory $bundle -RequireUnarmed -Movement:$Movement -Blocks:$Blocks -Chat:$Chat;$receipt=$current.InstalledReceipt}
+elseif(Test-Path -LiteralPath $installedPath){$null=Get-MineComeGameplayInstallation -BundleDirectory $bundle -RequireUnarmed -Movement:$Movement -Blocks:$Blocks -Chat:$Chat;Write-Output "GAMEPLAY_HUD_ALREADY_INSTALLED verified=true bundle=$bundle no_changes=true";return}
 Assert-MineComeGameplayNoArms $bin
 if(Test-Path -LiteralPath (Join-Path $bin 'dxgi.dll.minecome-disabled')){throw 'Conflicting disabled proxy preserved; expected the exact active owned installation.'}
 $entries=@()

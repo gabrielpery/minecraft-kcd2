@@ -46,6 +46,7 @@ public final class GameplayWireTests {
         p.setProperty("minecome.hudStreamLab","true");rejects(()->GameplayMode.requireExclusive(p));
         check(GameplayMode.MAX_LEASE_MS==86_400_000L);
         worldButtons(id);
+        chat(id);
         System.out.println("GameplayWireTests: "+checks+" checks passed; no games");
     }
     private static void worldButtons(HudInputProtocol.Identity id){
@@ -89,5 +90,70 @@ public final class GameplayWireTests {
         for(var old:new HudInputGate[]{new HudInputGate(),new HudInputGate(true)})rejects(()->old.apply(new HudInputProtocol.Event(1,1000,7,0,0,0,0),1000));
         b.putInt(96,2);
         check(HudInputProtocol.decode(b.array(),id,0,3000,1,true,true,true).events().isEmpty());
+    }
+    private static void chat(HudInputProtocol.Identity id){
+        var b=ByteBuffer.allocate(HudInputProtocol.MAPPING_BYTES).order(ByteOrder.LITTLE_ENDIAN);
+        b.put("MCHUDI06".getBytes(StandardCharsets.US_ASCII)).putInt(6).putInt(HudInputProtocol.MAPPING_BYTES);
+        b.put(id.run().getBytes(StandardCharsets.US_ASCII)).putInt(id.producerPid()).putInt(id.targetPid()).putLong(id.producerStart()).putLong(id.targetStart()).putLong(id.expires());
+        b.putLong(3).putLong(1000).putInt(1).putInt(3);
+        b.putLong(128,3).putLong(136,1000).putInt(144,1).putInt(148,2);
+        b.position(HudInputProtocol.HEADER_BYTES);
+        b.putLong(1).putLong(1000).putInt(9).putInt(0x1f642).putFloat(0).putFloat(0).putInt(0).putInt(0);
+        b.putLong(2).putLong(1000).putInt(10).putInt(13).putFloat(0).putFloat(0).putInt(0).putInt(0);
+        b.putLong(3).putLong(1000).putInt(11).putInt(13).putFloat(0).putFloat(0).putInt(0).putInt(0);
+        var snapshot=HudInputProtocol.decode(b.array(),id,0,1000,0,true,true,true,true);
+        check(snapshot.events().size()==3&&snapshot.events().getFirst().code()==0x1f642&&snapshot.events().getLast().kind()==11);
+        check(HudInputProtocol.decode(b.array(),id,3,1000,1,true,true,true,true).events().isEmpty());
+        for(boolean movement:new boolean[]{false,true})for(boolean gameplay:new boolean[]{false,true})for(boolean blocks:new boolean[]{false,true}){
+            rejects(()->HudInputProtocol.decode(b.array(),id,0,1000,0,movement,gameplay,blocks,false));
+            if(!movement||!gameplay||!blocks)rejects(()->HudInputProtocol.decode(b.array(),id,0,1000,0,movement,gameplay,blocks,true));
+        }
+        rejects(()->HudInputProtocol.decode(b.array(),id,0,1251,0,true,true,true,true));
+        b.putInt(148,3);rejects(()->HudInputProtocol.decode(b.array(),id,0,1000,0,true,true,true,true));b.putInt(148,2);
+        b.putInt(HudInputProtocol.HEADER_BYTES+36,1);rejects(()->HudInputProtocol.decode(b.array(),id,0,1000,0,true,true,true,true));b.putInt(HudInputProtocol.HEADER_BYTES+36,0);
+        for(int code:new int[]{0x20,'/','T',0x7e,0xa0,0xd7ff,0xe000,0x1f642,0x10ffff}){
+            var e=new HudInputProtocol.Event(1,1000,9,code,0,0,0);
+            HudInputProtocol.validateEvent(e,1000,true,true,true,true);check(Character.codePointAt(GameplayChatInput.characters(code),0)==code);
+            rejects(()->HudInputProtocol.validateEvent(e,1000,true,true,true));
+        }
+        for(int code:new int[]{-1,0,0x1f,0x7f,0x80,0x9f,0xd800,0xdbff,0xdc00,0xdfff,0x110000,Integer.MAX_VALUE}){
+            rejects(()->GameplayChatInput.characters(code));
+            rejects(()->HudInputProtocol.validateEvent(new HudInputProtocol.Event(1,1000,9,code,0,0,0),1000,true,true,true,true));
+        }
+        for(int code:new int[]{8,9,13,27,35,36,37,38,39,40,46})for(int kind:new int[]{10,11}){
+            HudInputProtocol.validateEvent(new HudInputProtocol.Event(1,1000,kind,code,0,0,0),1000,true,true,true,true);check(GameplayChatInput.glfw(code)>=256);
+        }
+        for(int code:new int[]{0,16,17,18,32,45,47,65,0xbf}){
+            rejects(()->GameplayChatInput.glfw(code));
+            rejects(()->HudInputProtocol.validateEvent(new HudInputProtocol.Event(1,1000,10,code,0,0,0),1000,true,true,true,true));
+        }
+        for(int code:new int[]{0x54,0xbf})for(int kind:new int[]{1,2}){
+            var event=new HudInputProtocol.Event(1,1000,kind,code,0,0,0);
+            HudInputProtocol.validateEvent(event,1000,true,true,true,true);check(true);
+            rejects(()->HudInputProtocol.validateEvent(event,1000,true,true,true));
+        }
+        for(var event:new HudInputProtocol.Event[]{new HudInputProtocol.Event(1,1000,9,'a',.1f,0,0),new HudInputProtocol.Event(1,1000,9,'a',0,0,1),
+                new HudInputProtocol.Event(1,1000,10,8,0,.1f,0),new HudInputProtocol.Event(1,1000,11,8,0,0,1),new HudInputProtocol.Event(1,1000,12,8,0,0,0)})
+            rejects(()->HudInputProtocol.validateEvent(event,1000,true,true,true,true));
+        var gate=new HudInputGate(true,true,true);
+        gate.apply(new HudInputProtocol.Event(1,1000,10,8,0,0,0),1000);
+        gate.apply(new HudInputProtocol.Event(2,1000,10,8,0,0,0),1000);check(gate.heldKeyCount()==1); // Native bounded editor repeat.
+        gate.apply(new HudInputProtocol.Event(3,1000,9,'W',0,0,0),1000);check(gate.heldKeyCount()==1&&gate.heldButtonCount()==0);
+        gate.apply(new HudInputProtocol.Event(4,1000,11,8,0,0,0),1000);check(gate.heldKeyCount()==0);
+        rejects(()->gate.apply(new HudInputProtocol.Event(5,1000,11,8,0,0,0),1000));
+        gate.apply(new HudInputProtocol.Event(5,1000,1,27,0,0,0),1000);
+        gate.apply(new HudInputProtocol.Event(6,1000,10,27,0,0,0),1000);check(gate.heldKeyCount()==2); // Distinct world/editor key channels.
+        rejects(()->gate.apply(new HudInputProtocol.Event(7,1000,10,27,0,0,0),1000));
+        gate.apply(new HudInputProtocol.Event(7,1000,2,27,0,0,0),1000);
+        gate.apply(new HudInputProtocol.Event(8,1000,11,27,0,0,0),1000);check(gate.heldKeyCount()==0);
+        gate.apply(new HudInputProtocol.Event(9,1000,10,13,0,0,0),1000);
+        rejects(()->gate.apply(new HudInputProtocol.Event(10,1000,10,13,0,0,0),1000));
+        rejects(()->gate.apply(new HudInputProtocol.Event(11,1000,9,'a',0,0,0),1000));
+        gate.releaseAll();check(gate.sequence()==9&&gate.heldKeyCount()==0&&gate.heldButtonCount()==0);
+        rejects(()->new HudInputReader(id,true,true,false,true));
+        var ack=new HudInputReader.Acknowledgement(3,1000,1,2,0);
+        new HudInputReader(id,true,true,true,true).acknowledge(ack);check(true);
+        rejects(()->new HudInputReader(id,true,true,true).acknowledge(ack));
+        b.putInt(96,2);check(HudInputProtocol.decode(b.array(),id,0,3000,1,true,true,true,true).events().isEmpty());
     }
 }

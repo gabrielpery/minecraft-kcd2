@@ -41,8 +41,14 @@ inventory suppression and saved coverage/player/block restoration. That check
 uses synthetic tiles and scripted input. A separate live KCD2 check passes actual
 terrain capture, shared-edge validation and cleanup; coupled frontier-crossing
 acceptance remains pending. Coverage is capped at 64 tiles; unknown terrain stays
-a boundary. General blocks, full host collision, Steve, cross-game combat,
-command typing from KCD2 and flight remain unfinished. Bounded labs remain available.
+a boundary. The separate [`-Chat` profile](docs/GAMEPLAY_SESSION.md#type-minecraft-commands-from-kcd2)
+adds real Minecraft chat and command entry to walking/building and can be combined
+with `-Explore`. An automated two-launch Minecraft check passes typed mode/item
+commands, text editing, movement suppression and saved game mode/inventory.
+An automated live KCD2 check also typed and submitted `/gamemode survival` through
+the native bridge: vanilla confirmed the command and its hearts/hunger appeared.
+General blocks, full host collision, Steve, cross-game combat and flight remain
+unfinished. Bounded labs remain available.
 
 The new [repeat-session development profile](kcd2/MOVEMENT-LAB.md#repeat-sessions-in-one-kcd-process)
 is implemented and compiled, with automated cleanup/rearm checks passing.
@@ -153,7 +159,7 @@ Live checks above use the **official KCD2 1.5.5 development build**. The native
 prerequisites. A successful development-world test does not establish retail support.
 
 General block rendering, full host collision, Steve, cross-game survival/combat,
-command typing from KCD2, flight and multiplayer remain unfinished. KCD's own HUD
+flight and multiplayer remain unfinished. KCD's own HUD
 and health systems still exist; selective widget replacement and health-system
 integration are separate work. Sessions remain isolated, experimental single-player
 development worlds. Bounded labs keep their explicit time limits; the persistent

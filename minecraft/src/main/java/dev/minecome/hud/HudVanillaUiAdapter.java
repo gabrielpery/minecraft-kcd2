@@ -4,30 +4,57 @@ import com.google.gson.*;
 import dev.minecome.hud.mixin.HudHandledScreenAccessor;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.screen.Screen;
+import net.minecraft.client.gui.screen.ChatScreen;
 import net.minecraft.client.gui.screen.ingame.*;
 import java.util.*;
 
 /** Real vanilla Screen entry points on the exact owned client thread/world. */
 final class HudVanillaUiAdapter {
     private final Object world,player,server;
-    private final boolean mouseAllowed;
-    private final Set<Integer> keys=new HashSet<>();
+    private final boolean mouseAllowed,commandsAllowed;
+    private final Set<Integer> keys=new HashSet<>(),editKeys=new HashSet<>();
+    private OwnedChatScreen ownedChat;
     private final HudPointerState pointer=new HudPointerState();
     private Screen pointerScreen;
     private long screenGeneration,cleanupReleases,lateReleasesConsumed,mouseDragCalls,wheelCalls,mouseClickCalls,mouseReleaseCalls;
+    private long chatOpenCalls,chatTextCalls,chatEditDownCalls,chatEditUpCalls,chatSubmitCalls,chatCancelCalls,chatTailEvents;
     private double x=0.5,y=0.5;
     private boolean pointerKnown;
-    HudVanillaUiAdapter(MinecraftClient client,boolean mouseAllowed){world=client.world;player=client.player;server=client.getServer();this.mouseAllowed=mouseAllowed;}
+    HudVanillaUiAdapter(MinecraftClient client,boolean mouseAllowed){this(client,mouseAllowed,false);}
+    HudVanillaUiAdapter(MinecraftClient client,boolean mouseAllowed,boolean commandsAllowed){world=client.world;player=client.player;server=client.getServer();this.mouseAllowed=mouseAllowed;this.commandsAllowed=commandsAllowed;}
     static boolean inventory(Screen screen){return screen instanceof InventoryScreen || screen instanceof CreativeInventoryScreen;}
+    static boolean chat(Screen screen){return screen instanceof ChatScreen;}
+    static int screenKind(Screen screen){return screen==null?0:chat(screen)?2:inventory(screen)?1:-1;}
+    // Inspected Yarn 1.21.1 ChatScreen: constructor seeds chatField; vanilla
+    // keyPressed submits through sendMessage/sendChatCommand and owns history.
+    // This subclass only exposes field text to the actual-Minecraft fixture.
+    private static final class OwnedChatScreen extends ChatScreen {
+        OwnedChatScreen(String initial){super(initial);}
+        String text(){return chatField.getText();}
+    }
+    String chatText(MinecraftClient client){requireOwned(client);if(client.currentScreen!=ownedChat||ownedChat==null)throw new IllegalStateException("No actual owned vanilla chat");return ownedChat.text();}
     private void requireOwned(MinecraftClient client){if(!client.isOnThread() || client.world!=world || client.player!=player || client.getServer()!=server || !client.isIntegratedServerRunning())throw new IllegalStateException("Vanilla UI owner/thread changed");}
     void apply(MinecraftClient client,HudInputProtocol.Event event){
         synchronizeScreen(client);Screen screen=client.currentScreen;
-        if(screen!=null && !inventory(screen))throw new IllegalStateException("Unowned screen during HUD input");
+        if(screen!=null && !inventory(screen) && screen!=ownedChat)throw new IllegalStateException("Unowned screen during HUD input");
+        if(event.kind()>=9){
+            if(!commandsAllowed)throw new IllegalStateException("Live chat forwarding is disabled");
+            // A submit/cancel closes ChatScreen synchronously. Remaining input
+            // captured before the next screen acknowledgement must not leak.
+            if(screen==null||screen!=ownedChat){chatTailEvents++;return;}
+            if(event.kind()==9){for(char character:GameplayChatInput.characters(event.code()))screen.charTyped(character,0);chatTextCalls++;}
+            else if(event.kind()==10){int glfw=GameplayChatInput.glfw(event.code());editKeys.add(glfw);screen.keyPressed(glfw,0,0);chatEditDownCalls++;if(event.code()==13)chatSubmitCalls++;if(event.code()==27)chatCancelCalls++;}
+            else if(event.kind()==11){int glfw=GameplayChatInput.glfw(event.code());editKeys.remove(glfw);screen.keyReleased(glfw,0,0);chatEditUpCalls++;}
+            else throw new IllegalArgumentException("Unexpected chat input kind");
+            return;
+        }
         if(event.kind()<=2){
             int glfw=event.code()==0x1b?256:event.code();
+            if(screen==ownedChat && ownedChat!=null){if(event.kind()==2)keys.remove(glfw);return;}
             if(event.kind()==2){keys.remove(glfw);if(screen!=null)screen.keyReleased(glfw,0,0);return;}
             keys.add(glfw);
-            if(event.code()==0x45){if(screen==null)client.setScreen(new InventoryScreen(client.player));else closeInventory(screen);}
+            if(commandsAllowed&&GameplayChatInput.opens(event.code())){if(screen==null){ownedChat=new OwnedChatScreen(event.code()==0xbf?"/":"");client.setScreen(ownedChat);chatOpenCalls++;}}
+            else if(event.code()==0x45){if(screen==null)client.setScreen(new InventoryScreen(client.player));else closeInventory(screen);}
             else if(event.code()==0x1b){if(screen!=null)closeInventory(screen);}
             else if(screen!=null)screen.keyPressed(glfw,0,0);
             else client.player.getInventory().selectedSlot=event.code()-0x31;
@@ -35,6 +62,7 @@ final class HudVanillaUiAdapter {
         }
         if(!mouseAllowed)throw new IllegalStateException("Live mouse forwarding is disabled");
         if(event.kind()==5 && pointer.awaitingRelease(event.code())){pointer.release(event.code());lateReleasesConsumed++;return;}
+        if(screen==ownedChat && ownedChat!=null)return;
         if(screen==null)throw new IllegalStateException("Pointer event without actual vanilla inventory");
         double oldX=logicalX(screen),oldY=logicalY(screen);x=event.x();y=event.y();pointerKnown=true;
         double nextX=logicalX(screen),nextY=logicalY(screen);screen.mouseMoved(nextX,nextY);
@@ -48,6 +76,8 @@ final class HudVanillaUiAdapter {
     }
     void synchronizeScreen(MinecraftClient client){
         requireOwned(client);Screen current=client.currentScreen;
+        if(ownedChat!=null&&current!=ownedChat){releaseChatKeys();ownedChat=null;}
+        if(commandsAllowed&&current!=null&&!inventory(current)&&current!=ownedChat)throw new IllegalStateException("Unowned screen during gameplay chat");
         if(current==pointerScreen)return;
         releasePointerScreen();pointerKnown=false;
         pointerScreen=inventory(current)?current:null;
@@ -58,16 +88,19 @@ final class HudVanillaUiAdapter {
         if(screen!=null)for(int button:released){screen.mouseReleased(logicalX(screen),logicalY(screen),button);cleanupReleases++;}
     }
     private void closeInventory(Screen screen){releasePointerScreen();pointerKnown=false;screen.close();}
+    private void releaseChatKeys(){if(ownedChat!=null)for(int key:editKeys)ownedChat.keyReleased(key,0,0);editKeys.clear();}
     void releaseAndClose(MinecraftClient client){
-        if(!client.isOnThread() || client.world!=world || client.player!=player || client.getServer()!=server){pointer.clear();pointerScreen=null;pointerKnown=false;keys.clear();return;}
+        if(!client.isOnThread() || client.world!=world || client.player!=player || client.getServer()!=server){pointer.clear();pointerScreen=null;pointerKnown=false;keys.clear();editKeys.clear();ownedChat=null;return;}
         Screen screen=client.currentScreen;
         try{
             releasePointerScreen();
+            releaseChatKeys();
             if(inventory(screen)){
                 for(int key:keys)screen.keyReleased(key,0,0);
                 screen.close();
             }
-        }finally{pointer.clear();pointerScreen=null;pointerKnown=false;keys.clear();}
+            else if(screen!=null&&screen==ownedChat)screen.close();
+        }finally{pointer.clear();pointerScreen=null;pointerKnown=false;keys.clear();editKeys.clear();ownedChat=null;}
     }
     private double logicalX(Screen screen){return Math.min(screen.width-0.001,x*screen.width);}
     private double logicalY(Screen screen){return Math.min(screen.height-0.001,y*screen.height);}
@@ -75,6 +108,11 @@ final class HudVanillaUiAdapter {
         var proof=new JsonObject();proof.addProperty("held_buttons",pointer.heldCount());proof.addProperty("pending_releases",pointer.pendingReleaseCount());proof.addProperty("active_button",pointer.activeButton());
         proof.addProperty("cleanup_releases",cleanupReleases);proof.addProperty("late_releases_consumed",lateReleasesConsumed);proof.addProperty("screen_generation",screenGeneration);proof.addProperty("mouse_drag_calls",mouseDragCalls);proof.addProperty("wheel_calls",wheelCalls);
         proof.addProperty("mouse_click_calls",mouseClickCalls);proof.addProperty("mouse_release_calls",mouseReleaseCalls);return proof;
+    }
+    JsonObject chatDiagnostics(){
+        var proof=new JsonObject();proof.addProperty("enabled",commandsAllowed);proof.addProperty("open_calls",chatOpenCalls);proof.addProperty("text_scalar_calls",chatTextCalls);
+        proof.addProperty("edit_down_calls",chatEditDownCalls);proof.addProperty("edit_up_calls",chatEditUpCalls);proof.addProperty("submit_key_calls",chatSubmitCalls);proof.addProperty("cancel_key_calls",chatCancelCalls);
+        proof.addProperty("closed_screen_tail_events",chatTailEvents);proof.addProperty("held_edit_keys",editKeys.size());return proof;
     }
     Double windowX(MinecraftClient client){return pointerKnown && inventory(client.currentScreen)?Math.min(client.getWindow().getWidth()-0.001,x*client.getWindow().getWidth()):null;}
     Double windowY(MinecraftClient client){return pointerKnown && inventory(client.currentScreen)?Math.min(client.getWindow().getHeight()-0.001,y*client.getWindow().getHeight()):null;}

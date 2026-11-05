@@ -38,11 +38,12 @@ public final class GameplaySession {
     private final HudStreamProducer.Identity identity;
     private final boolean standalone=Boolean.getBoolean("minecome.gameplayStandalone");
     private final String fixtureMode=System.getProperty("minecome.gameplayFixture","");
+    private final boolean chatMode=Boolean.getBoolean("minecome.gameplayChat");
     private final boolean blocksMode=Boolean.getBoolean("minecome.gameplayBlocks");
     private final boolean movementMode=blocksMode||Boolean.getBoolean("minecome.gameplayMovement");
     private final HudStreamLayout layout=HudStreamLayout.configured();
     private final HudReadback readback=new HudReadback();
-    private final HudInputGate gate=new HudInputGate(movementMode,blocksMode);
+    private final HudInputGate gate=new HudInputGate(movementMode,blocksMode,chatMode);
     private final long initializedAt=System.nanoTime();
     private GameplayWorld save;
     private HudStreamProducer output;
@@ -55,6 +56,7 @@ public final class GameplaySession {
     private GameplayAimReader aimReader;
     private GameplayBlocksFixture blocksFixture;
     private GameplayTerrainFixture terrainFixture;
+    private GameplayChatFixture chatFixture;
     private Object world,player,server;
     private boolean opening,ready,stopping,writerFinished,shutdownRequested,frameTransparent,sessionReportWritten;
     private long readyAt,stopAt,writerAt,lastCaptureAt,inputEvents;
@@ -81,6 +83,7 @@ public final class GameplaySession {
         if(!requested.getParent().equals(parent))throw new IOException("Gameplay stop file must be in this session directory");
         stopFile=requested;
         if(!fixtureMode.isEmpty()&&!standalone)throw new IllegalArgumentException("Persistence fixture requires standalone gameplay");
+        if(chatMode&&!blocksMode)throw new IllegalArgumentException("Gameplay chat requires the explicit blocks/movement profile");
     }
 
     public static void initialize(){
@@ -113,7 +116,7 @@ public final class GameplaySession {
     }
     private void beforeTick(MinecraftClient client){
         if(stopping||movement==null)return;
-        try{if(terrainFixture!=null)terrainFixture.beforeTick(client);if(blocksFixture!=null)blocksFixture.beforeTick(client);if(movementFixture!=null)movementFixture.beforeTick(client);movement.beforeTick(client,System.nanoTime());}
+        try{if(chatFixture!=null)chatFixture.beforeTick(client);if(terrainFixture!=null)terrainFixture.beforeTick(client);if(blocksFixture!=null)blocksFixture.beforeTick(client);if(movementFixture!=null)movementFixture.beforeTick(client);movement.beforeTick(client,System.nanoTime());}
         catch(Exception e){requestStop(client,"movement_failure",e.toString());}
     }
     private boolean owns(MinecraftClient client){return ready&&!stopping&&client.world==world&&client.player==player&&client.getServer()==server&&client.isIntegratedServerRunning();}
@@ -176,6 +179,9 @@ public final class GameplaySession {
                         if(fixtureMode.startsWith("terrain"))terrainFixture=new GameplayTerrainFixture(fixtureMode,blocks,movement,save,wire,directory.getParent(),proof->{
                             fixtureResult=proof.deepCopy();requestStop(MinecraftClient.getInstance(),"terrain_fixture_complete",proof.get("result").getAsString().equals("passed")?null:proof.toString());
                         });
+                        if(fixtureMode.startsWith("chat"))chatFixture=new GameplayChatFixture(fixtureMode,movement,save,wire,directory.getParent(),proof->{
+                            fixtureResult=proof.deepCopy();requestStop(MinecraftClient.getInstance(),"chat_fixture_complete",proof.get("result").getAsString().equals("passed")?null:proof.toString());
+                        });
                     }
                     if(fixtureMode.startsWith("walking"))movementFixture=new GameplayMovementFixture(fixtureMode,movement,save,wire,directory.getParent(),proof->{
                         fixtureResult=proof.deepCopy();requestStop(MinecraftClient.getInstance(),"movement_fixture_complete",proof.get("result").getAsString().equals("passed")?null:proof.toString());
@@ -189,10 +195,10 @@ public final class GameplaySession {
                 if(client.world==null||client.player==null||!client.isIntegratedServerRunning()||client.currentScreen!=null||client.getOverlay()!=null)return;
                 if(!client.getServer().getSaveProperties().getLevelName().equals(save.saveName()))throw new IllegalStateException("Gameplay world name differs");
                 save.verifyOwnership();world=client.world;player=client.player;server=client.getServer();
-                if(!standalone){ui=new HudVanillaUiAdapter(client,true);hideOwnedWindow(client);}
+                if(!standalone){ui=new HudVanillaUiAdapter(client,true,chatMode);hideOwnedWindow(client);}
                 output=new HudStreamProducer(root,directory,identity,save.saveName(),true,standalone?0:1);output.start();
                 ready=true;readyAt=System.nanoTime();
-                if(!fixtureMode.isEmpty()&&!fixtureMode.startsWith("walking")&&!fixtureMode.startsWith("blocks")&&!fixtureMode.startsWith("terrain"))fixture=new GameplayPersistenceFixture(fixtureMode,save,directory.getParent(),proof->{
+                if(!fixtureMode.isEmpty()&&!fixtureMode.startsWith("walking")&&!fixtureMode.startsWith("blocks")&&!fixtureMode.startsWith("terrain")&&!fixtureMode.startsWith("chat"))fixture=new GameplayPersistenceFixture(fixtureMode,save,directory.getParent(),proof->{
                     fixtureResult=proof.deepCopy();boolean passed=proof.has("result")&&proof.get("result").getAsString().equals("passed");
                     requestStop(MinecraftClient.getInstance(),"fixture_complete",passed?null:proof.toString());
                 });
@@ -219,6 +225,7 @@ public final class GameplaySession {
             if(aimReader!=null&&!stopping){if(aimReader.failure()!=null)throw new IllegalStateException("Native aim: "+aimReader.failure());blocks.aim(aimReader.current());}
             if(blocksFixture!=null&&!stopping)blocksFixture.tick(client);
             if(terrainFixture!=null&&!stopping)terrainFixture.tick(client);
+            if(chatFixture!=null&&!stopping)chatFixture.tick(client);
             if(blocks!=null&&!stopping)blocks.tick(client,!movement.terrainTransition()&&(standalone||input!=null&&input.connected()&&input.hostState()==1));
             if(movementFixture!=null&&!stopping)movementFixture.tick(client);
             if(fixture!=null&&output.isReady()&&output.publishedFrames()>0&&!stopping)fixture.tick(client);
@@ -227,7 +234,7 @@ public final class GameplaySession {
 
     private void inputTick(MinecraftClient client){
         if(input==null&&output.publishedFrames()>0){
-            input=new HudInputReader(new HudInputProtocol.Identity(identity.run(),output.producerPid(),output.producerStart(),identity.targetPid(),identity.targetStart(),identity.expiresUtcMs()),movementMode,true,blocksMode);
+            input=new HudInputReader(new HudInputProtocol.Identity(identity.run(),output.producerPid(),output.producerStart(),identity.targetPid(),identity.targetStart(),identity.expiresUtcMs()),movementMode,true,blocksMode,chatMode);
             input.start();
         }
         if(input==null||stopForClosedInput(client))return;
@@ -242,14 +249,15 @@ public final class GameplaySession {
             if(now-output.lastPublishedAt()>250_000_000L)throw new IllegalStateException("Gameplay HUD publication stale");
             for(int i=0;i<64;i++){
                 var event=input.poll();if(event==null)break;gate.apply(event,System.currentTimeMillis());
-                if(blocks!=null&&event.kind()>=7)blocks.event(client,event);
+                if(chatMode&&event.kind()>=9){if(blocks!=null)blocks.suspend(client);if(movement!=null)movement.suspend(client);ui.apply(client,event);}
+                else if(blocks!=null&&(event.kind()==7||event.kind()==8))blocks.event(client,event);
                 else if(movement!=null&&event.kind()<=2&&HudMovementKeys.movement(event.code()))movement.event(client,event,System.nanoTime());
-                else{if(event.kind()<=2&&(event.code()==0x45||event.code()==0x1b)){if(blocks!=null)blocks.suspend(client);if(movement!=null)movement.suspend(client);}ui.apply(client,event);}
+                else{if(event.kind()<=2&&(event.code()==0x45||event.code()==0x1b||chatMode&&(event.code()==0x54||event.code()==0xbf))){if(blocks!=null)blocks.suspend(client);if(movement!=null)movement.suspend(client);}ui.apply(client,event);}
                 inputEvents++;
             }
         }
         input.acknowledge(new HudInputReader.Acknowledgement(gate.sequence(),System.currentTimeMillis(),1,
-                HudVanillaUiAdapter.inventory(client.currentScreen)?1:0,client.player.getInventory().selectedSlot));
+                HudVanillaUiAdapter.screenKind(client.currentScreen),client.player.getInventory().selectedSlot));
     }
 
     private boolean stopForClosedInput(MinecraftClient client){
@@ -355,7 +363,7 @@ public final class GameplaySession {
         });
         long now=System.nanoTime();if(output==null||!output.isReady()||client.getOverlay()!=null||now-lastCaptureAt<50_000_000L)return;
         boolean inventory=HudVanillaUiAdapter.inventory(client.currentScreen);
-        var meta=new JsonObject();meta.addProperty("state",inventory?"inventory":client.currentScreen==null?"hotbar":"screen");
+        var meta=new JsonObject();meta.addProperty("state",inventory?"inventory":HudVanillaUiAdapter.chat(client.currentScreen)?"chat":client.currentScreen==null?"hotbar":"screen");
         meta.addProperty("selected_slot",client.player.getInventory().selectedSlot);meta.addProperty("screen",client.currentScreen==null?0:1);
         meta.addProperty("screen_kind",client.currentScreen==null?"none":client.currentScreen.getClass().getSimpleName());
         meta.addProperty("captured_utc_ms",System.currentTimeMillis());meta.addProperty("world_id",save.id().toString());
@@ -379,6 +387,8 @@ public final class GameplaySession {
         if(motion!=null)e.add("movement",motion);
         if(blocks!=null)e.add("blocks",blocks.evidence(client));
         e.addProperty("blocks_enabled",blocksMode);
+        e.addProperty("chat_enabled",chatMode);
+        if(ui!=null&&chatMode)e.add("chat_input",ui.chatDiagnostics());
         e.addProperty("normal_shutdown_requested",stopping);e.addProperty("controls_released",gate.heldKeyCount()==0&&gate.heldButtonCount()==0);
         e.addProperty("producer_finished",output!=null&&output.isFinished());e.addProperty("producer_failure",output==null?null:output.failure());
         if(!standalone){
@@ -400,7 +410,7 @@ public final class GameplaySession {
             Files.writeString(temporary,notice.toString(),StandardCharsets.UTF_8,StandardOpenOption.CREATE_NEW);
             Files.move(temporary,directory.getParent().resolve("gameplay-stopping.json"),java.nio.file.StandardCopyOption.ATOMIC_MOVE);
         }catch(Exception e){if(failure==null)failure="Stop notice: "+e;}
-        try{if(terrainFixture!=null)terrainFixture.close();if(blocksFixture!=null)blocksFixture.close();if(aimReader!=null)aimReader.close();if(blocks!=null)blocks.close(client);}catch(Exception e){if(failure==null)failure=e.toString();}
+        try{if(chatFixture!=null)chatFixture.close();if(terrainFixture!=null)terrainFixture.close();if(blocksFixture!=null)blocksFixture.close();if(aimReader!=null)aimReader.close();if(blocks!=null)blocks.close(client);}catch(Exception e){if(failure==null)failure=e.toString();}
         try{if(movementFixture!=null)movementFixture.close();if(movement!=null){if(failure==null)movement.close(client);else movement.abort(client,failure);}}catch(Exception e){if(failure==null)failure=e.toString();}
         try{if(ui!=null)ui.releaseAndClose(client);}catch(Exception e){if(failure==null)failure=e.toString();}
         gate.releaseAll();

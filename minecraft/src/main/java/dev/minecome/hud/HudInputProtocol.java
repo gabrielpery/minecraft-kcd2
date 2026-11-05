@@ -25,16 +25,24 @@ public final class HudInputProtocol {
         validateEvent(e,now,fresh,movement,false);
     }
     public static void validateEvent(Event e,long now,boolean fresh,boolean movement,boolean blocks) {
-        if(e.sequence()<=0 || e.capturedUtcMs()<=0 || e.kind()<1 || e.kind()>(blocks?8:6) || !Float.isFinite(e.x()) || !Float.isFinite(e.y()) || e.x()<0 || e.x()>1 || e.y()<0 || e.y()>1)
+        validateEvent(e,now,fresh,movement,blocks,false);
+    }
+    public static void validateEvent(Event e,long now,boolean fresh,boolean movement,boolean blocks,boolean chat) {
+        if(chat&&(!movement||!blocks))throw new IllegalArgumentException("Chat requires gameplay world controls");
+        if(e.sequence()<=0 || e.capturedUtcMs()<=0 || e.kind()<1 || e.kind()>(chat?11:blocks?8:6) || !Float.isFinite(e.x()) || !Float.isFinite(e.y()) || e.x()<0 || e.x()>1 || e.y()<0 || e.y()>1)
             throw new IllegalArgumentException("Invalid input record");
         if(fresh && (e.capturedUtcMs()<now-250 || e.capturedUtcMs()>now+100))throw new IllegalArgumentException("Stale/future input event");
         if(e.kind()<=2) {
-            if(!((e.code()>=0x31 && e.code()<=0x39) || e.code()==0x45 || e.code()==0x1b || (movement && HudMovementKeys.movement(e.code()))) || e.x()!=0 || e.y()!=0 || e.value()!=0)
+            if(!((e.code()>=0x31 && e.code()<=0x39) || e.code()==0x45 || e.code()==0x1b || (movement && HudMovementKeys.movement(e.code())) || (chat&&GameplayChatInput.opens(e.code()))) || e.x()!=0 || e.y()!=0 || e.value()!=0)
                 throw new IllegalArgumentException("Invalid input key");
         }else if(e.kind()==3) {
             if(e.code()!=0 || e.value()!=0)throw new IllegalArgumentException("Invalid pointer move");
         }else if(e.kind()==4 || e.kind()==5) {
             if(e.code()<0 || e.code()>1 || e.value()!=0)throw new IllegalArgumentException("Invalid pointer button");
+        }else if(e.kind()==9){
+            if(!chat||!GameplayChatInput.scalar(e.code())||e.x()!=0||e.y()!=0||e.value()!=0)throw new IllegalArgumentException("Invalid chat text scalar");
+        }else if(e.kind()>=10){
+            if(!chat||!GameplayChatInput.editKey(e.code())||e.x()!=0||e.y()!=0||e.value()!=0)throw new IllegalArgumentException("Invalid chat edit key");
         }else if(e.kind()>=7){
             if(!blocks||e.code()<0||e.code()>1||e.x()!=0||e.y()!=0||e.value()!=0)throw new IllegalArgumentException("Invalid world button");
         }else if(e.code()!=0 || e.value()==0 || e.value()< -16 || e.value()>16)throw new IllegalArgumentException("Invalid pointer wheel");
@@ -49,11 +57,15 @@ public final class HudInputProtocol {
         return decode(bytes,id,lastFetched,now,previousHostState,movement,gameplay,false);
     }
     public static Snapshot decode(byte[] bytes,Identity id,long lastFetched,long now,int previousHostState,boolean movement,boolean gameplay,boolean blocks) {
+        return decode(bytes,id,lastFetched,now,previousHostState,movement,gameplay,blocks,false);
+    }
+    public static Snapshot decode(byte[] bytes,Identity id,long lastFetched,long now,int previousHostState,boolean movement,boolean gameplay,boolean blocks,boolean chat) {
         if(blocks&&(!movement||!gameplay))throw new IllegalArgumentException("World buttons require gameplay movement");
+        if(chat&&(!blocks||!movement||!gameplay))throw new IllegalArgumentException("Chat requires gameplay block controls");
         if(bytes.length!=MAPPING_BYTES || lastFetched<0 || previousHostState<0 || previousHostState>2 || now<=250 || now>Long.MAX_VALUE-180_000 || now>=id.expires())
             throw new IllegalArgumentException("Invalid input mapping/time/lease");
         var b=ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
-        int profile=blocks?5:gameplay?(movement?4:3):(movement?2:1);
+        int profile=chat?6:blocks?5:gameplay?(movement?4:3):(movement?2:1);
         if(!new String(bytes,0,8,StandardCharsets.US_ASCII).equals("MCHUDI0"+profile) || b.getInt(8)!=profile || b.getInt(12)!=MAPPING_BYTES ||
                 !new String(bytes,16,32,StandardCharsets.US_ASCII).equals(id.run()) || b.getInt(48)!=id.producerPid() || b.getInt(52)!=id.targetPid() ||
                 b.getLong(56)!=id.producerStart() || b.getLong(64)!=id.targetStart() || b.getLong(72)!=id.expires())throw new IllegalArgumentException("Input mapping identity differs");
@@ -66,7 +78,7 @@ public final class HudInputProtocol {
         // but startup scheduling gaps do not consume the only activation.
         if(heartbeat<=0 || heartbeat>now+100 || (state==1 && heartbeat<now-250))throw new IllegalArgumentException("Stale/future host heartbeat");
         long acknowledged=b.getLong(128),ackTime=b.getLong(136);int guest=b.getInt(144),screen=b.getInt(148),slot=b.getInt(152);
-        if(guest<0 || guest>2 || screen<0 || screen>1 || slot<0 || slot>8 || acknowledged<0 || acknowledged>last ||
+        if(guest<0 || guest>2 || screen<0 || screen>(chat?2:1) || slot<0 || slot>8 || acknowledged<0 || acknowledged>last ||
                 (guest==0 && (acknowledged!=0 || ackTime!=0 || screen!=0 || slot!=0)) || (guest!=0 && (ackTime<=0 || ackTime>now+100)))
             throw new IllegalArgumentException("Invalid guest acknowledgement");
         var events=new ArrayList<Event>();
@@ -75,7 +87,7 @@ public final class HudInputProtocol {
             long seq=first+i;int at=HEADER_BYTES+(int)((seq-1)%CAPACITY)*RECORD_BYTES;
             var event=new Event(b.getLong(at),b.getLong(at+8),b.getInt(at+16),b.getInt(at+20),b.getFloat(at+24),b.getFloat(at+28),b.getInt(at+32));
             if(event.sequence()!=seq || b.getInt(at+36)!=0)throw new IllegalArgumentException("Missing/replaced input sequence or reserved record");
-            validateEvent(event,now,state!=2 && seq>lastFetched,movement,blocks);
+            validateEvent(event,now,state!=2 && seq>lastFetched,movement,blocks,chat);
             if(state==1 && seq>lastFetched)events.add(event);
         }
         return new Snapshot(last,heartbeat,state,List.copyOf(events));

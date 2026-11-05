@@ -19,8 +19,9 @@ Minecraft walking/resume and native sustained attachment/HUD pass; physical
 walking in this new profile still needs acceptance. The `-Blocks` profile extends
 it with persistent owned stones and a native mirror. `-Explore` adds on-demand
 terrain tiles and persists the admitted coverage, using the same blocks bundle.
-General blocks, Steve's body/hands, command typing from KCD2, cross-game
-health/combat and flight remain
+The separate `-Chat` profile adds Minecraft's real chat editor and commands to
+walking and blocks; it can also be combined with `-Explore`.
+General blocks, Steve's body/hands, cross-game health/combat and flight remain
 unfinished in this sustained path. Existing bounded gameplay labs remain separate.
 
 ## Run the standalone guest
@@ -267,6 +268,65 @@ validation, admission-file publication and native timer cleanup in 693ms:
 `runtime/evidence/gameplay-terrain-capture-20261105-191937-77679be45b4d4619be9b208946fca580/verification.json`.
 It uses a scripted frontier request without moving the native player or connecting
 Minecraft. Coupled frontier-crossing and physical-control acceptance remain pending.
+
+## Type Minecraft commands from KCD2
+
+`-Chat` includes walking and blocks and selects input protocol 6. It uses a
+separate native add-on with the existing pinned ReShade v5 proxy. The older
+UI/movement/block profiles retain their input contracts. With KCD2 closed:
+
+```powershell
+$bundle = Join-Path (Get-Location) ('runtime/hud-gameplay-chat-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+& './scripts/Prepare-GameplayHud.ps1' -Chat -BundleDirectory $bundle
+& './scripts/Install-GameplayHud.ps1' -Chat -BundleDirectory $bundle
+& './scripts/Start-Kcd2ToolsTest.ps1'
+```
+
+After the fresh tools world loads:
+
+```powershell
+& './scripts/Start-GameplaySession.ps1' -Chat -Explore -BundleDirectory $bundle
+```
+
+Activation is automatic. **T** opens Minecraft chat, **/** opens it with a slash,
+**Enter** submits, and **Escape** cancels. These are actual vanilla `ChatScreen`
+inputs, including its command parser, completion and history. Try
+`/gamemode survival`, `/gamemode creative` or `/give @s minecraft:stone 64`.
+Walking, mining and hotbar shortcuts pause while typing; held keys must be
+released before they can resume gameplay. **F8 still stops and saves.**
+
+This first chat path supports keyboard text and Backspace, Delete, arrows,
+Home/End and Tab. It does not forward chat mouse clicks, clipboard shortcuts,
+modifier-based selection, IME, dead-key composition or AltGr. Characters use the foreground keyboard
+layout with Shift/Caps Lock; the protocol accepts Unicode scalars. Fresh release
+edges recover short unmodified taps between frames. Injected Unicode/paste
+packets are not an equivalent input test, and ambiguous modifier taps are ignored.
+
+Commands execute normally in Minecraft, but they do not remove bridge limits:
+terrain coverage, stone-only rendering and walking bounds still apply. Creative
+and Elytra flight, teleporting outside captured coverage, other dimensions and
+NPC combat are not connected by this change.
+
+After stopping the session and closing KCD2, restore with the matching profile:
+
+```powershell
+& './scripts/Install-GameplayHud.ps1' -Chat -BundleDirectory $bundle -Restore
+```
+
+`Test-GameplayChat.ps1` automatically launches actual Minecraft twice. It passes
+typed mode/item commands, Unicode editing, cancellation, invalid-command recovery,
+movement suppression and resumed walking, then restores Survival mode, seven
+stone and the saved player checkpoint on reopening. Receipt:
+`runtime/evidence/gameplay-chat-20261105-194848-15b871e71c884ede940e105526e4f985/verification.json`.
+This scripted UI check does not itself prove physical KCD keyboard capture.
+
+A separate automated live KCD2 check used Computer Use key taps through the native
+bridge to open `/`, type `/gamemode survival` and submit it. The integrated server
+confirmed Survival, its feedback and hearts/hunger appeared in KCD2, and all 21
+native events were acknowledged. The 206-second session saved and cleaned up
+normally. Evidence and observation scope:
+`runtime/evidence/gameplay-kcd-20261105-201229-cf98ac724f5f4ce2a7b84e588b1f4bee/chat-observation.json`.
+This proves that command path; it is not a human typing-speed or flight check.
 
 ## Automatic sustained movement check
 

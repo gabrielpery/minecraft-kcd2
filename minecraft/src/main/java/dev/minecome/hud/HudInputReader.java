@@ -11,7 +11,7 @@ import java.util.concurrent.atomic.*;
 public final class HudInputReader implements AutoCloseable {
     public record Acknowledgement(long sequence,long utcMs,int state,int screen,int selected) {
         public Acknowledgement {
-            if(sequence<0 || utcMs<=0 || state<1 || state>2 || screen<0 || screen>1 || selected<0 || selected>8)throw new IllegalArgumentException("Invalid client acknowledgement");
+            if(sequence<0 || utcMs<=0 || state<1 || state>2 || screen<0 || screen>2 || selected<0 || selected>8)throw new IllegalArgumentException("Invalid client acknowledgement");
         }
     }
     private final HudInputProtocol.Identity identity;
@@ -28,18 +28,22 @@ public final class HudInputReader implements AutoCloseable {
     private volatile long closedAckWaitMs;
     private volatile String closedAckFailure="not_closed";
     private Thread worker;
-    private final boolean movement,gameplay,blocks;
+    private final boolean movement,gameplay,blocks,chat;
     public HudInputReader(HudInputProtocol.Identity identity){this(identity,false);}
     public HudInputReader(HudInputProtocol.Identity identity,boolean movement){this(identity,movement,false);}
     public HudInputReader(HudInputProtocol.Identity identity,boolean movement,boolean gameplay){
         this(identity,movement,gameplay,false);
     }
     public HudInputReader(HudInputProtocol.Identity identity,boolean movement,boolean gameplay,boolean blocks){
-        this.identity=identity;this.movement=movement;this.gameplay=gameplay;this.blocks=blocks;
+        this(identity,movement,gameplay,blocks,false);
+    }
+    public HudInputReader(HudInputProtocol.Identity identity,boolean movement,boolean gameplay,boolean blocks,boolean chat){
+        if(chat&&(!movement||!gameplay||!blocks))throw new IllegalArgumentException("Chat requires gameplay block controls");
+        this.identity=identity;this.movement=movement;this.gameplay=gameplay;this.blocks=blocks;this.chat=chat;
     }
     public synchronized void start(){if(worker!=null)throw new IllegalStateException("Input reader cannot restart");worker=new Thread(this::read,"MineComeHudInputReader");worker.start();}
     public HudInputProtocol.Event poll(){return queue.poll();}
-    public void acknowledge(Acknowledgement value){acknowledgement.set(value);}
+    public void acknowledge(Acknowledgement value){if(value.screen()>(chat?2:1))throw new IllegalArgumentException("Acknowledgement screen exceeds input profile");acknowledgement.set(value);}
     public int hostState(){return hostState;}
     public boolean connected(){return connected;}
     public long heartbeat(){return heartbeat;}
@@ -89,7 +93,7 @@ public final class HudInputReader implements AutoCloseable {
                 // or possible OS descheduling. Fresh host data must not look future.
                 now=System.currentTimeMillis();mono=System.nanoTime();
                 if(now>=identity.expires() || mono>=deadline)throw new IllegalStateException("Input immutable lease expired");
-                var snapshot=HudInputProtocol.decode(bytes,identity,lastFetched,now,state,movement,gameplay,blocks);state=snapshot.hostState();
+                var snapshot=HudInputProtocol.decode(bytes,identity,lastFetched,now,state,movement,gameplay,blocks,chat);state=snapshot.hostState();
                 if(snapshot.heartbeat()<heartbeat)throw new IllegalStateException("Host heartbeat regressed");
                 maxHostAgeMs=Math.max(maxHostAgeMs,now-snapshot.heartbeat());
                 if(state==0 && now-snapshot.heartbeat()>250)prearmOldHeartbeatPolls++;

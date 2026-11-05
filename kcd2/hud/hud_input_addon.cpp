@@ -41,6 +41,12 @@
 #ifdef MINECOME_HUD_GAMEPLAY_BLOCKS
 #include "gameplay_world_buttons.hpp"
 #endif
+#ifdef MINECOME_HUD_GAMEPLAY_CHAT
+#include "gameplay_chat.hpp"
+#if !defined(MINECOME_HUD_GAMEPLAY_BLOCKS)
+#error Gameplay chat requires sustained movement and world-button ownership.
+#endif
+#endif
 #ifdef MINECOME_HUD_PHYSICAL_MOVEMENT
 #include "movement_forwarding.hpp"
 #endif
@@ -262,7 +268,11 @@ struct Service {
         const auto path = st::module_path(module); const auto slash = path.find_last_of(L"/\\");
         if (slash != path.npos) config = path.substr(0,slash+1)+
 #ifdef MINECOME_HUD_GAMEPLAY_BLOCKS
+            #ifdef MINECOME_HUD_GAMEPLAY_CHAT
+            L"MineComeHudGameplayChat.ini";
+            #else
             L"MineComeHudGameplayBlocks.ini";
+            #endif
 #elif defined(MINECOME_HUD_GAMEPLAY_MOVEMENT)
             L"MineComeHudGameplayMovement.ini";
 #elif defined(MINECOME_HUD_GAMEPLAY)
@@ -491,7 +501,11 @@ struct Service {
             ui::Writer inputs;
             bool input_created=inputs.create(identity
 #ifdef MINECOME_HUD_GAMEPLAY_BLOCKS
+                #ifdef MINECOME_HUD_GAMEPLAY_CHAT
+                ,ui::Profile::gameplay_chat
+                #else
                 ,ui::Profile::gameplay_blocks
+                #endif
 #elif defined(MINECOME_HUD_GAMEPLAY_MOVEMENT)
                 ,ui::Profile::gameplay_movement
 #elif defined(MINECOME_HUD_GAMEPLAY)
@@ -634,6 +648,12 @@ struct RuntimeState {
     ui::KeyboardGate keyboard;
 #endif
     std::uint32_t previous_keys=0;
+#ifdef MINECOME_HUD_GAMEPLAY_CHAT
+    ui::ChatKeyboard chat_keyboard;
+    ui::ReleasedTapGate chat_taps;
+    std::uint32_t chat_world_held=0;
+    bool chat_caps=false,chat_caps_initialized=false,chat_caps_down=false;
+#endif
 #ifdef MINECOME_HUD_PHYSICAL_MOVEMENT
     ui::MovementGate movement;
 #endif
@@ -648,7 +668,8 @@ struct RuntimeState {
     hud::Rect rectangle;
     std::uint32_t target_width=0,target_height=0,uploaded_screen=0;
     std::uint64_t forwarded_events=0,transition_sequence=0,mouse_generation=0;
-    bool transition=false,transition_screen=false,mouse_leased=false,mouse_capability_reported=false;
+    std::uint32_t transition_screen=0;
+    bool transition=false,mouse_leased=false,mouse_capability_reported=false;
 #ifdef MINECOME_HUD_SELECTIVE_MOUSE
     mouse::ForwardingLease selective_lease;
     mouse::ModeGate selective_mode;
@@ -724,11 +745,16 @@ void capture_keyboard(api::effect_runtime *runtime,RuntimeState &state,bool comp
     if(!service)return;
     const auto peer=service->input_status.load(std::memory_order_acquire);
     if(!peer)return;
+#ifdef MINECOME_HUD_GAMEPLAY_CHAT
+    constexpr std::size_t ui_key_count=13;
+    constexpr std::array<std::uint32_t,18> keys{0x31,0x32,0x33,0x34,0x35,0x36,0x37,0x38,0x39,0x45,0x1b,0x54,0xbf,0x57,0x41,0x53,0x44,0x20};
+#else
     constexpr std::size_t ui_key_count=11;
 #ifdef MINECOME_HUD_PHYSICAL_MOVEMENT
     constexpr std::array<std::uint32_t,16> keys{0x31,0x32,0x33,0x34,0x35,0x36,0x37,0x38,0x39,0x45,0x1b,0x57,0x41,0x53,0x44,0x20};
 #else
     constexpr std::array<std::uint32_t,11> keys{0x31,0x32,0x33,0x34,0x35,0x36,0x37,0x38,0x39,0x45,0x1b};
+#endif
 #endif
     std::uint32_t held=0;
     for(std::size_t i=0;i<keys.size();++i)if(runtime->is_key_down(keys[i]))held|=1u<<i;
@@ -744,6 +770,24 @@ void capture_keyboard(api::effect_runtime *runtime,RuntimeState &state,bool comp
 #endif
     ui::WindowSnapshot window;HWND observed_foreground=nullptr;
     const bool window_eligible=visible(runtime,state,&window,&observed_foreground);
+#ifdef MINECOME_HUD_GAMEPLAY_CHAT
+    ui::ChatKeyState chat_keys{},chat_released{};
+    if(window_eligible){
+        for(unsigned key=0;key<chat_keys.size();++key){
+            chat_keys[key]=runtime->is_key_down(key)?0x80:0;
+            chat_released[key]=runtime->is_key_released(key)?1:0;
+        }
+        chat_keys[VK_SHIFT]|=chat_keys[VK_LSHIFT]|chat_keys[VK_RSHIFT];
+        // GetKeyState is suppressed by the existing v5 full keyboard lease.
+        // Bootstrap Caps Lock only before acquiring it, then track physical
+        // ReShade edges instead of asking a deliberately filtered game API.
+        if(!state.chat_caps_initialized&&!state.gameplay_keyboard_leased){
+            state.chat_caps=(GetKeyState(VK_CAPITAL)&1)!=0;state.chat_caps_initialized=true;
+            state.chat_caps_down=chat_keys[VK_CAPITAL]!=0;
+        } else if(chat_keys[VK_CAPITAL]&&!state.chat_caps_down)state.chat_caps=!state.chat_caps;
+        state.chat_caps_down=chat_keys[VK_CAPITAL]!=0;
+    }
+#endif
     // Diagnostic bits mirror the existing eligibility predicates, with no
     // added grace or refresh: composed/overlay/focus/peer/ACK/observation/end.
     std::uint32_t failures=(!composed?1u:0u)|(state.reshade_overlay?2u:0u)|(!window_eligible?4u:0u)|
@@ -769,6 +813,13 @@ void capture_keyboard(api::effect_runtime *runtime,RuntimeState &state,bool comp
         if(runtime->is_key_down(key))gate_controls|=1u<<31;
 #endif
     const auto step=state.keyboard.update(failures==0,f8,gate_controls,now);
+#ifdef MINECOME_HUD_GAMEPLAY_CHAT
+    const auto chat_pulses=state.chat_taps.update(step==ui::KeyboardGate::Step::active&&failures==0&&
+        !state.transition&&!state.observation_recovery.pending()&&!defer_mouse_query&&
+        state.selective_lease.owned()&&!state.selective_lease.pending(),chat_keys,chat_released);
+    std::uint32_t ui_pulses=0;
+    for(std::size_t i=0;i<ui_key_count;++i)if(chat_pulses[keys[i]])ui_pulses|=1u<<i;
+#endif
     if(step==ui::KeyboardGate::Step::closed) {
 #ifdef MINECOME_HUD_LIVE_MOUSE
         release_mouse(runtime,state);
@@ -824,7 +875,14 @@ void capture_keyboard(api::effect_runtime *runtime,RuntimeState &state,bool comp
     }
     // Enter full capture before forwarding E/Esc. The native device callbacks
     // drain old state on a mode change; no world/pointer edge crosses that drain.
+#ifdef MINECOME_HUD_GAMEPLAY_CHAT
+    const auto new_keys=(held&~state.previous_keys)|ui_pulses;
+    const bool chat_open=peer->ack.screen==0&&(new_keys&((1u<<11)|(1u<<12)))!=0;
+    const bool toggle_edge=!state.observation_recovery.pending()&&
+        (chat_open||(peer->ack.screen!=2&&(new_keys&((1u<<9)|(1u<<10)))!=0));
+#else
     const bool toggle_edge=!state.observation_recovery.pending()&&((held&~state.previous_keys)&((1u<<9)|(1u<<10)))!=0;
+#endif
     const auto desired=state.selective_mode.update(step==ui::KeyboardGate::Step::active&&peer->state==1,
         state.transition,peer->ack.screen,state.uploaded_screen,toggle_edge,mouse_buttons,
 #if defined(MINECOME_HUD_GAMEPLAY_MOVEMENT) && !defined(MINECOME_HUD_GAMEPLAY_BLOCKS)
@@ -904,12 +962,25 @@ void capture_keyboard(api::effect_runtime *runtime,RuntimeState &state,bool comp
             close_keyboard(runtime,ui::CloseCause::mailbox_overflow);release_mouse(runtime,state);return;
         }
 #endif
-        for(std::size_t i=0;i<ui_key_count;++i)if(state.previous_keys&(1u<<i)){
+        for(std::size_t i=0;i<ui_key_count;++i)if(
+#ifdef MINECOME_HUD_GAMEPLAY_CHAT
+            state.chat_world_held
+#else
+            state.previous_keys
+#endif
+            &(1u<<i)){
             if(!queue_input(state,{utc,ui::Kind::key_up,keys[i],0,0,0})){
                 close_keyboard(runtime,ui::CloseCause::mailbox_overflow);release_mouse(runtime,state);return;
             }
         }
         state.previous_keys=0;
+#ifdef MINECOME_HUD_GAMEPLAY_CHAT
+        state.chat_world_held=0;
+        const auto recovered_chat=state.chat_keyboard.update(false,chat_keys,now);
+        for(unsigned key=0;key<chat_keys.size();++key)if(recovered_chat.up[key]){
+            if(!queue_input(state,{utc,ui::Kind::edit_up,key,0,0,0})){close_keyboard(runtime,ui::CloseCause::mailbox_overflow);release_mouse(runtime,state);return;}
+        }
+#endif
         ui::PointerBatch releases;state.pointer.close(utc,releases);
         if(!queue_pointer(state,releases)){close_keyboard(runtime,ui::CloseCause::mailbox_overflow);release_mouse(runtime,state);return;}
         std::uint32_t recovery_x=0,recovery_y=0;std::int16_t recovery_wheel=0;
@@ -918,7 +989,12 @@ void capture_keyboard(api::effect_runtime *runtime,RuntimeState &state,bool comp
     }
 #endif
 #ifdef MINECOME_HUD_LIVE_MOUSE
-    if(state.transition&&peer->ack.sequence>=state.transition_sequence&&peer->ack.screen==static_cast<unsigned>(state.transition_screen)&&state.uploaded_screen==peer->ack.screen)
+    if(state.transition&&peer->ack.sequence>=state.transition_sequence&&peer->ack.screen==state.transition_screen&&state.uploaded_screen==
+#ifdef MINECOME_HUD_GAMEPLAY_CHAT
+        ui::chat_render_screen(peer->ack.screen))
+#else
+        peer->ack.screen)
+#endif
         state.transition=false;
 #if !defined(MINECOME_HUD_WORLD_CLICKS) && !defined(MINECOME_HUD_SELECTIVE_MOUSE)
     if(state.mouse_leased){ // Also covers the bounded close-screen ACK interval.
@@ -949,12 +1025,79 @@ void capture_keyboard(api::effect_runtime *runtime,RuntimeState &state,bool comp
         if(!queue_pointer(state,state.world_buttons.update(false,0,utc))){close_keyboard(runtime,ui::CloseCause::mailbox_overflow);release_mouse(runtime,state);return;}
     }
 #endif
-    const auto changed=held^state.previous_keys;
+#ifdef MINECOME_HUD_GAMEPLAY_CHAT
+    const bool chat_ready=peer->ack.screen==2&&!state.transition&&state.uploaded_screen==1&&state.selective_lease.allows(mouse::Mode::full)&&!state.observation_recovery.pending();
+    const auto chat_edges=state.chat_keyboard.update(chat_ready,chat_keys,now,chat_pulses);
+    for(unsigned key=0;key<chat_keys.size();++key)if(chat_edges.up[key]){
+        if(!queue_input(state,{utc,ui::Kind::edit_up,key,0,0,0})){close_keyboard(runtime,ui::CloseCause::mailbox_overflow);release_mouse(runtime,state);return;}
+    }
+    if(chat_ready){
+        // ReShade v6.8.0 publicly exposes key state, not its private WM_CHAR
+        // buffer (source/input.hpp). Use the foreground owning thread's layout
+        // and ToUnicodeEx flag 4: Win10 1607+ leaves kernel dead-key state intact.
+        // https://learn.microsoft.com/windows/win32/api/winuser/nf-winuser-tounicodeex
+        // No hooks, IME, clipboard or Ctrl/Alt shortcuts are synthesized.
+        const auto layout=GetKeyboardLayout(GetWindowThreadProcessId(state.window,nullptr));
+        chat_keys[VK_CAPITAL]|=state.chat_caps?1:0;
+        for(unsigned key=0;key<chat_keys.size();++key)if(chat_edges.down[key]){
+            if(ui::valid_edit(key)){
+                if(!queue_input(state,{utc,ui::Kind::edit_down,key,0,0,0})){close_keyboard(runtime,ui::CloseCause::mailbox_overflow);release_mouse(runtime,state);return;}
+                if(chat_edges.pulse[key]){
+                    if(!queue_input(state,{utc,ui::Kind::edit_up,key,0,0,0})){close_keyboard(runtime,ui::CloseCause::mailbox_overflow);release_mouse(runtime,state);return;}
+                } else state.chat_keyboard.forwarded_edit(key);
+                if(key==VK_RETURN||key==VK_ESCAPE){
+                    ui::PointerBatch releases;state.pointer.close(utc,releases);
+                    if(!queue_pointer(state,releases)){close_keyboard(runtime,ui::CloseCause::mailbox_overflow);release_mouse(runtime,state);return;}
+                    state.transition=true;state.transition_screen=0;state.transition_sequence=state.forwarded_events;
+                    break; // Do not type later same-frame keys into a closing chat.
+                }
+            } else {
+                std::array<wchar_t,8> text{};
+                const int count=ToUnicodeEx(key,MapVirtualKeyExW(key,MAPVK_VK_TO_VSC,layout),chat_keys.data(),text.data(),static_cast<int>(text.size()),4,layout);
+                if(count>0&&count<=static_cast<int>(text.size())&&!ui::chat_utf16(
+                    std::span<const std::uint16_t>(reinterpret_cast<const std::uint16_t *>(text.data()),static_cast<std::size_t>(count)),
+                    [&](std::uint32_t scalar){return queue_input(state,{utc,ui::Kind::text,scalar,0,0,0});})){
+                    close_keyboard(runtime,ui::CloseCause::mailbox_overflow);release_mouse(runtime,state);return;
+                }
+            }
+        }
+    }
+    // Acknowledged chat owns every printable key, including E and digits.
+    // During either handoff keep a baseline but dispatch no world UI toggles.
+    const bool chat_owned=peer->ack.screen==2||(state.transition&&state.transition_screen==2);
+#endif
+    const auto changed=(held^state.previous_keys)
+#ifdef MINECOME_HUD_GAMEPLAY_CHAT
+        |ui_pulses
+#endif
+        ;
     for(std::size_t i=0;i<ui_key_count;++i)if(changed&(1u<<i)) {
-        const ui::Event event{st::utc_ms(),(held&(1u<<i))?ui::Kind::key_down:ui::Kind::key_up,keys[i],0,0,0};
+#ifdef MINECOME_HUD_GAMEPLAY_CHAT
+        const bool pulse=(ui_pulses&(1u<<i))!=0;
+        const bool down=pulse||(held&(1u<<i))!=0;
+        if(chat_owned)continue;
+        if(i>=11&&(peer->ack.screen!=0||!down))continue;
+        if(!down&&!(state.chat_world_held&(1u<<i)))continue;
+        if(state.transition&&down)continue;
+#else
+        const bool down=(held&(1u<<i))!=0;
+#endif
+        const ui::Event event{st::utc_ms(),down?ui::Kind::key_down:ui::Kind::key_up,keys[i],0,0,0};
 #ifdef MINECOME_HUD_LIVE_MOUSE
-        const bool toggle=event.kind==ui::Kind::key_down&&(keys[i]==0x45||keys[i]==0x1b);
+        const bool toggle=event.kind==ui::Kind::key_down&&(keys[i]==0x45||keys[i]==0x1b
+#ifdef MINECOME_HUD_GAMEPLAY_CHAT
+            ||i>=11
+#endif
+            );
         if(toggle){
+#ifdef MINECOME_HUD_GAMEPLAY_CHAT
+            if(i>=11){
+                for(std::size_t held_key=0;held_key<ui_key_count;++held_key)if(state.chat_world_held&(1u<<held_key)){
+                    if(!queue_input(state,{utc,ui::Kind::key_up,keys[held_key],0,0,0})){close_keyboard(runtime,ui::CloseCause::mailbox_overflow);release_mouse(runtime,state);return;}
+                }
+                state.chat_world_held=0;
+            }
+#endif
 #ifdef MINECOME_HUD_WORLD_CLICKS
             state.world_click.suspend();
 #endif
@@ -963,7 +1106,24 @@ void capture_keyboard(api::effect_runtime *runtime,RuntimeState &state,bool comp
             if(!queue_pointer(state,releases)){close_keyboard(runtime,ui::CloseCause::mailbox_overflow);release_mouse(runtime,state);return;}
         }
         if(!queue_input(state,event)){close_keyboard(runtime,ui::CloseCause::mailbox_overflow);release_mouse(runtime,state);return;}
-        if(toggle){state.transition=true;state.transition_sequence=state.forwarded_events;state.transition_screen=keys[i]==0x45&&peer->ack.screen==0;}
+#ifdef MINECOME_HUD_GAMEPLAY_CHAT
+        if(i<11&&!pulse){
+            if(event.kind==ui::Kind::key_down)state.chat_world_held|=1u<<i;
+            else state.chat_world_held&=~(1u<<i);
+        }
+        // T and slash are one-shot screen requests. Pair the release now so a
+        // held opener cannot remain in Java's world-key state during chat.
+        if((i>=11||pulse)&&!queue_input(state,{utc,ui::Kind::key_up,keys[i],0,0,0})){
+            close_keyboard(runtime,ui::CloseCause::mailbox_overflow);release_mouse(runtime,state);return;
+        }
+#endif
+        if(toggle){state.transition=true;state.transition_sequence=state.forwarded_events;
+#ifdef MINECOME_HUD_GAMEPLAY_CHAT
+            state.transition_screen=i>=11?2u:(keys[i]==0x45&&peer->ack.screen==0?1u:0u);
+#else
+            state.transition_screen=keys[i]==0x45&&peer->ack.screen==0;
+#endif
+        }
 #else
         if(!service->input_mailbox->push(event)) {close_keyboard(runtime,ui::CloseCause::mailbox_overflow);return;}
 #endif
@@ -976,6 +1136,11 @@ void capture_keyboard(api::effect_runtime *runtime,RuntimeState &state,bool comp
 #endif
         return;
     }
+#ifdef MINECOME_HUD_GAMEPLAY_CHAT
+    // Chat editing is keyboard-only. Keep the full native mouse lease to stop
+    // camera/attacks, but never send inventory pointer edges to ChatScreen.
+    if(peer->ack.screen==2)return;
+#endif
     if(peer->ack.screen==0){
         ui::PointerBatch releases;state.pointer.close(utc,releases);
         if(releases.count){close_keyboard(runtime,ui::CloseCause::mouse_transition);release_mouse(runtime,state);return;}
@@ -1308,7 +1473,10 @@ void on_begin(api::effect_runtime *runtime, api::command_list *commands, api::re
     } catch (...) { fail(state,5); hide(runtime,state); }
 }
 } // namespace
-#if defined(MINECOME_HUD_GAMEPLAY_BLOCKS)
+#if defined(MINECOME_HUD_GAMEPLAY_CHAT)
+extern "C" __declspec(dllexport) const char *NAME="MineCome continuous Minecraft HUD, walking, blocks and chat";
+extern "C" __declspec(dllexport) const char *DESCRIPTION="Gameplay input v6: held world buttons, walking, inventory, T/slash vanilla chat and commands. Foreground layout text and edit keys only; no clipboard, IME or Ctrl/Alt chords. F8 stops.";
+#elif defined(MINECOME_HUD_GAMEPLAY_BLOCKS)
 extern "C" __declspec(dllexport) const char *NAME="MineCome continuous Minecraft HUD walking and blocks";
 extern "C" __declspec(dllexport) const char *DESCRIPTION="Gameplay input v5 with held world buttons, WASD/Space and inventory, automatic neutral activation and F8 stop. Native camera passes outside inventory; no diagnostic click or duration cap.";
 #elif defined(MINECOME_HUD_GAMEPLAY_MOVEMENT)

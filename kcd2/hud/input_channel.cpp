@@ -7,8 +7,8 @@ Writer::~Writer() {if(mapped_&&status_.state!=2)finish("host_shutdown");dispose(
 void Writer::dispose() {if(mapped_){UnmapViewOfFile(mapped_);mapped_=nullptr;}mapping_.reset();mutex_.reset();producer_.reset();}
 bool Writer::create(const Identity &id,Profile profile) {
     if(consumed_)return false;consumed_=true;
-    if((profile!=Profile::ui&&profile!=Profile::movement&&profile!=Profile::gameplay&&profile!=Profile::gameplay_movement&&profile!=Profile::gameplay_blocks)||
-        ((profile==Profile::gameplay||profile==Profile::gameplay_movement||profile==Profile::gameplay_blocks)!=(id.schema==3))){reason_="input_profile";return false;}
+    if((profile!=Profile::ui&&profile!=Profile::movement&&profile!=Profile::gameplay&&profile!=Profile::gameplay_movement&&profile!=Profile::gameplay_blocks&&profile!=Profile::gameplay_chat)||
+        ((profile==Profile::gameplay||profile==Profile::gameplay_movement||profile==Profile::gameplay_blocks||profile==Profile::gameplay_chat)!=(id.schema==3))){reason_="input_profile";return false;}
     profile_=profile;
     const auto utc=stream::utc_ms();begun_=stream::steady_ms();
     if(!stream::valid_identity(id)||id.target_pid!=GetCurrentProcessId()||id.target_start!=stream::process_start()||
@@ -78,7 +78,7 @@ bool Writer::transact(std::span<const Event> events,bool closing) {
     // before F8 makes ready() false; a real fresh client tick may recover. A
     // closed host may also wait for its final ACK without renewing ownership.
     if(valid&&!decode_ack(std::span<const std::uint8_t,128>(mapped_+128,128),status_.sequence,received_utc,
-                         status_.ack,ack,ack_error,status_.state==1)) {
+                       status_.ack,ack,ack_error,status_.state==1,profile_)) {
         reason_=ack_error;valid=false;
         status_.rejected_at_utc_ms=received_utc;status_.rejected_ack_utc_ms=0;
         for(unsigned i=0;i<8;++i)status_.rejected_ack_utc_ms|=std::uint64_t(mapped_[136+i])<<(i*8);
