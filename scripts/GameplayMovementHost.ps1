@@ -1,0 +1,201 @@
+#Requires -Version 7.3
+# Owned ongoing movement/view worker. The caller starts the exact tools process;
+# this helper never starts a game or modifies persistent game settings.
+. (Join-Path $PSScriptRoot 'KcdToolsProbeHelpers.ps1')
+. (Join-Path $PSScriptRoot 'HudGroundMovement.ps1')
+
+function Get-GameplayMovementBounds($Patch){
+    $data=Get-Content -LiteralPath $Patch.Path -Raw|ConvertFrom-Json -Depth 16
+    $tiles=if($data.PSObject.Properties['tiles']){@($data.tiles|ForEach-Object {$_.json|ConvertFrom-Json -Depth 12})}else{@($data)}
+    $points=@($tiles|ForEach-Object {$_.points}|Where-Object {$_.valid -eq $true})
+    if($points.Count -lt 4){throw 'Captured gameplay ground has insufficient valid points.'}
+    [pscustomobject]@{MinX=($points.x|Measure-Object -Minimum).Minimum+.31;MaxX=($points.x|Measure-Object -Maximum).Maximum-.31;
+        MinY=($points.y|Measure-Object -Minimum).Minimum+.31;MaxY=($points.y|Measure-Object -Maximum).Maximum-.31;
+        MinZ=($points.z|Measure-Object -Minimum).Minimum-.5;MaxZ=($points.z|Measure-Object -Maximum).Maximum+2.5}
+}
+function Test-GameplayHostNumber($Value){$Value -is [ValueType] -and $Value -isnot [bool] -and [double]::IsFinite([double]$Value)}
+function Publish-GameplayMovementView([string]$Temporary,[string]$Destination,[ValidateRange(1,100)][int]$RetryMilliseconds=100){
+    # Windows can briefly deny replacement while another process opens the old
+    # snapshot. Retry only sharing/access conflicts, using the original bytes
+    # and capture UTC. This worker never renews a stale camera observation.
+    $watch=[Diagnostics.Stopwatch]::StartNew()
+    while($true){
+        try{
+            if([IO.File]::Exists($Destination)){[IO.File]::Replace($Temporary,$Destination,[NullString]::Value)}else{[IO.File]::Move($Temporary,$Destination,$false)}
+            return
+        }catch{
+            $cause=$_.Exception.GetBaseException();$code=$cause.HResult -band 0xffff
+            if(($cause -isnot [IO.IOException] -and $cause -isnot [UnauthorizedAccessException]) -or $code -notin @(5,32,33) -or $watch.ElapsedMilliseconds -ge $RetryMilliseconds){throw}
+            Start-Sleep -Milliseconds ([int][Math]::Max(0,[Math]::Min(5,$RetryMilliseconds-$watch.ElapsedMilliseconds)))
+        }
+    }
+}
+function Read-GameplayMovementPose([string]$Path,$Identity,$Bounds,[long]$LastSequence,[double]$LastSource,[long]$Now){
+    if(-not [IO.File]::Exists($Path)){return $null}
+    $file=$null
+    try{
+        $file=[IO.FileStream]::new($Path,[IO.FileMode]::Open,[IO.FileAccess]::Read,([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
+        if($file.Length -lt 2 -or $file.Length -gt 4096){throw 'Gameplay pose exceeds4096 bytes.'}
+        $bytes=[byte[]]::new([int]$file.Length);$file.ReadExactly($bytes)
+        if($file.ReadByte() -ne -1){throw 'Gameplay pose changed size.'}
+        $json=[Text.UTF8Encoding]::new($false,$true).GetString($bytes)
+        $document=[Text.Json.JsonDocument]::Parse($json)
+        try{
+            if($document.RootElement.ValueKind -ne [Text.Json.JsonValueKind]::Object){throw 'Gameplay pose must be an object.'}
+            foreach($element in @($document.RootElement,$document.RootElement.GetProperty('position'))){
+                if($element.ValueKind -ne [Text.Json.JsonValueKind]::Object){throw 'Gameplay pose position must be an object.'}
+                $names=@($element.EnumerateObject()|ForEach-Object {$_.Name})
+                if(@($names|Select-Object -Unique).Count -ne $names.Count){throw 'Gameplay pose contains duplicate fields.'}
+            }
+        }finally{$document.Dispose()}
+        $p=$json|ConvertFrom-Json -Depth 6
+    }catch [IO.IOException]{if(($_.Exception.HResult -band 0xffff) -in @(2,3,32,33,303)){return $null};throw}
+    finally{if($file){$file.Dispose()}}
+    $keys=@('schema','kind','run','world_id','target_pid','target_start_filetime','patch_run','patch_sha256','seq','utc_ms','source_ms','position')
+    if($p -isnot [pscustomobject] -or (($p.PSObject.Properties.Name|Sort-Object)-join ',') -cne (($keys|Sort-Object)-join ',') -or
+        $p.schema -ne 1 -or $p.kind -cne 'minecome_gameplay_pose_v1' -or $p.run -cne $Identity.Run -or $p.world_id -cne $Identity.WorldId -or
+        $p.target_pid -ne $Identity.Pid -or $p.target_start_filetime -cne $Identity.Start -or $p.patch_run -cne $Identity.PatchRun -or $p.patch_sha256 -cne $Identity.PatchHash){throw 'Gameplay pose identity differs.'}
+    foreach($key in @('schema','target_pid','seq','utc_ms','source_ms')){if(-not(Test-GameplayHostNumber $p.$key)){throw "Invalid gameplay pose number: $key"}}
+    if($p.target_start_filetime -isnot [string]){throw 'Gameplay target start must be a string.'}
+    if($p.seq -lt 1 -or $p.seq -gt 10000000 -or $p.seq -ne [Math]::Floor($p.seq) -or $p.utc_ms -le 0 -or $p.utc_ms -ne [Math]::Floor($p.utc_ms) -or $p.utc_ms -gt $Now+50 -or $p.source_ms -lt 0 -or $p.source_ms -gt 86400000){throw 'Gameplay pose clock/sequence differs.'}
+    if($p.position -isnot [pscustomobject] -or (($p.position.PSObject.Properties.Name|Sort-Object)-join ',') -cne 'x,y,z'){throw 'Gameplay position differs.'}
+    foreach($axis in @('x','y','z')){if(-not(Test-GameplayHostNumber $p.position.$axis)){throw 'Gameplay position is not finite.'}}
+    if($p.position.x -lt $Bounds.MinX -or $p.position.x -gt $Bounds.MaxX -or $p.position.y -lt $Bounds.MinY -or $p.position.y -gt $Bounds.MaxY -or $p.position.z -lt $Bounds.MinZ -or $p.position.z -gt $Bounds.MaxZ){throw 'Gameplay pose leaves captured coverage.'}
+    if($p.seq -lt $LastSequence -or ($p.seq -gt $LastSequence -and $p.source_ms -le $LastSource)){throw 'Gameplay pose sequence/source clock regressed.'}
+    if($p.seq -eq $LastSequence -or $Now-$p.utc_ms -gt 250){return $null}
+    return $p
+}
+function Get-GameplayMovementWorker {
+    return {
+        param($Context,$Identity,$Bounds,[string]$PoseFile,[string]$ViewFile,[long]$ExpiresUtcMs,[long]$LogOffset,$Shared,$Token,[string]$ProjectRoot)
+        $ErrorActionPreference='Stop';Set-StrictMode -Version Latest
+        . (Join-Path $ProjectRoot 'scripts/GameplayMovementHost.ps1')
+        $run=$Identity.Run;$stopwatch=[Diagnostics.Stopwatch]::StartNew();$limit=$ExpiresUtcMs-[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+        $log=$null;$position=$LogOffset;$lastLength=$LogOffset;$begin=$null;$terminal=$null;$latestView=$null
+        $sequence=0L;$source=-1.0;$viewSequence=0L;$views=0L;$poses=0L;$lastPoseUtc=0L;$lastPoseAt=0.0;$lastViewAt=-1000.0;$failure=$null;$started=$false;$stage='starting'
+        $temp=$ViewFile+'.'+$run+'.tmp'
+        function Publish([bool]$Stopped=$false){$Shared['Snapshot']=[pscustomobject]@{Stopped=$Stopped;Failure=$failure;Stage=$stage;PoseCount=$poses;ViewCount=$views;LastPoseSequence=$sequence;LastPoseUtcMs=$lastPoseUtc;Begin=$begin;Terminal=$terminal;LastView=$latestView}}
+        function Numeric($v){([double]$v).ToString('R',[Globalization.CultureInfo]::InvariantCulture)}
+        function Send([string]$Body){
+            Assert-MineComeProbeContext $Context
+            $code="#"+$Body+";System.LogAlways('[MineComeGameplayFlush] $run')"
+            Invoke-MineComeToolsRequest -PathAndQuery ('/api/System/Console/ExecuteString?command='+[Uri]::EscapeDataString($code)) -TimeoutMilliseconds 150|Out-Null
+        }
+        function Receipts {
+            $length=$log.Length
+            if($length -lt $lastLength -or $length-$position -gt 2MB){throw 'Gameplay game-log identity/unread bound changed.'}
+            $log.Position=$position;$bytes=[byte[]]::new([int]($length-$position));$offset=0
+            while($offset -lt $bytes.Length){$n=$log.Read($bytes,$offset,$bytes.Length-$offset);if($n -eq 0){throw 'Gameplay log shrank.'};$offset+=$n}
+            $lf=[Array]::LastIndexOf($bytes,[byte]10)
+            $result=[Collections.Generic.List[object]]::new()
+            if($lf -ge 0){
+                $text=[Text.UTF8Encoding]::new($false,$true).GetString($bytes,0,$lf+1)
+                foreach($m in [regex]::Matches($text,'\[MineComeGameplayMovement\] (\{[^\r\n]*\})\r?\n')){
+                    if($m.Groups[1].Length -gt 4096){throw 'Gameplay native receipt exceeded bound.'}
+                    $r=$m.Groups[1].Value|ConvertFrom-Json -Depth 6
+                    if($r.schema -ne 1 -or $r.run -cne $run){continue};$result.Add($r)
+                }
+                Set-Variable -Name position -Value ($position+$lf+1) -Scope 1
+            }
+            Set-Variable -Name lastLength -Value $length -Scope 1
+            return $result.ToArray()
+        }
+        function RejectWrapper([string]$Call){
+            "local ok,why=$Call;if ok==false then if type(why)~='string' or not why:match('^[a-z_]+$') then why='invalid_reason' end;System.LogAlways('[MineComeGameplayMovement] {`"schema`":1,`"run`":`"$run`",`"event`":`"rejected`",`"result`":`"'..why..'`"}') end"
+        }
+        try{
+            $log=[IO.FileStream]::new($Context.GameLog,[IO.FileMode]::Open,[IO.FileAccess]::Read,([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete),1,[IO.FileOptions]::None)
+            $remaining=[Math]::Min(86400000,$limit)
+            $started=$true
+            Send (RejectWrapper "MineCome.GameplayMovementBegin('$run',$remaining,$(Numeric $Bounds.MinX),$(Numeric $Bounds.MaxX),$(Numeric $Bounds.MinY),$(Numeric $Bounds.MaxY),$(Numeric $Bounds.MinZ),$(Numeric $Bounds.MaxZ))")
+            $until=$stopwatch.Elapsed.TotalMilliseconds+1000
+            do{foreach($r in @(Receipts)){if($r.event -ceq 'begin'){$begin=$r}elseif($r.event -in @('rejected','terminal')){throw "Native gameplay begin rejected: $($r.result)"}};if($begin){break};Start-Sleep -Milliseconds 5}while($stopwatch.Elapsed.TotalMilliseconds -lt $until)
+            if(-not $begin -or $begin.result -cne 'ready' -or -not $begin.active){throw 'No native gameplay begin acknowledgement.'}
+            $stage='running';Publish
+            while(-not $Token.IsCancellationRequested){
+                $utc=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds();$elapsed=$stopwatch.Elapsed.TotalMilliseconds
+                if($utc -ge $ExpiresUtcMs -or $elapsed -ge $limit){throw 'Gameplay host identity expired.'}
+                $pose=Read-GameplayMovementPose $PoseFile $Identity $Bounds $sequence $source $utc
+                $parts=[Collections.Generic.List[string]]::new()
+                if($pose){$parts.Add((RejectWrapper "MineCome.GameplayMovementPose('$run',$($pose.seq),$(Numeric $pose.source_ms),$(Numeric $pose.position.x),$(Numeric $pose.position.y),$(Numeric $pose.position.z))"))}
+                $requestView=$elapsed-$lastViewAt -ge 90
+                if($requestView){$viewSequence++;$requestedUtc=$utc;$parts.Add((RejectWrapper "MineCome.GameplayMovementSample('$run',$viewSequence)"));$lastViewAt=$elapsed}
+                if($parts.Count){Send ([string]::Join(';',$parts));if($pose){$sequence=[long]$pose.seq;$source=[double]$pose.source_ms;$poses++;$lastPoseUtc=[long]$pose.utc_ms;$lastPoseAt=$elapsed}}
+                if($poses -gt 0 -and $elapsed-$lastPoseAt -gt 350){throw 'Gameplay guest pose expired.'}
+                $until=$stopwatch.Elapsed.TotalMilliseconds+$(if($requestView){300}else{0})
+                do{
+                    foreach($r in @(Receipts)){
+                        if($r.event -ceq 'terminal'){$terminal=$r;throw "Native gameplay stopped: $($r.result)"}
+                        if($r.event -ceq 'rejected'){throw "Native gameplay request rejected: $($r.result)"}
+                        if($r.event -ceq 'view'){
+                            if(-not $requestView -or $r.seq -ne $viewSequence -or $r.result -cne 'sampled' -or -not $r.active -or -not $r.camera_basis_valid){throw 'Native gameplay view acknowledgement differs.'}
+                            $latestView=$r
+                            $now=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+                            if($now-$requestedUtc -le 250){
+                                $value=[ordered]@{schema=1;source_kind='live_kcd_hud_view_v1';run=$run;patch_run=$Identity.PatchRun;patch_sha256=$Identity.PatchHash;target_pid=$Identity.Pid;target_start_filetime=$Identity.Start;seq=$viewSequence;utc_ms=$requestedUtc;forward=$r.forward;up=$r.up}
+                                $bytes=[Text.UTF8Encoding]::new($false).GetBytes(($value|ConvertTo-Json -Depth 5 -Compress))
+                                $f=[IO.FileStream]::new($temp,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
+                                try{$f.Write($bytes);$f.Flush($false)}finally{$f.Dispose()}
+                                Publish-GameplayMovementView $temp $ViewFile
+                                $views++
+                            }
+                            $requestView=$false
+                        }
+                    }
+                    if(-not $requestView){break};Start-Sleep -Milliseconds 5
+                }while($stopwatch.Elapsed.TotalMilliseconds -lt $until -and -not $Token.IsCancellationRequested)
+                if($requestView -and -not $Token.IsCancellationRequested){throw 'Native gameplay camera acknowledgement expired.'}
+                Publish;Start-Sleep -Milliseconds 10
+            }
+        }catch{$failure=$_.Exception.Message}
+        finally{
+            if($started){try{
+                Send (RejectWrapper "MineCome.GameplayMovementEnd('$run')")
+                $until=$stopwatch.Elapsed.TotalMilliseconds+750
+                do{foreach($r in @(Receipts)){if($r.event -ceq 'terminal'){$terminal=$r}};if($terminal){break};Start-Sleep -Milliseconds 10}while($stopwatch.Elapsed.TotalMilliseconds -lt $until)
+                if(-not $terminal -and -not $failure){$failure='Native gameplay terminal acknowledgement missing.'}
+            }catch{if(-not $failure){$failure=$_.Exception.Message}}}
+            if($log){$log.Dispose()}
+            if([IO.File]::Exists($temp)){[IO.File]::Delete($temp)}
+            $stage='stopped';Publish $true
+        }
+    }
+}
+function Start-GameplayMovementHost {
+    param($Context,[string]$Run,[string]$WorldId,$Patch,[string]$PoseFile,[string]$ViewFile,[long]$ExpiresUtcMs,$Bounds)
+    $root=$Context.ProjectRoot
+    if($Run -cnotmatch '^[0-9a-f]{32}$' -or $WorldId -cnotmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' -or $Patch.Run -cnotmatch '^[0-9a-f]{32}$' -or $Patch.Hash -cnotmatch '^[0-9a-f]{64}$'){throw 'Invalid gameplay host identity.'}
+    $now=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds();if($ExpiresUtcMs-$now -lt 1000 -or $ExpiresUtcMs-$now -gt 86400000){throw 'Gameplay host expiry differs.'}
+    $PoseFile=Resolve-HudMovementEvidencePath $PoseFile $root;$ViewFile=Resolve-HudMovementEvidencePath $ViewFile $root
+    if([IO.File]::Exists($ViewFile) -or [IO.File]::Exists($ViewFile+'.'+$Run+'.tmp')){throw 'Gameplay host view path already exists.'}
+    if((Get-FileHash -LiteralPath $Patch.Path).Hash -ine $Patch.Hash){throw 'Gameplay capture changed.'}
+    if(-not $Bounds){$Bounds=Get-GameplayMovementBounds $Patch}
+    foreach($name in @('MinX','MaxX','MinY','MaxY','MinZ','MaxZ')){if(-not(Test-GameplayHostNumber $Bounds.$name)){throw 'Invalid gameplay coverage bounds.'}}
+    $probe=New-MineComeProbeRun $Context 'gameplay-movement' (Join-Path $root 'kcd2/gameplay/movement_session.lua') 'GameplayMovementBegin'
+    $identity=[pscustomobject]@{Run=$Run;WorldId=$WorldId;Pid=$Context.GamePid;Start=$Context.GameStartedUtc.ToFileTimeUtc().ToString();PatchRun=$Patch.Run;PatchHash=$Patch.Hash}
+    $shared=[Collections.Concurrent.ConcurrentDictionary[string,object]]::new([StringComparer]::Ordinal)
+    $shared['Snapshot']=[pscustomobject]@{Stopped=$false;Failure=$null;Stage='starting';PoseCount=0L;ViewCount=0L;LastPoseSequence=0L;LastPoseUtcMs=0L;Begin=$null;Terminal=$null;LastView=$null}
+    $cancellation=[Threading.CancellationTokenSource]::new();$runspace=[RunspaceFactory]::CreateRunspace();$pipeline=[PowerShell]::Create()
+    try{
+        $runspace.Open();$pipeline.Runspace=$runspace
+        $null=$pipeline.AddScript((Get-GameplayMovementWorker).ToString()).AddArgument($Context).AddArgument($identity).AddArgument($Bounds).AddArgument($PoseFile).AddArgument($ViewFile).AddArgument($ExpiresUtcMs).AddArgument((Get-Item -LiteralPath $Context.GameLog).Length).AddArgument($shared).AddArgument($cancellation.Token).AddArgument($root)
+        $async=$pipeline.BeginInvoke()
+        return [pscustomobject]@{Runspace=$runspace;PowerShell=$pipeline;Async=$async;Shared=$shared;Cancellation=$cancellation;Probe=$probe;Final=$null;Disposed=$false;Bounds=$Bounds;Identity=$identity}
+    }catch{$cancellation.Cancel();$pipeline.Dispose();$runspace.Dispose();$cancellation.Dispose();throw}
+}
+function Get-GameplayMovementHostState($Session){
+    if($Session.Final){return $Session.Final};$snapshot=$Session.Shared['Snapshot']
+    if($Session.Async.IsCompleted -and -not $snapshot.Stopped){throw 'Gameplay host worker ended without cleanup evidence.'}
+    return $snapshot
+}
+function Stop-GameplayMovementHost($Session){
+    if($Session.Final){return $Session.Final}
+    $Session.Cancellation.Cancel()
+    if(-not $Session.Async.AsyncWaitHandle.WaitOne(2000)){throw 'Gameplay host worker did not finish bounded cleanup.'}
+    $errorText=$null;try{$null=$Session.PowerShell.EndInvoke($Session.Async)}catch{$errorText=$_.Exception.Message}
+    $s=$Session.Shared['Snapshot'];if(-not $errorText -and $Session.PowerShell.HadErrors){$errorText=[string]$Session.PowerShell.Streams.Error[0]}
+    $Session.Final=[pscustomobject]@{Stopped=$s.Stopped;Failure=$(if($s.Failure){$s.Failure}else{$errorText});Stage=$s.Stage;PoseCount=$s.PoseCount;ViewCount=$s.ViewCount;LastPoseSequence=$s.LastPoseSequence;LastPoseUtcMs=$s.LastPoseUtcMs;Begin=$s.Begin;Terminal=$s.Terminal;LastView=$s.LastView;ResourcesClosed=$true}
+    $Session.PowerShell.Dispose();$Session.Runspace.Dispose();$Session.Cancellation.Dispose();$Session.Disposed=$true
+    $Session.Final|ConvertTo-Json -Depth 8|Set-Content -LiteralPath (Join-Path $Session.Probe.Directory 'verification.json') -Encoding utf8NoBOM
+    return $Session.Final
+}

@@ -6,6 +6,10 @@ import com.mojang.blaze3d.systems.RenderSystem;
 import dev.minecome.gameplay.GameplayWorld;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
+import dev.minecome.terrain.GameplayMovement;
+import com.sun.jna.platform.win32.Kernel32;
+import com.sun.jna.platform.win32.WinBase;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gl.Framebuffer;
 import net.minecraft.client.option.GraphicsMode;
@@ -24,7 +28,7 @@ import java.nio.file.StandardOpenOption;
 import java.util.Set;
 import java.util.function.BooleanSupplier;
 
-/** Persistent vanilla guest and HUD session. Native movement/terrain are separate integration work. */
+/** Persistent vanilla guest/HUD, optionally attached to captured host terrain. */
 public final class GameplaySession {
     private static final Logger LOG=LoggerFactory.getLogger("MineComeGameplay");
     private static volatile GameplaySession active;
@@ -32,15 +36,18 @@ public final class GameplaySession {
     private final HudStreamProducer.Identity identity;
     private final boolean standalone=Boolean.getBoolean("minecome.gameplayStandalone");
     private final String fixtureMode=System.getProperty("minecome.gameplayFixture","");
+    private final boolean movementMode=Boolean.getBoolean("minecome.gameplayMovement");
     private final HudStreamLayout layout=HudStreamLayout.configured();
     private final HudReadback readback=new HudReadback();
-    private final HudInputGate gate=new HudInputGate();
+    private final HudInputGate gate=new HudInputGate(movementMode);
     private final long initializedAt=System.nanoTime();
     private GameplayWorld save;
     private HudStreamProducer output;
     private HudInputReader input;
     private HudVanillaUiAdapter ui;
     private GameplayPersistenceFixture fixture;
+    private GameplayMovement movement;
+    private GameplayMovementFixture movementFixture;
     private Object world,player,server;
     private boolean opening,ready,stopping,writerFinished,shutdownRequested,frameTransparent,sessionReportWritten;
     private long readyAt,stopAt,writerAt,lastCaptureAt,inputEvents;
@@ -83,12 +90,25 @@ public final class GameplaySession {
                     Long.parseUnsignedLong(required("minecome.hudStreamTargetStart")),Long.parseLong(required("minecome.hudStreamExpiresUtcMs")));
             var session=new GameplaySession(Path.of(required("minecome.root")),Path.of(required("minecome.hudStreamDirectory")),identity);
             active=session;
+            ClientTickEvents.START_CLIENT_TICK.register(session::beforeTick);
             ClientTickEvents.END_CLIENT_TICK.register(session::tick);
+            ServerTickEvents.END_SERVER_TICK.register(source->{var m=session.movement;if(m!=null)m.observe(source);});
             ClientLifecycleEvents.CLIENT_STOPPING.register(session::onClientStopping);
             LOG.info("GAMEPLAY_INITIALIZED run={} standalone={} persistentSave={}",identity.run(),session.standalone,GameplayWorld.SAVE_NAME);
         }catch(IOException e){throw new IllegalArgumentException("Gameplay session paths invalid",e);}
     }
     private static String required(String key){String value=System.getProperty(key);if(value==null||value.isBlank())throw new IllegalArgumentException(key+" is required");return value;}
+    private HudInputProtocol.Identity wireIdentity(){
+        var api=Kernel32.INSTANCE;var created=new WinBase.FILETIME();
+        if(!api.GetProcessTimes(api.GetCurrentProcess(),created,new WinBase.FILETIME(),new WinBase.FILETIME(),new WinBase.FILETIME()))throw new IllegalStateException("Gameplay process identity unavailable");
+        long start=(Integer.toUnsignedLong(created.dwHighDateTime)<<32)|Integer.toUnsignedLong(created.dwLowDateTime);
+        return new HudInputProtocol.Identity(identity.run(),api.GetCurrentProcessId(),start,identity.targetPid(),identity.targetStart(),identity.expiresUtcMs());
+    }
+    private void beforeTick(MinecraftClient client){
+        if(stopping||movement==null)return;
+        try{if(movementFixture!=null)movementFixture.beforeTick(client);movement.beforeTick(client,System.nanoTime());}
+        catch(Exception e){requestStop(client,"movement_failure",e.toString());}
+    }
     private boolean owns(MinecraftClient client){return ready&&!stopping&&client.world==world&&client.player==player&&client.getServer()==server&&client.isIntegratedServerRunning();}
     public static boolean suppressWorld(){var s=active;return s!=null&&!s.standalone&&s.owns(MinecraftClient.getInstance());}
     public static boolean transparentFrame(){var s=active;return s!=null&&s.frameTransparent&&s.owns(MinecraftClient.getInstance());}
@@ -135,6 +155,13 @@ public final class GameplaySession {
                 if(client.world!=null||client.isIntegratedServerRunning())throw new IllegalStateException("Refusing an existing active world");
                 opening=true;configure(client);
                 save=GameplayWorld.prepare(client.getLevelStorage().getSavesDirectory().toAbsolutePath(),root);
+                if(movementMode){
+                    var wire=wireIdentity();
+                    movement=new GameplayMovement(root,save,Path.of(required("minecome.gameplayGroundFile")),standalone,wire,directory.getParent());
+                    if(fixtureMode.startsWith("walking"))movementFixture=new GameplayMovementFixture(fixtureMode,movement,save,wire,directory.getParent(),proof->{
+                        fixtureResult=proof.deepCopy();requestStop(MinecraftClient.getInstance(),"movement_fixture_complete",proof.get("result").getAsString().equals("passed")?null:proof.toString());
+                    });
+                }
                 save.open(client,()->requestStop(client,"world_load_cancelled",null));
                 return;
             }
@@ -146,7 +173,7 @@ public final class GameplaySession {
                 if(!standalone){ui=new HudVanillaUiAdapter(client,true);hideOwnedWindow(client);}
                 output=new HudStreamProducer(root,directory,identity,save.saveName(),true,standalone?0:1);output.start();
                 ready=true;readyAt=System.nanoTime();
-                if(!fixtureMode.isEmpty())fixture=new GameplayPersistenceFixture(fixtureMode,save,directory.getParent(),proof->{
+                if(!fixtureMode.isEmpty()&&!fixtureMode.startsWith("walking"))fixture=new GameplayPersistenceFixture(fixtureMode,save,directory.getParent(),proof->{
                     fixtureResult=proof.deepCopy();boolean passed=proof.has("result")&&proof.get("result").getAsString().equals("passed");
                     requestStop(MinecraftClient.getInstance(),"fixture_complete",passed?null:proof.toString());
                 });
@@ -164,17 +191,20 @@ public final class GameplaySession {
             // retaining the exact integrated server and persistent save.
             if(client.world==null||client.player==null)return;
             if(client.world!=world||client.player!=player){
+                if(movement!=null)throw new IllegalStateException("Movement world/player changed; saved position retained for restart");
                 if(ui!=null)ui.releaseAndClose(client);gate.releaseAll();world=client.world;player=client.player;
                 if(!standalone)ui=new HudVanillaUiAdapter(client,true);
             }
+            if(movement!=null)movement.afterTick(client,System.nanoTime());
             if(!standalone)inputTick(client);
+            if(movementFixture!=null&&!stopping)movementFixture.tick(client);
             if(fixture!=null&&output.isReady()&&output.publishedFrames()>0&&!stopping)fixture.tick(client);
         }catch(Exception e){requestStop(client,"failure",e.toString());}
     }
 
     private void inputTick(MinecraftClient client){
         if(input==null&&output.publishedFrames()>0){
-            input=new HudInputReader(new HudInputProtocol.Identity(identity.run(),output.producerPid(),output.producerStart(),identity.targetPid(),identity.targetStart(),identity.expiresUtcMs()),false,true);
+            input=new HudInputReader(new HudInputProtocol.Identity(identity.run(),output.producerPid(),output.producerStart(),identity.targetPid(),identity.targetStart(),identity.expiresUtcMs()),movementMode,true);
             input.start();
         }
         if(input==null||stopForClosedInput(client))return;
@@ -182,12 +212,16 @@ public final class GameplaySession {
         if(input.connected()&&input.hostState()==1)inputArmedSeen=true;
         ui.synchronizeScreen(client);
         long now=System.nanoTime(),utc=System.currentTimeMillis();
+        if(movement!=null)movement.authority(client,now,input.connected()&&input.hostState()==1);
         if(input.connected()&&input.hostState()==1){
             if(!hiddenClientUnfocused(client))throw new IllegalStateException("Gameplay guest window is not hidden and unfocused");
             if(utc-input.heartbeat()>250||now-input.observedAt()>250_000_000L)throw new IllegalStateException("Gameplay host input stale");
             if(now-output.lastPublishedAt()>250_000_000L)throw new IllegalStateException("Gameplay HUD publication stale");
             for(int i=0;i<64;i++){
-                var event=input.poll();if(event==null)break;gate.apply(event,System.currentTimeMillis());ui.apply(client,event);inputEvents++;
+                var event=input.poll();if(event==null)break;gate.apply(event,System.currentTimeMillis());
+                if(movement!=null&&event.kind()<=2&&HudMovementKeys.movement(event.code()))movement.event(client,event,System.nanoTime());
+                else{if(movement!=null&&(event.code()==0x45||event.code()==0x1b))movement.suspend(client);ui.apply(client,event);}
+                inputEvents++;
             }
         }
         input.acknowledge(new HudInputReader.Acknowledgement(gate.sequence(),System.currentTimeMillis(),1,
@@ -314,7 +348,11 @@ public final class GameplaySession {
         e.addProperty("input_events_applied",inputEvents);e.addProperty("stop_reason",stopReason);e.addProperty("failure",failure);
         e.addProperty("input_connected",inputConnectedSeen);e.addProperty("input_armed_seen",inputArmedSeen);
         e.addProperty("active_ms",readyAt==0?0:(System.nanoTime()-readyAt)/1_000_000);e.addProperty("bootstrap_ground","vanilla_superflat");
-        e.addProperty("kcd_terrain_imported",false);e.addProperty("kcd_movement_connected",false);e.addProperty("host_command_typing_verified",false);
+        JsonObject motion=movement==null?null:movement.evidence(client);
+        boolean attached=motion!=null&&motion.get("ready").getAsBoolean();
+        e.addProperty("terrain_collision_attached",attached);
+        e.addProperty("kcd_terrain_imported",attached&&!standalone);e.addProperty("kcd_movement_connected",attached&&!standalone&&inputArmedSeen);e.addProperty("host_command_typing_verified",false);
+        if(motion!=null)e.add("movement",motion);
         e.addProperty("normal_shutdown_requested",stopping);e.addProperty("controls_released",gate.heldKeyCount()==0&&gate.heldButtonCount()==0);
         e.addProperty("producer_finished",output!=null&&output.isFinished());e.addProperty("producer_failure",output==null?null:output.failure());
         if(!standalone){
@@ -327,6 +365,16 @@ public final class GameplaySession {
     }
     private void requestStop(MinecraftClient client,String reason,String problem){
         if(stopping)return;stopReason=reason;failure=problem;
+        // End the host pose lease before draining asynchronous collision/input
+        // cleanup. The final receipt can legitimately take longer than the lease.
+        try{
+            var notice=new JsonObject();notice.addProperty("schema",1);notice.addProperty("kind","minecome_gameplay_stopping_v1");
+            notice.addProperty("run",identity.run());notice.addProperty("reason",reason);
+            Path temporary=directory.getParent().resolve("gameplay-stopping.tmp");
+            Files.writeString(temporary,notice.toString(),StandardCharsets.UTF_8,StandardOpenOption.CREATE_NEW);
+            Files.move(temporary,directory.getParent().resolve("gameplay-stopping.json"),java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+        }catch(Exception e){if(failure==null)failure="Stop notice: "+e;}
+        try{if(movementFixture!=null)movementFixture.close();if(movement!=null){if(failure==null)movement.close(client);else movement.abort(client,failure);}}catch(Exception e){if(failure==null)failure=e.toString();}
         try{if(ui!=null)ui.releaseAndClose(client);}catch(Exception e){if(failure==null)failure=e.toString();}
         gate.releaseAll();
         if(input!=null){
@@ -339,6 +387,8 @@ public final class GameplaySession {
     private void finishStop(MinecraftClient client){
         if(shutdownRequested)return;
         if(!writerFinished){
+            if(movement!=null&&!movement.cleanupComplete()&&System.nanoTime()-stopAt<2_000_000_000L)return;
+            if(movement!=null&&!movement.cleanupComplete()&&failure==null)failure="Movement cleanup incomplete";
             if(input!=null&&!input.isFinished()&&System.nanoTime()-stopAt<2_000_000_000L)return;
             if(input!=null&&!input.cleanupComplete()&&failure==null)failure="Input cleanup incomplete";
             try{restoreOwnedWindow(client);}catch(RuntimeException e){if(failure==null)failure="Window cleanup: "+e;}
@@ -368,6 +418,10 @@ public final class GameplaySession {
             // already-requested shutdown here before recording its final state.
             // No UI/input dispatch occurs after these bounded waits begin.
             if(!writerFinished){
+                if(movement!=null){
+                    awaitShutdown(movement::cleanupComplete,2_000_000_000L);
+                    if(!movement.cleanupComplete()&&failure==null)failure="Movement cleanup incomplete";
+                }
                 if(input!=null){
                     awaitShutdown(input::isFinished,2_000_000_000L);
                     if(!input.cleanupComplete()&&failure==null)failure="Input cleanup incomplete";

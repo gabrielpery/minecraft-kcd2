@@ -32,7 +32,6 @@ public final class HudInputReader implements AutoCloseable {
     public HudInputReader(HudInputProtocol.Identity identity){this(identity,false);}
     public HudInputReader(HudInputProtocol.Identity identity,boolean movement){this(identity,movement,false);}
     public HudInputReader(HudInputProtocol.Identity identity,boolean movement,boolean gameplay){
-        if(movement&&gameplay)throw new IllegalArgumentException("Gameplay UI does not yet own host movement");
         this.identity=identity;this.movement=movement;this.gameplay=gameplay;
     }
     public synchronized void start(){if(worker!=null)throw new IllegalStateException("Input reader cannot restart");worker=new Thread(this::read,"MineComeHudInputReader");worker.start();}

@@ -22,9 +22,9 @@ if($gameHash -ne $recorded[0].sha256) { throw 'The tools executable differs from
 $games=@(Get-Process KingdomCome -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $gameExe })
 if($games.Count -ne 1) { throw 'One already-running official tools test world is required; this script never launches a game.' }
 $game=$games[0];$gameStarted=$game.StartTime.ToUniversalTime()
+. (Join-Path $PSScriptRoot 'KcdToolsProbeHelpers.ps1')
 function Assert-OwnedEndpoint {
-    $listeners=@(Get-NetTCPConnection -LocalPort 1403 -State Listen -ErrorAction Stop)
-    if($listeners.Count -ne 1 -or $listeners[0].LocalAddress -ne '127.0.0.1' -or $listeners[0].OwningProcess -ne $game.Id) { throw 'The numeric loopback tools endpoint is not owned by the captured game; no request sent.' }
+    if(-not [MineCome.Probes.TcpOwner]::OwnsLoopback(1403,$game.Id)) { throw 'The numeric loopback tools endpoint is not owned by the captured game; no request sent.' }
 }
 Assert-OwnedEndpoint
 $moduleName=if($Patch){'ground_patch.lua'}else{'ground_probe.lua'}

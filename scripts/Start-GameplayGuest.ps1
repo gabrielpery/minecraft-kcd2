@@ -1,8 +1,8 @@
 # Persistent guest foundation. Actual Minecraft window; no KCD launch or input capture.
 [CmdletBinding()]
 param([string]$JavaHome='C:/Program Files/Java/jdk-24',[string]$InstanceDirectory,
- [string]$EvidenceDirectory,[string]$ReceiverPath,[ValidateSet('','create','resume')][string]$FixturePhase='',
- [switch]$PreflightOnly)
+ [string]$EvidenceDirectory,[string]$ReceiverPath,[ValidateSet('','create','resume','walking','walking-resume')][string]$FixturePhase='',
+ [switch]$Movement,[string]$GroundPatchFile,[switch]$PreflightOnly)
 . (Join-Path $PSScriptRoot 'powershell7.ps1')
 if($PSVersionTable.PSVersion.Major -lt 7){
  $code=Invoke-MineComePowerShell7 -ScriptPath $PSCommandPath -BoundParameters $PSBoundParameters
@@ -11,6 +11,11 @@ if($PSVersionTable.PSVersion.Major -lt 7){
 $ErrorActionPreference='Stop';Set-StrictMode -Version Latest
 $root=[IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
 . (Join-Path $PSScriptRoot 'HudGroundMovement.ps1')
+if($Movement){
+ if(-not $GroundPatchFile){throw 'Gameplay movement requires its persistent captured ground patch.'}
+ $GroundPatchFile=[IO.Path]::GetFullPath($GroundPatchFile)
+ if(-not (Test-Path -LiteralPath $GroundPatchFile -PathType Leaf)){throw 'Gameplay ground patch does not exist.'}
+}elseif($GroundPatchFile -or $FixturePhase.StartsWith('walking')){throw 'Ground patches and walking fixtures require -Movement.'}
 if(-not $InstanceDirectory){$InstanceDirectory=Join-Path $root 'runtime/gameplay/instance'}
 $InstanceDirectory=[IO.Path]::GetFullPath($InstanceDirectory)
 if(-not $InstanceDirectory.StartsWith($root+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)){throw 'Gameplay instance must stay inside the project.'}
@@ -37,6 +42,7 @@ try{
  $childArgs=@('-NoProfile','-File',(Join-Path $PSScriptRoot 'Run-GameplayClient.ps1'),'-EvidenceDirectory',$EvidenceDirectory,
  '-InstanceDirectory',$InstanceDirectory,'-Run',$run,'-TargetPid',[string]$PID,'-TargetStart',$targetStart,'-Expires',[string]$expires,'-JavaHome',$JavaHome)
  if($FixturePhase){$childArgs+=@('-FixturePhase',$FixturePhase)}
+ if($Movement){$childArgs+=@('-Movement','-GroundPatchFile',$GroundPatchFile)}
  $helper=Start-GameplayChild $powerShell $childArgs 'client'
  $deadline=[DateTime]::UtcNow.AddSeconds(120)
  $readyPath=Join-Path $EvidenceDirectory 'capture/stream-ready.json'
@@ -61,7 +67,7 @@ try{
    if(-not $helper.WaitForExit(10000)){throw 'Stream closed but Minecraft did not finish its normal save/shutdown.'}
    break
   }
-  if($FixturePhase -and [DateTime]::UtcNow -gt $fixtureDeadline){throw 'Persistence fixture did not finish normally.'}
+  if($FixturePhase -and [DateTime]::UtcNow -gt $fixtureDeadline){throw 'Gameplay fixture did not finish normally.'}
   Start-Sleep -Milliseconds 100
  }
  if($helper.ExitCode -ne 0){throw "Gameplay client exit code $($helper.ExitCode)."}
@@ -76,7 +82,11 @@ try{
   $session.failure -or $session.producer_failure -or -not $session.producer_finished -or
   -not $session.normal_shutdown_requested -or -not $session.controls_released -or
   -not $session.persistent_world -or $received.result -cne 'passed' -or $received.stream_schema -ne 3 -or -not $received.closed_seen){throw 'Gameplay close/persistence/transport proof failed.'}
- if($FixturePhase -and $session.fixture.result -cne 'passed'){throw 'Persistence fixture failed.'}
+ if($FixturePhase -and $session.fixture.result -cne 'passed'){throw 'Gameplay fixture failed.'}
+ if($Movement -and ($session.movement.failure -or -not $session.movement.cleanup_complete -or
+  -not $session.movement.controls_released -or -not $session.movement.client_collision_released -or
+  -not $session.movement.server_collision_released -or $session.movement.blocks_written -ne 0 -or
+  -not $session.movement.ground_cells_air)){throw 'Gameplay movement did not release its controls and ephemeral collision cleanly.'}
  $passed=$true
 }catch{$failure=$_.Exception.Message;throw}
 finally{
@@ -85,7 +95,7 @@ finally{
   [void]$helper.WaitForExit(10000)
  }
  [ordered]@{schema=1;kind='minecome_gameplay_guest_session_v1';run=$run;result=$(if($passed){'passed'}else{'failed'});failure=$failure;
-  instance=$InstanceDirectory;fixture=$FixturePhase;kcd_connected=$false;normal_client_exit=($helper -and $helper.HasExited -and $helper.ExitCode -eq 0)}|
+  instance=$InstanceDirectory;fixture=$FixturePhase;movement=[bool]$Movement;kcd_connected=$false;normal_client_exit=($helper -and $helper.HasExited -and $helper.ExitCode -eq 0)}|
   ConvertTo-Json|Set-Content -LiteralPath (Join-Path $EvidenceDirectory 'verification.json') -Encoding utf8NoBOM
 }
 [pscustomobject]@{EvidenceDirectory=$EvidenceDirectory;VerificationFile=(Join-Path $EvidenceDirectory 'verification.json')}

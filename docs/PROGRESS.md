@@ -1,5 +1,47 @@
 # MineCome progress — 2026-11-05
 
+## Sustained walking, terrain binding and saved location
+
+The separate `-Movement` gameplay profile now connects vanilla Minecraft walking
+to imported KCD ground and an ongoing native position follower. It uses input
+protocol 4 alongside HUD schema 3; UI-only protocol 3 and bounded labs are preserved.
+There is no 15-second movement cutoff or automatic return to origin. Inventory
+releases movement; the last clean grounded position and captured terrain origin
+persist with the world. Stop returns native controls and cancels owned timers.
+
+Actual Minecraft walking PASS: 35.038s, early and post 21-second walking, real
+inventory suppression/resumption,636 HUD frames and both collision threads.
+Saved position X1.291498509/Y64/Z0 was restored exactly on reopen; the resumed
+player walked another 1.2915m, retained Creative abilities, and closed normally.
+The initial reopen validator falsely compared Gson float objects with parsed
+decimals. That validator was fixed and only the shorter resume phase repeated.
+Combined evidence:
+`runtime/evidence/gameplay-20261105-175426-6f1e55fbef314baabc1bb94deeec5011/walking-resume-verification.json`.
+Inputs/camera are scripted in this standalone check, not native physical input.
+
+Actual KCD2 connection PASS, host 60 FPS:
+`runtime/evidence/gameplay-kcd-20261105-175248-793be9188b3642d9b4b8f793e4221e6e/verification.json`.
+The guest ran 41.717s on a fresh live 81-point capture. 601 authoritative poses and
+401 native camera samples passed; 734 HUD uploads, zero drops, 2487 submissions.
+Computer Use showed the Minecraft hotbar/crosshair in KCD. Native stop was explicit,
+timers cancelled, checkpoint saved, collision removed, and guest exited normally.
+No input events were recorded: this establishes sustained native attachment/HUD,
+not new physical walking acceptance. A late automated W tap was outside the active
+stream and supplies no movement proof. No user test was requested.
+
+Focused checks passed: 21 world, 19 wire, 14 movement, 353 existing HUD-input;
+88 native gameplay, 383 native input, 8 Lua lifecycle and 9 host worker/contract.
+Windows atomic camera/pose writes now tolerate brief sharing conflicts without
+renewing old capture timestamps. Capture reuses the verified listener ownership
+helper instead of the unreliable CIM listener-state query on this machine.
+
+Current scope is one 8×8m sampled patch with frontier braking, not free roaming.
+Block mirroring, rolling terrain admission, host command typing, flight and Steve/
+combat remain required work. New gameplay currently allows one session per KCD
+process. Both games closed normally; six prior renderer files restored and verified:
+`runtime/evidence/gameplay-hud-restore-20261105-175526-28eada4f3a554adabf82d57466a0edea`.
+See [GAMEPLAY_SESSION.md](GAMEPLAY_SESSION.md) for the exact development commands.
+
 ## Persistent session foundation — actual Minecraft save/reopen passed
 
 The separate gameplay entry reuses `MineCome-Gameplay` with an owned world UUID,

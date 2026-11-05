@@ -1,6 +1,8 @@
 #include "stream_contract.hpp"
 #include "input_contract.hpp"
 #include "gameplay_keyboard_policy.hpp"
+#include "movement_forwarding.hpp"
+#include "selective_forwarding.hpp"
 #include <cstring>
 #include <iostream>
 #include <stdexcept>
@@ -70,6 +72,32 @@ void input_tests(){
     check(ui::valid_event(e,1250,ui::Profile::gameplay)&&!ui::valid_event(e,1251,ui::Profile::gameplay),"gameplay retains250ms input lease");
     const ui::Event walk{1000,ui::Kind::key_down,0x57};
     check(!ui::valid_event(walk,1000)&&ui::valid_event(walk,1000,ui::Profile::movement)&&!ui::valid_event(walk,1000,ui::Profile::gameplay),"movement is not part of the initial gameplay UI contract");
+    ui::encode_host(encoded,id,0,0,0,ui::Profile::gameplay_movement);
+    check(std::memcmp(encoded.data(),"MCHUDI04",8)==0&&encoded[8]==4,"explicit sustained movement header");
+    for(auto code:ui::movement_keys){
+        const ui::Event down{1000,ui::Kind::key_down,code},up{1000,ui::Kind::key_up,code};
+        check(ui::valid_event(down,1250,ui::Profile::gameplay_movement)&&ui::valid_event(up,1250,ui::Profile::gameplay_movement),"sustained movement edges accepted");
+        check(!ui::valid_event(down,1251,ui::Profile::gameplay_movement)&&!ui::valid_event(down,1000,ui::Profile::gameplay),"v4 age and v3 isolation retained");
+    }
+    check(ui::valid_event(e,1000,ui::Profile::gameplay_movement),"v4 retains ordinary UI events");
+    check(!ui::valid_event({1000,ui::Kind::key_down,0x10},1000,ui::Profile::gameplay_movement),"unimplemented sprint or modifier not silently forwarded");
+    ui::MovementGate movement;
+    movement.update(true,0);movement.update(true,0);
+    check(movement.update(true,1).down==1,"physical forward edge starts after neutral ownership");
+    check(movement.update(false,1).up==1&&movement.held()==0,"inventory transition releases forward before UI toggle");
+    movement.update(true,1);check(!movement.armed(),"held key cannot leak out of inventory");
+    movement.update(true,0);movement.update(true,0);
+    check(movement.update(true,1).down==1,"fresh press resumes after inventory neutral frames");
+    namespace mouse=minecome::selective;
+    mouse::ModeGate world_mouse;
+    check(world_mouse.update(true,false,0,0,false,0,false)==mouse::Mode::full,"world mouse starts at neutral boundary");
+    check(world_mouse.update(true,false,0,0,false,0,false)==mouse::Mode::buttons,"neutral world mode releases mouse ownership");
+    check(world_mouse.update(true,false,0,0,false,1,true)==mouse::Mode::buttons,"native world click preserves mouse passthrough");
+    check(world_mouse.update(true,true,0,0,true,0,true)==mouse::Mode::full,"UI toggle captures mouse before inventory");
+    check(world_mouse.update(true,false,1,1,false,1,false)==mouse::Mode::full,"inventory owns dragging button");
+    check(world_mouse.update(true,false,0,0,false,1,false)==mouse::Mode::full,"closing inventory retains held-button drain");
+    check(world_mouse.update(true,false,0,0,false,0,false)==mouse::Mode::full,"inventory exit first neutral frame");
+    check(world_mouse.update(true,false,0,0,false,0,false)==mouse::Mode::buttons,"inventory exit restores native mouse after neutral");
 }
 void keyboard_mask_tests(){
     namespace gk=minecome::gameplay_keyboard;

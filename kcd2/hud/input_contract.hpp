@@ -8,7 +8,7 @@ namespace minecome::hud::input {
 inline constexpr std::size_t header_bytes=256, ring_count=64, record_bytes=40, mapping_bytes=2816;
 inline constexpr std::uint64_t fresh_ms=250, activation_ms=30000;
 using Identity=stream::Identity;
-enum class Profile : std::uint32_t { ui=1, movement=2, gameplay=3 };
+enum class Profile : std::uint32_t { ui=1, movement=2, gameplay=3, gameplay_movement=4 };
 enum class Kind : std::uint32_t { key_down=1,key_up=2,move=3,button_down=4,button_up=5,wheel=6 };
 struct Event {
     std::uint64_t captured=0;

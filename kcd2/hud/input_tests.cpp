@@ -317,7 +317,7 @@ void channels() {
     Guest legacy_peer(legacy_id);legacy_peer.write(0);legacy.poll();legacy.arm();
     forward.captured=st::utc_ms();
     check(!legacy.append(std::span<const ui::Event>(&forward,1))&&legacy.reason()=="invalid_or_stale_event","v1 writer rejects movement even on valid fresh session");
-    ui::Writer invalid;check(!invalid.create(identity(9),static_cast<ui::Profile>(4))&&invalid.reason()=="input_profile","unsupported writer profile refused");
+    ui::Writer invalid;check(!invalid.create(identity(9),static_cast<ui::Profile>(5))&&invalid.reason()=="input_profile","unsupported writer profile refused");
     auto game_id=identity(10);game_id.schema=3;game_id.expires_utc_ms=st::utc_ms()+st::gameplay_max_lease_ms;
     ui::Writer game;check(game.create(game_id,ui::Profile::gameplay),"explicit gameplay writer accepts24h outer identity");
     Guest game_peer(game_id);game_peer.write(0);check(game.poll()&&game.arm(),"gameplay acknowledgement arms");
@@ -327,6 +327,17 @@ void channels() {
     game.finish("explicit_stop");game_peer.write(1,2);check(game.poll()&&game.status().ack.state==2,"gameplay explicit stop rendezvous");
     ui::Writer wrong_game;check(!wrong_game.create(identity(11),ui::Profile::gameplay),"gameplay writer refuses legacy stream identity");
     ui::Writer wrong_legacy;check(!wrong_legacy.create(game_id,ui::Profile::ui),"legacy writer refuses gameplay identity");
+    auto game_movement_id=identity(12);game_movement_id.schema=3;game_movement_id.expires_utc_ms=st::utc_ms()+st::gameplay_max_lease_ms;
+    ui::Writer game_movement;check(game_movement.create(game_movement_id,ui::Profile::gameplay_movement),"explicit sustained movement writer accepts24h outer identity");
+    Guest game_movement_peer(game_movement_id);game_movement_peer.write(0);check(game_movement.poll()&&game_movement.arm(),"sustained movement guest readiness arms");
+    check(!std::memcmp(game_movement_peer.bytes,"MCHUDI04",8)&&game_movement_peer.bytes[8]==4,"actual sustained movement mapping is v4");
+    forward.kind=ui::Kind::key_down;forward.captured=st::utc_ms();
+    check(game_movement.append(std::span<const ui::Event>(&forward,1))&&game_movement.status().sequence==1,"actual v4 movement down published");
+    game_movement_peer.write(1);game_movement.poll();forward.kind=ui::Kind::key_up;forward.captured=st::utc_ms();
+    check(game_movement.append(std::span<const ui::Event>(&forward,1))&&game_movement.status().sequence==2,"actual v4 movement release published");
+    game_movement.finish("explicit_stop");game_movement_peer.write(2,2);
+    check(game_movement.poll()&&game_movement.status().ack.state==2,"sustained movement explicit stop rendezvous");
+    ui::Writer wrong_game_movement;check(!wrong_game_movement.create(identity(13),ui::Profile::gameplay_movement),"sustained movement rejects legacy stream identity");
 
 }
 }

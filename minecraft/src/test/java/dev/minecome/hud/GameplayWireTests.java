@@ -28,6 +28,15 @@ public final class GameplayWireTests {
         rejects(()->HudInputProtocol.decode(b.array(),id,0,1000,0,true));
         rejects(()->HudInputProtocol.decode(b.array(),id,0,1251,0,false,true));
         rejects(()->HudInputProtocol.decode(b.array(),id,0,1000,0,true,true));
+        b.put(7,(byte)'4');b.putInt(8,4);
+        check(HudInputProtocol.decode(b.array(),id,0,1000,0,true,true).hostState()==1);
+        rejects(()->HudInputProtocol.decode(b.array(),id,0,1000,0,false,true));
+        rejects(()->HudInputProtocol.decode(b.array(),id,0,1000,0,true,false));
+        b.putLong(80,1);b.putInt(100,1);
+        b.position(HudInputProtocol.HEADER_BYTES);b.putLong(1).putLong(1000).putInt(1).putInt(0x57);
+        check(HudInputProtocol.decode(b.array(),id,0,1000,0,true,true).events().getFirst().code()==0x57);
+        rejects(()->HudInputProtocol.validateEvent(new HudInputProtocol.Event(1,1000,1,0x57,0,0,0),1000,true,false));
+        b.putLong(80,0);b.putInt(100,0);
         b.put(7,(byte)'1');b.putInt(8,1);
         rejects(()->HudInputProtocol.decode(b.array(),id,0,1000,0,false,true));
         check(HudInputProtocol.decode(b.array(),id,0,1000,0,false).hostState()==1);

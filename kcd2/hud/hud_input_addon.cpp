@@ -32,6 +32,9 @@
 #if defined(MINECOME_HUD_PHYSICAL_MOVEMENT) && defined(MINECOME_HUD_WORLD_CLICKS) && !defined(MINECOME_HUD_WALKING_AIMED)
 #error Movement and world-click profiles may only be combined by the explicit walking aimed target.
 #endif
+#if defined(MINECOME_HUD_GAMEPLAY_MOVEMENT) && (!defined(MINECOME_HUD_GAMEPLAY) || !defined(MINECOME_HUD_PHYSICAL_MOVEMENT) || !defined(MINECOME_HUD_SELECTIVE_MOUSE) || defined(MINECOME_HUD_WORLD_CLICKS))
+#error Gameplay movement requires its explicit gameplay, physical movement and selective inventory profile without world clicks.
+#endif
 #ifdef MINECOME_HUD_PHYSICAL_MOVEMENT
 #include "movement_forwarding.hpp"
 #endif
@@ -252,7 +255,9 @@ struct Service {
     explicit Service(HMODULE module) {
         const auto path = st::module_path(module); const auto slash = path.find_last_of(L"/\\");
         if (slash != path.npos) config = path.substr(0,slash+1)+
-#ifdef MINECOME_HUD_GAMEPLAY
+#ifdef MINECOME_HUD_GAMEPLAY_MOVEMENT
+            L"MineComeHudGameplayMovement.ini";
+#elif defined(MINECOME_HUD_GAMEPLAY)
             L"MineComeHudGameplay.ini";
 #elif defined(MINECOME_HUD_REPEAT_SESSION)
             L"MineComeHudWalkingRepeat.ini";
@@ -477,7 +482,9 @@ struct Service {
             receipt("arm","accepted",identity.run);
             ui::Writer inputs;
             bool input_created=inputs.create(identity
-#ifdef MINECOME_HUD_GAMEPLAY
+#ifdef MINECOME_HUD_GAMEPLAY_MOVEMENT
+                ,ui::Profile::gameplay_movement
+#elif defined(MINECOME_HUD_GAMEPLAY)
                 ,ui::Profile::gameplay
 #elif defined(MINECOME_HUD_PHYSICAL_MOVEMENT)
                 ,ui::Profile::movement
@@ -744,7 +751,7 @@ void capture_keyboard(api::effect_runtime *runtime,RuntimeState &state,bool comp
 #endif
     auto gate_controls=held;
 #ifdef MINECOME_HUD_GAMEPLAY
-    // Native walking is never forwarded, but cannot be held during takeover.
+    // No movement, modifier or jump control may be held during takeover.
     for(const auto key:std::array<std::uint32_t,7>{'W','A','S','D',VK_SPACE,VK_SHIFT,VK_CONTROL})
         if(runtime->is_key_down(key))gate_controls|=1u<<31;
 #endif
@@ -804,13 +811,25 @@ void capture_keyboard(api::effect_runtime *runtime,RuntimeState &state,bool comp
     const bool toggle_edge=!state.observation_recovery.pending()&&((held&~state.previous_keys)&((1u<<9)|(1u<<10)))!=0;
     const auto desired=state.selective_mode.update(step==ui::KeyboardGate::Step::active&&peer->state==1,
         state.transition,peer->ack.screen,state.uploaded_screen,toggle_edge,mouse_buttons,
+#ifdef MINECOME_HUD_GAMEPLAY_MOVEMENT
+        // Once neutral world passthrough is established, ordinary native clicks
+        // must not reacquire full mouse capture or interrupt walking. Inventory
+        // still owns a mouse lease until held buttons drain on screen close.
+        state.gameplay_keyboard_leased&&!state.mouse_leased);
+#else
         state.selective_lease.allows(mouse::Mode::buttons));
+#endif
 #ifdef MINECOME_HUD_GAMEPLAY
-    // Persistent UI foundation: KCD owns movement/look/world mouse outside UI.
-    // The proxy absorbs only slots/E/Esc there, before any edge reaches KCD.
+    // UI-only gameplay preserves native walking. The separate movement profile
+    // captures the keyboard in-world too; neither captures native camera axes.
     const bool full_capture=desired==mouse::Mode::full;
+#ifdef MINECOME_HUD_GAMEPLAY_MOVEMENT
+    constexpr auto keyboard_mode=gameplay_keyboard::Mode::full;
+#else
+    const auto keyboard_mode=full_capture?gameplay_keyboard::Mode::full:gameplay_keyboard::Mode::ui;
+#endif
     if(!gameplay_keyboard_api->request(reinterpret_cast<std::uintptr_t>(state.window),reinterpret_cast<std::uintptr_t>(runtime),100,
-        full_capture?gameplay_keyboard::Mode::full:gameplay_keyboard::Mode::ui)){
+        keyboard_mode)){
         close_keyboard(runtime,ui::CloseCause::eligibility_lost);release_mouse(runtime,state);return;
     }
     state.gameplay_keyboard_leased=true;
@@ -893,7 +912,11 @@ void capture_keyboard(api::effect_runtime *runtime,RuntimeState &state,bool comp
     // Movement must release before the UI toggle, including simultaneous W+E.
     // Wait for both actual guest screen and its composed pixels to agree.
     const bool movement_ready=!state.transition&&!toggle_edge&&peer->ack.screen==0&&state.uploaded_screen==0&&
+#ifdef MINECOME_HUD_GAMEPLAY_MOVEMENT
+        state.gameplay_keyboard_leased&&!full_capture;
+#else
         state.selective_lease.allows(mouse::Mode::buttons);
+#endif
     if(!queue_movement(state,state.movement.update(movement_ready,held>>ui_key_count),utc)){
         close_keyboard(runtime,ui::CloseCause::mailbox_overflow);release_mouse(runtime,state);return;
     }
@@ -1254,7 +1277,10 @@ void on_begin(api::effect_runtime *runtime, api::command_list *commands, api::re
     } catch (...) { fail(state,5); hide(runtime,state); }
 }
 } // namespace
-#if defined(MINECOME_HUD_GAMEPLAY)
+#if defined(MINECOME_HUD_GAMEPLAY_MOVEMENT)
+extern "C" __declspec(dllexport) const char *NAME="MineCome continuous Minecraft HUD and walking";
+extern "C" __declspec(dllexport) const char *DESCRIPTION="Opt-in gameplay input v4 with v5 keyboard capture; neutral activation, F8 stop, WASD/Space and inventory forwarding. KCD camera and world mouse remain native; no world-click bridge or demo timer.";
+#elif defined(MINECOME_HUD_GAMEPLAY)
 extern "C" __declspec(dllexport) const char *NAME="MineCome continuous Minecraft HUD and inventory";
 extern "C" __declspec(dllexport) const char *DESCRIPTION="Opt-in gameplay v3 with v5 per-key capture; neutral activation, F8 stop and short peer leases. KCD owns world movement and mouse outside inventory; no demo timer.";
 #elif defined(MINECOME_HUD_REPEAT_SESSION)

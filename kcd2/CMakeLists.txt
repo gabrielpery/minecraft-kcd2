@@ -40,6 +40,11 @@ if(BUILD_TESTING)
     if(EXISTS "${MINECOME_TEST_PYTHON}" AND EXISTS "${MINECOME_LUA_LIBRARY}")
         add_test(NAME lua_stone_sink_lifecycle COMMAND "${MINECOME_TEST_PYTHON}"
             "${CMAKE_CURRENT_SOURCE_DIR}/tests/run_lua_sink_tests.py" --lua-library "${MINECOME_LUA_LIBRARY}")
+        add_test(NAME lua_gameplay_movement_lifecycle COMMAND "${MINECOME_TEST_PYTHON}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/run_lua_sink_tests.py" --lua-library "${MINECOME_LUA_LIBRARY}"
+            --module "${CMAKE_CURRENT_SOURCE_DIR}/gameplay/movement_session.lua"
+            --tests "${CMAKE_CURRENT_SOURCE_DIR}/tests/lua_gameplay_movement_tests.lua")
+        set_tests_properties(lua_gameplay_movement_lifecycle PROPERTIES TIMEOUT 15)
     endif()
     add_executable(stone_mirror_tests tests/stone_mirror_tests.cpp)
     target_link_libraries(stone_mirror_tests PRIVATE minecome_stone_mirror)

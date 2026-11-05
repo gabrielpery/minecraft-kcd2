@@ -19,6 +19,10 @@ loom {
                     vmArgs '-Dminecome.gameplayStandalone=true'
                 if (project.hasProperty('minecomeGameplayFixture'))
                     vmArgs "-Dminecome.gameplayFixture=${project.property('minecomeGameplayFixture')}"
+                if (project.hasProperty('minecomeGameplayMovement'))
+                    vmArgs '-Dminecome.gameplayMovement=true'
+                if (project.hasProperty('minecomeGameplayGroundFile'))
+                    vmArgs "-Dminecome.gameplayGroundFile=${project.property('minecomeGameplayGroundFile')}"
             }
             if (project.hasProperty('minecomeHudAimedBridgeLab'))
                 vmArgs '-Dminecome.hudAimedBridgeLab=true'
@@ -375,4 +379,9 @@ tasks.register('gameplayWireTest', JavaExec) {
     classpath = sourceSets.test.runtimeClasspath
     mainClass = 'dev.minecome.hud.GameplayWireTests'
 }
-tasks.named('check') { dependsOn 'gameplayWorldTest', 'gameplayWireTest' }
+tasks.register('gameplayMovementTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'dev.minecome.terrain.GameplayMovementTests'
+}
+tasks.named('check') { dependsOn 'gameplayWorldTest', 'gameplayWireTest', 'gameplayMovementTest' }

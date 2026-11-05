@@ -24,10 +24,22 @@ function Assert-MineComeGameplayFile([string]$Path,$Record){
     $null=Resolve-MineComeGameplayPath $Path
     if(-not(Test-Path -LiteralPath $Path -PathType Leaf) -or (Get-Item -LiteralPath $Path).Length -ne $Record.bytes -or (Get-MineComeGameplayHash $Path) -cne $Record.sha256){throw "Exact owned gameplay file differs: $Path"}
 }
+function Get-MineComeGameplayProfilePath([switch]$Movement){
+    return (Join-Path $script:mcGameplayRoot $(if($Movement){'config/hud-gameplay-movement-profile-v5.json'}else{'config/hud-gameplay-profile-v5.json'}))
+}
+function Get-MineComeGameplayInputProtocol($Profile){
+    if($Profile.kind -ceq 'minecome_gameplay_movement_hud_profile_v5'){return 4}
+    if($Profile.kind -ceq 'minecome_gameplay_hud_profile_v5'){return 3}
+    throw 'Unknown gameplay profile protocol.'
+}
 function Get-MineComeGameplayProfile {
-    $profilePath=Join-Path $script:mcGameplayRoot 'config/hud-gameplay-profile-v5.json';$p=Read-MineComeGameplayJson $profilePath
-    if($p.schema -ne 1 -or $p.kind -cne 'minecome_gameplay_hud_profile_v5' -or $p.tools_exe_sha256 -cne 'a32d077e6b54e5cd0c5a5f3194f473779706ff266a711e4745ccdb598843340a' -or
-       $p.upstream_commit -cne '18deaa52de0c425a78b329e9cb3c497281cd00ec' -or $p.arm_config_relative_path -cne 'minecome-hud/addons/MineComeHudGameplay.ini'){throw 'Unknown gameplay profile.'}
+    param([switch]$Movement)
+    $profilePath=Get-MineComeGameplayProfilePath -Movement:$Movement;$p=Read-MineComeGameplayJson $profilePath
+    $kind=if($Movement){'minecome_gameplay_movement_hud_profile_v5'}else{'minecome_gameplay_hud_profile_v5'}
+    $arm=if($Movement){'minecome-hud/addons/MineComeHudGameplayMovement.ini'}else{'minecome-hud/addons/MineComeHudGameplay.ini'}
+    if($p.schema -ne 1 -or $p.kind -cne $kind -or $p.tools_exe_sha256 -cne 'a32d077e6b54e5cd0c5a5f3194f473779706ff266a711e4745ccdb598843340a' -or
+       $p.upstream_commit -cne '18deaa52de0c425a78b329e9cb3c497281cd00ec' -or $p.arm_config_relative_path -cne $arm){throw 'Unknown gameplay profile.'}
+    if($Movement -and $p.ui_input_protocol -ne 4){throw 'Movement profile requires input protocol 4.'}
     Assert-MineComeGameplayRecords $p.files
     foreach($name in @('build_receipt_sha256','previous_manifest_sha256','previous_receipt_sha256')){if($p.$name -cnotmatch '^[0-9a-f]{64}$'){throw "Unfrozen gameplay pin: $name"}}
     foreach($name in @('build_receipt','addon_source','previous_bundle')){if([IO.Path]::IsPathRooted($p.$name) -or $p.$name -match '(^|[\\/])\.\.([\\/]|$)'){throw 'Profile path must be relative to this workspace.'}}
@@ -57,16 +69,19 @@ function Assert-MineComeGameplayNoArms([string]$Bin,[string]$AllowedTemporaryPat
 }
 function Assert-MineComeGameplayBundle([string]$BundleDirectory,$Profile){
     $bundle=Resolve-MineComeGameplayPath $BundleDirectory -InRuntime;$m=Read-MineComeGameplayJson (Join-Path $bundle 'bundle.json')
-    if($m.schema -ne 3 -or $m.kind -cne 'minecome_gameplay_hud_bundle_v3' -or $m.stream_protocol -ne 3 -or $m.ui_input_protocol -ne 3 -or $m.gameplay_keyboard_api -ne 5 -or
-       $m.tools_only -ne $true -or $m.arm_config_relative_path -cne $Profile.arm_config_relative_path -or $m.profile_sha256 -cne (Get-MineComeGameplayHash (Join-Path $script:mcGameplayRoot 'config/hud-gameplay-profile-v5.json'))){throw 'Gameplay bundle profile differs.'}
+    $inputProtocol=Get-MineComeGameplayInputProtocol $Profile
+    $profilePath=Get-MineComeGameplayProfilePath -Movement:($inputProtocol -eq 4)
+    if($m.schema -ne 3 -or $m.kind -cne 'minecome_gameplay_hud_bundle_v3' -or $m.stream_protocol -ne 3 -or $m.ui_input_protocol -ne $inputProtocol -or $m.gameplay_keyboard_api -ne 5 -or
+       $m.tools_only -ne $true -or $m.arm_config_relative_path -cne $Profile.arm_config_relative_path -or $m.profile_sha256 -cne (Get-MineComeGameplayHash $profilePath)){throw 'Gameplay bundle profile differs.'}
     Assert-MineComeGameplayRecords $m.files
     foreach($r in $Profile.files){$record=@($m.files|Where-Object{$_.path -ceq $r.path})[0];if($record.sha256 -cne $r.sha256 -or $record.bytes -ne $r.bytes){throw "Gameplay bundle pin differs: $($r.path)"};Assert-MineComeGameplayFile (Join-Path $bundle $r.path) $r}
     if(Test-Path -LiteralPath (Join-Path $bundle $Profile.arm_config_relative_path)){throw 'Prepared gameplay bundle must remain unarmed.'}
     return $m
 }
 function Get-MineComeGameplayInstallation {
-    param([string]$BundleDirectory=(Join-Path $script:mcGameplayRoot 'runtime/hud-compositor-gameplay'),[switch]$RequireUnarmed)
-    $p=Get-MineComeGameplayProfile;$bundle=Resolve-MineComeGameplayPath $BundleDirectory -InRuntime;$m=Assert-MineComeGameplayBundle $bundle $p;$bin=Get-MineComeGameplayToolsBin $p
+    param([string]$BundleDirectory,[switch]$RequireUnarmed,[switch]$Movement)
+    if(-not $BundleDirectory){$BundleDirectory=Join-Path $script:mcGameplayRoot $(if($Movement){'runtime/hud-compositor-gameplay-movement'}else{'runtime/hud-compositor-gameplay'})}
+    $p=Get-MineComeGameplayProfile -Movement:$Movement;$bundle=Resolve-MineComeGameplayPath $BundleDirectory -InRuntime;$m=Assert-MineComeGameplayBundle $bundle $p;$bin=Get-MineComeGameplayToolsBin $p
     $receipt=Read-MineComeGameplayJson (Join-Path $bundle 'installed.json')
     if($receipt.schema -ne 1 -or $receipt.kind -cne 'minecome_gameplay_hud_install_v1' -or $receipt.status -cne 'installed_unarmed' -or
        $receipt.profile_sha256 -cne $m.profile_sha256 -or $receipt.target_exe -ine (Join-Path $bin 'KingdomCome.exe') -or $receipt.bundle -ine $bundle -or

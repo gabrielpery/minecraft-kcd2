@@ -1,0 +1,102 @@
+#Requires -Version 7.3
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Standalone pose-file and worker transport fixture; no game or network calls.
+$ErrorActionPreference='Stop';Set-StrictMode -Version Latest
+. (Join-Path $PSScriptRoot 'GameplayMovementHost.ps1')
+$directory=Join-Path ([IO.Path]::GetTempPath()) ('minecome-gameplay-host-test-'+[guid]::NewGuid().ToString('N'))
+$null=New-Item -ItemType Directory -Path (Join-Path $directory 'scripts')
+$poseFile=Join-Path $directory 'pose.json';$viewFile=Join-Path $directory 'view.json';$gameLog=Join-Path $directory 'game.log'
+$identity=[pscustomobject]@{Run='a'*32;WorldId='11111111-1111-4111-8111-111111111111';Pid=123;Start='133456789012345678';PatchRun='b'*32;PatchHash='c'*64}
+$bounds=[pscustomobject]@{MinX=-10.;MaxX=10.;MinY=-10.;MaxY=10.;MinZ=-10.;MaxZ=10.}
+$now=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+$valid=[ordered]@{schema=1;kind='minecome_gameplay_pose_v1';run=$identity.Run;world_id=$identity.WorldId;target_pid=$identity.Pid;target_start_filetime=$identity.Start;patch_run=$identity.PatchRun;patch_sha256=$identity.PatchHash;seq=1;utc_ms=$now;source_ms=0;position=@{x=1.;y=2.;z=3.}}
+$passed=0;$pipeline=$null;$runspace=$null;$cancel=$null
+function Require([bool]$Condition,[string]$Message){if(-not $Condition){throw $Message}}
+function Write-Pose($Value){$Value|ConvertTo-Json -Depth 6 -Compress|Set-Content -LiteralPath $poseFile -Encoding utf8NoBOM}
+function Copy-Pose{$copy=@{};foreach($key in $valid.Keys){$copy[$key]=$valid[$key]};return $copy}
+function Refuses([scriptblock]$Action){$threw=$false;try{& $Action|Out-Null}catch{$threw=$true};Require $threw 'Invalid pose was accepted.'}
+try{
+    Write-Pose $valid
+    $p=Read-GameplayMovementPose $poseFile $identity $bounds 0 -1 $now
+    Require ($p.seq -eq 1 -and $p.position.z -eq 3) 'Fresh pose read differs.';$passed++
+    Require ($null -eq (Read-GameplayMovementPose $poseFile $identity $bounds 1 0 $now)) 'Duplicate pose was renewed.'
+    Require ($null -eq (Read-GameplayMovementPose $poseFile $identity $bounds 0 -1 ($now+251))) 'Stale pose was renewed.';$passed++
+    foreach($change in @(@{run='d'*32},@{target_pid=999},@{seq=0},@{utc_ms=$now+51},@{source_ms=86400001},@{schema='1'},@{target_start_filetime=123})){
+        $v=Copy-Pose;foreach($key in $change.Keys){$v[$key]=$change[$key]};Write-Pose $v
+        Refuses {Read-GameplayMovementPose $poseFile $identity $bounds 0 -1 $now}
+    };$passed++
+    Write-Pose $valid;Refuses {Read-GameplayMovementPose $poseFile $identity $bounds 2 5 $now}
+    $v=Copy-Pose;$v.seq=2;Write-Pose $v;Refuses {Read-GameplayMovementPose $poseFile $identity $bounds 1 0 $now};$passed++
+    $v=Copy-Pose;$v.position=@{x=11.;y=2.;z=3.};Write-Pose $v
+    Refuses {Read-GameplayMovementPose $poseFile $identity $bounds 0 -1 $now};$passed++
+    $json=($valid|ConvertTo-Json -Depth 6 -Compress).Replace('"seq":1','"seq":1,"seq":2')
+    [IO.File]::WriteAllText($poseFile,$json);Refuses {Read-GameplayMovementPose $poseFile $identity $bounds 0 -1 $now};$passed++
+    [IO.File]::WriteAllText($poseFile,' '*4097);Refuses {Read-GameplayMovementPose $poseFile $identity $bounds 0 -1 $now};$passed++
+
+    # Exercise the actual Windows sharing conflict. Failed attempts retain the
+    # original bytes/UTC and bounded retry succeeds after the reader releases.
+    $replaceTarget=Join-Path $directory 'sharing-view.json';$replaceTemp=$replaceTarget+'.tmp'
+    [IO.File]::WriteAllText($replaceTarget,'old');$original='{"utc_ms":123,"seq":4}'
+    [IO.File]::WriteAllText($replaceTemp,$original)
+    $held=[IO.FileStream]::new($replaceTarget,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read)
+    try{
+        $watch=[Diagnostics.Stopwatch]::StartNew();Refuses {Publish-GameplayMovementView $replaceTemp $replaceTarget -RetryMilliseconds 25}
+        Require ($watch.ElapsedMilliseconds -lt 500 -and [IO.File]::ReadAllText($replaceTemp) -ceq $original) 'Sharing retry was unbounded or rewrote original capture.'
+    }finally{$held.Dispose()}
+    $held=[IO.FileStream]::new($replaceTarget,[IO.FileMode]::Open,[IO.FileAccess]::Read,[IO.FileShare]::Read)
+    $release=[PowerShell]::Create();$signal=[Collections.Concurrent.ConcurrentDictionary[string,object]]::new()
+    try{
+        $null=$release.AddScript('param($held,$signal);$signal["ready"]=$true;Start-Sleep -Milliseconds 40;$held.Dispose()').AddArgument($held).AddArgument($signal)
+        $releaseAsync=$release.BeginInvoke();$until=[Diagnostics.Stopwatch]::StartNew()
+        while(-not $signal.ContainsKey('ready') -and $until.ElapsedMilliseconds -lt 1000){Start-Sleep -Milliseconds 1}
+        Require ($signal.ContainsKey('ready')) 'Sharing release worker did not start.'
+        Publish-GameplayMovementView $replaceTemp $replaceTarget
+        $null=$release.EndInvoke($releaseAsync)
+        Require ([IO.File]::ReadAllText($replaceTarget) -ceq $original -and -not [IO.File]::Exists($replaceTemp)) 'Retried replacement lost original capture or atomic temp.'
+    }finally{$held.Dispose();$release.Dispose()};$passed++
+
+    # The real worker runs in a separate runspace against a simulated console/log.
+    # Only this private fixture overrides the exact-process gate and transport.
+    $helper=(Join-Path $PSScriptRoot 'GameplayMovementHost.ps1').Replace("'","''")
+    $mock=@'
+. '__HELPER__'
+function Assert-MineComeProbeContext($Context){}
+$script:fixtureSequence=0L
+function Invoke-MineComeToolsRequest([string]$PathAndQuery,[int]$TimeoutMilliseconds){
+    $body=[Uri]::UnescapeDataString($PathAndQuery.Substring($PathAndQuery.IndexOf('command=')+8))
+    $r=[ordered]@{schema=1;run=$Identity.Run;event='';result='';seq=0;active=$true;camera_basis_valid=$true;forward=@{x=0.;y=1.;z=0.};up=@{x=0.;y=0.;z=1.}}
+    if($body.Contains('GameplayMovementBegin')){$r.event='begin';$r.result='ready'}
+    elseif($body.Contains('GameplayMovementEnd')){$r.event='terminal';$r.result='explicit_stop';$r.active=$false}
+    elseif($body -match "GameplayMovementSample\('[a-f0-9]+',(\d+)\)"){$r.event='view';$r.result='sampled';$r.seq=[long]$Matches[1]}
+    if($r.event){[IO.File]::AppendAllText($Context.GameLog,('[MineComeGameplayMovement] '+($r|ConvertTo-Json -Depth 5 -Compress)+"`n"))}
+    $script:fixtureSequence++
+    $p=[ordered]@{schema=1;kind='minecome_gameplay_pose_v1';run=$Identity.Run;world_id=$Identity.WorldId;target_pid=$Identity.Pid;target_start_filetime=$Identity.Start;patch_run=$Identity.PatchRun;patch_sha256=$Identity.PatchHash;seq=$script:fixtureSequence;utc_ms=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds();source_ms=$script:fixtureSequence*10;position=@{x=1.;y=2.;z=3.}}
+    [IO.File]::WriteAllText($PoseFile,($p|ConvertTo-Json -Depth 5 -Compress))
+}
+'@
+    [IO.File]::WriteAllText((Join-Path $directory 'scripts/GameplayMovementHost.ps1'),$mock.Replace('__HELPER__',$helper))
+    [IO.File]::WriteAllText($gameLog,'');[IO.File]::Delete($poseFile)
+    $shared=[Collections.Concurrent.ConcurrentDictionary[string,object]]::new();$cancel=[Threading.CancellationTokenSource]::new()
+    $runspace=[RunspaceFactory]::CreateRunspace();$runspace.Open();$pipeline=[PowerShell]::Create();$pipeline.Runspace=$runspace
+    $expires=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()+5000
+    $null=$pipeline.AddScript((Get-GameplayMovementWorker).ToString()).AddArgument([pscustomobject]@{GameLog=$gameLog}).AddArgument($identity).AddArgument($bounds).AddArgument($poseFile).AddArgument($viewFile).AddArgument($expires).AddArgument(0L).AddArgument($shared).AddArgument($cancel.Token).AddArgument($directory)
+    $async=$pipeline.BeginInvoke();$watch=[Diagnostics.Stopwatch]::StartNew()
+    do{
+        if($shared.ContainsKey('Snapshot')){$s=$shared['Snapshot'];if($s.Stopped -or ($s.ViewCount -ge 3 -and $s.PoseCount -ge 3)){break}}
+        Start-Sleep -Milliseconds 10
+    }while($watch.ElapsedMilliseconds -lt 3000 -and -not $async.IsCompleted)
+    $cancel.Cancel();Require ($async.AsyncWaitHandle.WaitOne(2000)) 'Fixture worker cleanup timed out.'
+    $null=$pipeline.EndInvoke($async)
+    Require (-not $pipeline.HadErrors) ('Worker errors: '+[string]$pipeline.Streams.Error)
+    $s=$shared['Snapshot'];Require ($s.Stopped -and -not $s.Failure) ('Worker failed: '+$s.Failure)
+    Require ($s.ViewCount -ge 3 -and $s.PoseCount -ge 3) 'Worker did not continue refreshing pose and view.'
+    Require ($s.Terminal.result -eq 'explicit_stop') 'Worker omitted native stop acknowledgement.'
+    $view=Get-Content -LiteralPath $viewFile -Raw|ConvertFrom-Json
+    Require ($view.run -ceq $identity.Run -and $view.source_kind -ceq 'live_kcd_hud_view_v1' -and $view.utc_ms -le [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()) 'Published live-view contract differs.'
+    Require (-not [IO.File]::Exists($viewFile+'.'+$identity.Run+'.tmp')) 'Atomic publication temp file survived.';$passed++
+    Write-Output "PASS $passed gameplay host contract/worker checks (simulated transport; no game/network)"
+}finally{
+    if($cancel){$cancel.Cancel()};if($pipeline){$pipeline.Dispose()};if($runspace){$runspace.Dispose()};if($cancel){$cancel.Dispose()}
+    $resolved=[IO.Path]::GetFullPath($directory);$temp=[IO.Path]::GetFullPath([IO.Path]::GetTempPath())
+    if($resolved.StartsWith($temp,[StringComparison]::OrdinalIgnoreCase) -and [IO.Path]::GetFileName($resolved).StartsWith('minecome-gameplay-host-test-')){Remove-Item -LiteralPath $resolved -Recurse -Force}
+}

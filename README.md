@@ -23,13 +23,19 @@ required goals; the current prototype has not implemented most of them yet.
 work, but this is not yet a complete playable mod or a ready-to-install release.
 The public repository contains source, build scripts and development procedures.
 
-The separate [gameplay session foundation](docs/GAMEPLAY_SESSION.md) now keeps a
-Minecraft world between launches. An automated two-launch check preserves inventory,
-Survival mode, health and hunger, and executes vanilla game-mode commands. A new
-HUD/inventory profile replaces the demo countdown with automatic activation and
-explicit stop/save. Its KCD integration is still experimental: Minecraft walking,
-terrain, blocks, command typing and flight have not yet moved into this sustained
-path. The existing bounded walking/block tests remain available.
+The separate [gameplay session](docs/GAMEPLAY_SESSION.md) keeps a Minecraft world
+between launches. An automated two-launch check preserves inventory, Survival
+mode, health and hunger, and executes vanilla game-mode commands. Its HUD/inventory
+profile replaces the demo countdown with automatic activation and explicit
+stop/save. An additional `-Movement` profile now implements Minecraft-authoritative
+walking on one captured 8×8 metre KCD2 terrain patch, retaining its coordinate
+origin and the saved player location between launches. This path has no timed
+return to the origin or 15-second walking cutoff; it pauses at the captured edge.
+Automatic walking, inventory suppression and saved-location resume pass in actual
+Minecraft. A 40-second KCD2 check passes sustained attachment/HUD and cleanup;
+physical walking acceptance in this new profile remains pending. Blocks,
+command typing from KCD2, Steve rendering, combat and flight are still unfinished
+in this path. The existing bounded walking/block tests remain available.
 
 The new [repeat-session development profile](kcd2/MOVEMENT-LAB.md#repeat-sessions-in-one-kcd-process)
 is implemented and compiled, with automated cleanup/rearm checks passing.
@@ -84,7 +90,7 @@ three pre-captured tiles. Admission now works in the physical walking controller
 automatic Minecraft test with blocks and inventory: both sides cross X=8.837m and
 return, the owned stone survives admission, and all 190 imported cells stay unchanged.
 Native replay support for this combined profile is implemented but its live run is
-pending. Repeated terrain acquisition and a sustained gameplay session remain unfinished.
+pending. Repeated terrain acquisition and sustained block gameplay remain unfinished.
 
 The separate jump diagnostic currently exposes a temporary KCD camera-height
 deviation during landing; it is not counted as a passing walking check.
