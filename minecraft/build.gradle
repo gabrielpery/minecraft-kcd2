@@ -27,6 +27,8 @@ loom {
                     vmArgs '-Dminecome.gameplayExplore=true'
                 if (project.hasProperty('minecomeGameplayChat'))
                     vmArgs '-Dminecome.gameplayChat=true'
+                if (project.hasProperty('minecomeGameplayFlight'))
+                    vmArgs '-Dminecome.gameplayFlight=true'
                 if (project.hasProperty('minecomeGameplayGroundFile'))
                     vmArgs "-Dminecome.gameplayGroundFile=${project.property('minecomeGameplayGroundFile')}"
             }

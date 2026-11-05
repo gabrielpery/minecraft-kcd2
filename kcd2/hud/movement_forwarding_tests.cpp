@@ -28,7 +28,7 @@ void contract(){
         check(!ui::valid_event({1101,ui::Kind::key_up,key},1000,ui::Profile::movement),"v2 future bound");
         check(!ui::valid_event({1000,ui::Kind::key_down,key,.1f},1000,ui::Profile::movement),"v2 no coordinate payload");
     }
-    check(!ui::valid_event({1000,ui::Kind::move,0},1000,static_cast<ui::Profile>(3)),"unknown profile fails");
+    check(!ui::valid_event({1000,ui::Kind::move,0},1000,static_cast<ui::Profile>(7)),"unknown profile fails");
     const ui::Identity id{"0123456789abcdef0123456789abcdef",2,3,4,5,10000};
     std::array<std::uint8_t,128> old{},movement{};
     ui::encode_host(old,id,8,1000,1);ui::encode_host(movement,id,8,1000,1,ui::Profile::movement);

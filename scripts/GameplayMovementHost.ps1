@@ -95,7 +95,7 @@ function Read-GameplayMovementPose([string]$Path,$Identity,$Bounds,[long]$LastSe
 }
 function Get-GameplayMovementWorker {
     return {
-        param($Context,$Identity,$Bounds,[string]$PoseFile,[string]$ViewFile,[long]$ExpiresUtcMs,[long]$LogOffset,$Shared,$Token,[string]$ProjectRoot,$BlocksState,$TerrainState)
+        param($Context,$Identity,$Bounds,[string]$PoseFile,[string]$ViewFile,[long]$ExpiresUtcMs,[long]$LogOffset,$Shared,$Token,[string]$ProjectRoot,$BlocksState,$TerrainState,[bool]$Flight=$false)
         $ErrorActionPreference='Stop';Set-StrictMode -Version Latest
         . (Join-Path $ProjectRoot 'scripts/GameplayMovementHost.ps1')
         $run=$Identity.Run;$stopwatch=[Diagnostics.Stopwatch]::StartNew();$limit=$ExpiresUtcMs-[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
@@ -145,7 +145,8 @@ function Get-GameplayMovementWorker {
             $log=[IO.FileStream]::new($Context.GameLog,[IO.FileMode]::Open,[IO.FileAccess]::Read,([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete),1,[IO.FileOptions]::None)
             $remaining=[Math]::Min(86400000,$limit)
             $started=$true
-            Send (RejectWrapper "MineCome.GameplayMovementBegin('$run',$remaining,$(Numeric $Bounds.MinX),$(Numeric $Bounds.MaxX),$(Numeric $Bounds.MinY),$(Numeric $Bounds.MaxY),$(Numeric $Bounds.MinZ),$(Numeric $Bounds.MaxZ))")
+            $flightArgument=if($Flight){',true'}else{''}
+            Send (RejectWrapper "MineCome.GameplayMovementBegin('$run',$remaining,$(Numeric $Bounds.MinX),$(Numeric $Bounds.MaxX),$(Numeric $Bounds.MinY),$(Numeric $Bounds.MaxY),$(Numeric $Bounds.MinZ),$(Numeric $Bounds.MaxZ)$flightArgument)")
             $until=$stopwatch.Elapsed.TotalMilliseconds+1000
             do{foreach($r in @(Receipts)){if($r.event -ceq 'begin'){$begin=$r}elseif($r.event -in @('rejected','terminal')){throw "Native gameplay begin rejected: $($r.result)"}};if($begin){break};Start-Sleep -Milliseconds 5}while($stopwatch.Elapsed.TotalMilliseconds -lt $until)
             if(-not $begin -or $begin.result -cne 'ready' -or -not $begin.active){throw 'No native gameplay begin acknowledgement.'}
@@ -233,7 +234,8 @@ function Get-GameplayMovementWorker {
     }
 }
 function Start-GameplayMovementHost {
-    param($Context,[string]$Run,[string]$WorldId,$Patch,[string]$PoseFile,[string]$ViewFile,[long]$ExpiresUtcMs,$Bounds,[switch]$Blocks,[switch]$Explore,[string]$TerrainCacheFile)
+    param($Context,[string]$Run,[string]$WorldId,$Patch,[string]$PoseFile,[string]$ViewFile,[long]$ExpiresUtcMs,$Bounds,[switch]$Blocks,[switch]$Explore,[string]$TerrainCacheFile,[switch]$Flight)
+    if($Flight){$Blocks=$true}
     if($Explore){$Blocks=$true;if(-not $TerrainCacheFile){throw 'Explore requires the owned terrain cache path.'}}
     $root=$Context.ProjectRoot
     if($Run -cnotmatch '^[0-9a-f]{32}$' -or $WorldId -cnotmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' -or $Patch.Run -cnotmatch '^[0-9a-f]{32}$' -or $Patch.Hash -cnotmatch '^[0-9a-f]{64}$'){throw 'Invalid gameplay host identity.'}
@@ -257,7 +259,7 @@ function Start-GameplayMovementHost {
     $cancellation=[Threading.CancellationTokenSource]::new();$runspace=[RunspaceFactory]::CreateRunspace();$pipeline=[PowerShell]::Create()
     try{
         $runspace.Open();$pipeline.Runspace=$runspace
-        $null=$pipeline.AddScript((Get-GameplayMovementWorker).ToString()).AddArgument($Context).AddArgument($identity).AddArgument($Bounds).AddArgument($PoseFile).AddArgument($ViewFile).AddArgument($ExpiresUtcMs).AddArgument((Get-Item -LiteralPath $Context.GameLog).Length).AddArgument($shared).AddArgument($cancellation.Token).AddArgument($root).AddArgument($blocksState).AddArgument($terrainState)
+        $null=$pipeline.AddScript((Get-GameplayMovementWorker).ToString()).AddArgument($Context).AddArgument($identity).AddArgument($Bounds).AddArgument($PoseFile).AddArgument($ViewFile).AddArgument($ExpiresUtcMs).AddArgument((Get-Item -LiteralPath $Context.GameLog).Length).AddArgument($shared).AddArgument($cancellation.Token).AddArgument($root).AddArgument($blocksState).AddArgument($terrainState).AddArgument([bool]$Flight)
         $async=$pipeline.BeginInvoke()
         return [pscustomobject]@{Runspace=$runspace;PowerShell=$pipeline;Async=$async;Shared=$shared;Cancellation=$cancellation;Probe=$probe;Final=$null;Disposed=$false;Bounds=$Bounds;Identity=$identity}
     }catch{$cancellation.Cancel();$pipeline.Dispose();$runspace.Dispose();$cancellation.Dispose();throw}

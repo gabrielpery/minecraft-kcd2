@@ -127,7 +127,7 @@ public final class GameplayWireTests {
             rejects(()->GameplayChatInput.glfw(code));
             rejects(()->HudInputProtocol.validateEvent(new HudInputProtocol.Event(1,1000,10,code,0,0,0),1000,true,true,true,true));
         }
-        for(int code:new int[]{0x54,0xbf})for(int kind:new int[]{1,2}){
+        for(int code:new int[]{0x54,0xbf,0x10,0x11})for(int kind:new int[]{1,2}){
             var event=new HudInputProtocol.Event(1,1000,kind,code,0,0,0);
             HudInputProtocol.validateEvent(event,1000,true,true,true,true);check(true);
             rejects(()->HudInputProtocol.validateEvent(event,1000,true,true,true));

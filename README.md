@@ -47,8 +47,15 @@ with `-Explore`. An automated two-launch Minecraft check passes typed mode/item
 commands, text editing, movement suppression and saved game mode/inventory.
 An automated live KCD2 check also typed and submitted `/gamemode survival` through
 the native bridge: vanilla confirmed the command and its hearts/hunger appeared.
-General blocks, full host collision, Steve, cross-game combat and flight remain
-unfinished. Bounded labs remain available.
+The [`-Flight` profile](docs/GAMEPLAY_SESSION.md#creative-flight) adds vanilla
+Creative flight: double-Space toggles flying, Space/Shift rises/descends, WASD moves
+and Ctrl sprints. Automated actual-Minecraft checks cover those controls, inventory
+and chat suppression, landing and airborne save/reopen. An automated live KCD2
+check also passes native takeoff, ascent, hovering, inventory and landing with the
+HUD visible. Flight currently uses captured terrain and owned stone collision,
+with an 18m height ceiling above the original capture origin. General blocks,
+complete host collision, Steve, cross-game combat and Elytra remain unfinished.
+Bounded labs remain available.
 
 The new [repeat-session development profile](kcd2/MOVEMENT-LAB.md#repeat-sessions-in-one-kcd-process)
 is implemented and compiled, with automated cleanup/rearm checks passing.
@@ -116,6 +123,7 @@ deviation during landing; it is not counted as a passing walking check.
 |---|---|
 | Minecraft stone in KCD2 | Actual Minecraft-derived stone appears and disappears in the official KCD2 development world after vanilla placement/breaking. |
 | Hotbar and Creative inventory | Minecraft's real UI is composited inside KCD2. Physical slot selection, inventory opening/closing, clicks, dragging and scrolling have passed live tests. |
+| Creative flight | Native KCD2 takeoff, ascent, hover, inventory and landing pass an automated live check with the HUD visible. Actual-Minecraft fixtures also verify descent, horizontal/sprint flight and airborne save/reopen. Limited to captured terrain/owned stone collision and an 18m ceiling; no Elytra yet. |
 | Camera and block controls together | KCD camera look works outside inventory and stays still inside it. Right-click/place and left-click/break work in one fixed nearby cell during a bounded live session. |
 | Minecraft aiming | After fixing KCD's default stone rotation, a live right-click places on the original block's top face and the next two clicks break both blocks, with matching Minecraft/KCD records and user confirmation. The standalone actual-Minecraft lab passes 28 targeting/control scenarios with synthetic host rays, including hotbar changes while an action finishes. |
 | Movement groundwork | In an automatic two-game test, KCD follows walking/jumping from the Minecraft HUD world over sampled KCD ground, then returns the player to the starting position. The same save completes its HUD/inventory sequence. This bounded scripted lab uses a standalone HUD receiver; the separate gameplay path removes its timed return. |
@@ -159,7 +167,7 @@ Live checks above use the **official KCD2 1.5.5 development build**. The native
 prerequisites. A successful development-world test does not establish retail support.
 
 General block rendering, full host collision, Steve, cross-game survival/combat,
-flight and multiplayer remain unfinished. KCD's own HUD
+Elytra and multiplayer remain unfinished. KCD's own HUD
 and health systems still exist; selective widget replacement and health-system
 integration are separate work. Sessions remain isolated, experimental single-player
 development worlds. Bounded labs keep their explicit time limits; the persistent

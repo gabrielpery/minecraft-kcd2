@@ -14,7 +14,7 @@ std::uint64_t get64(std::span<const std::uint8_t> b,std::size_t at) { std::uint6
 bool valid_key(std::uint32_t code,Profile profile) noexcept {
     if(profile!=Profile::ui&&profile!=Profile::movement&&profile!=Profile::gameplay&&profile!=Profile::gameplay_movement&&profile!=Profile::gameplay_blocks&&profile!=Profile::gameplay_chat)return false;
     return (code>=0x31&&code<=0x39)||code==0x45||code==0x1b||
-        (profile==Profile::gameplay_chat&&(code==0x54||code==0xbf))||
+        (profile==Profile::gameplay_chat&&(code==0x54||code==0xbf||code==0x10||code==0x11))||
         ((profile==Profile::movement||profile==Profile::gameplay_movement||profile==Profile::gameplay_blocks||profile==Profile::gameplay_chat)&&(code==0x57||code==0x41||code==0x53||code==0x44||code==0x20));
 }
 bool valid_text(std::uint32_t scalar) noexcept {

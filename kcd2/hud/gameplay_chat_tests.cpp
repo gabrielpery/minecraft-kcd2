@@ -20,8 +20,10 @@ void contract(){
         check(!ui::valid_event({1000,ui::Kind::text,'a'},1000,old),"old profile rejects text");
         check(!ui::valid_event({1000,ui::Kind::edit_down,8},1000,old),"old profile rejects edits");
         check(!ui::valid_key('T',old)&&!ui::valid_key(0xbf,old),"old opener allowlists remain frozen");
+        check(!ui::valid_key(0x10,old)&&!ui::valid_key(0x11,old),"old flight modifier allowlists remain frozen");
     }
     check(ui::valid_key('T',profile)&&ui::valid_key(0xbf,profile),"explicit chat openers");
+    check(ui::valid_key(0x10,profile)&&ui::valid_key(0x11,profile),"input6 flight modifiers");
     for(auto key:ui::movement_keys)check(ui::valid_key(key,profile),"chat retains physical movement");
     for(auto kind:{ui::Kind::world_button_down,ui::Kind::world_button_up})check(ui::valid_event({1000,kind,1},1000,profile),"chat retains world actions");
     for(unsigned scalar:{32u,126u,160u,0x263au,0x10000u,0x1f600u,0x10ffffu})check(ui::valid_event({1000,ui::Kind::text,scalar},1000,profile),"valid Unicode scalar");
@@ -126,5 +128,32 @@ void ownership(){
     check(mode.update(true,false,2,1,false,0,true)==minecome::selective::Mode::full,"chat requires full mouse capture");
     check(mode.update(true,true,0,1,false,0,true)==minecome::selective::Mode::full,"closing chat retains full capture until pixels agree");
 }
+void flight_movement(){
+    for(std::uint32_t mask=1;mask<128;++mask){
+        ui::MovementGate gate{127u};
+        check(!gate.update(true,mask).down&&!gate.armed(),"flight keys already held cannot acquire ownership");
+        gate.update(true,0);gate.update(true,0);
+        auto press=gate.update(true,mask);
+        check(press.down==mask&&!press.up&&!press.pulse,"all flight chord combinations forward once");
+        auto still=gate.update(true,mask);check(!still.down&&!still.up&&!still.pulse,"flight hold never fabricates repeats");
+        auto lost=gate.update(false,mask,16);check(lost.up==mask&&!lost.down&&!lost.pulse,"UI or lease loss releases modifiers and drops jump pulse");
+        check(!gate.update(true,mask).down&&!gate.armed(),"flight held across UI must release before reuse");
+        gate.update(true,0);gate.update(true,0);
+        check(gate.update(true,mask).down==mask,"flight controls resume after neutral");
+    }
+    ui::MovementGate pulse{127u};
+    check(!pulse.update(true,0,16).pulse&&!pulse.armed(),"jump pulse suppressed before ownership");
+    pulse.update(true,0);
+    auto first=pulse.update(true,0,16);
+    check(first.pulse==16&&!first.down&&!first.up&&!pulse.held(),"short jump yields one balanced pulse without held debt");
+    check(!pulse.update(true,0).pulse,"jump pulse does not repeat in next sample");
+    check(pulse.update(true,0,16).pulse==16,"second distinct jump pulse reaches vanilla double tap queue");
+    auto held=pulse.update(true,16,16);check(held.down==16&&!held.pulse,"held jump and release pulse cannot duplicate");
+    auto release=pulse.update(true,0,16);check(release.up==16&&!release.pulse,"held release cannot become second jump tap");
+    check(!pulse.update(false,0,16).pulse,"jump pulse cannot cross screen transition");
+    check(!pulse.update(true,0,16).pulse,"jump pulse cannot replay while ownership rearms");
+    ui::MovementGate legacy;legacy.update(true,0);legacy.update(true,0);
+    check(!legacy.update(true,96).down&&!legacy.held(),"legacy gate still masks flight modifiers");
 }
-int main(){try{contract();keyboard();unicode();released_taps();ownership();std::cout<<"HUD_GAMEPLAY_CHAT_TESTS checks="<<checks<<" PASS\n";return 0;}catch(const std::exception&e){std::cerr<<e.what()<<'\n';return 1;}}
+}
+int main(){try{contract();keyboard();unicode();released_taps();ownership();flight_movement();std::cout<<"HUD_GAMEPLAY_CHAT_TESTS checks="<<checks<<" PASS\n";return 0;}catch(const std::exception&e){std::cerr<<e.what()<<'\n';return 1;}}

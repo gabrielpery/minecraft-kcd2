@@ -71,6 +71,25 @@ test('navigation conflicts and explicit hard expiry stop without origin restorat
  f=fixture();f:begin(A,1000);f:pose(1,0,5,2,3);f:fire('tick',.01);f:fire('hard',1)
  f:lastReason('session_expired');eq(f.position.x,5);eq(f:activeTimers(),0)
 end)
+
+test('only explicit Creative flight permits vanilla sprint flight speed',function()
+ local f=fixture();eq(MineCome.GameplayMovementBegin(A,86400000,-10,10,-10,10,-10,10,'true'),false);eq(f.serial,0)
+ f:begin();f:pose(1,0,1,2,3);f:fire('tick',.001)
+ eq(f:pose(2,100,3.2,2,3),false);f:lastReason('source_velocity_invalid')
+ f=fixture();eq(MineCome.GameplayMovementBegin(A,86400000,-10,10,-10,10,-10,10,true),true)
+ f:pose(1,0,1,2,3);f:fire('tick',.001);eq(f:pose(2,100,3.2,2,3),true);f:fire('tick',.1)
+ eq(f:pose(3,200,6.3,2,3),false);f:lastReason('source_velocity_invalid')
+end)
+
+test('flight follows vertical rise hover and landing with normal lease cleanup',function()
+ local f=fixture();eq(MineCome.GameplayMovementBegin(A,86400000,-10,10,-10,10,-10,10,true),true)
+ f:pose(1,0,1,2,3);f:fire('tick',.001)
+ for i=2,11 do eq(f:pose(i,(i-1)*100,1,2,3+(i-1)*.25),true);f:fire('tick',.1)end
+ assert(math.abs(f.position.z-5.5)<.000001)
+ for i=12,21 do eq(f:pose(i,(i-1)*100,1,2,5.5),true);f:fire('tick',.1)end
+ for i=22,31 do eq(f:pose(i,(i-1)*100,1,2,5.5-(i-21)*.25),true);f:fire('tick',.1)end
+ assert(math.abs(f.position.z-3)<.000001);eq(MineCome.GameplayMovementEnd(A),true);eq(f:activeTimers(),0)
+end)
 test('native binding failure cleans up and preserves changed world position',function()
  local f=fixture();f:begin();f.write_error=true;f:pose(1,0,5,2,3);f:fire('tick',.01)
  f:lastReason('position_write_failed');eq(f.position.x,5);eq(f:activeTimers(),0)

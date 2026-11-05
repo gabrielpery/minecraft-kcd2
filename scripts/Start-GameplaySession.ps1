@@ -1,7 +1,7 @@
 # Sustained HUD/inventory, with an explicit Minecraft walking profile.
 [CmdletBinding()]
 param([string]$BundleDirectory,[string]$InstanceDirectory,[string]$JavaHome='C:/Program Files/Java/jdk-24',
- [ValidateRange(0,300)][int]$SmokeSeconds=0,[switch]$PreflightOnly,[switch]$Movement,[switch]$Blocks,[switch]$Explore,[switch]$Chat,[string]$GroundPatchFile)
+ [ValidateRange(0,300)][int]$SmokeSeconds=0,[switch]$PreflightOnly,[switch]$Movement,[switch]$Blocks,[switch]$Explore,[switch]$Chat,[switch]$Flight,[string]$GroundPatchFile)
 . (Join-Path $PSScriptRoot 'powershell7.ps1')
 if($PSVersionTable.PSVersion.Major -lt 7){
  $code=Invoke-MineComePowerShell7 -ScriptPath $PSCommandPath -BoundParameters $PSBoundParameters
@@ -12,6 +12,7 @@ $root=[IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
 . (Join-Path $PSScriptRoot 'GameplayHudProfile.ps1')
 . (Join-Path $PSScriptRoot 'KcdToolsProbeHelpers.ps1')
 . (Join-Path $PSScriptRoot 'GameplayMovementHost.ps1')
+if($Flight){$Chat=$true}
 if($Explore -or $Chat){$Blocks=$true};if($Blocks){$Movement=$true}
 if(-not $Movement -and $GroundPatchFile){throw 'GroundPatchFile requires Movement.'}
 if(-not $BundleDirectory){$BundleDirectory=Join-Path $root $(if($Chat){'runtime/hud-compositor-gameplay-chat'}elseif($Blocks){'runtime/hud-compositor-gameplay-blocks'}elseif($Movement){'runtime/hud-compositor-gameplay-movement'}else{'runtime/hud-compositor-gameplay'})}
@@ -66,6 +67,7 @@ try{
  if($Blocks){$arguments+='-Blocks'}
  if($Explore){$arguments+='-Explore'}
  if($Chat){$arguments+='-Chat'}
+ if($Flight){$arguments+='-Flight'}
  $quoted=@($arguments|ForEach-Object {ConvertTo-MineComeWindowsArgument $_})
  $helper=Start-Process -FilePath (Get-MineComePowerShell7) -ArgumentList ([string]::Join(' ',$quoted)) -WorkingDirectory $root -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $directory 'client.log') -RedirectStandardError (Join-Path $directory 'client-errors.log')
  $deadline=[DateTime]::UtcNow.AddSeconds(120);$ready=$null
@@ -83,7 +85,7 @@ try{
  Assert-MineComeProbeContext $context
  if($Movement){
   $guest=Read-MineComeGameplayJson (Join-Path $directory 'gameplay-ready.json')
-  $hostFollower=Start-GameplayMovementHost -Context $context -Run $run -WorldId $guest.world_id -Patch $patch -PoseFile (Join-Path $directory 'gameplay-pose.json') -ViewFile (Join-Path $directory 'host-view.json') -ExpiresUtcMs $expires -Blocks:$Blocks -Explore:$Explore -TerrainCacheFile (Join-Path $bindingDirectory 'coverage.json')
+  $hostFollower=Start-GameplayMovementHost -Context $context -Run $run -WorldId $guest.world_id -Patch $patch -PoseFile (Join-Path $directory 'gameplay-pose.json') -ViewFile (Join-Path $directory 'host-view.json') -ExpiresUtcMs $expires -Blocks:$Blocks -Explore:$Explore -TerrainCacheFile (Join-Path $bindingDirectory 'coverage.json') -Flight:$Flight
   $movementPath=Join-Path $directory 'gameplay-movement-ready.json';$until=[DateTime]::UtcNow.AddSeconds(12)
   while(-not (Test-Path -LiteralPath $movementPath)){
    $state=Get-GameplayMovementHostState $hostFollower
@@ -101,6 +103,7 @@ try{
  Write-Output "GAMEPLAY_READY run=$run stop_file=$(Join-Path $directory 'session.stop')"
  if($Explore){Write-Output 'Terrain grows automatically toward your movement, up to 64 captured tiles. Saved terrain and construction keep their original coordinates.'}
  if($Chat){Write-Output 'T opens Minecraft chat; / opens commands. Type a command and press Enter; Escape cancels. Walking and mining pause while chat is open.'}
+ if($Flight){Write-Output 'Creative flight: /gamemode creative, double-tap Space to toggle; Space rises, Shift descends, Ctrl sprints. Flight stays within captured terrain and its vertical limit; F8 saves airborne position.'}
  Write-Output $(if($Blocks){'Focus KCD2 with controls released. Walking, HUD and stone controls activate automatically: right-click places held stone, left-click mines owned stone. E opens inventory; F8 stops and saves. Terrain coverage and owned stone capacity are bounded.'}elseif($Movement){'Focus KCD2 with controls released. Minecraft walking and HUD activate automatically. F8 stops and saves at the last safe position. Walking is limited to the captured terrain; blocks, commands and flight are not connected in this path yet.'}else{'Focus KCD2 with controls released. HUD activates automatically; F8 stops and saves. KCD owns walking; Minecraft commands/flight are not connected yet.'})
  $smokeDeadline=[DateTime]::UtcNow.AddSeconds($SmokeSeconds)
  while(-not $helper.HasExited){
@@ -157,7 +160,7 @@ finally{
  }
  [ordered]@{schema=1;kind='minecome_gameplay_kcd_session_v1';run=$run;result=$(if($passed){'passed'}else{'failed'});failure=$failure;
   target_pid=$context.GamePid;target_start_filetime=$targetStart;instance=$InstanceDirectory;smoke_seconds=$SmokeSeconds;
-  minecraft_movement_connected=[bool]($Movement -and $passed);movement_profile=[bool]$Movement;blocks_profile=[bool]$Blocks;explore_profile=[bool]$Explore;chat_profile=[bool]$Chat;host_command_typing_verified=$false;normal_client_exit=($helper -and $helper.HasExited -and $helper.ExitCode -eq 0)}|
+  minecraft_movement_connected=[bool]($Movement -and $passed);movement_profile=[bool]$Movement;blocks_profile=[bool]$Blocks;explore_profile=[bool]$Explore;chat_profile=[bool]$Chat;flight_profile=[bool]$Flight;host_command_typing_verified=$false;normal_client_exit=($helper -and $helper.HasExited -and $helper.ExitCode -eq 0)}|
   ConvertTo-Json|Set-Content -LiteralPath (Join-Path $directory 'verification.json') -Encoding utf8NoBOM
 }
 if(-not $passed){throw $failure}

@@ -10,6 +10,7 @@ import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import dev.minecome.terrain.GameplayMovement;
+import dev.minecome.terrain.GameplayMovementKeys;
 import com.sun.jna.platform.win32.Kernel32;
 import com.sun.jna.platform.win32.WinBase;
 import net.minecraft.client.MinecraftClient;
@@ -39,6 +40,7 @@ public final class GameplaySession {
     private final boolean standalone=Boolean.getBoolean("minecome.gameplayStandalone");
     private final String fixtureMode=System.getProperty("minecome.gameplayFixture","");
     private final boolean chatMode=Boolean.getBoolean("minecome.gameplayChat");
+    private final boolean flightMode=Boolean.getBoolean("minecome.gameplayFlight");
     private final boolean blocksMode=Boolean.getBoolean("minecome.gameplayBlocks");
     private final boolean movementMode=blocksMode||Boolean.getBoolean("minecome.gameplayMovement");
     private final HudStreamLayout layout=HudStreamLayout.configured();
@@ -57,6 +59,7 @@ public final class GameplaySession {
     private GameplayBlocksFixture blocksFixture;
     private GameplayTerrainFixture terrainFixture;
     private GameplayChatFixture chatFixture;
+    private GameplayFlightFixture flightFixture;
     private Object world,player,server;
     private boolean opening,ready,stopping,writerFinished,shutdownRequested,frameTransparent,sessionReportWritten;
     private long readyAt,stopAt,writerAt,lastCaptureAt,inputEvents;
@@ -84,6 +87,7 @@ public final class GameplaySession {
         stopFile=requested;
         if(!fixtureMode.isEmpty()&&!standalone)throw new IllegalArgumentException("Persistence fixture requires standalone gameplay");
         if(chatMode&&!blocksMode)throw new IllegalArgumentException("Gameplay chat requires the explicit blocks/movement profile");
+        if(flightMode&&!chatMode)throw new IllegalArgumentException("Gameplay flight requires the chat/world input profile");
     }
 
     public static void initialize(){
@@ -116,7 +120,7 @@ public final class GameplaySession {
     }
     private void beforeTick(MinecraftClient client){
         if(stopping||movement==null)return;
-        try{if(chatFixture!=null)chatFixture.beforeTick(client);if(terrainFixture!=null)terrainFixture.beforeTick(client);if(blocksFixture!=null)blocksFixture.beforeTick(client);if(movementFixture!=null)movementFixture.beforeTick(client);movement.beforeTick(client,System.nanoTime());}
+        try{if(flightFixture!=null)flightFixture.beforeTick(client);if(chatFixture!=null)chatFixture.beforeTick(client);if(terrainFixture!=null)terrainFixture.beforeTick(client);if(blocksFixture!=null)blocksFixture.beforeTick(client);if(movementFixture!=null)movementFixture.beforeTick(client);movement.beforeTick(client,System.nanoTime());}
         catch(Exception e){requestStop(client,"movement_failure",e.toString());}
     }
     private boolean owns(MinecraftClient client){return ready&&!stopping&&client.world==world&&client.player==player&&client.getServer()==server&&client.isIntegratedServerRunning();}
@@ -182,6 +186,9 @@ public final class GameplaySession {
                         if(fixtureMode.startsWith("chat"))chatFixture=new GameplayChatFixture(fixtureMode,movement,save,wire,directory.getParent(),proof->{
                             fixtureResult=proof.deepCopy();requestStop(MinecraftClient.getInstance(),"chat_fixture_complete",proof.get("result").getAsString().equals("passed")?null:proof.toString());
                         });
+                        if(fixtureMode.startsWith("flight"))flightFixture=new GameplayFlightFixture(fixtureMode,movement,save,wire,directory.getParent(),proof->{
+                            fixtureResult=proof.deepCopy();requestStop(MinecraftClient.getInstance(),"flight_fixture_complete",proof.get("result").getAsString().equals("passed")?null:proof.toString());
+                        });
                     }
                     if(fixtureMode.startsWith("walking"))movementFixture=new GameplayMovementFixture(fixtureMode,movement,save,wire,directory.getParent(),proof->{
                         fixtureResult=proof.deepCopy();requestStop(MinecraftClient.getInstance(),"movement_fixture_complete",proof.get("result").getAsString().equals("passed")?null:proof.toString());
@@ -198,7 +205,7 @@ public final class GameplaySession {
                 if(!standalone){ui=new HudVanillaUiAdapter(client,true,chatMode);hideOwnedWindow(client);}
                 output=new HudStreamProducer(root,directory,identity,save.saveName(),true,standalone?0:1);output.start();
                 ready=true;readyAt=System.nanoTime();
-                if(!fixtureMode.isEmpty()&&!fixtureMode.startsWith("walking")&&!fixtureMode.startsWith("blocks")&&!fixtureMode.startsWith("terrain")&&!fixtureMode.startsWith("chat"))fixture=new GameplayPersistenceFixture(fixtureMode,save,directory.getParent(),proof->{
+                if(!fixtureMode.isEmpty()&&!fixtureMode.startsWith("walking")&&!fixtureMode.startsWith("blocks")&&!fixtureMode.startsWith("terrain")&&!fixtureMode.startsWith("chat")&&!fixtureMode.startsWith("flight"))fixture=new GameplayPersistenceFixture(fixtureMode,save,directory.getParent(),proof->{
                     fixtureResult=proof.deepCopy();boolean passed=proof.has("result")&&proof.get("result").getAsString().equals("passed");
                     requestStop(MinecraftClient.getInstance(),"fixture_complete",passed?null:proof.toString());
                 });
@@ -226,6 +233,7 @@ public final class GameplaySession {
             if(blocksFixture!=null&&!stopping)blocksFixture.tick(client);
             if(terrainFixture!=null&&!stopping)terrainFixture.tick(client);
             if(chatFixture!=null&&!stopping)chatFixture.tick(client);
+            if(flightFixture!=null&&!stopping)flightFixture.tick(client);
             if(blocks!=null&&!stopping)blocks.tick(client,!movement.terrainTransition()&&(standalone||input!=null&&input.connected()&&input.hostState()==1));
             if(movementFixture!=null&&!stopping)movementFixture.tick(client);
             if(fixture!=null&&output.isReady()&&output.publishedFrames()>0&&!stopping)fixture.tick(client);
@@ -251,7 +259,9 @@ public final class GameplaySession {
                 var event=input.poll();if(event==null)break;gate.apply(event,System.currentTimeMillis());
                 if(chatMode&&event.kind()>=9){if(blocks!=null)blocks.suspend(client);if(movement!=null)movement.suspend(client);ui.apply(client,event);}
                 else if(blocks!=null&&(event.kind()==7||event.kind()==8))blocks.event(client,event);
-                else if(movement!=null&&event.kind()<=2&&HudMovementKeys.movement(event.code()))movement.event(client,event,System.nanoTime());
+                else if(movement!=null&&event.kind()<=2&&GameplayMovementKeys.movement(event.code())){
+                    if(flightMode||HudMovementKeys.movement(event.code()))movement.event(client,event,System.nanoTime());
+                }
                 else{if(event.kind()<=2&&(event.code()==0x45||event.code()==0x1b||chatMode&&(event.code()==0x54||event.code()==0xbf))){if(blocks!=null)blocks.suspend(client);if(movement!=null)movement.suspend(client);}ui.apply(client,event);}
                 inputEvents++;
             }
@@ -388,6 +398,7 @@ public final class GameplaySession {
         if(blocks!=null)e.add("blocks",blocks.evidence(client));
         e.addProperty("blocks_enabled",blocksMode);
         e.addProperty("chat_enabled",chatMode);
+        e.addProperty("flight_enabled",flightMode);
         if(ui!=null&&chatMode)e.add("chat_input",ui.chatDiagnostics());
         e.addProperty("normal_shutdown_requested",stopping);e.addProperty("controls_released",gate.heldKeyCount()==0&&gate.heldButtonCount()==0);
         e.addProperty("producer_finished",output!=null&&output.isFinished());e.addProperty("producer_failure",output==null?null:output.failure());
@@ -410,7 +421,7 @@ public final class GameplaySession {
             Files.writeString(temporary,notice.toString(),StandardCharsets.UTF_8,StandardOpenOption.CREATE_NEW);
             Files.move(temporary,directory.getParent().resolve("gameplay-stopping.json"),java.nio.file.StandardCopyOption.ATOMIC_MOVE);
         }catch(Exception e){if(failure==null)failure="Stop notice: "+e;}
-        try{if(chatFixture!=null)chatFixture.close();if(terrainFixture!=null)terrainFixture.close();if(blocksFixture!=null)blocksFixture.close();if(aimReader!=null)aimReader.close();if(blocks!=null)blocks.close(client);}catch(Exception e){if(failure==null)failure=e.toString();}
+        try{if(flightFixture!=null)flightFixture.close();if(chatFixture!=null)chatFixture.close();if(terrainFixture!=null)terrainFixture.close();if(blocksFixture!=null)blocksFixture.close();if(aimReader!=null)aimReader.close();if(blocks!=null)blocks.close(client);}catch(Exception e){if(failure==null)failure=e.toString();}
         try{if(movementFixture!=null)movementFixture.close();if(movement!=null){if(failure==null)movement.close(client);else movement.abort(client,failure);}}catch(Exception e){if(failure==null)failure=e.toString();}
         try{if(ui!=null)ui.releaseAndClose(client);}catch(Exception e){if(failure==null)failure=e.toString();}
         gate.releaseAll();

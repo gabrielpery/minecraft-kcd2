@@ -108,8 +108,9 @@ local function consume(data)
  if type(p)~='table' or state.active~=p or p.terminal or p.data[data.slot]~=data or not handle(p.timers[data.slot]) then return nil end
  p.timers[data.slot]=nil;return p
 end
-function MineCome.GameplayMovementBegin(run,duration_ms,minx,maxx,miny,maxy,minz,maxz)
+function MineCome.GameplayMovementBegin(run,duration_ms,minx,maxx,miny,maxy,minz,maxz,flight)
  if not token(run) or not finite(duration_ms) or duration_ms<1000 or duration_ms>86400000 or duration_ms~=math.floor(duration_ms) then return false,'invalid_identity_or_duration' end
+ if flight~=nil and type(flight)~='boolean' then return false,'invalid_flight_profile' end
  if state.active then return false,'busy' end
  if MineCome._movement_probe and (MineCome._movement_probe.active or MineCome._movement_probe.follower) then return false,'diagnostic_busy' end
  local bounds={minx,maxx,miny,maxy,minz,maxz};for i=1,6 do if not finite(bounds[i]) or math.abs(bounds[i])>=LIMIT then return false,'invalid_bounds' end end
@@ -118,6 +119,10 @@ function MineCome.GameplayMovementBegin(run,duration_ms,minx,maxx,miny,maxy,minz
  if reason then return false,reason end
  if not t or type(field(s.entity,'SetWorldPos'))~='function' or not Script or type(Script.SetTimerForFunction)~='function' or type(Script.KillTimer)~='function' then return false,'api_unavailable' end
  local p={run=run,entity=s.entity,id=s.id,link_nil=s.link==nil,created=t,deadline=t+duration_ms/1000,last_clock=t,last_owned=copy(s.position),bounds=bounds,timers={},data={},sequence=0,applied=0,writes=0,view_sequence=0}
+ -- Vanilla 1.21.1 PlayerEntity.getOffGroundSpeed doubles default .05 flight
+ -- acceleration when sprinting; LivingEntity.travel damps XZ by .91. Its
+ -- asymptote is below24m/s. Walking retains its existing12m/s admission.
+ p.max_speed=flight==true and 24 or 12
  if not inside(p,s.position,2) then return false,'host_outside_capture' end
  state.active=p
  if not arm(p,'hard','MineCome_GameplayMovementExpiry',duration_ms) or not arm(p,'tick','MineCome_GameplayMovementTick',1) then finish(p,'initial_timer_failed');return false,'initial_timer_failed' end
@@ -131,7 +136,7 @@ function MineCome.GameplayMovementPose(run,seq,source_ms,x,y,z)
  elseif not finite(source_ms) or source_ms<0 or source_ms>86400000 or (p.latest and source_ms<=p.latest.source_ms) then reason='source_time_invalid'
  elseif not inside(p,target,0) then reason='target_outside_capture'
  elseif not t or t<p.last_clock or t>=p.deadline or (p.latest and t-p.latest.received>LEASE) then reason='source_lease_expired'
- elseif p.latest and distance(target,p.latest.target)>0.5+12*(source_ms-p.latest.source_ms)/1000 then reason='source_velocity_invalid' end
+ elseif p.latest and distance(target,p.latest.target)>0.5+p.max_speed*(source_ms-p.latest.source_ms)/1000 then reason='source_velocity_invalid' end
  if reason then finish(p,reason);return false,reason end
  p.segment={from=copy(p.last_owned),started=t};p.latest={seq=seq,source_ms=source_ms,target=copy(target),received=t,first=p.sequence==0};p.sequence=seq
  return true,'queued'

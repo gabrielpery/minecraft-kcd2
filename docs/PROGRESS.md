@@ -1,5 +1,61 @@
 # MineCome progress — 2026-11-05
 
+## Creative flight in sustained gameplay
+
+Implemented and compiled `-Flight`, including chat, walking and blocks, with
+optional `-Explore`. Native input 6 forwards Shift/Ctrl and preserves short Space
+tap edges until vanilla consumes them. Actual Minecraft abilities handle double
+Space takeoff/landing, ascent, descent and sprint flight; no forced flying state.
+Inventory, chat, lost authority and terrain admission release controls and stop
+flight inertia. Flight uses captured heightfield/owned-stone collision, conservative
+braking bounds and an 18m feet ceiling above the original capture origin. The
+native follower admits default sprint-flight speed only with the explicit profile.
+Other movement profiles retain their speed admission and input behavior.
+
+Actual Minecraft paired flight check PASS:
+`runtime/evidence/gameplay-flight-20261105-202840-dbf5c73f022645229d03dd00213087c4/verification.json`.
+Vanilla takeoff, ascent, descent, horizontal/sprint motion, inventory/chat
+suppression, command mode changes and landing passed. A second takeoff saved
+airborne at (0.502,67.619,1.602); reopening retained the same world/player and
+vanilla flight abilities, then ascended/descended/landed. Both saves and collision/
+ledger cleanup passed. This fixture uses ordinary input and real ChatScreen
+commands, without ability or position writes.
+
+Automated live KCD2 flight check PASS:
+`runtime/evidence/gameplay-kcd-20261105-203016-5755cf27bbf549a3a956968e384a247a/flight-observation.json`.
+Computer Use double-Space took off through the native bridge; a later Space tap
+rose further. The actual KCD camera hovered while E opened/closed Minecraft's
+Creative inventory, then double-Space landed with the hotbar still present.
+Client/server each recorded 1,300 flying ticks and maximum altitude 2.438m.
+All 15 native events were acknowledged; 2,130 HUD frames uploaded with zero drops.
+Normal save and movement/block/terrain cleanup passed. This sequence does not
+claim native horizontal/sprint/held-Shift, airborne reconnect or frontier crossing;
+the actual-Minecraft fixture covers the flight mechanics separately.
+
+Checkpoint handling also records current airborne/falling state on the server
+cleanup thread before removing collision, avoiding a stale flying checkpoint
+after a mode change. Falling checkpoints preserve accumulated fall distance and
+resume through vanilla landing. Minecraft's actual `ServerPlayerEntity` constructor
+sets 60 ticks of join invulnerability, so an immediate Survival landing after
+reopening can correctly leave health unchanged. The bridge preserves that rule;
+it does not force damage. Focused actual-Minecraft save/reopen PASS:
+`runtime/evidence/gameplay-flight-fall-20261105-203651-2903172718104064b8ae261d787ddf7d/fall-continuation-verification.json`.
+The actual Survival fall saved at Y67.274 with fall distance 4.844m; the unchanged
+checkpoint reopened, accumulated 7.539m, naturally landed at player age 26 with
+health 20 under login protection, and saved a grounded checkpoint with full cleanup.
+The original paired receipt preserves the incorrect damage-expectation failure;
+only resume was repeated after correcting the fixture and adding observations.
+Final Gradle assemble and movement checks passed. Earlier flight and native proofs
+precede this checkpoint fix; the focused continuation verifies the changed path.
+
+Focused checks passed: native chat/input 1,425 and legacy input/movement suites,
+Java movement 37, wire 193 and legacy HUD input 353, the gameplay Lua movement
+suite and console batching 17. Launchers parse and forward `-Flight` through the
+PowerShell 7 bootstrap. KCD2 closed normally and its prior renderer was restored:
+`runtime/evidence/gameplay-hud-restore-20261105-203542-39a8a3005fc14292b98ce41f91b09092`.
+No manual user test was required. Full host obstacle collision, arbitrary flight
+speeds, Elytra, Steve/hands/general blocks and cross-game combat remain unfinished.
+
 ## Vanilla chat and commands in sustained gameplay
 
 Implemented and compiled the separate `-Chat` profile, which includes walking

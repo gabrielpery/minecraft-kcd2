@@ -304,8 +304,9 @@ packets are not an equivalent input test, and ambiguous modifier taps are ignore
 
 Commands execute normally in Minecraft, but they do not remove bridge limits:
 terrain coverage, stone-only rendering and walking bounds still apply. Creative
-and Elytra flight, teleporting outside captured coverage, other dimensions and
-NPC combat are not connected by this change.
+flight requires the additional `-Flight` switch below. Elytra flight, teleporting
+outside captured coverage, other dimensions and NPC combat are not connected by
+the chat profile.
 
 After stopping the session and closing KCD2, restore with the matching profile:
 
@@ -327,6 +328,56 @@ native events were acknowledged. The 206-second session saved and cleaned up
 normally. Evidence and observation scope:
 `runtime/evidence/gameplay-kcd-20261105-201229-cf98ac724f5f4ce2a7b84e588b1f4bee/chat-observation.json`.
 This proves that command path; it is not a human typing-speed or flight check.
+
+## Creative flight
+
+`-Flight` includes chat, walking and blocks and uses the chat native bundle.
+It can combine with `-Explore` for on-demand captured terrain. Prepare and install
+the rebuilt bundle with KCD2 closed, then start a fresh development world:
+
+```powershell
+$bundle = Join-Path (Get-Location) ('runtime/hud-gameplay-flight-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+& './scripts/Prepare-GameplayHud.ps1' -Flight -BundleDirectory $bundle
+& './scripts/Install-GameplayHud.ps1' -Flight -BundleDirectory $bundle
+& './scripts/Start-Kcd2ToolsTest.ps1'
+```
+
+Once the world has loaded:
+
+```powershell
+& './scripts/Start-GameplaySession.ps1' -Flight -Explore -BundleDirectory $bundle
+```
+
+Use `/gamemode creative`, then double-tap **Space** to toggle vanilla flying.
+**Space** rises, **Shift** descends, **WASD** moves, and **Ctrl** enables sprint
+flight. Inventory and chat release controls and stop aerial drift. **F8** stops
+and saves; a valid airborne checkpoint reopens with the saved vanilla Creative
+flight abilities. Reopening that airborne save requires `-Flight`.
+Stopping after flight is disabled also records the falling position and accumulated
+fall distance. On reopening, vanilla physics completes that fall before controls
+attach. Minecraft's normal login damage protection still applies; the bridge does
+not force damage during that protection period.
+
+Flight uses Minecraft's abilities, input and collision, with the host following
+the authoritative position. Coverage remains the captured ground heightfield
+and owned Minecraft stone; native buildings, branches and other unsampled
+obstacles are not complete collision. Feet stay below 18 metres above the original
+capture origin. Unknown terrain stops movement; this is not unrestricted travel
+or Elytra support. Modified flight speeds above Minecraft's default are unsupported.
+
+After stopping and closing KCD2:
+
+```powershell
+& './scripts/Install-GameplayHud.ps1' -Flight -BundleDirectory $bundle -Restore
+```
+
+`./scripts/Test-GameplayFlight.ps1` runs actual Minecraft twice, using ordinary
+jump/modifier input and real chat commands to exercise flight and airborne reload.
+It does not force flight abilities or substitute scripted position changes.
+Verification results and remaining live limits are recorded in `PROGRESS.md`.
+The focused `./scripts/Test-GameplayFlight.ps1 -FixturePhase flight-fall` regression
+switches from Creative flight to Survival, saves during the fall, then reopens
+and checks restored fall distance, natural landing and vanilla login protection.
 
 ## Automatic sustained movement check
 

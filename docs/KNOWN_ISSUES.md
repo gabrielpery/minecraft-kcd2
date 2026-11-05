@@ -1,5 +1,19 @@
 # Known issues and blockers
 
+## Sustained gameplay and Creative flight
+
+The separate [gameplay profiles](GAMEPLAY_SESSION.md) now provide persistent worlds,
+walking, owned stone construction, growing terrain coverage, commands and Creative
+flight. Historical bounded-lab restrictions below do not describe every profile.
+Creative flight has automated native takeoff/hover/inventory/landing evidence;
+actual-Minecraft fixtures also cover horizontal/sprint/descent and airborne reload.
+It remains limited to captured heightfield/owned-stone collision, an 18m ceiling
+above the capture origin and default flight speed. Native buildings/branches and
+other unsampled obstacles lack complete collision. Elytra is not implemented.
+Live coupled frontier crossing and native horizontal/sprint/held-Shift flight
+acceptance remain unverified. No manual test is needed for the completed automated
+milestone; batch remaining acceptance with a larger playable feature.
+
 ## Latest combined input limitations
 
 The combined side-face/walking/inventory check now passes in KCD2, including all

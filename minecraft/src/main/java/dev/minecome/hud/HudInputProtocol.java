@@ -33,7 +33,7 @@ public final class HudInputProtocol {
             throw new IllegalArgumentException("Invalid input record");
         if(fresh && (e.capturedUtcMs()<now-250 || e.capturedUtcMs()>now+100))throw new IllegalArgumentException("Stale/future input event");
         if(e.kind()<=2) {
-            if(!((e.code()>=0x31 && e.code()<=0x39) || e.code()==0x45 || e.code()==0x1b || (movement && HudMovementKeys.movement(e.code())) || (chat&&GameplayChatInput.opens(e.code()))) || e.x()!=0 || e.y()!=0 || e.value()!=0)
+            if(!((e.code()>=0x31 && e.code()<=0x39) || e.code()==0x45 || e.code()==0x1b || (movement && HudMovementKeys.movement(e.code())) || (chat&&(GameplayChatInput.opens(e.code())||e.code()==0x10||e.code()==0x11))) || e.x()!=0 || e.y()!=0 || e.value()!=0)
                 throw new IllegalArgumentException("Invalid input key");
         }else if(e.kind()==3) {
             if(e.code()!=0 || e.value()!=0)throw new IllegalArgumentException("Invalid pointer move");
