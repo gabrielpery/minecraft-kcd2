@@ -26,8 +26,14 @@ bool save(const std::wstring &path, const std::string &json) {
 int wmain(int argc, wchar_t **argv) {
     try {
         std::map<std::wstring,std::wstring> args;
-        for (int i=1;i<argc;i+=2) {
+        bool gameplay=false;
+        for (int i=1;i<argc;) {
+            if (std::wstring_view(argv[i]) == L"--gameplay") {
+                if(gameplay)return 2;
+                gameplay=true;++i;continue;
+            }
             if (i+1 >= argc || !args.emplace(argv[i],argv[i+1]).second) return 2;
+            i+=2;
         }
         for (const auto &[key,value] : args) {
             (void)value;
@@ -36,6 +42,7 @@ int wmain(int argc, wchar_t **argv) {
         }
         if (args.size() != 7 || args[L"--output"].empty()) return 2;
         st::Identity id;
+        id.schema=gameplay?3:1;
         for (auto c : args[L"--run"]) { if (c > 127) return 2; id.run += static_cast<char>(c); }
         if (!number(args[L"--target-pid"],id.target_pid) || !number(args[L"--target-start"],id.target_start) ||
             !number(args[L"--producer-pid"],id.producer_pid) || !number(args[L"--producer-start"],id.producer_start) ||
@@ -68,7 +75,7 @@ int wmain(int argc, wchar_t **argv) {
         const bool passed = closed && accepted > 0 && nontransparent > 0;
         std::ostringstream json;
         json << "{\n  \"schema\":1,\n  \"run\":\"" << id.run << "\",\n  \"result\":\"" << (passed?"passed":"failed")
-             << "\",\n  \"reason\":\"" << reason << "\",\n  \"accepted_frames\":" << accepted
+             << "\",\n  \"stream_schema\":" << id.schema << ",\n  \"reason\":\"" << reason << "\",\n  \"accepted_frames\":" << accepted
              << ",\n  \"nontransparent_frames\":" << nontransparent << ",\n  \"first_sequence\":" << first << ",\n  \"last_sequence\":" << last
              << ",\n  \"repeated_polls\":" << repeated << ",\n  \"busy_polls\":" << busy
              << ",\n  \"closed_seen\":" << (closed?"true":"false") << ",\n  \"stale_hidden_verified\":" << (stale?"true":"false")

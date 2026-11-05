@@ -2,65 +2,82 @@
 
 ## User direction
 
-Prioritize a finished playable product and less time/usage. Read [PRODUCT.md](PRODUCT.md):
-Steve/hands/equipment, Minecraft survival/combat, general blocks, commands (including
-`/gamemode survival`), Creative flight and Elytra/rockets are required. These are
-product goals, not implemented claims. Manual testing stays deferred to a larger
-milestone. Do not resume repeated F8 countdowns or small already-proven checks.
+Deliver the full scope in [PRODUCT.md](PRODUCT.md): Steve/hands/equipment,
+Minecraft survival/combat and general blocks, commands, Creative flight and Elytra.
+Prefer integrated implementation and automatic tests. Manual acceptance is deferred
+to a larger milestone; do not resume repeated F8 countdowns.
 
-## Working checkpoint
+## New persistent session foundation
 
-Existing bounded native corridor walking/HUD/inventory/stone controls remain
-verified. Latest user acceptance was cutoff cleanup: “worked fine”. See PROGRESS.md.
+`GameplayWorld` owns `MineCome-Gameplay` with stable world identity and ordinary
+vanilla save/reopen. `GameplaySession` is separate from diagnostic labs, retains
+inventory/mode/player state, emits schema3 HUD and accepts schema3 UI input.
+Regular lifetime is stop/peer closure with a finite24h identity; it has no30s demo
+cutoff. Hidden-window rendering/cleanup reuses the existing proven path.
 
-New controller integration passes actual Minecraft on previously captured KCD terrain:
+Actual two-launch persistence PASS:
+`runtime/evidence/gameplay-persistence-20261105-170217-435f802075d347c982b362d2e32c75d9/verification.json`.
+35.2s first session; same world/player reopened with17 apples, iron pickaxe,
+Survival, health16, food11 and saved regeneration rule. Vanilla command packets
+switch Creative/Survival abilities. Both clients save/exit normally.
+Standalone bootstrap is vanilla superflat, not imported KCD collision.
+
+New native gameplay addon + selective-keyboard v5 proxy compile. Automatic neutral
+activation, F8 stop, short frame/input/keyboard leases. UI keys/inventory only;
+KCD retains native world walking/camera outside inventory. **Minecraft movement,
+terrain, block mirroring and command typing are NOT connected in this new path.**
+Do not describe this as sustained Minecraft-authoritative gameplay yet.
+
+Native composition/lifecycle PASS (host60FPS):
+`runtime/evidence/gameplay-kcd-20261105-171621-b063422fa5d64d6fa67539bff318d787/verification.json`.
+40.546s, automatic input arming,733 uploads/zero drops/2498 submissions; actual
+CUA frame showed Minecraft hotbar over KCD. Stop/save, input cleanup and hidden
+guest exit passed. No events recorded, so new inventory controls remain unverified.
+
+Entry points: `Start-GameplayGuest.ps1`, `Start-GameplaySession.ps1`,
+`Test-GameplayPersistence.ps1`; see [GAMEPLAY_SESSION.md](GAMEPLAY_SESSION.md).
+The new bundle is staged at `runtime/hud-compositor-gameplay`. Exact pinned
+v5 staging/install/restore scripts preserve the old six-file installation.
+After restoring a bundle, restaging/reinstall uses a fresh `-BundleDirectory`.
+Native v5 currently accepts one session per KCD process; same-process rearm is
+not implemented for gameplay. Do not confuse it with the old two-session lab.
+
+## Next implementation
+
+Connect the verified walking/terrain/controller and owned block ledger to
+GameplaySession, replacing lab-only time/arena limits while retaining freshness,
+server authority and orderly native control return. Then general visuals/blocks,
+chat commands and Creative flight; follow Survival/NPC combat and Elytra.
+The retail loader/access route remains unverified; current integration uses the
+exact official Steam tools2429020/display1.5.5 executable and console/log interface.
+
+## Preserve existing working behavior
+
+Bounded physical corridor HUD/walking/inventory/aimed stone remains user-verified.
+Latest acceptance: cutoff cleanup “worked fine”. New physical controller admission
+passes actual Minecraft on captured KCD terrain:
 `runtime/evidence/hud-physical-fixture-20261105-161657-96911b0ddfd345fabdbc5851d073af57/verification.json`.
-Both sides reach X=8.836764818m, return within 0.029064m, preserve the seed through
-admission, complete six block actions and inventory/resumed walking. All 190
-imported cells remain air; source hashes/trace and cleanup pass. Scripted input and
-standalone HUD receiver only; new native physical acceptance is not claimed.
+Both threads reach X8.836764818; return error0.029064m; seed survives admission;
+six block actions, inventory/resumed walking pass; all190 imported cells remain air.
+This is scripted Minecraft + standalone HUD, not a new native physical-input pass.
+The old October30 failure was a validator bug (valid held-key release/reapply on
+admission), already fixed. Do not repeat it.
 
-The October30 failure was a validator bug: a held key releases/reapplies during
-admission, incorrectly rejected as multiple bindings. Fixed and covered; November5
-fresh run passes. Do not redo that investigation. Existing failed receipt untouched.
+`Test-CoupledPhysicalExtension.ps1` is implemented, not yet run end-to-end; use only
+if needed for next integration. Existing15s input+1s settle,18s native lifetime,
+400ms lease,200ms playback, three pre-captured tiles remain diagnostic limits.
 
-## Next implementation: sustained gameplay
+## Environment
 
-Stop adding separate short profiles. Reuse the controller/input/HUD in a persistent
-world/session with owned blocks and ongoing terrain acquisition. Separate gameplay
-lifetime from diagnostic duration: ordinary play must not expire after 15 seconds
-or teleport back to its initial position. Retain freshness/ownership and clean host
-control handover on disconnect. Keep bounded labs for regression.
+JDK C:/Program Files/Java/jdk-24; Gradle cache minecraft/.gradle-user-home.
+Public remote gabrielpery/minecraft-kcd2, branch codex/initial-import.
+No retail saves. Routine edits/tests/launches/pushes authorized.
+Old verified bundle: runtime/hud-compositor-walking-corridor-aimed-20261029.
+Check the latest PROGRESS.md section and process/install receipts before native work.
 
-Resolve the supported KCD2 release/access path early. Current actual access is the
-official development game's console/log interface; the retail KCSE route remains
-unverified. Avoid building the product around an unproven retail loader.
-
-Then general Minecraft visuals/blocks, commands/mode changes and Creative flight;
-follow with Survival/NPC combat and Elytra. Concrete gaps: renderHand is cancelled,
-world rendering suppressed, BlockModelExport/stone_mirror accept only stone,
-AimedStoneArena requires Creative, HudStreamLab creates disposable Creative/Peaceful
-saves, and the protocol has no NPC/damage exchange. These are required product work.
-
-## Pending automatic native verification
-
-`Test-CoupledPhysicalExtension.ps1` is implemented but not run end to end. It captures
-three tiles, runs the combined Minecraft fixture and replays its server trace in
-KCD2, restoring FPS and position. Lua/PS checks pass. Use only if needed for the
-next gameplay integration; it needs an already-open exact tools world, no F8.
-Sequential replay does not establish simultaneous native HUD/physical input.
-
-Physical extension retains 15s input+1s settle, 18s native lifetime, 400ms lease,
-200ms playback, X[-3.5,11.5], Z[-3.5,3.5]. Legacy corridor stays X[-3.5,7.5].
-Three tiles are pre-captured; one admission is not rolling terrain streaming.
-
-## State
-
-The November5 fixture closed normally; no game/helper remains from it. No installed
-native DLL changed. Existing bundle:
-`runtime/hud-compositor-walking-corridor-aimed-20261029/installed.json`, addon SHA256
-`c5353e4bc21fd512838160cd3196f23f17b0fd6d0dc412178037dd56426c0196`.
-Inspect processes/arms before native work. Official Steam tools2429020/display1.5.5
-only; never load retail1.5.6 saves. JDK: C:/Program Files/Java/jdk-24.
-Gradle cache: minecraft/.gradle-user-home. Public repo: gabrielpery/minecraft-kcd2,
-branch codex/initial-import. Routine edits/tests/launches/pushes remain authorized.
+End state: both test games closed normally. All six original renderer files were
+restored and hash-verified; v5 is not currently installed. Restore receipt:
+`runtime/evidence/gameplay-hud-restore-20261105-171912-4d3a36f146104ac39d8e9572351fbc04`.
+Gameplay native smoke used +sys_MaxFPS60 only for that process. Investigate an
+ongoing GPU budget before promising long unrestricted sessions. No manual input
+was requested. Default persistent Minecraft world now exists under runtime/gameplay.

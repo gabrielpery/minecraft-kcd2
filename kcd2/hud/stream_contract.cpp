@@ -34,10 +34,10 @@ std::uint64_t u64(std::span<const std::uint8_t> h, std::size_t at) {
 }
 bool valid_identity(const Identity &id) noexcept {
     return token(id.run) && id.producer_pid && id.target_pid && id.producer_start &&
-        id.target_start && id.expires_utc_ms;
+        id.target_start && id.expires_utc_ms && (id.schema == 1 || id.schema == 3);
 }
 bool parse_arm(std::string_view text, std::uint32_t target_pid, std::uint64_t target_start,
-               std::uint64_t utc, Identity &out, std::string &error) {
+               std::uint64_t utc, Identity &out, std::string &error, std::uint32_t expected_schema) {
     out = {}; error.clear();
     auto fail = [&](std::string_view why) { error = why; return false; };
     if (text.empty() || text.size() > max_arm_bytes || text.find('\0') != text.npos) return fail("config_size_or_nul");
@@ -59,19 +59,20 @@ bool parse_arm(std::string_view text, std::uint32_t target_pid, std::uint64_t ta
             key != "ProducerPid" && key != "ProducerStart" && key != "ExpiresUtcMs") return fail("config_unknown");
         if (value.empty() || !fields.emplace(std::string(key), std::string(value)).second) return fail("config_duplicate_or_empty");
     }
-    if (!section || fields.size() != 7 || fields["Schema"] != "1") return fail("config_schema_or_missing");
-    Identity id; id.run = fields["Run"];
+    if (!section || fields.size() != 7 || (expected_schema != 1 && expected_schema != 3) ||
+        fields["Schema"] != std::to_string(expected_schema)) return fail("config_schema_or_missing");
+    Identity id; id.run = fields["Run"]; id.schema = expected_schema;
     if (!number(fields["TargetPid"], id.target_pid) || !number(fields["ProducerPid"], id.producer_pid) ||
         !number(fields["TargetStart"], id.target_start) || !number(fields["ProducerStart"], id.producer_start) ||
         !number(fields["ExpiresUtcMs"], id.expires_utc_ms) || !valid_identity(id)) return fail("config_identity");
     if (id.target_pid != target_pid || id.target_start != target_start) return fail("config_target");
-    if (id.expires_utc_ms <= utc || id.expires_utc_ms-utc > max_lease_ms) return fail("config_expiry");
+    if (id.expires_utc_ms <= utc || id.expires_utc_ms-utc > maximum_lease(id)) return fail("config_expiry");
     out = std::move(id); return true;
 }
 bool Validator::start(const Identity &id, std::uint64_t utc, std::uint64_t steady) {
     if (consumed_) return false;
     consumed_ = true;
-    if (!valid_identity(id) || id.expires_utc_ms <= utc || id.expires_utc_ms-utc > max_lease_ms ||
+    if (!valid_identity(id) || id.expires_utc_ms <= utc || id.expires_utc_ms-utc > maximum_lease(id) ||
         steady > std::numeric_limits<std::uint64_t>::max()-(id.expires_utc_ms-utc)) {
         invalidate("session_identity_or_expiry"); return false;
     }
@@ -94,8 +95,8 @@ Result Validator::accept(std::span<const std::uint8_t> bytes, std::uint64_t utc,
     if (!live(utc, steady)) { invalidate("expired"); return Result::expired; }
     auto bad = [&](std::string_view why) { invalidate(why); return Result::invalid; };
     if (bytes.size() != header_bytes) return bad("header_length");
-    constexpr std::string_view magic = "MCHUDS01";
-    if (!std::equal(magic.begin(), magic.end(), bytes.begin()) || u32(bytes,8) != 1 || u32(bytes,12) != header_bytes)
+    const std::string_view magic = identity_.schema == 3 ? "MCHUDS03" : "MCHUDS01";
+    if (!std::equal(magic.begin(), magic.end(), bytes.begin()) || u32(bytes,8) != identity_.schema || u32(bytes,12) != header_bytes)
         return bad("header_magic_or_schema");
     if (!std::equal(identity_.run.begin(), identity_.run.end(), bytes.begin()+16) ||
         u32(bytes,48) != identity_.producer_pid || u32(bytes,52) != identity_.target_pid ||

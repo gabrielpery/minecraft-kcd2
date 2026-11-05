@@ -12,7 +12,7 @@ std::uint32_t get32(std::span<const std::uint8_t> b,std::size_t at) { std::uint3
 std::uint64_t get64(std::span<const std::uint8_t> b,std::size_t at) { std::uint64_t v=0;for(unsigned i=0;i<8;++i)v|=std::uint64_t(b[at+i])<<(i*8);return v; }
 }
 bool valid_key(std::uint32_t code,Profile profile) noexcept {
-    if(profile!=Profile::ui&&profile!=Profile::movement)return false;
+    if(profile!=Profile::ui&&profile!=Profile::movement&&profile!=Profile::gameplay)return false;
     return (code>=0x31&&code<=0x39)||code==0x45||code==0x1b||
         (profile==Profile::movement&&(code==0x57||code==0x41||code==0x53||code==0x44||code==0x20));
 }
@@ -20,7 +20,7 @@ bool fresh(std::uint64_t timestamp,std::uint64_t now) noexcept {
     return timestamp && (timestamp<=now ? now-timestamp<=fresh_ms : timestamp-now<=100);
 }
 bool valid_event(const Event &e,std::uint64_t now,Profile profile) noexcept {
-    if(profile!=Profile::ui&&profile!=Profile::movement)return false;
+    if(profile!=Profile::ui&&profile!=Profile::movement&&profile!=Profile::gameplay)return false;
     if(!fresh(e.captured,now)||!std::isfinite(e.x)||!std::isfinite(e.y)||e.x<0||e.x>1||e.y<0||e.y>1)return false;
     switch(e.kind) {
     case Kind::key_down:case Kind::key_up:return valid_key(e.code,profile)&&e.x==0&&e.y==0&&e.wheel==0;
@@ -31,7 +31,7 @@ bool valid_event(const Event &e,std::uint64_t now,Profile profile) noexcept {
     }
 }
 void encode_host(std::span<std::uint8_t,128> b,const Identity &id,std::uint64_t sequence,std::uint64_t utc,std::uint32_t state,Profile profile) {
-    std::fill(b.begin(),b.end(),std::uint8_t{0});std::memcpy(b.data(),profile==Profile::movement?"MCHUDI02":"MCHUDI01",8);put32(b,8,static_cast<std::uint32_t>(profile));put32(b,12,mapping_bytes);
+    std::fill(b.begin(),b.end(),std::uint8_t{0});std::memcpy(b.data(),profile==Profile::gameplay?"MCHUDI03":profile==Profile::movement?"MCHUDI02":"MCHUDI01",8);put32(b,8,static_cast<std::uint32_t>(profile));put32(b,12,mapping_bytes);
     std::memcpy(b.data()+16,id.run.data(),32);put32(b,48,id.producer_pid);put32(b,52,id.target_pid);
     put64(b,56,id.producer_start);put64(b,64,id.target_start);put64(b,72,id.expires_utc_ms);
     put64(b,80,sequence);put64(b,88,utc);put32(b,96,state);put32(b,100,static_cast<std::uint32_t>(std::min<std::uint64_t>(sequence,64)));
@@ -73,11 +73,11 @@ KeyboardGate::Step KeyboardGate::update(bool eligible,bool f8,std::uint32_t keys
     if(!consumed_) {
         if(!eligible) {neutral_=false;return Step::idle;}
         if(!f8&&!keys)neutral_=true;
-        if(!edge)return Step::idle;
+        if(gameplay_ ? (f8||keys) : !edge)return Step::idle;
         if(!neutral_||keys)return Step::idle;
         consumed_=true;began_=now;settling_=2;return Step::starting;
     }
-    if(!eligible||edge||now<began_||now-began_>=activation_ms) {
+    if(!eligible||edge||now<began_||(!gameplay_&&now-began_>=activation_ms)) {
         reason_=!eligible?Close::ineligible:edge?Close::second_f8:now<began_?Close::clock_regressed:Close::expired;
         closed_=true;return Step::closed;
     }

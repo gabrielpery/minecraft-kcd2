@@ -28,9 +28,13 @@ public final class HudInputReader implements AutoCloseable {
     private volatile long closedAckWaitMs;
     private volatile String closedAckFailure="not_closed";
     private Thread worker;
-    private final boolean movement;
+    private final boolean movement,gameplay;
     public HudInputReader(HudInputProtocol.Identity identity){this(identity,false);}
-    public HudInputReader(HudInputProtocol.Identity identity,boolean movement){this.identity=identity;this.movement=movement;}
+    public HudInputReader(HudInputProtocol.Identity identity,boolean movement){this(identity,movement,false);}
+    public HudInputReader(HudInputProtocol.Identity identity,boolean movement,boolean gameplay){
+        if(movement&&gameplay)throw new IllegalArgumentException("Gameplay UI does not yet own host movement");
+        this.identity=identity;this.movement=movement;this.gameplay=gameplay;
+    }
     public synchronized void start(){if(worker!=null)throw new IllegalStateException("Input reader cannot restart");worker=new Thread(this::read,"MineComeHudInputReader");worker.start();}
     public HudInputProtocol.Event poll(){return queue.poll();}
     public void acknowledge(Acknowledgement value){acknowledgement.set(value);}
@@ -53,7 +57,7 @@ public final class HudInputReader implements AutoCloseable {
     private void read(){
         Kernel32 api=Kernel32.INSTANCE;WinNT.HANDLE producer=null,target=null,mapping=null,mutex=null;Pointer view=null;long lastFetched=0;int state=0;
         try {
-            long remaining=identity.expires()-System.currentTimeMillis();if(remaining<=0 || remaining>180_000)throw new IllegalStateException("Input initial lease out of bounds");
+            long remaining=identity.expires()-System.currentTimeMillis();if(remaining<=0 || remaining>(gameplay?dev.minecome.gameplay.GameplayMode.MAX_LEASE_MS:180_000))throw new IllegalStateException("Input initial lease out of bounds");
             long deadline=System.nanoTime()+remaining*1_000_000L;
             producer=api.OpenProcess(WinNT.PROCESS_QUERY_LIMITED_INFORMATION|WinNT.SYNCHRONIZE,false,identity.producerPid());
             target=api.OpenProcess(WinNT.PROCESS_QUERY_LIMITED_INFORMATION|WinNT.SYNCHRONIZE,false,identity.targetPid());
@@ -83,7 +87,7 @@ public final class HudInputReader implements AutoCloseable {
                 // or possible OS descheduling. Fresh host data must not look future.
                 now=System.currentTimeMillis();mono=System.nanoTime();
                 if(now>=identity.expires() || mono>=deadline)throw new IllegalStateException("Input immutable lease expired");
-                var snapshot=HudInputProtocol.decode(bytes,identity,lastFetched,now,state,movement);state=snapshot.hostState();
+                var snapshot=HudInputProtocol.decode(bytes,identity,lastFetched,now,state,movement,gameplay);state=snapshot.hostState();
                 if(snapshot.heartbeat()<heartbeat)throw new IllegalStateException("Host heartbeat regressed");
                 maxHostAgeMs=Math.max(maxHostAgeMs,now-snapshot.heartbeat());
                 if(state==0 && now-snapshot.heartbeat()>250)prearmOldHeartbeatPolls++;

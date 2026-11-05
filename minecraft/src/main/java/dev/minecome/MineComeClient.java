@@ -36,6 +36,10 @@ public final class MineComeClient implements ClientModInitializer {
     private final boolean interactive=Boolean.getBoolean("minecome.interactiveStoneLab");
     private final InteractiveStoneLab interactiveLab=new InteractiveStoneLab();
     @Override public void onInitializeClient() {
+        if(dev.minecome.gameplay.GameplayMode.enabled()){
+            dev.minecome.gameplay.GameplayMode.requireExclusive(System.getProperties());
+            dev.minecome.hud.GameplaySession.initialize();return;
+        }
         if(Boolean.getBoolean("minecome.hudAimedBridgeLab")) {
             for(String mode:List.of("aimedBridgeLab","aimedStoneLab","hudStreamLab","hudExportLab","interactiveStoneLab","externalInputLab","groundMovementLab","smokeWorld","dynamicBridgeSmoke"))
                 if(Boolean.getBoolean("minecome."+mode))throw new IllegalArgumentException("Choose one isolated development lab mode");

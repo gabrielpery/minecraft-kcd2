@@ -39,6 +39,7 @@ public final class HudStreamProducer implements AutoCloseable {
     private final Path root,directory;
     private final String save;
     private final boolean genuine;
+    private final boolean gameplay=dev.minecome.gameplay.GameplayMode.enabled();
     private final int inputMode;
     private final boolean inputDelayFixture,inputPointerFixture,liveMouse,stoneBridge,stoneFixture,stoneLive,aimedStone;
     private final boolean backgroundTrial;
@@ -67,9 +68,10 @@ public final class HudStreamProducer implements AutoCloseable {
         this(root,directory,identity,save,genuine,0);
     }
     public HudStreamProducer(Path root,Path directory,Identity identity,String save,boolean genuine,int inputMode) {
-        if(!root.isAbsolute() || !directory.isAbsolute() || save==null || !save.matches("MineCome-HudStream-[0-9a-f-]{36}"))
+        if(!root.isAbsolute() || !directory.isAbsolute() || save==null || !(gameplay?save.equals(dev.minecome.gameplay.GameplayWorld.SAVE_NAME):save.matches("MineCome-HudStream-[0-9a-f-]{36}")))
             throw new IllegalArgumentException("Invalid owned stream output path/save");
-        if(inputMode<0 || inputMode>2)throw new IllegalArgumentException("Invalid input mode");
+        if(inputMode<0 || inputMode>2 || gameplay&&(!genuine||inputMode==2))throw new IllegalArgumentException("Invalid input mode");
+        if(gameplay)dev.minecome.gameplay.GameplayMode.requireExclusive(System.getProperties());
         this.root=root.normalize();this.directory=directory.normalize();this.identity=identity;this.save=save;this.genuine=genuine;this.inputMode=inputMode;
         groundMovementMode=HudGroundMovementMode.mode(System.getProperties());
         physicalMovement=HudPhysicalMovementMode.require(System.getProperties());
@@ -80,7 +82,7 @@ public final class HudStreamProducer implements AutoCloseable {
             throw new IllegalArgumentException("Physical movement requires genuine pixels and its exact live or standalone fixture input profile");
         standalone=Boolean.getBoolean("minecome.hudStreamStandalone");
         if(groundMovementMode!=HudGroundMovementMode.Mode.NONE && (!genuine || inputMode!=0))throw new IllegalArgumentException("Ground movement requires genuine standalone HUD pixels");
-        liveMouse=Boolean.getBoolean("minecome.hudStreamLiveMouse");HudMousePolicy.enabled(inputMode!=0,inputMode==2,liveMouse);
+        liveMouse=gameplay&&inputMode==1 || Boolean.getBoolean("minecome.hudStreamLiveMouse");HudMousePolicy.enabled(inputMode!=0,inputMode==2,liveMouse);
         inputDelayFixture=inputMode==2 && Boolean.getBoolean("minecome.hudStreamInputDelayFixture");
         inputPointerFixture=inputMode==2 && Boolean.getBoolean("minecome.hudStreamInputPointerFixture");
         stoneBridge=Boolean.getBoolean("minecome.hudStoneBridge");stoneFixture=Boolean.getBoolean("minecome.hudStoneFixture");stoneLive=Boolean.getBoolean("minecome.hudStoneLive");
@@ -145,19 +147,23 @@ public final class HudStreamProducer implements AutoCloseable {
         Thread value; synchronized(this){value=worker;} if(value==null)return false;value.join(millis);return finished.get();
     }
     public static byte[] header(Identity id,int producerPid,long producerStart,long sequence,long captured,int width,int height,int selected,int screen,int state) {
+        return header(id,producerPid,producerStart,sequence,captured,width,height,selected,screen,state,1);
+    }
+    public static byte[] header(Identity id,int producerPid,long producerStart,long sequence,long captured,int width,int height,int selected,int screen,int state,int schema) {
+        if(schema!=1&&schema!=3)throw new IllegalArgumentException("Unknown HUD stream schema");
         if(producerPid<=0 || producerStart<=0 || sequence<0 || captured<0 || state<0 || state>2 || selected<0 || selected>8 || screen<0 || screen>1)
             throw new IllegalArgumentException("Invalid header fields");
         int size=(width==0 && height==0 && state!=1)?0:HudPixels.byteSize(width,height);
         if(state==1 && (sequence==0 || captured==0))throw new IllegalArgumentException("Frame identity required");
         var b=ByteBuffer.allocate(HEADER_BYTES).order(ByteOrder.LITTLE_ENDIAN);
-        b.put("MCHUDS01".getBytes(StandardCharsets.US_ASCII)).putInt(1).putInt(HEADER_BYTES);
+        b.put((schema==3?"MCHUDS03":"MCHUDS01").getBytes(StandardCharsets.US_ASCII)).putInt(schema).putInt(HEADER_BYTES);
         b.put(id.run().getBytes(StandardCharsets.US_ASCII)).putInt(producerPid).putInt(id.targetPid());
         b.putLong(producerStart).putLong(id.targetStart()).putLong(id.expiresUtcMs()).putLong(sequence).putLong(captured);
         b.putInt(width).putInt(height).putInt(width*4).putInt(size).putInt(1).putInt(state).putInt(selected).putInt(screen);
         return b.array();
     }
     private JsonObject identityReceipt(int pid,long start) {
-        var r=new JsonObject();r.addProperty("schema",1);r.addProperty("run",identity.run());r.addProperty("pid",pid);r.addProperty("producer_pid",pid);
+        var r=new JsonObject();r.addProperty("schema",gameplay?3:1);if(gameplay)r.addProperty("session_kind","gameplay");r.addProperty("run",identity.run());r.addProperty("pid",pid);r.addProperty("producer_pid",pid);
         r.addProperty("producer_start_filetime",Long.toUnsignedString(start));r.addProperty("target_pid",identity.targetPid());
         r.addProperty("target_start_filetime",Long.toUnsignedString(identity.targetStart()));r.addProperty("expires_utc_ms",identity.expiresUtcMs());
         r.addProperty("mapping",identity.mappingName());r.addProperty("mapping_name",identity.mappingName());r.addProperty("mutex_name",identity.mutexName());r.addProperty("mapping_bytes",MAPPING_BYTES);
@@ -186,7 +192,7 @@ public final class HudStreamProducer implements AutoCloseable {
             r.addProperty("ui_input_physical_movement",!scripted);
             if(scripted){r.addProperty("ui_physical_controller_fixture",true);r.addProperty("standalone",true);r.addProperty("scripted_input",true);r.addProperty("physical_input_verified",false);}
         }
-        if(inputMode!=0){r.addProperty("ui_input_protocol",physicalMovement?2:1);r.addProperty("ui_input_live_mouse",liveMouse);r.addProperty("ui_input_fixture",inputMode==2);r.addProperty("ui_input_delay_fixture",inputDelayFixture);r.addProperty("ui_input_pointer_fixture",inputPointerFixture);r.addProperty("ui_input_stone_bridge",stoneBridge);r.addProperty("ui_input_stone_fixture",stoneFixture);r.addProperty("ui_input_stone_live",stoneLive);r.addProperty("ui_input_aimed_stone_bridge",aimedStone);r.addProperty("ui_input_background_trial",backgroundTrial);r.addProperty("ui_input_offscreen_presentation",offscreenPresentation);r.addProperty("ui_input_offscreen_trial",offscreenTrial);}return r;
+        if(inputMode!=0){r.addProperty("ui_input_protocol",gameplay?3:physicalMovement?2:1);r.addProperty("ui_input_live_mouse",liveMouse);r.addProperty("ui_input_fixture",inputMode==2);r.addProperty("ui_input_delay_fixture",inputDelayFixture);r.addProperty("ui_input_pointer_fixture",inputPointerFixture);r.addProperty("ui_input_stone_bridge",stoneBridge);r.addProperty("ui_input_stone_fixture",stoneFixture);r.addProperty("ui_input_stone_live",stoneLive);r.addProperty("ui_input_aimed_stone_bridge",aimedStone);r.addProperty("ui_input_background_trial",backgroundTrial);r.addProperty("ui_input_offscreen_presentation",offscreenPresentation);r.addProperty("ui_input_offscreen_trial",offscreenTrial);}return r;
     }
     private void run() {
         Kernel32 api=null;WinNT.HANDLE mapping=null,mutex=null;Pointer view=null;
@@ -196,7 +202,7 @@ public final class HudStreamProducer implements AutoCloseable {
         var pendingSamples=new ArrayList<Sample>(8);
         try {
             long remaining=identity.expiresUtcMs()-System.currentTimeMillis();
-            if(remaining<=0 || remaining>180_000)throw new IOException("Initial stream lease outside 1..180000ms");
+            if(remaining<=0 || remaining>(gameplay?dev.minecome.gameplay.GameplayMode.MAX_LEASE_MS:180_000))throw new IOException("Initial stream lease outside 1..180000ms");
             long deadline=System.nanoTime()+remaining*1_000_000L;
             Path realRoot=root.toRealPath(),evidence=root.resolve("runtime/evidence").toRealPath(),parent=directory.getParent().toRealPath();
             if(!evidence.startsWith(realRoot) || !parent.startsWith(evidence) || parent.equals(realRoot))throw new IOException("Stream output escapes runtime/evidence");
@@ -216,7 +222,7 @@ public final class HudStreamProducer implements AutoCloseable {
             view=api.MapViewOfFile(mapping,WinNT.FILE_MAP_ALL_ACCESS,0,0,MAPPING_BYTES);
             if(view==null)throw nativeFailure(api,"MapViewOfFile");
             if(!lock(api,mutex))throw new IOException("Fresh mutex unexpectedly busy");
-            try {view.clear(MAPPING_BYTES);view.write(0,header(identity,pid,start,0,0,0,0,0,0,0),0,HEADER_BYTES);}
+            try {view.clear(MAPPING_BYTES);view.write(0,header(identity,pid,start,0,0,0,0,0,0,0,gameplay?3:1),0,HEADER_BYTES);}
             finally {unlock(api,mutex);}
             publicationStage("initial_ready_receipt");writeJson(target.resolve("stream-ready.json"),identityReceipt(pid,start));evidenceWriter=new HudEvidenceWriter(HudStreamProducer::writeJson);ready.set(true);
             while(true) {
@@ -244,7 +250,7 @@ public final class HudStreamProducer implements AutoCloseable {
                 try {
                     publicationStage("mapping_write");long writeAt=System.nanoTime();
                     width=frame.width();height=frame.height();selected=frame.selectedSlot();screen=frame.screen();lastCaptured=frame.capturedUtcMs();
-                    byte[] head=header(identity,pid,start,++sequence,lastCaptured,width,height,selected,screen,1);
+                    byte[] head=header(identity,pid,start,++sequence,lastCaptured,width,height,selected,screen,1,gameplay?3:1);
                     view.write(HEADER_BYTES,rgba,0,rgba.length);view.write(0,head,0,head.length);
                     maxMapWriteNanos=Math.max(maxMapWriteNanos,System.nanoTime()-writeAt);
                 } finally {unlock(api,mutex);}
@@ -295,7 +301,7 @@ public final class HudStreamProducer implements AutoCloseable {
             if(api!=null && view!=null && mutex!=null)try {
                 // Three bounded attempts; never wait indefinitely to close a foreign-owned mutex.
                 for(int attempt=0;attempt<3 && !closed;attempt++)if(lock(api,mutex))try {
-                    byte[] head=header(identity,pid,start,sequence,lastCaptured,width,height,selected,screen,2);view.write(0,head,0,head.length);closed=true;
+                    byte[] head=header(identity,pid,start,sequence,lastCaptured,width,height,selected,screen,2,gameplay?3:1);view.write(0,head,0,head.length);closed=true;
                 }finally {unlock(api,mutex);}
                 if(closed)Thread.sleep(150);
             }catch(Exception e){failure.compareAndSet(null,e.toString());}

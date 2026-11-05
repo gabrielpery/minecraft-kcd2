@@ -8,7 +8,7 @@ namespace minecome::hud::input {
 inline constexpr std::size_t header_bytes=256, ring_count=64, record_bytes=40, mapping_bytes=2816;
 inline constexpr std::uint64_t fresh_ms=250, activation_ms=30000;
 using Identity=stream::Identity;
-enum class Profile : std::uint32_t { ui=1, movement=2 };
+enum class Profile : std::uint32_t { ui=1, movement=2, gameplay=3 };
 enum class Kind : std::uint32_t { key_down=1,key_up=2,move=3,button_down=4,button_up=5,wheel=6 };
 struct Event {
     std::uint64_t captured=0;
@@ -45,6 +45,7 @@ private:
 // frames before accepting keys, one activation and at most 30 seconds.
 class KeyboardGate {
 public:
+    explicit KeyboardGate(bool gameplay = false) noexcept : gameplay_(gameplay) {}
     enum class Step { idle,starting,active,closed };
     enum class Close { none,ineligible,second_f8,clock_regressed,expired,key_during_settle };
     Step update(bool eligible,bool f8,std::uint32_t keys,std::uint64_t now) noexcept;
@@ -57,7 +58,7 @@ public:
     }
 private:
     Close reason_=Close::none;
-    bool neutral_=false,previous_f8_=false,consumed_=false,closed_=false;
+    bool gameplay_=false,neutral_=false,previous_f8_=false,consumed_=false,closed_=false;
     std::uint32_t settling_=0;
     std::uint64_t began_=0;
 };

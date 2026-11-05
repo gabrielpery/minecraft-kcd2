@@ -1,5 +1,43 @@
 # MineCome progress — 2026-11-05
 
+## Persistent session foundation — actual Minecraft save/reopen passed
+
+The separate gameplay entry reuses `MineCome-Gameplay` with an owned world UUID,
+preserving its inventory, game mode and player state. It does not seed/reset a
+disposable Creative lab on each launch. Regular lifetime is explicit stop/peer
+closure, bounded by a 24-hour session identity; short freshness leases remain.
+Bounded lab profiles and their verified walking/block behavior are unchanged.
+
+Actual two-launch proof:
+`runtime/evidence/gameplay-persistence-20261105-170217-435f802075d347c982b362d2e32c75d9/verification.json`.
+Creation ran for 35.2 seconds, saved normally and reopened the same world/player.
+Seventeen apples, an iron pickaxe, Survival mode, health16, food11 and the changed
+regeneration rule survived. Vanilla command packets changed Creative/Survival
+abilities on resume. This verifies guest commands, not typing commands from KCD2
+or actual flying. Bootstrap collision is vanilla superflat, not imported KCD.
+
+The native gameplay addon and v5 ReShade proxy compile with schema3 HUD/input,
+neutral automatic activation and F8 stop. The v5 keyboard lease captures only UI
+keys outside inventory; KCD retains native world movement and camera. Minecraft
+authoritative walking/terrain/blocks are **not connected in this new profile**.
+Connected guest rendering reuses the verified hidden-window cleanup path.
+
+Java world/protocol checks and existing HUD regressions passed. Native profile,
+adapter, stream and input checks passed; full pinned v5 proxy build/export passed.
+See [GAMEPLAY_SESSION.md](GAMEPLAY_SESSION.md) for entry points and limitations.
+
+Native smoke PASS with KCD2 launched at60FPS:
+`runtime/evidence/gameplay-kcd-20261105-171621-b063422fa5d64d6fa67539bff318d787/verification.json`.
+The guest ran40.546s; native input automatically armed,733 frames uploaded with
+zero drops and2498 compositor submissions. A Computer Use frame visibly showed
+Minecraft's hotbar/crosshair on the native world. Explicit stop saved normally,
+closed both peers, completed input cleanup and kept Minecraft hidden until exit.
+No input events were recorded, so this is sustained composition/lifecycle proof,
+not a new inventory-controls or movement acceptance. No manual test was requested.
+Both games closed normally afterward; all six original renderer files were restored
+and hash-verified. New v5 binaries remain staged, not currently installed. One
+gameplay session per KCD process is implemented; same-process rearm remains work.
+
 ## Product target and physical-controller admission checkpoint
 
 The user confirmed Steve/hands/equipment, Minecraft health/hunger and combat with

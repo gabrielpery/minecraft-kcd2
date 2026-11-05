@@ -13,10 +13,10 @@ public abstract class HudOffscreenBlitMixin {
     /** render(Z)V's sole outer clear precedes the owned framebuffer.beginWrite. */
     @Redirect(method="render(Z)V",at=@At(value="INVOKE",target="Lcom/mojang/blaze3d/systems/RenderSystem;clear(IZ)V"))
     private void minecome$ownedOffscreenClear(int mask,boolean checkError){
-        if(!HudStreamLab.skipDesktopClear(mask))RenderSystem.clear(mask,checkError);
+        if(!HudStreamLab.skipDesktopClear(mask)&&!dev.minecome.hud.GameplaySession.skipDesktopClear(mask))RenderSystem.clear(mask,checkError);
     }
     @Redirect(method="render(Z)V",at=@At(value="INVOKE",target="Lnet/minecraft/client/gl/Framebuffer;draw(II)V"))
     private void minecome$ownedOffscreenBlit(Framebuffer framebuffer,int width,int height){
-        if(!HudStreamLab.skipDesktopBlit(framebuffer,width,height))framebuffer.draw(width,height);
+        if(!HudStreamLab.skipDesktopBlit(framebuffer,width,height)&&!dev.minecome.hud.GameplaySession.skipDesktopBlit(framebuffer,width,height))framebuffer.draw(width,height);
     }
 }

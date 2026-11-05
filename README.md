@@ -23,6 +23,14 @@ required goals; the current prototype has not implemented most of them yet.
 work, but this is not yet a complete playable mod or a ready-to-install release.
 The public repository contains source, build scripts and development procedures.
 
+The separate [gameplay session foundation](docs/GAMEPLAY_SESSION.md) now keeps a
+Minecraft world between launches. An automated two-launch check preserves inventory,
+Survival mode, health and hunger, and executes vanilla game-mode commands. A new
+HUD/inventory profile replaces the demo countdown with automatic activation and
+explicit stop/save. Its KCD integration is still experimental: Minecraft walking,
+terrain, blocks, command typing and flight have not yet moved into this sustained
+path. The existing bounded walking/block tests remain available.
+
 The new [repeat-session development profile](kcd2/MOVEMENT-LAB.md#repeat-sessions-in-one-kcd-process)
 is implemented and compiled, with automated cleanup/rearm checks passing.
 Two bounded sessions now work in the same KCD2 process, with live user confirmation.

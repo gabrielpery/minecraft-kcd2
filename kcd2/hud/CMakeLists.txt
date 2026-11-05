@@ -194,6 +194,42 @@ endif()
 add_custom_command(TARGET minecome_hud_movement_compositor POST_BUILD
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/shaders/MineComeMouseHud.fx"
     "$<TARGET_FILE_DIR:minecome_hud_movement_compositor>/MineComeHud.fx")
+# Gameplay uses the separate v5 proxy keyboard mask and explicit v3 transport.
+# Existing lab artifacts retain their capture and lifetime contracts.
+add_library(minecome_hud_gameplay_compositor SHARED hud_input_addon.cpp)
+target_link_libraries(minecome_hud_gameplay_compositor PRIVATE minecome_hud_input user32)
+target_include_directories(minecome_hud_gameplay_compositor PRIVATE "${MINECOME_RESHADE_ROOT}/include")
+target_compile_definitions(minecome_hud_gameplay_compositor PRIVATE MINECOME_HUD_UI_INPUT=1 MINECOME_HUD_LIVE_MOUSE=1 MINECOME_HUD_SELECTIVE_MOUSE=1 MINECOME_HUD_MOTION_FILTER=1 MINECOME_HUD_RAW_OWNER_FILTER=1 MINECOME_HUD_GAMEPLAY=1)
+set_target_properties(minecome_hud_gameplay_compositor PROPERTIES OUTPUT_NAME "MineComeHudCompositor" PREFIX "" SUFFIX ".addon64"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/gameplay" ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/gameplay"
+    PDB_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/gameplay")
+if(MSVC)
+    set_target_properties(minecome_hud_gameplay_compositor PROPERTIES MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    target_compile_options(minecome_hud_gameplay_compositor PRIVATE /W4 /permissive- /utf-8 /EHsc)
+endif()
+add_custom_command(TARGET minecome_hud_gameplay_compositor POST_BUILD
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/shaders/MineComeMouseHud.fx"
+    "$<TARGET_FILE_DIR:minecome_hud_gameplay_compositor>/MineComeHud.fx")
+if(BUILD_TESTING)
+    add_executable(minecome_hud_gameplay_tests gameplay_session_tests.cpp)
+    target_link_libraries(minecome_hud_gameplay_tests PRIVATE minecome_hud_input)
+    if(MSVC)
+        set_target_properties(minecome_hud_gameplay_tests PROPERTIES MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+        target_compile_options(minecome_hud_gameplay_tests PRIVATE /W4 /permissive- /utf-8 /EHsc)
+    endif()
+    add_test(NAME hud_gameplay_session COMMAND minecome_hud_gameplay_tests)
+    add_executable(minecome_gameplay_keyboard_adapter_tests gameplay_keyboard_adapter_tests.cpp)
+    target_compile_features(minecome_gameplay_keyboard_adapter_tests PRIVATE cxx_std_20)
+    target_include_directories(minecome_gameplay_keyboard_adapter_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_compile_definitions(minecome_gameplay_keyboard_adapter_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+    target_link_libraries(minecome_gameplay_keyboard_adapter_tests PRIVATE user32 dxguid)
+    if(MSVC)
+        set_target_properties(minecome_gameplay_keyboard_adapter_tests PROPERTIES MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+        target_compile_options(minecome_gameplay_keyboard_adapter_tests PRIVATE /W4 /permissive- /utf-8 /EHsc)
+    endif()
+    add_test(NAME hud_gameplay_keyboard_adapter COMMAND minecome_gameplay_keyboard_adapter_tests)
+endif()
+
 # A separate opt-in target combines input v2 with original world-click edges.
 # Existing movement/r4 binaries and their frozen profiles remain independent.
 add_library(minecome_hud_walking_aimed_compositor SHARED hud_input_addon.cpp)

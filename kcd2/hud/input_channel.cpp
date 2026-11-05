@@ -7,11 +7,12 @@ Writer::~Writer() {if(mapped_&&status_.state!=2)finish("host_shutdown");dispose(
 void Writer::dispose() {if(mapped_){UnmapViewOfFile(mapped_);mapped_=nullptr;}mapping_.reset();mutex_.reset();producer_.reset();}
 bool Writer::create(const Identity &id,Profile profile) {
     if(consumed_)return false;consumed_=true;
-    if(profile!=Profile::ui&&profile!=Profile::movement){reason_="input_profile";return false;}
+    if((profile!=Profile::ui&&profile!=Profile::movement&&profile!=Profile::gameplay)||
+        ((profile==Profile::gameplay)!=(id.schema==3))){reason_="input_profile";return false;}
     profile_=profile;
     const auto utc=stream::utc_ms();begun_=stream::steady_ms();
     if(!stream::valid_identity(id)||id.target_pid!=GetCurrentProcessId()||id.target_start!=stream::process_start()||
-        id.expires_utc_ms<=utc||id.expires_utc_ms-utc>stream::max_lease_ms) {reason_="host_identity_or_expiry";return false;}
+        id.expires_utc_ms<=utc||id.expires_utc_ms-utc>stream::maximum_lease(id)) {reason_="host_identity_or_expiry";return false;}
     identity_=id;deadline_=begun_+(id.expires_utc_ms-utc);
     producer_.reset(OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION|SYNCHRONIZE,FALSE,id.producer_pid));
     if(!producer_||stream::process_start(producer_.value)!=id.producer_start||WaitForSingleObject(producer_.value,0)!=WAIT_TIMEOUT) {

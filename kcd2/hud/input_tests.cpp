@@ -317,7 +317,17 @@ void channels() {
     Guest legacy_peer(legacy_id);legacy_peer.write(0);legacy.poll();legacy.arm();
     forward.captured=st::utc_ms();
     check(!legacy.append(std::span<const ui::Event>(&forward,1))&&legacy.reason()=="invalid_or_stale_event","v1 writer rejects movement even on valid fresh session");
-    ui::Writer invalid;check(!invalid.create(identity(9),static_cast<ui::Profile>(3))&&invalid.reason()=="input_profile","unsupported writer profile refused");
+    ui::Writer invalid;check(!invalid.create(identity(9),static_cast<ui::Profile>(4))&&invalid.reason()=="input_profile","unsupported writer profile refused");
+    auto game_id=identity(10);game_id.schema=3;game_id.expires_utc_ms=st::utc_ms()+st::gameplay_max_lease_ms;
+    ui::Writer game;check(game.create(game_id,ui::Profile::gameplay),"explicit gameplay writer accepts24h outer identity");
+    Guest game_peer(game_id);game_peer.write(0);check(game.poll()&&game.arm(),"gameplay acknowledgement arms");
+    check(!std::memcmp(game_peer.bytes,"MCHUDI03",8)&&game_peer.bytes[8]==3,"actual gameplay mapping is v3");
+    ui::Event select{st::utc_ms(),ui::Kind::key_down,0x32};
+    check(game.append(std::span<const ui::Event>(&select,1)),"gameplay actual UI edge published");
+    game.finish("explicit_stop");game_peer.write(1,2);check(game.poll()&&game.status().ack.state==2,"gameplay explicit stop rendezvous");
+    ui::Writer wrong_game;check(!wrong_game.create(identity(11),ui::Profile::gameplay),"gameplay writer refuses legacy stream identity");
+    ui::Writer wrong_legacy;check(!wrong_legacy.create(game_id,ui::Profile::ui),"legacy writer refuses gameplay identity");
+
 }
 }
 int main() {try{contract();background_receipts();offscreen_receipts();pointer_receipts();channels();std::cout<<"HUD_INPUT_TESTS checks="<<checks<<" PASS\n";return 0;}catch(const std::exception&e){std::cerr<<"HUD_INPUT_TESTS FAIL "<<checks<<" "<<e.what()<<'\n';return 1;}}

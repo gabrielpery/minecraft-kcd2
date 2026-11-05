@@ -56,6 +56,9 @@
 #include "world_click.hpp"
 #endif
 #include "hud_contract.hpp"
+#ifdef MINECOME_HUD_GAMEPLAY
+#include "gameplay_keyboard_api.hpp"
+#endif
 #include <reshade.hpp>
 #include <algorithm>
 #include <array>
@@ -72,6 +75,13 @@ namespace api = reshade::api;
 namespace hud = minecome::hud;
 namespace st = minecome::hud::stream;
 namespace ui = minecome::hud::input;
+#ifdef MINECOME_HUD_GAMEPLAY
+constexpr std::uint32_t stream_schema = 3;
+namespace gameplay_keyboard=minecome::gameplay_keyboard;
+const gameplay_keyboard::Api *gameplay_keyboard_api=nullptr;
+#else
+constexpr std::uint32_t stream_schema = 1;
+#endif
 #ifdef MINECOME_HUD_MOTION_FILTER
 namespace motion = minecome::motion;
 motion::ReadDiagnostics motion_diagnostics=nullptr;
@@ -242,7 +252,9 @@ struct Service {
     explicit Service(HMODULE module) {
         const auto path = st::module_path(module); const auto slash = path.find_last_of(L"/\\");
         if (slash != path.npos) config = path.substr(0,slash+1)+
-#ifdef MINECOME_HUD_REPEAT_SESSION
+#ifdef MINECOME_HUD_GAMEPLAY
+            L"MineComeHudGameplay.ini";
+#elif defined(MINECOME_HUD_REPEAT_SESSION)
             L"MineComeHudWalkingRepeat.ini";
 #elif defined(MINECOME_HUD_WALKING_AIMED)
             L"MineComeHudWalkingAimed.ini";
@@ -419,7 +431,7 @@ struct Service {
                                   )) {
                     std::string error;
                     if (st::parse_arm(std::string_view(reinterpret_cast<const char *>(bytes.data()),bytes.size()),
-                                      pid,start,st::utc_ms(),identity,error)) {
+                                      pid,start,st::utc_ms(),identity,error,stream_schema)) {
 #ifdef MINECOME_HUD_REPEAT_SESSION
                         // Leave the retired arm untouched until the explicit
                         // controller archives it; never auto-replay that arm.
@@ -438,7 +450,7 @@ struct Service {
             // producer or replacement config can reopen or renew this session.
             auto accepted=std::make_shared<Session>(); accepted->identity=identity;
             const auto utc=st::utc_ms(); accepted->begun=st::steady_ms();
-            if (identity.expires_utc_ms <= utc || identity.expires_utc_ms-utc > st::max_lease_ms) {
+            if (identity.expires_utc_ms <= utc || identity.expires_utc_ms-utc > st::maximum_lease(identity)) {
                 end("arm_expired",identity.run); return;
             }
             accepted->deadline=accepted->begun+(identity.expires_utc_ms-utc);
@@ -465,7 +477,9 @@ struct Service {
             receipt("arm","accepted",identity.run);
             ui::Writer inputs;
             bool input_created=inputs.create(identity
-#ifdef MINECOME_HUD_PHYSICAL_MOVEMENT
+#ifdef MINECOME_HUD_GAMEPLAY
+                ,ui::Profile::gameplay
+#elif defined(MINECOME_HUD_PHYSICAL_MOVEMENT)
                 ,ui::Profile::movement
 #endif
                 ),input_closed_logged=false,first_close_logged=false;
@@ -596,7 +610,12 @@ struct RuntimeState {
     api::effect_technique technique{};
     bool bound=false, failed=false;
     bool reshade_overlay=false;
+#ifdef MINECOME_HUD_GAMEPLAY
+    ui::KeyboardGate keyboard{true};
+    bool gameplay_keyboard_leased=false;
+#else
     ui::KeyboardGate keyboard;
+#endif
     std::uint32_t previous_keys=0;
 #ifdef MINECOME_HUD_PHYSICAL_MOVEMENT
     ui::MovementGate movement;
@@ -672,6 +691,9 @@ bool queue_movement(RuntimeState &state,const ui::MovementEdges &edges,std::uint
 #endif
 #endif
 void close_keyboard(api::effect_runtime *runtime,ui::CloseCause cause,const ui::CloseSnapshot *snapshot=nullptr) noexcept {
+#ifdef MINECOME_HUD_GAMEPLAY
+    if(gameplay_keyboard_api)gameplay_keyboard_api->release(reinterpret_cast<std::uintptr_t>(runtime->get_hwnd()),reinterpret_cast<std::uintptr_t>(runtime));
+#endif
     if(service&&service->input_owner.load(std::memory_order_acquire)==runtime) {
         if(snapshot)input_signals.load()->first_close.publish(*snapshot);else record_close(cause);
         service->input_request.store(2,std::memory_order_release);
@@ -708,6 +730,9 @@ void capture_keyboard(api::effect_runtime *runtime,RuntimeState &state,bool comp
         ((!peer->live||peer->state>=2)?8u:0u)|(peer->ack.state!=1?16u:0u)|(!ui::fresh(peer->ack.utc,utc)?32u:0u)|
         ((now<peer->observed||now-peer->observed>ui::fresh_ms)?64u:0u)|
         (input_signals.load()->input_force_close.load(std::memory_order_acquire)?128u:0u)|(service->terminal.load(std::memory_order_acquire)?256u:0u);
+#ifdef MINECOME_HUD_GAMEPLAY
+    if(!gameplay_keyboard_api->query(reinterpret_cast<std::uintptr_t>(state.window),state.gameplay_keyboard_leased?reinterpret_cast<std::uintptr_t>(runtime):0))failures|=2048u;
+#endif
 #ifdef MINECOME_HUD_LIVE_MOUSE
     if(!state.keyboard.consumed()&&(!mouse_capable||mouse_buttons))failures|=512u;
 #ifdef MINECOME_HUD_SELECTIVE_MOUSE
@@ -717,7 +742,13 @@ void capture_keyboard(api::effect_runtime *runtime,RuntimeState &state,bool comp
     if(state.mouse_leased&&(!mouse_capable||!(mouse_status.flags&mouse::active)||mouse_status.generation!=state.mouse_generation))failures|=1024u;
 #endif
 #endif
-    const auto step=state.keyboard.update(failures==0,f8,held,now);
+    auto gate_controls=held;
+#ifdef MINECOME_HUD_GAMEPLAY
+    // Native walking is never forwarded, but cannot be held during takeover.
+    for(const auto key:std::array<std::uint32_t,7>{'W','A','S','D',VK_SPACE,VK_SHIFT,VK_CONTROL})
+        if(runtime->is_key_down(key))gate_controls|=1u<<31;
+#endif
+    const auto step=state.keyboard.update(failures==0,f8,gate_controls,now);
     if(step==ui::KeyboardGate::Step::closed) {
 #ifdef MINECOME_HUD_LIVE_MOUSE
         release_mouse(runtime,state);
@@ -754,7 +785,9 @@ void capture_keyboard(api::effect_runtime *runtime,RuntimeState &state,bool comp
     service->input_request.compare_exchange_strong(request,1,std::memory_order_acq_rel);
     // Public ReShade request affects the following frame. The gate waits two
     // fully neutral frames before forwarding UI edges. F8 itself may reach KCD.
+#ifndef MINECOME_HUD_GAMEPLAY
     runtime->block_input_next_frame();
+#endif
 #ifdef MINECOME_HUD_SELECTIVE_MOUSE
     if(defer_mouse_query){
         // Preserve only the already-owned bounded lease. No capture renewal or
@@ -772,6 +805,19 @@ void capture_keyboard(api::effect_runtime *runtime,RuntimeState &state,bool comp
     const auto desired=state.selective_mode.update(step==ui::KeyboardGate::Step::active&&peer->state==1,
         state.transition,peer->ack.screen,state.uploaded_screen,toggle_edge,mouse_buttons,
         state.selective_lease.allows(mouse::Mode::buttons));
+#ifdef MINECOME_HUD_GAMEPLAY
+    // Persistent UI foundation: KCD owns movement/look/world mouse outside UI.
+    // The proxy absorbs only slots/E/Esc there, before any edge reaches KCD.
+    const bool full_capture=desired==mouse::Mode::full;
+    if(!gameplay_keyboard_api->request(reinterpret_cast<std::uintptr_t>(state.window),reinterpret_cast<std::uintptr_t>(runtime),100,
+        full_capture?gameplay_keyboard::Mode::full:gameplay_keyboard::Mode::ui)){
+        close_keyboard(runtime,ui::CloseCause::eligibility_lost);release_mouse(runtime,state);return;
+    }
+    state.gameplay_keyboard_leased=true;
+    if(!full_capture)release_mouse(runtime,state);
+    else {
+        runtime->block_input_next_frame();
+#endif
     const auto requested=state.selective_lease.request_mode(desired);
     mouse::Snapshot world_capture;
     const bool previously_owned=state.selective_lease.owned(),previously_pending=state.selective_lease.pending();
@@ -790,6 +836,9 @@ void capture_keyboard(api::effect_runtime *runtime,RuntimeState &state,bool comp
     state.mouse_leased=state.selective_lease.owned();state.mouse_generation=state.selective_lease.generation();
     if(!previously_owned||old_generation!=state.mouse_generation||previously_pending!=state.selective_lease.pending())
         mouse_receipt(state.selective_lease.pending()?"selective_mouse_pending":"selective_mouse_ready",capture_result,world_capture);
+#ifdef MINECOME_HUD_GAMEPLAY
+    }
+#endif
 #elif defined(MINECOME_HUD_WORLD_CLICKS)
     // Deliberate bounded-lab policy: strict v1 capture freezes the complete
     // KCD mouse while world clicks or inventory own input. It is acquired
@@ -1205,7 +1254,10 @@ void on_begin(api::effect_runtime *runtime, api::command_list *commands, api::re
     } catch (...) { fail(state,5); hide(runtime,state); }
 }
 } // namespace
-#ifdef MINECOME_HUD_REPEAT_SESSION
+#if defined(MINECOME_HUD_GAMEPLAY)
+extern "C" __declspec(dllexport) const char *NAME="MineCome continuous Minecraft HUD and inventory";
+extern "C" __declspec(dllexport) const char *DESCRIPTION="Opt-in gameplay v3 with v5 per-key capture; neutral activation, F8 stop and short peer leases. KCD owns world movement and mouse outside inventory; no demo timer.";
+#elif defined(MINECOME_HUD_REPEAT_SESSION)
 extern "C" __declspec(dllexport) const char *NAME="MineCome repeatable walking aimed lab";
 extern "C" __declspec(dllexport) const char *DESCRIPTION="Opt-in two-session profile; each session retains its original 30-second input limit. A new producer and verified native/controller cleanup are required before explicit rearm.";
 #elif defined(MINECOME_HUD_WALKING_AIMED)
@@ -1236,6 +1288,13 @@ extern "C" __declspec(dllexport) const char *DESCRIPTION="Exact KCD2 tools/D3D12
 extern "C" __declspec(dllexport) bool AddonInit(HMODULE addon, HMODULE reshade_module) {
     if (!reshade::register_addon(addon,reshade_module)) return false;
     try {
+#ifdef MINECOME_HUD_GAMEPLAY
+        const auto get_keyboard_api=reinterpret_cast<gameplay_keyboard::GetApi>(GetProcAddress(reshade_module,"MineComeGetGameplayKeyboardApi"));
+        gameplay_keyboard_api=get_keyboard_api?get_keyboard_api(gameplay_keyboard::api_version,sizeof(gameplay_keyboard::Api)):nullptr;
+        if(!gameplay_keyboard_api||gameplay_keyboard_api->size!=sizeof(gameplay_keyboard::Api)||gameplay_keyboard_api->version!=gameplay_keyboard::api_version||
+            !gameplay_keyboard_api->query||!gameplay_keyboard_api->request||!gameplay_keyboard_api->release)
+            throw std::runtime_error("gameplay_keyboard_v5_runtime_required");
+#endif
 #ifdef MINECOME_HUD_LIVE_MOUSE
         const auto get_api=reinterpret_cast<mouse::GetApi>(GetProcAddress(reshade_module,
 #ifdef MINECOME_HUD_SELECTIVE_MOUSE

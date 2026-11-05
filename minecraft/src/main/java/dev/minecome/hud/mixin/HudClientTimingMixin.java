@@ -9,7 +9,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 /** Exact mapped1.21.1 render(Z)V calls inspected with javap; observational, trial-only. */
 @Mixin(MinecraftClient.class)
 public abstract class HudClientTimingMixin {
-    @Inject(method="onWindowFocusChanged(Z)V",at=@At("HEAD")) private void minecome$focusChanged(boolean focused,CallbackInfo ci){HudStreamLab.timingFocusChanged(focused);}
+    @Inject(method="onWindowFocusChanged(Z)V",at=@At("HEAD")) private void minecome$focusChanged(boolean focused,CallbackInfo ci){HudStreamLab.timingFocusChanged(focused);dev.minecome.hud.GameplaySession.timingFocusChanged(focused);}
     @Inject(method="render(Z)V",at=@At("HEAD")) private void minecome$frameStart(CallbackInfo ci){HudStreamLab.timingStage("frame_setup");}
     @Inject(method="render(Z)V",at=@At("RETURN")) private void minecome$frameEnd(CallbackInfo ci){HudStreamLab.timingStage("between_frames");}
     @Inject(method="render(Z)V",at=@At(value="INVOKE",target="Lnet/minecraft/client/MinecraftClient;tick()V")) private void minecome$tickStart(CallbackInfo ci){HudStreamLab.timingStage("client_tick");}

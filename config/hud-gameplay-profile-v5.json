@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "kind": "minecome_gameplay_hud_profile_v5",
+  "tools_exe_sha256": "a32d077e6b54e5cd0c5a5f3194f473779706ff266a711e4745ccdb598843340a",
+  "upstream_commit": "18deaa52de0c425a78b329e9cb3c497281cd00ec",
+  "build_receipt": "runtime/dependencies/reshade-selective-r5-6.8.0/evidence/20261105-165841-ff11265ea3254c61b40886a4f56b2dcb/verification.json",
+  "build_receipt_sha256": "caa7fa0f51d870077be58a01c26394734f2b4e96ba07f6c80467915625b993c8",
+  "addon_source": "build/native/kcd2/hud/gameplay/Release/MineComeHudCompositor.addon64",
+  "previous_bundle": "runtime/hud-compositor-walking-corridor-aimed-20261029",
+  "previous_manifest_sha256": "5d34a9ba8f0de0c3a277ad63c21bcc9eaa4df935a949f252f32b7515707346e7",
+  "previous_receipt_sha256": "663d5f79979b157546a193534377463ae77635849de2eb29847ace6ddf88b1ab",
+  "arm_config_relative_path": "minecome-hud/addons/MineComeHudGameplay.ini",
+  "files": [
+    {"path":"dxgi.dll","bytes":5721600,"sha256":"22a894022a0275f4ed355d97bfc06bc2ea838581f61fc5d0f0b85fde3a81362e"},
+    {"path":"ReShade.ini","bytes":263,"sha256":"5b34cc314c711b9e02c17538a4cdd0eb44e7f110072cca95ae9e33a099ff9228"},
+    {"path":"MineComeHudPreset.ini","bytes":82,"sha256":"34aeb1df7cc2afa0e4024ddc105cb1b4a8423ad99f7867f43590d41e5532051a"},
+    {"path":"ReShade-LICENSE.txt","bytes":259951,"sha256":"06a0946fe81aa79712f4455886a501bc1d219384cf93d6728cbd3e2003a9bded"},
+    {"path":"minecome-hud/addons/MineComeHudCompositor.addon64","bytes":353792,"sha256":"51f16a21e0e161b643217bd41bb855b5c8feb421b5bff73645b1454017ae9e49"},
+    {"path":"minecome-hud/shaders/MineComeHud.fx","bytes":2549,"sha256":"ba09f039fbcd616200456f7f79a1fca913bbbe3e8bf672576dc5098c1c25d0b6"}
+  ]
+}

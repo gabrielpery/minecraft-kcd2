@@ -14,3 +14,4 @@ gradlew text eol=lf
 # Unified diff context must preserve the pinned upstream's whitespace exactly.
 kcd2/reshade/mouse-capture.patch -whitespace
 kcd2/reshade/selective-capture.patch -whitespace
+kcd2/reshade/gameplay-keyboard-v5.patch -whitespace

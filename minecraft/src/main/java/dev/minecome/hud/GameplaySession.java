@@ -1,0 +1,398 @@
+package dev.minecome.hud;
+
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+import com.mojang.blaze3d.systems.RenderSystem;
+import dev.minecome.gameplay.GameplayWorld;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientLifecycleEvents;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
+import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.gl.Framebuffer;
+import net.minecraft.client.option.GraphicsMode;
+import org.lwjgl.glfw.GLFW;
+import org.lwjgl.opengl.GL11;
+import org.lwjgl.opengl.GL14;
+import org.lwjgl.opengl.GL30;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
+import java.util.Set;
+import java.util.function.BooleanSupplier;
+
+/** Persistent vanilla guest and HUD session. Native movement/terrain are separate integration work. */
+public final class GameplaySession {
+    private static final Logger LOG=LoggerFactory.getLogger("MineComeGameplay");
+    private static volatile GameplaySession active;
+    private final Path root,directory,stopFile;
+    private final HudStreamProducer.Identity identity;
+    private final boolean standalone=Boolean.getBoolean("minecome.gameplayStandalone");
+    private final String fixtureMode=System.getProperty("minecome.gameplayFixture","");
+    private final HudStreamLayout layout=HudStreamLayout.configured();
+    private final HudReadback readback=new HudReadback();
+    private final HudInputGate gate=new HudInputGate();
+    private final long initializedAt=System.nanoTime();
+    private GameplayWorld save;
+    private HudStreamProducer output;
+    private HudInputReader input;
+    private HudVanillaUiAdapter ui;
+    private GameplayPersistenceFixture fixture;
+    private Object world,player,server;
+    private boolean opening,ready,stopping,writerFinished,shutdownRequested,frameTransparent,sessionReportWritten;
+    private long readyAt,stopAt,writerAt,lastCaptureAt,inputEvents;
+    private int captureId,lastReadbackId;
+    private String stopReason="not_stopped",failure;
+    private JsonObject fixtureResult;
+    private int[] priorBlend;
+    private Boolean oldPause,oldHidden,oldFullscreen,oldVsync;
+    private Integer oldScale,oldFps;
+    private GraphicsMode oldGraphics;
+    private int oldWidth,oldHeight;
+    private long hiddenWindow,focusLossCallbacksAfterHide,desktopSwapsSkipped;
+    private Boolean oldWindowVisible,oldFocusOnShow;
+    private boolean windowHideRequested,windowHideVerified,clientFocusedBeforeHide;
+    private boolean inputConnectedSeen,inputArmedSeen;
+    private JsonObject windowCleanup;
+
+    private GameplaySession(Path root,Path directory,HudStreamProducer.Identity identity)throws IOException{
+        if(!root.isAbsolute()||!directory.isAbsolute())throw new IllegalArgumentException("Absolute gameplay paths required");
+        this.root=root.toRealPath();this.directory=directory.normalize();this.identity=identity;
+        Path parent=directory.getParent().toRealPath();
+        if(!parent.startsWith(this.root.resolve("runtime/evidence")))throw new IOException("Gameplay session output must be inside runtime/evidence");
+        Path requested=Path.of(System.getProperty("minecome.gameplayStopFile",parent.resolve("session.stop").toString())).toAbsolutePath().normalize();
+        if(!requested.getParent().equals(parent))throw new IOException("Gameplay stop file must be in this session directory");
+        stopFile=requested;
+        if(!fixtureMode.isEmpty()&&!standalone)throw new IllegalArgumentException("Persistence fixture requires standalone gameplay");
+    }
+
+    public static void initialize(){
+        if(!Boolean.getBoolean("minecome.gameplay"))return;
+        if(active!=null)throw new IllegalStateException("Gameplay session already initialized");
+        for(String key:System.getProperties().stringPropertyNames()){
+            if(!key.startsWith("minecome.")||key.startsWith("minecome.gameplay"))continue;
+            if(Boolean.getBoolean(key)&&(key.endsWith("Lab")||key.contains("Fixture")||key.startsWith("minecome.hudGround")
+                    ||key.startsWith("minecome.hudPhysical")||key.equals("minecome.smokeWorld")||key.equals("minecome.dynamicBridgeSmoke")))
+                throw new IllegalArgumentException("Gameplay cannot share development lab ownership: "+key);
+        }
+        try{
+            var identity=new HudStreamProducer.Identity(required("minecome.hudStreamRun"),Integer.parseInt(required("minecome.hudStreamTargetPid")),
+                    Long.parseUnsignedLong(required("minecome.hudStreamTargetStart")),Long.parseLong(required("minecome.hudStreamExpiresUtcMs")));
+            var session=new GameplaySession(Path.of(required("minecome.root")),Path.of(required("minecome.hudStreamDirectory")),identity);
+            active=session;
+            ClientTickEvents.END_CLIENT_TICK.register(session::tick);
+            ClientLifecycleEvents.CLIENT_STOPPING.register(session::onClientStopping);
+            LOG.info("GAMEPLAY_INITIALIZED run={} standalone={} persistentSave={}",identity.run(),session.standalone,GameplayWorld.SAVE_NAME);
+        }catch(IOException e){throw new IllegalArgumentException("Gameplay session paths invalid",e);}
+    }
+    private static String required(String key){String value=System.getProperty(key);if(value==null||value.isBlank())throw new IllegalArgumentException(key+" is required");return value;}
+    private boolean owns(MinecraftClient client){return ready&&!stopping&&client.world==world&&client.player==player&&client.getServer()==server&&client.isIntegratedServerRunning();}
+    public static boolean suppressWorld(){var s=active;return s!=null&&!s.standalone&&s.owns(MinecraftClient.getInstance());}
+    public static boolean transparentFrame(){var s=active;return s!=null&&s.frameTransparent&&s.owns(MinecraftClient.getInstance());}
+    public static Double virtualMouseX(){var s=active;var c=MinecraftClient.getInstance();return s!=null&&s.ui!=null&&s.owns(c)?s.ui.windowX(c):null;}
+    public static Double virtualMouseY(){var s=active;var c=MinecraftClient.getInstance();return s!=null&&s.ui!=null&&s.owns(c)?s.ui.windowY(c):null;}
+    public static void timingFocusChanged(boolean focused){
+        var s=active;if(s!=null&&!s.standalone&&s.windowHideRequested&&!focused)s.focusLossCallbacksAfterHide++;
+    }
+    public static boolean skipDesktopSwap(long window){
+        var s=active;if(s==null||!s.offscreenAllowed(MinecraftClient.getInstance(),window))return false;
+        RenderSystem.assertOnRenderThread();GL11.glFlush();s.desktopSwapsSkipped++;return true;
+    }
+    public static boolean skipDesktopBlit(Framebuffer framebuffer,int width,int height){
+        var s=active;var client=MinecraftClient.getInstance();
+        if(s==null||framebuffer!=client.getFramebuffer()||width!=client.getWindow().getFramebufferWidth()
+                ||height!=client.getWindow().getFramebufferHeight()||!s.offscreenAllowed(client,client.getWindow().getHandle()))return false;
+        RenderSystem.assertOnRenderThread();var shader=client.gameRenderer.blitScreenProgram;if(shader==null)return false;
+        // Same desktop-only state changes as the proven stream lab; the actual
+        // HUD framebuffer and its asynchronous readback have already rendered.
+        RenderSystem.disableDepthTest();RenderSystem.disableBlend();RenderSystem.viewport(0,0,width,height);
+        shader.addSampler("DiffuseSampler",framebuffer.getColorAttachment());shader.unbind();
+        RenderSystem.depthMask(true);RenderSystem.colorMask(true,true,true,true);return true;
+    }
+    public static boolean skipDesktopClear(int mask){
+        var s=active;if(s==null||mask!=(GL11.GL_COLOR_BUFFER_BIT|GL11.GL_DEPTH_BUFFER_BIT))return false;
+        RenderSystem.assertOnRenderThread();var client=MinecraftClient.getInstance();
+        return GL11.glGetInteger(GL30.GL_DRAW_FRAMEBUFFER_BINDING)==0&&s.offscreenAllowed(client,client.getWindow().getHandle());
+    }
+    private boolean offscreenAllowed(MinecraftClient client,long window){
+        if(standalone||!ready||!windowHideVerified||window!=hiddenWindow||client.getWindow().getHandle()!=hiddenWindow)return false;
+        // Continue only the desktop bypass during bounded terminal cleanup, so
+        // a hidden drawable cannot block saving; this path applies no input.
+        if(stopping)return System.nanoTime()-stopAt<6_000_000_000L;
+        return System.currentTimeMillis()<identity.expiresUtcMs()&&client.getServer()==server&&client.isIntegratedServerRunning();
+    }
+
+    private void tick(MinecraftClient client){
+        try{
+            if(stopping){finishStop(client);return;}
+            if(Files.exists(stopFile)){requestStop(client,"stop_requested",null);return;}
+            if(System.currentTimeMillis()>=identity.expiresUtcMs()){requestStop(client,"session_expired",null);return;}
+            if(!opening){
+                if(!client.isFinishedLoading()||client.getOverlay()!=null)return;
+                if(client.world!=null||client.isIntegratedServerRunning())throw new IllegalStateException("Refusing an existing active world");
+                opening=true;configure(client);
+                save=GameplayWorld.prepare(client.getLevelStorage().getSavesDirectory().toAbsolutePath(),root);
+                save.open(client,()->requestStop(client,"world_load_cancelled",null));
+                return;
+            }
+            if(!ready){
+                if(System.nanoTime()-initializedAt>120_000_000_000L)throw new IllegalStateException("Gameplay world startup deadline");
+                if(client.world==null||client.player==null||!client.isIntegratedServerRunning()||client.currentScreen!=null||client.getOverlay()!=null)return;
+                if(!client.getServer().getSaveProperties().getLevelName().equals(save.saveName()))throw new IllegalStateException("Gameplay world name differs");
+                save.verifyOwnership();world=client.world;player=client.player;server=client.getServer();
+                if(!standalone){ui=new HudVanillaUiAdapter(client,true);hideOwnedWindow(client);}
+                output=new HudStreamProducer(root,directory,identity,save.saveName(),true,standalone?0:1);output.start();
+                ready=true;readyAt=System.nanoTime();
+                if(!fixtureMode.isEmpty())fixture=new GameplayPersistenceFixture(fixtureMode,save,directory.getParent(),proof->{
+                    fixtureResult=proof.deepCopy();boolean passed=proof.has("result")&&proof.get("result").getAsString().equals("passed");
+                    requestStop(MinecraftClient.getInstance(),"fixture_complete",passed?null:proof.toString());
+                });
+                var notice=evidence(client);notice.addProperty("ready",true);
+                Files.writeString(directory.getParent().resolve("gameplay-ready.json"),notice.toString(),StandardCharsets.UTF_8,StandardOpenOption.CREATE_NEW);
+                LOG.info("GAMEPLAY_READY run={} world={} newWorld={} standalone={}",identity.run(),save.id(),save.newlyCreated(),standalone);
+            }
+            if(client.getServer()!=server||!client.isIntegratedServerRunning()){requestStop(client,"world_closed",null);return;}
+            // Transport shutdown must still save and exit during a vanilla world
+            // transition, before the replacement player/world objects exist.
+            if(output.failure()!=null)throw new IllegalStateException("HUD publication failed: "+output.failure());
+            if(stopForClosedInput(client))return;
+            if(!standalone)observeHiddenWindow(client);
+            // Respawn/dimension travel can replace the vanilla client objects while
+            // retaining the exact integrated server and persistent save.
+            if(client.world==null||client.player==null)return;
+            if(client.world!=world||client.player!=player){
+                if(ui!=null)ui.releaseAndClose(client);gate.releaseAll();world=client.world;player=client.player;
+                if(!standalone)ui=new HudVanillaUiAdapter(client,true);
+            }
+            if(!standalone)inputTick(client);
+            if(fixture!=null&&output.isReady()&&output.publishedFrames()>0&&!stopping)fixture.tick(client);
+        }catch(Exception e){requestStop(client,"failure",e.toString());}
+    }
+
+    private void inputTick(MinecraftClient client){
+        if(input==null&&output.publishedFrames()>0){
+            input=new HudInputReader(new HudInputProtocol.Identity(identity.run(),output.producerPid(),output.producerStart(),identity.targetPid(),identity.targetStart(),identity.expiresUtcMs()),false,true);
+            input.start();
+        }
+        if(input==null||stopForClosedInput(client))return;
+        if(input.connected())inputConnectedSeen=true;
+        if(input.connected()&&input.hostState()==1)inputArmedSeen=true;
+        ui.synchronizeScreen(client);
+        long now=System.nanoTime(),utc=System.currentTimeMillis();
+        if(input.connected()&&input.hostState()==1){
+            if(!hiddenClientUnfocused(client))throw new IllegalStateException("Gameplay guest window is not hidden and unfocused");
+            if(utc-input.heartbeat()>250||now-input.observedAt()>250_000_000L)throw new IllegalStateException("Gameplay host input stale");
+            if(now-output.lastPublishedAt()>250_000_000L)throw new IllegalStateException("Gameplay HUD publication stale");
+            for(int i=0;i<64;i++){
+                var event=input.poll();if(event==null)break;gate.apply(event,System.currentTimeMillis());ui.apply(client,event);inputEvents++;
+            }
+        }
+        input.acknowledge(new HudInputReader.Acknowledgement(gate.sequence(),System.currentTimeMillis(),1,
+                HudVanillaUiAdapter.inventory(client.currentScreen)?1:0,client.player.getInventory().selectedSlot));
+    }
+
+    private boolean stopForClosedInput(MinecraftClient client){
+        if(input==null||!input.isClosed())return false;
+        String reason=input.reason();requestStop(client,reason==null?"input_closed":reason,
+                Set.of("host_closed","guest_closed").contains(reason==null?"":reason)?null:reason);
+        return true;
+    }
+
+    private void configure(MinecraftClient client){
+        oldPause=client.options.pauseOnLostFocus;oldHidden=client.options.hudHidden;oldGraphics=client.options.getGraphicsMode().getValue();
+        oldFullscreen=client.options.getFullscreen().getValue();oldScale=client.options.getGuiScale().getValue();
+        oldFps=client.options.getMaxFps().getValue();oldVsync=client.options.getEnableVsync().getValue();
+        oldWidth=client.getWindow().getWidth();oldHeight=client.getWindow().getHeight();
+        client.options.pauseOnLostFocus=false;client.options.hudHidden=false;client.options.getGraphicsMode().setValue(GraphicsMode.FAST);
+        client.options.getFullscreen().setValue(false);client.getWindow().setWindowedSize(layout.width(),layout.height());
+        client.options.getGuiScale().setValue(layout.guiScale());client.options.getEnableVsync().setValue(false);
+        client.options.getMaxFps().setValue(60);client.onResolutionChanged();
+    }
+    private void restore(MinecraftClient client){
+        if(oldPause==null)return;
+        restoreOwnedWindow(client);
+        client.options.pauseOnLostFocus=oldPause;client.options.hudHidden=oldHidden;client.options.getGraphicsMode().setValue(oldGraphics);
+        client.options.getGuiScale().setValue(oldScale);client.options.getEnableVsync().setValue(oldVsync);client.options.getMaxFps().setValue(oldFps);
+        if(!standalone&&windowHideVerified){
+            // Restore saved options without a native resize/fullscreen transition
+            // that would show the owned guest again immediately before exit.
+            client.options.getFullscreen().setValue(oldFullscreen);
+            if(client.getWindow().isFullscreen())client.getWindow().toggleFullscreen();
+        }else{client.getWindow().setWindowedSize(oldWidth,oldHeight);client.options.getFullscreen().setValue(oldFullscreen);client.onResolutionChanged();}
+        oldPause=null;
+    }
+
+    private static boolean windowAttribute(long handle,int attribute){
+        int value=GLFW.glfwGetWindowAttrib(handle,attribute);
+        if(value!=GLFW.GLFW_TRUE&&value!=GLFW.GLFW_FALSE)throw new IllegalStateException("Invalid GLFW window attribute");
+        return value==GLFW.GLFW_TRUE;
+    }
+    private void hideOwnedWindow(MinecraftClient client){
+        RenderSystem.assertOnRenderThread();long handle=client.getWindow().getHandle();
+        if(standalone||save==null||client.getServer()!=server||!client.isIntegratedServerRunning()
+                ||client.getWindow().isFullscreen()||GLFW.glfwGetWindowMonitor(handle)!=0)
+            throw new IllegalStateException("Hiding requires the owned windowed gameplay guest");
+        hiddenWindow=handle;oldWindowVisible=windowAttribute(handle,GLFW.GLFW_VISIBLE);oldFocusOnShow=windowAttribute(handle,GLFW.GLFW_FOCUS_ON_SHOW);
+        clientFocusedBeforeHide=client.isWindowFocused();windowHideRequested=true;GLFW.glfwHideWindow(handle);
+        windowHideVerified=!windowAttribute(handle,GLFW.GLFW_VISIBLE);
+        if(!windowHideVerified)throw new IllegalStateException("GLFW did not hide the gameplay guest");
+        observeHiddenWindow(client);
+        LOG.info("GAMEPLAY_WINDOW_HIDDEN run={} window={}",identity.run(),Long.toUnsignedString(hiddenWindow));
+    }
+    private void observeHiddenWindow(MinecraftClient client){
+        RenderSystem.assertOnRenderThread();long handle=client.getWindow().getHandle();
+        if(!windowHideVerified||hiddenWindow!=handle||client.getWindow().isFullscreen()||GLFW.glfwGetWindowMonitor(handle)!=0
+                ||windowAttribute(handle,GLFW.GLFW_VISIBLE))throw new IllegalStateException("Hidden gameplay window identity/visibility changed");
+        if(client.getFramebuffer().textureWidth!=layout.width()||client.getFramebuffer().textureHeight!=layout.height()
+                ||client.getWindow().getScaleFactor()!=layout.guiScale())throw new IllegalStateException("Hidden gameplay framebuffer/GUI size changed");
+    }
+    private boolean hiddenClientUnfocused(MinecraftClient client){
+        // As in HudStreamLab, the actual Minecraft WM_KILLFOCUS callback is the
+        // authority; bundled GLFW's raw focus attribute uses the caller's queue.
+        return windowHideVerified&&!windowAttribute(hiddenWindow,GLFW.GLFW_VISIBLE)&&!client.isWindowFocused()
+                &&(!clientFocusedBeforeHide||focusLossCallbacksAfterHide>0);
+    }
+    private void restoreOwnedWindow(MinecraftClient client){
+        if(oldWindowVisible==null||windowCleanup!=null)return;
+        RenderSystem.assertOnRenderThread();
+        windowCleanup=HudWindowCleanup.finish(new HudWindowCleanup.Window(){
+            public long handle(){return client.getWindow().getHandle();}
+            public boolean windowed(){return !client.getWindow().isFullscreen()&&GLFW.glfwGetWindowMonitor(hiddenWindow)==0;}
+            public boolean visible(){return windowAttribute(hiddenWindow,GLFW.GLFW_VISIBLE);}
+            public boolean focusOnShow(){return windowAttribute(hiddenWindow,GLFW.GLFW_FOCUS_ON_SHOW);}
+            public void focusOnShow(boolean value){GLFW.glfwSetWindowAttrib(hiddenWindow,GLFW.GLFW_FOCUS_ON_SHOW,value?GLFW.GLFW_TRUE:GLFW.GLFW_FALSE);}
+            public void show(){GLFW.glfwShowWindow(hiddenWindow);}
+            public void hide(){GLFW.glfwHideWindow(hiddenWindow);}
+        },hiddenWindow,oldWindowVisible,oldFocusOnShow,windowHideVerified);
+        if(!windowCleanup.get("cleanup_succeeded").getAsBoolean()&&failure==null)failure="Owned gameplay window cleanup failed";
+    }
+
+    public static void beforeGuiClear(){
+        var s=active;var client=MinecraftClient.getInstance();if(s==null||s.standalone||!s.owns(client))return;
+        RenderSystem.assertOnRenderThread();
+        if(s.frameTransparent){s.requestStop(client,"render_failure","Nested gameplay HUD frame");return;}
+        s.priorBlend=new int[]{GL11.glGetInteger(GL14.GL_BLEND_SRC_RGB),GL11.glGetInteger(GL14.GL_BLEND_DST_RGB),GL11.glGetInteger(GL14.GL_BLEND_SRC_ALPHA),GL11.glGetInteger(GL14.GL_BLEND_DST_ALPHA)};
+        s.frameTransparent=true;
+        float[] color=new float[4];GL11.glGetFloatv(GL11.GL_COLOR_CLEAR_VALUE,color);
+        var mask=org.lwjgl.BufferUtils.createByteBuffer(4);GL11.glGetBooleanv(GL11.GL_COLOR_WRITEMASK,mask);
+        boolean scissor=GL11.glIsEnabled(GL11.GL_SCISSOR_TEST);int[] box=new int[4];GL11.glGetIntegerv(GL11.GL_SCISSOR_BOX,box);
+        try{RenderSystem.disableScissor();RenderSystem.colorMask(true,true,true,true);RenderSystem.clearColor(0,0,0,0);RenderSystem.clear(GL11.GL_COLOR_BUFFER_BIT,MinecraftClient.IS_SYSTEM_MAC);}
+        finally{RenderSystem.clearColor(color[0],color[1],color[2],color[3]);RenderSystem.colorMask(mask.get(0)!=0,mask.get(1)!=0,mask.get(2)!=0,mask.get(3)!=0);if(scissor)RenderSystem.enableScissor(box[0],box[1],box[2],box[3]);}
+    }
+    public static void afterRender(){
+        var s=active;if(s==null)return;var client=MinecraftClient.getInstance();
+        try{if(s.owns(client)&&(s.standalone||s.frameTransparent))s.capture(client);}
+        catch(Exception e){s.requestStop(client,"render_failure",e.toString());}
+        finally{s.restoreBlend();}
+    }
+    private void restoreBlend(){frameTransparent=false;if(priorBlend!=null){RenderSystem.blendFuncSeparate(priorBlend[0],priorBlend[1],priorBlend[2],priorBlend[3]);priorBlend=null;}}
+    private void capture(MinecraftClient client){
+        readback.poll(frame->{
+            if(frame.id()<=lastReadbackId)return;lastReadbackId=frame.id();if(stopping||output==null)return;
+            var meta=JsonParser.parseString(frame.metadata()).getAsJsonObject();
+            output.offer(new HudStreamProducer.Frame(frame.width(),frame.height(),frame.bottomUp(),meta.get("captured_utc_ms").getAsLong(),meta.get("selected_slot").getAsInt(),meta.get("screen").getAsInt(),frame.metadata()));
+        });
+        long now=System.nanoTime();if(output==null||!output.isReady()||client.getOverlay()!=null||now-lastCaptureAt<50_000_000L)return;
+        boolean inventory=HudVanillaUiAdapter.inventory(client.currentScreen);
+        var meta=new JsonObject();meta.addProperty("state",inventory?"inventory":client.currentScreen==null?"hotbar":"screen");
+        meta.addProperty("selected_slot",client.player.getInventory().selectedSlot);meta.addProperty("screen",client.currentScreen==null?0:1);
+        meta.addProperty("screen_kind",client.currentScreen==null?"none":client.currentScreen.getClass().getSimpleName());
+        meta.addProperty("captured_utc_ms",System.currentTimeMillis());meta.addProperty("world_id",save.id().toString());
+        meta.addProperty("gameplay",true);meta.addProperty("no_world_pixels",!standalone);
+        if(!standalone)meta.addProperty("hand_pixels",false);
+        meta.addProperty("health_client",client.player.getHealth());meta.addProperty("food_client",client.player.getHungerManager().getFoodLevel());
+        if(readback.capture(client.getFramebuffer(),++captureId,meta.toString()))lastCaptureAt=now;
+    }
+
+    private JsonObject evidence(MinecraftClient client){
+        var e=new JsonObject();e.addProperty("schema",1);e.addProperty("kind","minecome_gameplay_session_v1");e.addProperty("run",identity.run());
+        e.addProperty("standalone",standalone);e.addProperty("persistent_world",true);e.addProperty("save",GameplayWorld.SAVE_NAME);
+        if(save!=null){e.addProperty("world_id",save.id().toString());e.addProperty("new_world",save.newlyCreated());}
+        e.addProperty("input_events_applied",inputEvents);e.addProperty("stop_reason",stopReason);e.addProperty("failure",failure);
+        e.addProperty("input_connected",inputConnectedSeen);e.addProperty("input_armed_seen",inputArmedSeen);
+        e.addProperty("active_ms",readyAt==0?0:(System.nanoTime()-readyAt)/1_000_000);e.addProperty("bootstrap_ground","vanilla_superflat");
+        e.addProperty("kcd_terrain_imported",false);e.addProperty("kcd_movement_connected",false);e.addProperty("host_command_typing_verified",false);
+        e.addProperty("normal_shutdown_requested",stopping);e.addProperty("controls_released",gate.heldKeyCount()==0&&gate.heldButtonCount()==0);
+        e.addProperty("producer_finished",output!=null&&output.isFinished());e.addProperty("producer_failure",output==null?null:output.failure());
+        if(!standalone){
+            e.addProperty("owned_window_hidden",windowHideVerified);e.addProperty("focus_loss_callbacks_after_hide",focusLossCallbacksAfterHide);
+            e.addProperty("desktop_swaps_skipped",desktopSwapsSkipped);
+            if(windowCleanup!=null)e.add("window_cleanup",windowCleanup.deepCopy());
+        }
+        if(input!=null){e.add("input",input.diagnostics());e.addProperty("input_cleanup_complete",input.cleanupComplete());}
+        if(fixtureResult!=null)e.add("fixture",fixtureResult.deepCopy());e.add("capture",readback.diagnostics());return e;
+    }
+    private void requestStop(MinecraftClient client,String reason,String problem){
+        if(stopping)return;stopReason=reason;failure=problem;
+        try{if(ui!=null)ui.releaseAndClose(client);}catch(Exception e){if(failure==null)failure=e.toString();}
+        gate.releaseAll();
+        if(input!=null){
+            int selected=client.player==null?0:client.player.getInventory().selectedSlot;
+            input.acknowledge(new HudInputReader.Acknowledgement(gate.sequence(),System.currentTimeMillis(),2,0,selected));input.close();
+        }
+        stopping=true;stopAt=System.nanoTime();
+        LOG.info("GAMEPLAY_STOP run={} reason={} failure={}",identity.run(),reason,failure);
+    }
+    private void finishStop(MinecraftClient client){
+        if(shutdownRequested)return;
+        if(!writerFinished){
+            if(input!=null&&!input.isFinished()&&System.nanoTime()-stopAt<2_000_000_000L)return;
+            if(input!=null&&!input.cleanupComplete()&&failure==null)failure="Input cleanup incomplete";
+            try{restoreOwnedWindow(client);}catch(RuntimeException e){if(failure==null)failure="Window cleanup: "+e;}
+            var proof=evidence(client);
+            try{Files.writeString(directory.getParent().resolve("gameplay-session.json"),proof.toString(),StandardCharsets.UTF_8,StandardOpenOption.CREATE_NEW);sessionReportWritten=true;}
+            catch(IOException e){if(failure==null)failure="Session receipt: "+e;proof.addProperty("failure",failure);LOG.error("GAMEPLAY_RECEIPT_FAILED",e);}
+            writerFinished=true;writerAt=System.nanoTime();
+            try{if(output!=null)output.finish(failure==null?"stopped":"failed",proof);}
+            catch(RuntimeException e){if(failure==null)failure="Producer finalization: "+e;LOG.error("GAMEPLAY_FINALIZATION_FAILED",e);}
+        }
+        if(output!=null&&!output.isFinished()&&System.nanoTime()-writerAt<3_000_000_000L)return;
+        if(output!=null&&output.failure()!=null&&failure==null)failure="Producer finalization: "+output.failure();
+        if(output!=null&&!output.isFinished()&&failure==null)failure="Producer shutdown deadline";
+        if(sessionReportWritten){
+            try{Files.writeString(directory.getParent().resolve("gameplay-session.json"),evidence(client).toString(),StandardCharsets.UTF_8,StandardOpenOption.TRUNCATE_EXISTING);}
+            catch(IOException e){if(failure==null)failure="Final session receipt: "+e;LOG.error("GAMEPLAY_FINAL_RECEIPT_FAILED",e);}
+        }
+        shutdownRequested=true;
+        try{restoreBlend();restore(client);}finally{client.scheduleStop();}
+    }
+    private void onClientStopping(MinecraftClient client){
+        if(!stopping)requestStop(client,"client_closed",null);
+        try{
+            try{restoreBlend();readback.close();restore(client);}
+            catch(RuntimeException e){if(failure==null)failure="Client cleanup: "+e;LOG.error("GAMEPLAY_CLIENT_CLEANUP_FAILED",e);}
+            // An external window close has no further client ticks. Drain the
+            // already-requested shutdown here before recording its final state.
+            // No UI/input dispatch occurs after these bounded waits begin.
+            if(!writerFinished){
+                if(input!=null){
+                    awaitShutdown(input::isFinished,2_000_000_000L);
+                    if(!input.cleanupComplete()&&failure==null)failure="Input cleanup incomplete";
+                }
+                writerFinished=true;writerAt=System.nanoTime();
+                try{if(output!=null)output.finish(failure==null?"stopped":"failed",evidence(client));}
+                catch(RuntimeException e){if(failure==null)failure="Producer finalization: "+e;LOG.error("GAMEPLAY_FINALIZATION_FAILED",e);}
+            }
+            if(output!=null){
+                awaitShutdown(output::isFinished,3_000_000_000L);
+                if(output.failure()!=null&&failure==null)failure="Producer finalization: "+output.failure();
+                if(!output.isFinished()&&failure==null)failure="Producer shutdown deadline";
+            }
+            try{
+                Files.writeString(directory.getParent().resolve("gameplay-session.json"),evidence(client).toString(),StandardCharsets.UTF_8,
+                        sessionReportWritten?StandardOpenOption.TRUNCATE_EXISTING:StandardOpenOption.CREATE_NEW);
+                sessionReportWritten=true;
+            }catch(IOException e){if(failure==null)failure="Final session receipt: "+e;LOG.error("GAMEPLAY_FINAL_RECEIPT_FAILED",e);}
+        }finally{active=null;}
+    }
+    private static void awaitShutdown(BooleanSupplier finished,long timeoutNanos){
+        long began=System.nanoTime();
+        while(!finished.getAsBoolean()&&System.nanoTime()-began<timeoutNanos){
+            try{Thread.sleep(10);}
+            catch(InterruptedException e){Thread.currentThread().interrupt();return;}
+        }
+    }
+}

@@ -9,7 +9,7 @@ param(
     [string]$WindowsSdkVersion='10.0.26100.0',
     [string]$PlatformToolset='v143',
     [string]$VisualStudioVersion='17.0',
-    [ValidateSet(1,2,3,4)][int]$SelectiveRevision=1,
+    [ValidateSet(1,2,3,4,5)][int]$SelectiveRevision=1,
     [switch]$PrepareOnly
 )
 $ErrorActionPreference='Stop'
@@ -18,13 +18,14 @@ $pin='18deaa52de0c425a78b329e9cb3c497281cd00ec'
 $reference=Join-Path $root 'external/reshade'
 $pristine=Join-Path $root 'runtime/dependencies/reshade-minecome-6.8.0/source'
 $pristineScript=Join-Path $PSScriptRoot 'Build-CustomReShade.ps1'
-$workspace=Join-Path $root $(if($SelectiveRevision -eq 4){'runtime/dependencies/reshade-selective-r4-6.8.0'}elseif($SelectiveRevision -eq 3){'runtime/dependencies/reshade-selective-r3-6.8.0'}elseif($SelectiveRevision -eq 2){'runtime/dependencies/reshade-selective-r2-6.8.0'}else{'runtime/dependencies/reshade-selective-6.8.0'})
+$workspace=Join-Path $root $(if($SelectiveRevision -eq 5){'runtime/dependencies/reshade-selective-r5-6.8.0'}elseif($SelectiveRevision -eq 4){'runtime/dependencies/reshade-selective-r4-6.8.0'}elseif($SelectiveRevision -eq 3){'runtime/dependencies/reshade-selective-r3-6.8.0'}elseif($SelectiveRevision -eq 2){'runtime/dependencies/reshade-selective-r2-6.8.0'}else{'runtime/dependencies/reshade-selective-6.8.0'})
 $id=[Guid]::NewGuid().ToString('N')
 $source=Join-Path $workspace ('source-'+$id.Substring(0,12))
 $run=Join-Path $workspace ('evidence/'+(Get-Date -Format 'yyyyMMdd-HHmmss')+'-'+$id)
 $proxy='C:/Program Files (x86)/Steam/steamapps/common/KCD2Mod/Bin/Win64ReleaseSteamLTO_DLL/dxgi.dll'
 $patchName=if($SelectiveRevision -ge 3){'selective-motion-r3.patch'}elseif($SelectiveRevision -eq 2){'selective-motion-r2.patch'}else{'selective-capture.patch'}
 $patch=Join-Path $root ('kcd2/reshade/'+$patchName)
+$gameplayPatch=if($SelectiveRevision -eq 5){Join-Path $root 'kcd2/reshade/gameplay-keyboard-v5.patch'}else{$null}
 $copies=[ordered]@{
     'kcd2/hud/selective_capture_api.hpp'='source/windows/selective_capture_api.hpp'
     'kcd2/hud/selective_capture_policy.hpp'='source/windows/selective_capture_policy.hpp'
@@ -39,6 +40,11 @@ if($SelectiveRevision -ge 3){
     $copies['kcd2/reshade/raw_motion_capture_adapter.hpp']='source/windows/raw_motion_capture_adapter.hpp'
     $copies['kcd2/hud/raw_motion_policy.hpp']='source/windows/raw_motion_policy.hpp'
     $copies['kcd2/hud/raw_motion_diagnostics_api.hpp']='source/windows/raw_motion_diagnostics_api.hpp'
+}
+if($SelectiveRevision -eq 5){
+    $copies['kcd2/hud/gameplay_keyboard_api.hpp']='source/windows/gameplay_keyboard_api.hpp'
+    $copies['kcd2/hud/gameplay_keyboard_policy.hpp']='source/windows/gameplay_keyboard_policy.hpp'
+    $copies['kcd2/reshade/gameplay_keyboard_adapter.hpp']='source/windows/gameplay_keyboard_adapter.hpp'
 }
 $commands=[Collections.Generic.List[object]]::new()
 $result=[ordered]@{schema=1;kind='minecome_selective_reshade_build_v2';upstream='https://github.com/crosire/reshade';commit=$pin;configuration='Release';platform='x64';mouse_capture_api=2;source=$source;evidence=$run;status='failed';failure=$null;game_launched=$false;deployed=$false;hook_changes=$true;created_utc=[DateTime]::UtcNow.ToString('o');bit_reproducibility_verified=$false}
@@ -98,7 +104,8 @@ try {
     $observedPaths=($generated | ForEach-Object {$_.path.Replace('\','/')} | Sort-Object) -join '|'
     if($generated.Count -ne $expected.Count -or $observedPaths -cne (($expected | Sort-Object) -join '|')){throw 'Unexpected pristine GLAD output manifest.'}
     foreach($entry in @($baseline.glad_generator_inputs)+$generated){if((Hash (Relative-Path $pristine $entry.path)) -cne $entry.sha256){throw "Pristine GLAD input/output changed: $($entry.path)"}}
-    $inputHashes=@(@($patch)+@($copies.Keys | ForEach-Object {Join-Path $root $_}) | ForEach-Object {Assert-PlainPath $_;[ordered]@{path=$_;sha256=Hash $_}})
+    $patches=@($patch);if($gameplayPatch){$patches+=@($gameplayPatch);$result.gameplay_keyboard_api=5}
+    $inputHashes=@($patches+@($copies.Keys | ForEach-Object {Join-Path $root $_}) | ForEach-Object {Assert-PlainPath $_;[ordered]@{path=$_;sha256=Hash $_}})
     $result.original_inputs=$inputHashes
     Copy-Item -LiteralPath $patch -Destination (Join-Path $run $patchName)
     Run git @('clone','--no-hardlinks','--no-checkout',$reference,$source) 'clone'
@@ -112,6 +119,11 @@ try {
     foreach($entry in $generated){$target=Relative-Path $source $entry.path;[IO.Directory]::CreateDirectory((Split-Path $target)) | Out-Null;Copy-Item -LiteralPath (Relative-Path $pristine $entry.path) -Destination $target;if((Hash $target) -cne $entry.sha256){throw 'Copied GLAD output differs from its receipt.'}}
     Run git @('-C',$source,'apply','--check','--index',$patch) 'patch-check'
     Run git @('-C',$source,'apply','--index',$patch) 'patch-apply'
+    if($gameplayPatch){
+        Copy-Item -LiteralPath $gameplayPatch -Destination (Join-Path $run 'gameplay-keyboard-v5.patch')
+        Run git @('-C',$source,'apply','--check','--index',$gameplayPatch) 'gameplay-patch-check'
+        Run git @('-C',$source,'apply','--index',$gameplayPatch) 'gameplay-patch-apply'
+    }
     foreach($relative in $copies.Keys){$target=Relative-Path $source $copies[$relative];if(Test-Path -LiteralPath $target){throw "Patch overlaps a separately hashed input: $target"};Copy-Item -LiteralPath (Join-Path $root $relative) -Destination $target;Run git @('-C',$source,'add','--',$copies[$relative]) ('stage-'+[IO.Path]::GetFileNameWithoutExtension($relative))}
     # Freeze the exact patched index, including copied ABI/policy headers.
     $sourceFingerprint=& git -C $source write-tree
@@ -125,7 +137,7 @@ try {
     if((($result.patched_paths | Sort-Object) -join '|') -cne (($allowedPaths | Sort-Object) -join '|')){throw 'The patch must change only dinput8.cpp, input_windows.cpp and the exact separately hashed headers.'}
     $result.patched_files=@($result.patched_paths | ForEach-Object {$path=Relative-Path $source $_;[ordered]@{path=$_;sha256=Hash $path;includes=@(Select-String -LiteralPath $path -Pattern '^\s*#include\s' | ForEach-Object {$_.Line.Trim()})}})
     $version=Relative-Path $source 'res/version.h'
-    $versionBuild=if($SelectiveRevision -eq 4){6}elseif($SelectiveRevision -eq 3){5}elseif($SelectiveRevision -eq 2){4}else{3}
+    $versionBuild=if($SelectiveRevision -eq 5){7}elseif($SelectiveRevision -eq 4){6}elseif($SelectiveRevision -eq 3){5}elseif($SelectiveRevision -eq 2){4}else{3}
     $versionFull='6.8.0.'+$versionBuild
     @('#pragma once','',('#define VERSION_FULL '+$versionFull),'#define VERSION_MAJOR 6','#define VERSION_MINOR 8','#define VERSION_REVISION 0',('#define VERSION_BUILD '+$versionBuild),'',('#define VERSION_STRING_FILE "'+$versionFull+'"'),'#define VERSION_STRING_PRODUCT "6.8.0 MINECOME SELECTIVE UNOFFICIAL"') | Set-Content -LiteralPath $version -Encoding ascii
     if($PrepareOnly){$result.status='prepared'}
@@ -138,13 +150,14 @@ try {
         $env:PIP_NO_INDEX='1';$env:PYTHONPATH=$null;$env:PYTHONHOME=$null
         Push-Location $source
         try {Run $MSBuild @('ReShade.vcxproj','/m:4','/t:Build','/p:Configuration=Release','/p:Platform=x64',('/p:PlatformToolset='+$PlatformToolset),('/p:VisualStudioVersion='+$VisualStudioVersion),('/p:WindowsTargetPlatformVersion='+$WindowsSdkVersion),('/p:SolutionDir='+$source+'\'),'/p:BuildingSetupTool=true','/p:GladReproducible=true',('/p:ForceImportBeforeCppTargets='+$guard),('/bl:'+(Join-Path $run 'build.binlog')),'/v:minimal') 'build'} finally {Pop-Location}
-        $output=Join-Path $run $(if($SelectiveRevision -eq 4){'ReShade64-minecome-selective-r4-6.8.0.dll'}elseif($SelectiveRevision -eq 3){'ReShade64-minecome-selective-r3-6.8.0.dll'}elseif($SelectiveRevision -eq 2){'ReShade64-minecome-selective-r2-6.8.0.dll'}else{'ReShade64-minecome-selective-6.8.0.dll'})
+        $output=Join-Path $run $(if($SelectiveRevision -eq 5){'ReShade64-minecome-selective-r5-6.8.0.dll'}elseif($SelectiveRevision -eq 4){'ReShade64-minecome-selective-r4-6.8.0.dll'}elseif($SelectiveRevision -eq 3){'ReShade64-minecome-selective-r3-6.8.0.dll'}elseif($SelectiveRevision -eq 2){'ReShade64-minecome-selective-r2-6.8.0.dll'}else{'ReShade64-minecome-selective-6.8.0.dll'})
         Copy-Item -LiteralPath (Relative-Path $source 'bin/x64/Release/ReShade64.dll') -Destination $output
         Run $DumpBin @('/headers','/exports',$output) 'pe-headers-exports'
         $pe=Get-Content -LiteralPath (Join-Path $run 'pe-headers-exports.log') -Raw
         foreach($required in @('8664 machine (x64)','ReShadeRegisterAddon','ReShadeRegisterEvent','DirectInput8Create','MineComeGetSelectiveMouseCaptureApi')){if(-not $pe.Contains($required)){throw "Expected PE header/export missing: $required"}}
         if($SelectiveRevision -ge 2 -and -not $pe.Contains('MineComeReadMotionDiagnostics')){throw 'Expected motion diagnostics export missing.'}
         if($SelectiveRevision -ge 3 -and -not $pe.Contains('MineComeReadRawMotionDiagnostics')){throw 'Expected raw motion diagnostics export missing.'}
+        if($SelectiveRevision -eq 5 -and -not $pe.Contains('MineComeGetGameplayKeyboardApi')){throw 'Expected gameplay keyboard API export missing.'}
         $result.output=$output;$result.output_sha256=Hash $output;$result.output_bytes=(Get-Item -LiteralPath $output).Length;$result.version=(Get-Item -LiteralPath $output).VersionInfo.FileVersion
         $result.msbuild=$MSBuild;$result.msbuild_version=(Get-Item -LiteralPath $MSBuild).VersionInfo.FileVersion;$result.dumpbin=$DumpBin;$result.sdk=$WindowsSdkVersion;$result.toolset=$PlatformToolset
         $result.generated_outputs_unchanged=$true

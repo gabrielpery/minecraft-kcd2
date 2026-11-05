@@ -10,6 +10,16 @@ loom {
         client {
             programArgs '--username', 'MineComeLab'
             vmArgs '--enable-native-access=ALL-UNNAMED'
+            if (project.hasProperty('minecomeGameplay')) {
+                vmArgs '-Dminecome.gameplay=true'
+                vmArgs "-Dminecome.root=${project.rootDir.parentFile.absolutePath}"
+                if (project.hasProperty('minecomeGameplayInstance'))
+                    runDir project.relativePath(project.file(project.property('minecomeGameplayInstance')))
+                if (project.hasProperty('minecomeGameplayStandalone'))
+                    vmArgs '-Dminecome.gameplayStandalone=true'
+                if (project.hasProperty('minecomeGameplayFixture'))
+                    vmArgs "-Dminecome.gameplayFixture=${project.property('minecomeGameplayFixture')}"
+            }
             if (project.hasProperty('minecomeHudAimedBridgeLab'))
                 vmArgs '-Dminecome.hudAimedBridgeLab=true'
             for (String suffix : ['Run','Directory','TokenFile']) {
@@ -353,3 +363,16 @@ tasks.register('groundExpansionTest', JavaExec) {
     mainClass = 'dev.minecome.terrain.GroundExpansionTests'
 }
 check.dependsOn groundExpansionTest
+
+// Production session contracts; isolated from bounded HUD lab profiles.
+tasks.register('gameplayWorldTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'dev.minecome.gameplay.GameplayWorldTests'
+}
+tasks.register('gameplayWireTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'dev.minecome.hud.GameplayWireTests'
+}
+tasks.named('check') { dependsOn 'gameplayWorldTest', 'gameplayWireTest' }

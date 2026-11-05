@@ -10,7 +10,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 @Mixin(Mouse.class)
 public abstract class HudMouseMixin {
     @Inject(method="getX",at=@At("HEAD"),cancellable=true)
-    private void minecome$uiMouseX(CallbackInfoReturnable<Double> value){Double x=HudStreamLab.virtualMouseX();if(x!=null)value.setReturnValue(x);}
+    private void minecome$uiMouseX(CallbackInfoReturnable<Double> value){Double x=HudStreamLab.virtualMouseX();if(x==null)x=dev.minecome.hud.GameplaySession.virtualMouseX();if(x!=null)value.setReturnValue(x);}
     @Inject(method="getY",at=@At("HEAD"),cancellable=true)
-    private void minecome$uiMouseY(CallbackInfoReturnable<Double> value){Double y=HudStreamLab.virtualMouseY();if(y!=null)value.setReturnValue(y);}
+    private void minecome$uiMouseY(CallbackInfoReturnable<Double> value){Double y=HudStreamLab.virtualMouseY();if(y==null)y=dev.minecome.hud.GameplaySession.virtualMouseY();if(y!=null)value.setReturnValue(y);}
 }

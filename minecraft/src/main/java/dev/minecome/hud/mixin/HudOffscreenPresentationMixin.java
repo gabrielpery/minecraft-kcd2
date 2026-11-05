@@ -11,6 +11,6 @@ import org.spongepowered.asm.mixin.injection.*;
 public abstract class HudOffscreenPresentationMixin {
     @Redirect(method="flipFrame(J)V",at=@At(value="INVOKE",target="Lorg/lwjgl/glfw/GLFW;glfwSwapBuffers(J)V",remap=false),remap=false)
     private static void minecome$ownedOffscreenSwap(long window){
-        if(!HudStreamLab.skipDesktopSwap(window))GLFW.glfwSwapBuffers(window);
+        if(!HudStreamLab.skipDesktopSwap(window)&&!dev.minecome.hud.GameplaySession.skipDesktopSwap(window))GLFW.glfwSwapBuffers(window);
     }
 }

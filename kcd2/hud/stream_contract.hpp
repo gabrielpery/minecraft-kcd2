@@ -11,12 +11,16 @@ inline constexpr std::size_t header_bytes = 256;
 inline constexpr std::size_t pixel_capacity = 1920u * 1080u * 4u;
 inline constexpr std::size_t mapping_bytes = header_bytes + pixel_capacity;
 inline constexpr std::size_t max_arm_bytes = 4096;
-inline constexpr std::uint64_t max_lease_ms = 180000, fresh_ms = 500;
+inline constexpr std::uint64_t max_lease_ms = 180000, gameplay_max_lease_ms = 24ull*60*60*1000, fresh_ms = 500;
 struct Identity {
     std::string run;
     std::uint32_t producer_pid = 0, target_pid = 0;
     std::uint64_t producer_start = 0, target_start = 0, expires_utc_ms = 0;
+    std::uint32_t schema = 1; // 1: bounded lab, 3: explicit gameplay session.
 };
+inline constexpr std::uint64_t maximum_lease(const Identity &id) noexcept {
+    return id.schema == 3 ? gameplay_max_lease_ms : max_lease_ms;
+}
 struct Header {
     std::uint64_t sequence = 0, capture_utc_ms = 0;
     std::uint32_t width = 0, height = 0, pitch = 0, bytes = 0;
@@ -24,7 +28,7 @@ struct Header {
 };
 bool valid_identity(const Identity &identity) noexcept;
 bool parse_arm(std::string_view text, std::uint32_t target_pid, std::uint64_t target_start,
-               std::uint64_t utc, Identity &out, std::string &error);
+               std::uint64_t utc, Identity &out, std::string &error, std::uint32_t expected_schema = 1);
 enum class Result { waiting, unchanged, frame, closed, invalid, expired };
 class Validator {
 public:

@@ -38,10 +38,14 @@ public final class HudInputProtocol {
         return decode(bytes,id,lastFetched,now,previousHostState,false);
     }
     public static Snapshot decode(byte[] bytes,Identity id,long lastFetched,long now,int previousHostState,boolean movement) {
+        return decode(bytes,id,lastFetched,now,previousHostState,movement,false);
+    }
+    public static Snapshot decode(byte[] bytes,Identity id,long lastFetched,long now,int previousHostState,boolean movement,boolean gameplay) {
+        if(movement&&gameplay)throw new IllegalArgumentException("Gameplay UI is separate from movement input");
         if(bytes.length!=MAPPING_BYTES || lastFetched<0 || previousHostState<0 || previousHostState>2 || now<=250 || now>Long.MAX_VALUE-180_000 || now>=id.expires())
             throw new IllegalArgumentException("Invalid input mapping/time/lease");
         var b=ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
-        if(!new String(bytes,0,8,StandardCharsets.US_ASCII).equals(movement?"MCHUDI02":"MCHUDI01") || b.getInt(8)!=(movement?2:1) || b.getInt(12)!=MAPPING_BYTES ||
+        if(!new String(bytes,0,8,StandardCharsets.US_ASCII).equals(gameplay?"MCHUDI03":movement?"MCHUDI02":"MCHUDI01") || b.getInt(8)!=(gameplay?3:movement?2:1) || b.getInt(12)!=MAPPING_BYTES ||
                 !new String(bytes,16,32,StandardCharsets.US_ASCII).equals(id.run()) || b.getInt(48)!=id.producerPid() || b.getInt(52)!=id.targetPid() ||
                 b.getLong(56)!=id.producerStart() || b.getLong(64)!=id.targetStart() || b.getLong(72)!=id.expires())throw new IllegalArgumentException("Input mapping identity differs");
         for(int i=104;i<128;i++)if(bytes[i]!=0)throw new IllegalArgumentException("Nonzero host reserved bytes");
