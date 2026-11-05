@@ -9,6 +9,9 @@ import java.util.Set;
  * Immutable geometric ownership policy for a small arena beside imported ground.
  * Imported collision cells always remain AIR in the actual world. Even a partial
  * imported slab protects its entire block cell from placement, break and cleanup.
+ * A collision expansion supplies its complete planned surface at construction:
+ * future cells are reserved before admission, so the arena identity and owned
+ * stone ledger never change when either game thread installs the next surface.
  * This policy neither writes blocks nor establishes ownership: callers supply
  * only stones already confirmed by the real client and integrated server in the
  * exact owned world, and must recheck those observations before dispatch/cleanup.

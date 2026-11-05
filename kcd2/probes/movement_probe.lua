@@ -371,6 +371,8 @@ local CORRIDOR_SCRIPTED_LIMITS = { hard_ms=22000,source_ms=20000,writes=549,rece
 -- only this profile may reach the admitted third strip. No physical authority.
 local EXTENSION_SCRIPTED_LIMITS = { hard_ms=22000,source_ms=20000,writes=549,receipts=512,max_seq=256,
     walking_area="extension",min_x=-3.5,max_x=11.5,min_y=-3.5,max_y=3.5,min_z=-6.1,max_z=3.5 }
+local EXTENSION_PHYSICAL_LIMITS = { hard_ms=18000,source_ms=16000,writes=2047,receipts=256,session="extended",max_seq=200,
+    walking_area="extension",min_x=-3.5,max_x=11.5,min_y=-3.5,max_y=3.5,min_z=-6.1,max_z=3.5 }
 local PHYSICAL_LIMITS = { hard_ms=FOLLOWER_MS,source_ms=SOURCE_LIMIT_MS,writes=511,receipts=128,radius=2 }
 local EXTENDED_LIMITS = { hard_ms=18000,source_ms=16000,writes=2047,receipts=256,session="extended",radius=2 }
 local WIDE_PHYSICAL_LIMITS = { hard_ms=FOLLOWER_MS,source_ms=SOURCE_LIMIT_MS,writes=511,receipts=128,radius=4,walking_area="wide" }
@@ -536,7 +538,7 @@ end
 local function begin_follower(run,physical,buffered,extended,walking_area)
     if not token(run) then return false,"invalid_run" end
     if walking_area ~= nil and walking_area ~= "wide" and walking_area ~= "corridor" and walking_area ~= "extension" then return false,"invalid_walking_area" end
-    if walking_area == "extension" and (physical or buffered or extended) then return false,"invalid_walking_area" end
+    if walking_area == "extension" and physical and not (buffered and extended) then return false,"invalid_walking_area" end
     if walking_area == "corridor" and physical and not (buffered and extended) then return false,"invalid_walking_area" end
     if state.active or state.follower then return false,"busy" end
     local s,clock = snapshot(),now()
@@ -544,7 +546,7 @@ local function begin_follower(run,physical,buffered,extended,walking_area)
     if not clock then unsafe = "clock_unavailable" end
     if type(field(s.entity,"SetWorldPos")) ~= "function" then unsafe = "position_writer_unavailable" end
     if not Script or type(Script.SetTimerForFunction) ~= "function" or type(Script.KillTimer) ~= "function" then unsafe = "timer_unavailable" end
-    local limits = walking_area == "extension" and EXTENSION_SCRIPTED_LIMITS
+    local limits = walking_area == "extension" and (physical and EXTENSION_PHYSICAL_LIMITS or EXTENSION_SCRIPTED_LIMITS)
         or walking_area == "corridor" and (physical and CORRIDOR_EXTENDED_LIMITS or CORRIDOR_SCRIPTED_LIMITS)
         or walking_area == "wide" and (not physical and WIDE_SCRIPTED_LIMITS or extended and WIDE_EXTENDED_LIMITS or WIDE_PHYSICAL_LIMITS)
         or extended and EXTENDED_LIMITS or physical and PHYSICAL_LIMITS or SCRIPTED_LIMITS

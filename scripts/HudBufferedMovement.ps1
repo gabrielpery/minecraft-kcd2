@@ -23,12 +23,12 @@ function Get-HudBufferedField($Value,[string]$Name) {
     }
     return ,($Value.$Name)
 }
-function Assert-HudWalkingFollowerSession($Receipts,[switch]$ExtendedWalking,[switch]$WideWalking,[switch]$CorridorWalking) {
-    if($CorridorWalking -and -not $ExtendedWalking){throw 'Physical corridor requires the extended buffered session.'}
+function Assert-HudWalkingFollowerSession($Receipts,[switch]$ExtendedWalking,[switch]$WideWalking,[switch]$CorridorWalking,[switch]$ExtensionWalking) {
+    if(($CorridorWalking -or $ExtensionWalking) -and -not $ExtendedWalking){throw 'Physical corridor requires the extended buffered session.'}
     $session=Get-HudWalkingSession -ExtendedWalking:$ExtendedWalking
     if(@($Receipts).Count -lt 1 -or @($Receipts).Count -gt $session.Receipts){throw 'Follower receipt budget exceeded or absent.'}
     foreach($receipt in $Receipts){
-        Assert-HudWalkingArea $receipt ([bool]$WideWalking) -CorridorWalking:$CorridorWalking
+        Assert-HudWalkingArea $receipt ([bool]$WideWalking) -CorridorWalking:$CorridorWalking -ExtensionWalking:$ExtensionWalking
         Assert-HudWalkingSession $receipt -ExtendedWalking:$ExtendedWalking
         [void](Get-HudBufferedNumber (Get-HudBufferedField $receipt 'hard_deadline_ms') 'hard deadline' $session.DeadlineMs $session.DeadlineMs)
         [void](Get-HudBufferedInteger (Get-HudBufferedField $receipt 'writes') 'follower writes' 0 ($session.OrdinaryWrites+1))
@@ -180,9 +180,9 @@ function Get-HudBufferedCamera($Value,[string]$Name) {
     }
     return [pscustomobject]@{position=$position;forward=$forward;up=$up;fov=$fov}
 }
-function Assert-HudBufferedMovementReceipt($Receipt,$Forwarded,[switch]$ExtendedWalking,[switch]$WideWalking,[switch]$CorridorWalking) {
-    if($CorridorWalking -and -not $ExtendedWalking){throw 'Physical corridor requires the extended buffered session.'}
-    Assert-HudWalkingArea $Receipt ([bool]$WideWalking) -CorridorWalking:$CorridorWalking
+function Assert-HudBufferedMovementReceipt($Receipt,$Forwarded,[switch]$ExtendedWalking,[switch]$WideWalking,[switch]$CorridorWalking,[switch]$ExtensionWalking) {
+    if(($CorridorWalking -or $ExtensionWalking) -and -not $ExtendedWalking){throw 'Physical corridor requires the extended buffered session.'}
+    Assert-HudWalkingArea $Receipt ([bool]$WideWalking) -CorridorWalking:$CorridorWalking -ExtensionWalking:$ExtensionWalking
     $session=Get-HudWalkingSession -ExtendedWalking:$ExtendedWalking
     Assert-HudWalkingSession $Receipt -ExtendedWalking:$ExtendedWalking
     # This proves retained observed path samples, not unrecorded frames or visual
@@ -197,11 +197,11 @@ function Assert-HudBufferedMovementReceipt($Receipt,$Forwarded,[switch]$Extended
         $ms=Get-HudBufferedNumber (Get-HudBufferedField $point 'SourceMs') 'forwarded source time' 0 $session.SourceMs
         if($ms -ne [double][single]$ms){throw 'Forwarded SourceMs must retain the exact float32 wire value.'}
         $target=Get-HudBufferedVector (Get-HudBufferedField $point 'Target') 'forwarded target'
-        if($CorridorWalking -and $points.Count -gt 0){
+        if(($CorridorWalking -or $ExtensionWalking) -and $points.Count -gt 0){
             # Source zero is the real settled anchor mapped to the saved KCD
             # origin, never the centre of the second tile or a rolling anchor.
             $origin=$points[0].Target
-            if($target.x -lt $origin.x-3.5 -or $target.x -gt $origin.x+7.5 -or
+            if($target.x -lt $origin.x-3.5 -or $target.x -gt $origin.x+$(if($ExtensionWalking){11.5}else{7.5}) -or
                 $target.y -lt $origin.y-3.5 -or $target.y -gt $origin.y+3.5 -or
                 $target.z -lt $origin.z-6.1 -or $target.z -gt $origin.z+3.5){throw 'Buffered corridor source leaves its immutable rectangle.'}
         }

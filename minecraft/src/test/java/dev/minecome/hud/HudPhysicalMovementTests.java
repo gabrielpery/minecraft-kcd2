@@ -99,6 +99,24 @@ public final class HudPhysicalMovementTests {
             else reject(()->HudPhysicalMovementMode.require(corridorAimed),"Corridor live input cannot acquire scripted aiming");
             corridor.remove("minecome.hudPhysicalMovementExtended");reject(()->HudPhysicalMovementMode.require(corridor),"Corridor cannot use short timing");
         }
+        for(var base:List.of(extended,extendedFixture)){
+            var extension=(Properties)base.clone();extension.setProperty("minecome.hudExtensionWalking","true");
+            check(HudPhysicalMovementMode.require(extension)&&HudPhysicalMovementMode.extension(extension),"Explicit extension selects only extended physical live or fixture ownership");
+            if(HudPhysicalMovementMode.fixture(extension)){
+                extension.setProperty("minecome.hudWalkingAimedFixture","true");
+                check(HudPhysicalMovementMode.require(extension)&&HudPhysicalMovementMode.fixtureYaw(extension)==-90,"Extension aimed fixture retains eastward heading");
+            }
+            for(String conflict:List.of("hudCorridorWalking","hudWideWalking","hudFacingSeedFixture","hudWalkingLateCutoffFixture","hudGroundMovementFixture","hudGroundMovementCoupled","hudGroundCorridorFixture","hudGroundCorridorCoupled","hudGroundCorridorWalkOnly","hudGroundExtensionFixture","hudGroundExtensionCoupled","hudGroundExtensionDelayFixture")){
+                var mixed=(Properties)extension.clone();mixed.setProperty("minecome."+conflict,"true");
+                reject(()->HudPhysicalMovementMode.require(mixed),"Physical extension rejects "+conflict);
+            }
+            extension.remove("minecome.hudPhysicalMovementExtended");reject(()->HudPhysicalMovementMode.require(extension),"Physical extension cannot use short timing");
+        }
+        var extensionOrphan=new Properties();extensionOrphan.setProperty("minecome.hudExtensionWalking","true");
+        reject(()->HudPhysicalMovementMode.require(extensionOrphan),"Physical extension cannot enable implicit ownership");
+        for(String invalid:List.of("TRUE","1","","extension")){
+            var p=(Properties)extendedFixture.clone();p.setProperty("minecome.hudExtensionWalking",invalid);reject(()->HudPhysicalMovementMode.require(p),"Malformed physical extension selector");
+        }
         var corridorOrphan=new Properties();corridorOrphan.setProperty("minecome.hudCorridorWalking","true");
         reject(()->HudPhysicalMovementMode.require(corridorOrphan),"Corridor cannot enable implicit physical ownership");
         for(String invalid:List.of("TRUE","1","","corridor")){

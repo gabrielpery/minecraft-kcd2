@@ -51,19 +51,26 @@ function Get-MineComePowerShell7 {
     }
     throw 'An existing PowerShell 7 runtime was not found. No installation or administrator access was attempted.'
 }
-function Invoke-MineComePowerShell7([string]$ScriptPath,[Collections.IDictionary]$BoundParameters) {
-    $hostPath=Get-MineComePowerShell7
+function Get-MineComePowerShell7Arguments([string]$ScriptPath,[Collections.IDictionary]$BoundParameters) {
     $arguments=[Collections.Generic.List[string]]::new()
     foreach($argument in @('-NoLogo','-NoProfile','-File',[IO.Path]::GetFullPath($ScriptPath))){$arguments.Add($argument)}
-    foreach($name in @('GameRoot','Level','JavaHome','BundleDirectory','PreflightOnly','WithoutMods')){
+    $switchNames=@('PreflightOnly','WithoutMods','CorridorWalking','ExtensionWalking','ExtendedWalking','AimedBlocks','WideWalking','FacingSeed','LateCutoff','DelayHandoff')
+    $valueNames=@('GameRoot','Level','JavaHome','BundleDirectory','TraceDirectory','GroundPatchFile','GroundCorridorFile','GroundExtensionFile','YawDegrees')
+    foreach($name in @($valueNames)+@($switchNames)){
         if($BoundParameters.Keys -notcontains $name){continue}
         $value=$BoundParameters[$name]
-        if($name -eq 'PreflightOnly' -or $name -eq 'WithoutMods'){
+        if($switchNames -contains $name){
             $arguments.Add('-'+$name+':$'+([bool]$value).ToString().ToLowerInvariant())
         }else{
-            $arguments.Add('-'+$name);$arguments.Add([string]$value)
+            $arguments.Add('-'+$name)
+            $arguments.Add($(if($value -is [IFormattable]){$value.ToString($null,[Globalization.CultureInfo]::InvariantCulture)}else{[string]$value}))
         }
     }
+    return $arguments.ToArray()
+}
+function Invoke-MineComePowerShell7([string]$ScriptPath,[Collections.IDictionary]$BoundParameters) {
+    $arguments=@(Get-MineComePowerShell7Arguments $ScriptPath $BoundParameters)
+    $hostPath=Get-MineComePowerShell7
     $quoted=@($arguments|ForEach-Object {ConvertTo-MineComeWindowsArgument $_})
     $info=[Diagnostics.ProcessStartInfo]::new($hostPath)
     # No CREATE_NEW_CONSOLE or CREATE_NO_WINDOW: share the user's existing

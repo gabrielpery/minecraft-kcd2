@@ -40,6 +40,7 @@ param(
     [switch]$ExtendedWalking,
     [switch]$WideWalking,
     [switch]$CorridorWalking,
+    [switch]$ExtensionWalking,
     [switch]$AimedBlocks,
     [switch]$LateCutoff,
     [switch]$FacingSeed,
@@ -64,8 +65,8 @@ function Assert-HudCorridorPhysicalChildMode([bool]$Corridor,[bool]$Extended,[bo
         throw 'CorridorWalking requires a separate extended physical profile.'
     }
 }
-function Assert-HudWalkingAimedChildMode([bool]$AimedBlocks,[bool]$Standalone,[bool]$PhysicalFixture,[bool]$ExtendedWalking,[bool]$OtherMode,[double]$Yaw=0,[switch]$CorridorWalking) {
-    if($AimedBlocks -and (-not $Standalone -or -not $PhysicalFixture -or -not $ExtendedWalking -or $OtherMode -or -not [double]::IsFinite($Yaw) -or $Yaw -ne $(if($CorridorWalking){-90}else{0}))){
+function Assert-HudWalkingAimedChildMode([bool]$AimedBlocks,[bool]$Standalone,[bool]$PhysicalFixture,[bool]$ExtendedWalking,[bool]$OtherMode,[double]$Yaw=0,[switch]$CorridorWalking,[switch]$ExtensionWalking) {
+    if($AimedBlocks -and (-not $Standalone -or -not $PhysicalFixture -or -not $ExtendedWalking -or $OtherMode -or -not [double]::IsFinite($Yaw) -or $Yaw -ne $(if($CorridorWalking -or $ExtensionWalking){-90}else{0}))){
         throw 'Combined aimed blocks require the selected standalone extended controller fixture and its fixed yaw.'
     }
 }
@@ -89,12 +90,15 @@ $producerDirectory=Join-Path $EvidenceDirectory 'capture'
 $exitCode=1
 try {
     if($GroundExtensionDelayFixture -and -not ($GroundExtensionFixture -or $GroundExtensionCoupled)){throw 'Extension delay fixture requires an explicit extension mode.'}
-    if(($GroundExtensionFixture -or $GroundExtensionCoupled) -and (($GroundExtensionFixture -and $GroundExtensionCoupled) -or -not $Standalone -or -not $GroundPatchFile -or $GroundCorridorFixture -or $GroundCorridorCoupled -or $GroundCorridorWalkOnly -or $GroundMovementFixture -or $GroundMovementCoupled -or ($GroundExtensionFixture -and $MovementTraceFile) -or ($GroundExtensionCoupled -and -not $MovementTraceFile) -or $HostViewFile -or $PhysicalMovement -or $PhysicalMovementFixture -or $ExtendedWalking -or $WideWalking -or $CorridorWalking -or $AimedBlocks -or $FacingSeed -or $LateCutoff -or $WalkingAimed -or $InputMode -or $LiveMouse -or $InputFixture -or $InputPointerFixture -or $InputDelayFixture -or $InputBackgroundTrial -or $InputOffscreenTrial -or $OffscreenPresentation -or $StoneFixture -or $StoneLive -or $AimedStone -or $StoneTokenFile)){
+    if(($GroundExtensionFixture -or $GroundExtensionCoupled) -and (($GroundExtensionFixture -and $GroundExtensionCoupled) -or -not $Standalone -or -not $GroundPatchFile -or $GroundCorridorFixture -or $GroundCorridorCoupled -or $GroundCorridorWalkOnly -or $GroundMovementFixture -or $GroundMovementCoupled -or ($GroundExtensionFixture -and $MovementTraceFile) -or ($GroundExtensionCoupled -and -not $MovementTraceFile) -or $HostViewFile -or $PhysicalMovement -or $PhysicalMovementFixture -or $ExtendedWalking -or $WideWalking -or $CorridorWalking -or $ExtensionWalking -or $AimedBlocks -or $FacingSeed -or $LateCutoff -or $WalkingAimed -or $InputMode -or $LiveMouse -or $InputFixture -or $InputPointerFixture -or $InputDelayFixture -or $InputBackgroundTrial -or $InputOffscreenTrial -or $OffscreenPresentation -or $StoneFixture -or $StoneLive -or $AimedStone -or $StoneTokenFile)){
         throw 'Terrain extension requires one separate standalone scripted HUD profile; only coupled extension requires a new trace.'
+    }
+    if($ExtensionWalking -and (-not $ExtendedWalking -or ([int][bool]$PhysicalMovement+[int][bool]$PhysicalMovementFixture+[int][bool]$WalkingAimed) -ne 1 -or $CorridorWalking -or $WideWalking -or $FacingSeed -or $LateCutoff -or $GroundMovementFixture -or $GroundMovementCoupled -or $GroundCorridorFixture -or $GroundCorridorCoupled -or $GroundCorridorWalkOnly -or $GroundExtensionFixture -or $GroundExtensionCoupled -or $GroundExtensionDelayFixture)){
+        throw 'ExtensionWalking requires its separate extended physical live or fixture controller.'
     }
     Assert-HudLateCutoffChildMode ([bool]$LateCutoff) ([bool]$Standalone) ([bool]$PhysicalMovementFixture) ([bool]$ExtendedWalking) ([bool]$CorridorWalking) ([bool]$AimedBlocks) ([bool]($WalkingAimed -or $PhysicalMovement -or $WideWalking -or $FacingSeed))
     Assert-HudWalkingAimedLiveChildMode ([bool]$WalkingAimed) ([bool]$ExtendedWalking) ([bool]$InputMode) ([bool]$LiveMouse) ([bool]$OffscreenPresentation) ([bool]($Standalone -or $PhysicalMovement -or $PhysicalMovementFixture -or $AimedBlocks -or $StoneFixture -or $StoneLive -or $AimedStone -or $GroundMovementFixture -or $GroundMovementCoupled -or $InputFixture -or $InputPointerFixture -or $InputDelayFixture -or $InputBackgroundTrial -or $InputOffscreenTrial)) $GroundPatchFile $MovementTraceFile $HostViewFile $StoneTokenFile
-    Assert-HudWalkingAimedChildMode ([bool]$AimedBlocks) ([bool]$Standalone) ([bool]$PhysicalMovementFixture) ([bool]$ExtendedWalking) ([bool]($PhysicalMovement -or $InputMode -or $LiveMouse -or $OffscreenPresentation -or $GroundMovementFixture -or $GroundMovementCoupled -or $InputFixture -or $InputPointerFixture -or $StoneFixture -or $StoneLive -or $AimedStone -or $InputDelayFixture -or $InputBackgroundTrial -or $InputOffscreenTrial)) $PhysicalFixtureYaw -CorridorWalking:$CorridorWalking
+    Assert-HudWalkingAimedChildMode ([bool]$AimedBlocks) ([bool]$Standalone) ([bool]$PhysicalMovementFixture) ([bool]$ExtendedWalking) ([bool]($PhysicalMovement -or $InputMode -or $LiveMouse -or $OffscreenPresentation -or $GroundMovementFixture -or $GroundMovementCoupled -or $InputFixture -or $InputPointerFixture -or $StoneFixture -or $StoneLive -or $AimedStone -or $InputDelayFixture -or $InputBackgroundTrial -or $InputOffscreenTrial)) $PhysicalFixtureYaw -CorridorWalking:$CorridorWalking -ExtensionWalking:$ExtensionWalking
     if($ExtendedWalking -and -not ($PhysicalMovement -or $PhysicalMovementFixture -or $WalkingAimed)){throw 'Extended walking requires an explicit physical movement profile.'}
     if($WideWalking -and -not ($PhysicalMovement -or $PhysicalMovementFixture -or $WalkingAimed -or $GroundMovementCoupled)){throw 'Wide walking requires an explicit physical or scripted coupled HUD movement profile.'}
     if($WideWalking -and $PhysicalMovementFixture -and -not $ExtendedWalking){throw 'Wide walking fixture requires ExtendedWalking.'}
@@ -143,6 +147,7 @@ try {
     if($ExtendedWalking){$arguments+='-PminecomeHudPhysicalMovementExtended'}
     if($WideWalking){$arguments+='-PminecomeHudWideWalking'}
     if($CorridorWalking){$arguments+='-PminecomeHudCorridorWalking'}
+    if($ExtensionWalking){$arguments+='-PminecomeHudExtensionWalking'}
     if($AimedBlocks){$arguments+='-PminecomeHudWalkingAimedFixture'}
     if($FacingSeed){$arguments+='-PminecomeHudFacingSeedFixture'}
     if($LateCutoff){$arguments+='-PminecomeHudWalkingLateCutoffFixture'}

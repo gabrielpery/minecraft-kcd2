@@ -1,8 +1,12 @@
-#Requires -Version 7.3
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Replay a previously verified, bounded server trace. No Minecraft or HUD arm.
 [CmdletBinding()]
-param([Parameter(Mandatory)][string]$TraceDirectory,[switch]$PreflightOnly,[switch]$CorridorWalking,[string]$GroundCorridorFile)
+param([Parameter(Mandatory)][string]$TraceDirectory,[switch]$PreflightOnly,[switch]$CorridorWalking,[string]$GroundCorridorFile,[switch]$ExtensionWalking,[string]$GroundExtensionFile)
+. (Join-Path $PSScriptRoot 'powershell7.ps1')
+if($PSVersionTable.PSVersion.Major -lt 7){
+    $code=Invoke-MineComePowerShell7 -ScriptPath $PSCommandPath -BoundParameters $PSBoundParameters
+    if($code -ne 0){throw "Buffered replay failed: $code"};return
+}
 $ErrorActionPreference='Stop';Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'KcdToolsProbeHelpers.ps1')
 . (Join-Path $PSScriptRoot 'HudWalkingReceipts.ps1')
@@ -10,12 +14,16 @@ $ErrorActionPreference='Stop';Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'HudBufferedMovement.ps1')
 . (Join-Path $PSScriptRoot 'HudGroundMovement.ps1')
 . (Join-Path $PSScriptRoot 'HudGroundCorridor.ps1')
+. (Join-Path $PSScriptRoot 'HudGroundExtension.ps1')
 . (Join-Path $PSScriptRoot 'MovementTraceReceiver.ps1')
-function Assert-HudCorridorReplayTrace($Trace,$Verification,$Fixture,$Capture){
+function Assert-HudCorridorReplayTrace($Trace,$Verification,$Fixture,$Capture,[switch]$ExtensionWalking){
+    $area=if($ExtensionWalking){'extension'}else{'corridor'}
+    $maxX=if($ExtensionWalking){11.5}else{7.5}
+    $edge=if($ExtensionWalking){8}else{4}
     foreach($field in @('scripted_input','source_hashes_verified')){if($Verification.$field -isnot [bool] -or -not $Verification.$field){throw 'Corridor fixture proof flags must be typed true.'}}
     foreach($field in @('physical_input_verified','kcd_compositing_verified','renderer_armed','reverse_input_mapping_created')){if($Verification.$field -isnot [bool] -or $Verification.$field){throw 'Corridor fixture must retain explicit false live-input claims.'}}
     if($Verification.kind -cne 'standalone_hud_physical_controller_fixture_verification_v1' -or
-        $Verification.walking_area -cne 'corridor' -or $Verification.movement_session -cne 'extended' -or
+        $Verification.walking_area -cne $area -or $Verification.movement_session -cne 'extended' -or
         $Verification.scripted_input -cne $true -or $Verification.physical_input_verified -cne $false -or
         $Verification.kcd_compositing_verified -cne $false -or $Verification.kcd_commands_sent -ne 0 -or
         $Verification.renderer_armed -cne $false -or $Verification.reverse_input_mapping_created -cne $false -or
@@ -36,7 +44,7 @@ function Assert-HudCorridorReplayTrace($Trace,$Verification,$Fixture,$Capture){
     $lastSeq=0L;$lastUtc=0L;$crossed=$false
     foreach($record in $Trace){
         if($record.schema -ne 1 -or $record.run -cne $Fixture.Run -or $record.patch_sha256 -cne $Fixture.Hash -or
-            $record.source_kind -cne 'standalone_hud_physical_movement_corridor_fixture' -or $record.walking_area -cne 'corridor' -or
+            $record.source_kind -cne "standalone_hud_physical_movement_${area}_fixture" -or $record.walking_area -cne $area -or
             $record.save -cne $begin.save -or $record.world -cne $begin.world){throw 'Corridor replay source identity differs.'}
         $seq=Get-HudBufferedInteger $record.seq 'sequence' 1 200
         $utc=Get-HudBufferedInteger $record.utc_ms 'UTC clock' 1 ([long]::MaxValue)
@@ -44,15 +52,15 @@ function Assert-HudCorridorReplayTrace($Trace,$Verification,$Fixture,$Capture){
         if($record.kind -cne 'sample'){continue}
         foreach($side in @('client','server')){
             $motion=$record.$side
-            [void](Get-HudBufferedNumber $motion.x 'raw X' -3.5 7.5);[void](Get-HudBufferedNumber $motion.z 'raw Z' -3.5 3.5)
+            [void](Get-HudBufferedNumber $motion.x 'raw X' -3.5 $maxX);[void](Get-HudBufferedNumber $motion.z 'raw Z' -3.5 3.5)
             [void](Get-HudBufferedNumber $motion.y 'raw Y' 57.9 67.5)
-            [void](Get-HudBufferedNumber ($motion.x-$begin.anchor_mc.x) 'relative X' -3.5 7.5)
+            [void](Get-HudBufferedNumber ($motion.x-$begin.anchor_mc.x) 'relative X' -3.5 $maxX)
             [void](Get-HudBufferedNumber ($motion.z-$begin.anchor_mc.z) 'relative Z' -3.5 3.5)
             [void](Get-HudBufferedNumber ($motion.y-$begin.anchor_mc.y) 'relative Y' -6.1 3.5)
             foreach($axis in @('vx','vy','vz')){[void](Get-HudBufferedNumber $motion.$axis $axis -4 4)}
             foreach($flag in @('on_ground','proxy_support')){if($motion.$flag -isnot [bool]){throw 'Corridor source motion flags must be typed booleans.'}}
         }
-        if($record.client.x -gt 4 -and $record.server.x -gt 4){$crossed=$true}
+        if($record.client.x -gt $edge -and $record.server.x -gt $edge){$crossed=$true}
     }
     foreach($record in @($samples[0],$samples[-1])){
         if(-not $record.server.on_ground -or -not $record.server.proxy_support){throw 'Corridor replay endpoints must be supported.'}
@@ -60,32 +68,38 @@ function Assert-HudCorridorReplayTrace($Trace,$Verification,$Fixture,$Capture){
     if(-not $crossed){throw 'Corridor replay lacks actual client/server crossing of the original four-metre edge.'}
 }
 if([bool]$CorridorWalking -ne [bool]$GroundCorridorFile){throw 'Corridor replay requires both CorridorWalking and the original GroundCorridorFile.'}
+if($CorridorWalking -and $ExtensionWalking){throw 'Choose exactly one replay surface.'}
+if([bool]$ExtensionWalking -ne [bool]$GroundExtensionFile){throw 'Extension replay requires its original GroundExtensionFile.'}
+$composite=$CorridorWalking -or $ExtensionWalking
+$area=if($ExtensionWalking){'extension'}else{'corridor'}
+$maximumX=if($ExtensionWalking){11.5}else{7.5}
 $context=Get-MineComeProbeContext
 $evidenceRoot=[IO.Path]::GetFullPath((Join-Path $context.ProjectRoot 'runtime/evidence'))+[IO.Path]::DirectorySeparatorChar
 $sourceDirectory=(Resolve-Path -LiteralPath $TraceDirectory).Path
 if(-not $sourceDirectory.StartsWith($evidenceRoot,[StringComparison]::OrdinalIgnoreCase)){throw 'Replay evidence must be in this project runtime/evidence.'}
 $tracePath=Join-Path $sourceDirectory 'movement.ndjson'
 $verification=Get-Content -LiteralPath (Join-Path $sourceDirectory 'verification.json') -Raw | ConvertFrom-Json
-$oldForwarded=@(if(-not $CorridorWalking){Get-Content -LiteralPath (Join-Path $sourceDirectory 'forwarded.json') -Raw | ConvertFrom-Json})
+$oldForwarded=@(if(-not $composite){Get-Content -LiteralPath (Join-Path $sourceDirectory 'forwarded.json') -Raw | ConvertFrom-Json})
 if($verification.result -cne 'passed' -or $verification.trace_passed -ne $true -or
     (Get-FileHash -LiteralPath $tracePath).Hash -ine $verification.trace_sha256 -or
-    (Get-Item -LiteralPath $tracePath).Length -gt $(if($CorridorWalking){256KB}else{65536})){throw 'Replay needs a matching, previously passed bounded trace.'}
+    (Get-Item -LiteralPath $tracePath).Length -gt $(if($composite){256KB}else{65536})){throw 'Replay needs a matching, previously passed bounded trace.'}
 $trace=@(Get-Content -LiteralPath $tracePath | ForEach-Object {$doc=Read-MineComeTraceJson $_ 8192;try{Convert-MineComeTraceValue $doc.RootElement}finally{$doc.Dispose()}})
 $capture=$null;$fixture=$null
-if($CorridorWalking){
-    $capture=Read-HudLiveGroundCorridor $GroundCorridorFile $context.ProjectRoot $context
-    $fixture=Read-HudGroundCorridorInput (Join-Path $sourceDirectory 'standalone-ground-corridor.json') $context.ProjectRoot $false
-    Assert-HudCorridorReplayTrace $trace $verification $fixture $capture
+if($composite){
+    $capture=if($ExtensionWalking){Read-HudLiveGroundExtension $GroundExtensionFile $context.ProjectRoot $context}else{Read-HudLiveGroundCorridor $GroundCorridorFile $context.ProjectRoot $context}
+    $fixtureFile="standalone-ground-$area.json"
+    $fixture=if($ExtensionWalking){Read-HudGroundExtensionInput (Join-Path $sourceDirectory $fixtureFile) $context.ProjectRoot $false}else{Read-HudGroundCorridorInput (Join-Path $sourceDirectory $fixtureFile) $context.ProjectRoot $false}
+    Assert-HudCorridorReplayTrace $trace $verification $fixture $capture -ExtensionWalking:$ExtensionWalking
     $original=Get-Content -LiteralPath $capture.Path -Raw | ConvertFrom-Json -Depth 16
     $replay=Get-Content -LiteralPath $fixture.Path -Raw | ConvertFrom-Json -Depth 16
-    for($i=0;$i -lt 2;$i++){
+    for($i=0;$i -lt $(if($ExtensionWalking){3}else{2});$i++){
         $a=$original.tiles[$i].json | ConvertFrom-Json -Depth 16;$b=$replay.tiles[$i].json | ConvertFrom-Json -Depth 16
         if($b.provenance.original_capture_sha256 -cne $capture.Hash -or $b.provenance.numeric_samples_only -cne $true){throw 'Fixture tile lacks its original capture hash.'}
         foreach($value in @($a,$b)){$value.PSObject.Properties.Remove('run');$value.PSObject.Properties.Remove('provenance')}
         if(($a | ConvertTo-Json -Depth 16 -Compress) -cne ($b | ConvertTo-Json -Depth 16 -Compress)){throw 'Fixture altered captured terrain coordinates.'}
     }
     $sources=Read-HudMovementJson (Join-Path $sourceDirectory 'source-hashes.json')
-    if($sources.kind -cne 'standalone_hud_corridor_physical_source_manifest_v1' -or $sources.run -cne $verification.run -or
+    if($sources.kind -cne "standalone_hud_${area}_physical_source_manifest_v1" -or $sources.run -cne $verification.run -or
         @($sources.files).Count -lt 1 -or @($sources.files).Count -gt 1024){throw 'Corridor fixture source manifest differs.'}
     foreach($entry in $sources.files){
         $path=[IO.Path]::GetFullPath((Join-Path $context.ProjectRoot $entry.path))
@@ -97,7 +111,7 @@ $begins=@($trace | Where-Object kind -CEQ 'begin');$records=@($trace | Where-Obj
 if($records.Count -lt 3 -or $records.Count -gt 200 -or $begins.Count -ne 1 -or
     $records[0].phase -cne 'SETTLING' -or $records[-1].phase -cne 'PASSED'){throw 'Replay requires a complete bounded source timeline.'}
 $begin=$begins[0];$matched=0
-$sourceState=New-HudBufferedSourceState -ExtendedWalking:$CorridorWalking
+$sourceState=New-HudBufferedSourceState -ExtendedWalking:$composite
 $plan=@(foreach($record in $records){
     $mapped=[pscustomobject]@{x=$begin.center.x+$record.server.x-$begin.anchor_mc.x;
         y=$begin.center.y-$record.server.z+$begin.anchor_mc.z;z=$begin.center.z+$record.server.y-$begin.anchor_mc.y}
@@ -106,12 +120,12 @@ $plan=@(foreach($record in $records){
         if($old[0].ServerSeq -ne $record.server_seq -or $old[0].UtcMs -ne $record.utc_ms){throw 'Replay source record differs from its original dispatch.'}
         foreach($axis in @('x','y','z')){if($old[0].Target.$axis -ne $mapped.$axis){throw 'Original dispatch differs from the hashed source position.'}}
         $matched++
-    }elseif(-not $CorridorWalking -and ($old.Count -ne 0 -or $record.phase -cnotin @('SETTLING','PASSED'))){throw 'Replay sample lacks a unique verified original dispatch.'}
+    }elseif(-not $composite -and ($old.Count -ne 0 -or $record.phase -cnotin @('SETTLING','PASSED'))){throw 'Replay sample lacks a unique verified original dispatch.'}
     $precise=Get-HudBufferedSourceTime -State $sourceState -Record $record
     [pscustomobject]@{Record=$record;SourceMs=[double][single]$precise;SourcePreciseMs=$precise;
         AtMs=(([decimal]$record.monotonic_ns-[decimal]$records[0].monotonic_ns)/1000000.0);OriginalTarget=$mapped}
 })
-if($matched -ne $oldForwarded.Count -or $plan[0].AtMs -ne 0 -or $plan[-1].AtMs -gt $(if($CorridorWalking){16000}else{6000})){throw 'Replay timeline or dispatch coverage differs.'}
+if($matched -ne $oldForwarded.Count -or $plan[0].AtMs -ne 0 -or $plan[-1].AtMs -gt $(if($composite){16000}else{6000})){throw 'Replay timeline or dispatch coverage differs.'}
 if($PreflightOnly){Write-Output "BUFFERED_REPLAY_PREFLIGHT_PASS samples=$($plan.Count) no_changes=true";return}
 $probe=$null;$cursor=$null;$budget=$null;$budgetEvidence=$null;$failure=$null
 $requested=$false;$restored=$false;$passed=$false;$receipts=@();$origin=$null
@@ -159,10 +173,10 @@ function Wait-Restoration {
     }while($clock.ElapsedMilliseconds -lt 3000)
 }
 try{
-    $entryPoint=if($CorridorWalking){'BeginExtendedBufferedPhysicalMovementFollower'}else{'BeginBufferedPhysicalMovementFollower'}
+    $entryPoint=if($composite){'BeginExtendedBufferedPhysicalMovementFollower'}else{'BeginBufferedPhysicalMovementFollower'}
     $probe=New-MineComeProbeRun $context 'buffered-movement-replay' (Join-Path $context.ProjectRoot 'kcd2/probes/movement_probe.lua') $entryPoint
-    if($CorridorWalking){
-        foreach($file in @('movement.ndjson','verification.json','source-hashes.json','standalone-ground-corridor.json')){
+    if($composite){
+        foreach($file in @('movement.ndjson','verification.json','source-hashes.json',$fixtureFile)){
             Copy-Item -LiteralPath (Join-Path $sourceDirectory $file) -Destination (Join-Path $probe.Directory ('source-'+$file))
             (Get-Item -LiteralPath (Join-Path $probe.Directory ('source-'+$file))).IsReadOnly=$true
         }
@@ -172,7 +186,7 @@ try{
     $cap=Setup-Receipt 'MineComeMovementCapabilities'
     if($cap.identity_stable -ne $true -or $cap.linked_kind -notin @('nil','number_zero') -or $cap.position.ok -ne $true -or $cap.position.finite -ne $true){throw 'Verified stationary actor and no-link contract required.'}
     $origin=$cap.position.value
-    if($CorridorWalking){foreach($axis in @('x','y','z')){if($origin.$axis -ne $capture.Anchor.$axis){throw 'Corridor replay requires the original unchanged captured player origin.'}}}
+    if($composite){foreach($axis in @('x','y','z')){if($origin.$axis -ne $capture.Anchor.$axis){throw 'Corridor replay requires the original unchanged captured player origin.'}}}
     Console "MineCome.VerifyMovementNoLinkContract('$($probe.Run)','$($cap.linked_kind)')"
     if((Setup-Receipt 'MineComeMovementContract').result -cne 'verified'){throw 'No-link contract was not acknowledged.'}
     $budget=New-MineComeHudGpuBudget $context;Start-MineComeHudGpuBudget $budget
@@ -182,12 +196,12 @@ try{
         if($wall.ElapsedMilliseconds-$item.AtMs -gt 100){throw 'Replay dispatch missed its recorded publication time.'}
         $target=[pscustomobject]@{}
         foreach($axis in @('x','y','z')){
-            $base=if($CorridorWalking){$capture.Anchor}else{$plan[0].OriginalTarget}
+            $base=if($composite){$capture.Anchor}else{$plan[0].OriginalTarget}
             $value=[double]$origin.$axis+[double]$item.OriginalTarget.$axis-[double]$base.$axis
             $target | Add-Member -NotePropertyName $axis -NotePropertyValue $value
         }
-        if($CorridorWalking){
-            [void](Get-HudBufferedNumber ($target.x-$origin.x) 'target X' -3.5 7.5)
+        if($composite){
+            [void](Get-HudBufferedNumber ($target.x-$origin.x) 'target X' -3.5 $maximumX)
             [void](Get-HudBufferedNumber ($target.y-$origin.y) 'target Y' -3.5 3.5)
             [void](Get-HudBufferedNumber ($target.z-$origin.z) 'target Z' -6.1 3.5)
         }elseif((Distance $origin $target) -gt 1.8 -or [Math]::Abs($target.z-$origin.z) -gt 1.5){throw 'Replay exceeds the bounded physical path.'}
@@ -195,7 +209,7 @@ try{
         $sourceText=([double]$item.SourceMs).ToString('R',$culture)
         $code="MineCome.ApplyBufferedMovementFollower('$($probe.Run)',$($item.Record.seq),$x,$y,$z,$sourceText)"
         if(-not $requested){
-            $areaArgument=if($CorridorWalking){",'corridor'"}else{''}
+            $areaArgument=if($composite){",'$area'"}else{''}
             $code="local p=player and player:GetWorldPos(); if p and (p.x-($x))^2+(p.y-($y))^2+(p.z-($z))^2<=0.00000001 then if MineCome.$entryPoint('$($probe.Run)'$areaArgument) then $code end end"
         }
         $requested=$true;Console $code 150
@@ -207,12 +221,12 @@ try{
     Console "MineCome.FinishBufferedMovementFollower('$($probe.Run)',$($forwarded[-1].TraceSeq))" 150
     Wait-Restoration
     if(-not $restored){throw 'Replay actor restoration was not verified.'}
-    Assert-HudWalkingFollowerSession $receipts -ExtendedWalking:$CorridorWalking -CorridorWalking:$CorridorWalking
+    Assert-HudWalkingFollowerSession $receipts -ExtendedWalking:$composite -CorridorWalking:$CorridorWalking -ExtensionWalking:$ExtensionWalking
     $observed=@($receipts | Where-Object event -CEQ 'applied')
     if($observed.Count -lt 3){throw 'Too few delayed buffered observations.'}
     $playbackEpoch=$null;$lastCrossed=0;$crossedPoints=0;$previousSourceIndex=-1
     foreach($receipt in $observed){
-        $proof=Assert-HudBufferedMovementReceipt -Receipt $receipt -Forwarded $forwarded -ExtendedWalking:$CorridorWalking -CorridorWalking:$CorridorWalking
+        $proof=Assert-HudBufferedMovementReceipt -Receipt $receipt -Forwarded $forwarded -ExtendedWalking:$composite -CorridorWalking:$CorridorWalking -ExtensionWalking:$ExtensionWalking
         if(($null -ne $playbackEpoch -and $proof.EpochEngineSeconds -ne $playbackEpoch) -or $proof.CrossedSourceSeq -le $lastCrossed){throw 'Replay changed epoch or repeated a source point.'}
         if($proof.SourcePointsCrossed -ne $proof.SourceIndex-$previousSourceIndex){throw 'Replay crossing count differs from actual source progress.'}
         $previousSourceIndex=$proof.SourceIndex
@@ -220,8 +234,8 @@ try{
         $summaries.Add($proof)
     }
     if($lastCrossed -ne $forwarded[-1].TraceSeq -or $crossedPoints -ne $forwarded.Count){throw 'Replay did not drain every submitted source point.'}
-    if($CorridorWalking){
-        if(@($observed | Where-Object {$_.player.x-$origin.x -gt 4}).Count -lt 1){throw 'Corridor native observations did not cross the original four-metre edge.'}
+    if($composite){
+        if(@($observed | Where-Object {$_.player.x-$origin.x -gt $(if($ExtensionWalking){8}else{4})}).Count -lt 1){throw 'Corridor native observations did not cross the original four-metre edge.'}
         foreach($axis in @('x','y','z')){
             $terminal=@($receipts | Where-Object event -CEQ 'restored')[0]
             if($terminal.target.$axis -ne $origin.$axis -or $terminal.player.$axis -ne $origin.$axis){throw 'Corridor replay lacks exact native restoration to its immutable origin.'}
@@ -254,10 +268,10 @@ finally{
     if($probe){
         ConvertTo-Json -InputObject $receipts -Depth 15 | Set-Content -LiteralPath (Join-Path $probe.Directory 'kcd-receipts.json') -Encoding utf8NoBOM
         ConvertTo-Json -InputObject $forwarded.ToArray() -Depth 8 | Set-Content -LiteralPath (Join-Path $probe.Directory 'forwarded.json') -Encoding utf8NoBOM
-        [ordered]@{schema=1;kind=$(if($CorridorWalking){'minecome_buffered_corridor_movement_replay_v1'}else{'minecome_buffered_movement_replay_v1'});run=$probe.Run;result=$(if($passed){'passed'}else{'failed'});failure=$failure;
+        [ordered]@{schema=1;kind=$(if($composite){"minecome_buffered_${area}_movement_replay_v1"}else{'minecome_buffered_movement_replay_v1'});run=$probe.Run;result=$(if($passed){'passed'}else{'failed'});failure=$failure;
             source_evidence=$sourceDirectory;source_trace_sha256=$verification.trace_sha256;scripted_replay=$true;physical_input_verified=$false;
             minecraft_connected=$false;hud_armed=$false;visual_smoothness_verified=$false;target_pid=$context.GamePid;source_sha256=$probe.SourceHash;
-            walking_area=$(if($CorridorWalking){'corridor'}else{'normal'});movement_session=$(if($CorridorWalking){'extended'}else{'short'});
+            walking_area=$(if($composite){$area}else{'normal'});movement_session=$(if($composite){'extended'}else{'short'});
             original_capture_sha256=$(if($capture){$capture.Hash}else{$null});fixture_sha256=$(if($fixture){$fixture.Hash}else{$null});
             forwarded=$forwarded.Count;observed=$summaries.Count;summaries=$summaries.ToArray();restoration_verified=$restored;host_gpu_budget=$budgetEvidence} |
             ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Join-Path $probe.Directory 'verification.json') -Encoding utf8NoBOM
@@ -265,3 +279,4 @@ finally{
     }
 }
 if(-not $passed){throw $failure}
+[pscustomobject]@{EvidenceDirectory=$probe.Directory;VerificationFile=(Join-Path $probe.Directory 'verification.json')}

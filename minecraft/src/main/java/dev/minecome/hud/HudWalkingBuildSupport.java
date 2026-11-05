@@ -15,6 +15,7 @@ import java.util.concurrent.atomic.*;
 final class HudWalkingBuildSupport {
     private record Observation(long at,int support,boolean otherwiseAir){}
     private final GroundSurface patch;
+    private final HudPhysicalMovement movement;
     private final String save;
     private final MinecraftServer server;
     private final Object clientWorld,clientPlayer;
@@ -29,10 +30,17 @@ final class HudWalkingBuildSupport {
     private volatile boolean requested,prepared,cleanupRequested,cleaned;
 
     HudWalkingBuildSupport(MinecraftClient client,GroundSurface patch,String save,HudPhysicalMovement.BuildHeading heading){
+        this(client,patch,save,heading,null);
+    }
+    HudWalkingBuildSupport(MinecraftClient client,GroundSurface patch,String save,HudPhysicalMovement.BuildHeading heading,HudPhysicalMovement movement){
         require(Boolean.getBoolean("minecome.hudWalkingAimed") && client.isOnThread() && client.player!=null && client.getServer()!=null,"Live walking build owner required");
         require(save.matches("MineCome-HudStream-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}") && save.equals(client.getServer().getSaveProperties().getLevelName()),"Exact walking HUD save required");
-        require(patch.sourceKind().equals(patch.corridor()?"live_kcd_ground_corridor":"live_kcd_ground_patch") && GroundCollision.matches(client.world,patch,false),"Exact live imported ground required");
-        this.patch=patch;this.save=save;server=client.getServer();clientWorld=client.world;clientPlayer=client.player;playerId=client.player.getUuid();
+        this.movement=movement;this.patch=patch;
+        boolean extension=HudPhysicalMovementMode.extension(System.getProperties());
+        require(!extension||movement!=null,"Extension build support requires its collision owner");
+        require(movement==null||movement.plannedSurface().sha256().equals(patch.sha256()),"Build region must reserve the full collision plan");
+        require(patch.sourceKind().equals(extension?"live_kcd_ground_extension":patch.corridor()?"live_kcd_ground_corridor":"live_kcd_ground_patch") && collisionMatches(client.world,false),"Exact live imported ground required");
+        this.save=save;server=client.getServer();clientWorld=client.world;clientPlayer=client.player;playerId=client.player.getUuid();
         require(Math.abs(client.player.getX())<.001 && Math.abs(client.player.getZ())<.001,"Build support must precede walking");
         this.heading=patch.wide()&&!patch.corridor()?heading:null;
         require(!patch.wide() || patch.corridor() || heading!=null,"Fresh host heading required for wide build support");
@@ -86,12 +94,12 @@ final class HudWalkingBuildSupport {
     }
     private Observation fresh(){var value=observation.get();long now=System.nanoTime();return value!=null && now>=value.at() && now-value.at()<=250_000_000L?value:null;}
     private void check(MinecraftClient c){
-        require(c.isOnThread() && c.world==clientWorld && c.player==clientPlayer && c.getServer()==server && c.isIntegratedServerRunning() && GroundCollision.matches(c.world,patch,false),"Walking build client identity changed");
+        require(c.isOnThread() && c.world==clientWorld && c.player==clientPlayer && c.getServer()==server && c.isIntegratedServerRunning() && collisionMatches(c.world,false),"Walking build client identity changed");
         require(failure.get()==null,"Walking build support: "+failure.get());
     }
     private void requireServer(){
         var w=server.getOverworld();var p=server.getPlayerManager().getPlayer(playerId);
-        require(save.equals(server.getSaveProperties().getLevelName()) && p!=null && p.getWorld()==w && p.isCreative() && GroundCollision.matches(w,patch,true),"Walking build server identity changed");
+        require(save.equals(server.getSaveProperties().getLevelName()) && p!=null && p.getWorld()==w && p.isCreative() && collisionMatches(w,true),"Walking build server identity changed");
         if(serverWorld==null){serverWorld=w;serverPlayer=p;}
         require(serverWorld==w && serverPlayer==p && w.isChunkLoaded(support),"Walking build server owner changed");
     }
@@ -103,11 +111,13 @@ final class HudWalkingBuildSupport {
         }
         return true;
     }
+    private boolean collisionMatches(BlockView world,boolean serverSide){return movement==null?GroundCollision.matches(world,patch,serverSide):movement.collisionMatches(world,serverSide);}
     private int state(BlockView w){var s=w.getBlockState(support);return s.isAir()?0:s.isOf(Blocks.BEDROCK)?1:2;}
     private static BlockPos pos(AimGeometry.Cell p){return new BlockPos(p.x(),p.y(),p.z());}
     private static void require(boolean b,String reason){if(!b)throw new IllegalStateException(reason);}
     JsonObject evidence(){
         var e=new JsonObject();e.addProperty("patch_run",patch.run());e.addProperty("patch_sha256",patch.sha256());e.addProperty("prepared",prepared);e.addProperty("cleanup_complete",cleaned);e.addProperty("direct_support_writes",writes.get());e.addProperty("failure",failure.get());
+        e.addProperty("protected_imported_cells",region.importedCells().size());
         var selection=new JsonObject();selection.addProperty("mode",patch.corridor()?"corridor_side_perimeter":heading==null?"narrow_fixed":"host_view_perimeter");
         if(heading!=null){selection.addProperty("view_seq",heading.viewSequence());selection.addProperty("yaw",heading.yaw());selection.addProperty("forward_x",heading.forwardX());selection.addProperty("forward_z",heading.forwardZ());}
         var cell=new JsonObject();cell.addProperty("x",support.getX());cell.addProperty("y",support.getY());cell.addProperty("z",support.getZ());selection.add("support",cell);e.add("selection",selection);return e;

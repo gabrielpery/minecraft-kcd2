@@ -15,8 +15,13 @@ final class HudMovementBoundary {
     private record Heights(double min,double max) {}
     private final GroundSurface patch;
     private final MovementTraceSink.Motion anchor;
+    private final boolean extension;
 
-    HudMovementBoundary(GroundSurface patch,MovementTraceSink.Motion anchor){this.patch=patch;this.anchor=anchor;}
+    HudMovementBoundary(GroundSurface patch,MovementTraceSink.Motion anchor){this(patch,anchor,false);}
+    HudMovementBoundary(GroundSurface patch,MovementTraceSink.Motion anchor,boolean extension){
+        this.patch=patch;this.anchor=anchor;this.extension=extension;
+        if(extension&&!patch.corridor())throw new IllegalArgumentException("Extension boundary requires composite terrain");
+    }
 
     Decision check(MovementTraceSink.Motion m,int forward,int sideways,boolean jump,double yaw,
                    double acceleration,double jumpVelocity,boolean sprintJump){
@@ -51,7 +56,7 @@ final class HudMovementBoundary {
         double dy=Math.max(Math.abs(bottom-anchor.y()),Math.abs(top-anchor.y()));
         double reach=Math.sqrt(dx*dx+dy*dy+dz*dz);
         if(patch.corridor()){
-            if(corridor.minX()-anchor.x()< -3.5 || corridor.maxX()-anchor.x()>7.5 ||
+            if(corridor.minX()-anchor.x()< -3.5 || corridor.maxX()-anchor.x()>(extension?11.5:7.5) ||
                     corridor.minZ()-anchor.z()< -3.5 || corridor.maxZ()-anchor.z()>3.5)
                 return reject("corridor_anchor_braking_clearance",flat,heights,reach);
         }else if(reach>(patch.wide()?3.5:RADIUS))return reject("sphere_braking_clearance",flat,heights,reach);

@@ -15,15 +15,16 @@ final class MovementTraceSink implements AutoCloseable {
         GROUND("MineCome-Ground-"),HUD_COUPLED("MineCome-HudStream-"),HUD_CORRIDOR_COUPLED("MineCome-HudStream-"),HUD_CORRIDOR_WALK_COUPLED("MineCome-HudStream-"),HUD_EXTENSION_WALK_COUPLED("MineCome-HudStream-"),
         HUD_PHYSICAL(false,HudMovementSession.SHORT),HUD_PHYSICAL_FIXTURE(true,HudMovementSession.SHORT),
         HUD_PHYSICAL_EXTENDED(false,HudMovementSession.EXTENDED),HUD_PHYSICAL_EXTENDED_FIXTURE(true,HudMovementSession.EXTENDED),
-        HUD_PHYSICAL_CORRIDOR(false,HudMovementSession.EXTENDED),HUD_PHYSICAL_CORRIDOR_FIXTURE(true,HudMovementSession.EXTENDED);
+        HUD_PHYSICAL_CORRIDOR(false,HudMovementSession.EXTENDED),HUD_PHYSICAL_CORRIDOR_FIXTURE(true,HudMovementSession.EXTENDED),
+        HUD_PHYSICAL_EXTENSION(false,HudMovementSession.EXTENDED),HUD_PHYSICAL_EXTENSION_FIXTURE(true,HudMovementSession.EXTENDED);
         private final String savePrefix;
         private final boolean physical,fixture;
         private final HudMovementSession session;
         Profile(String savePrefix){this.savePrefix=savePrefix;physical=false;fixture=false;session=HudMovementSession.SHORT;}
         Profile(boolean fixture,HudMovementSession session){savePrefix="MineCome-HudStream-";physical=true;this.fixture=fixture;this.session=session;}
         boolean corridor(){return this==HUD_CORRIDOR_COUPLED||this==HUD_CORRIDOR_WALK_COUPLED||this==HUD_PHYSICAL_CORRIDOR||this==HUD_PHYSICAL_CORRIDOR_FIXTURE;}
-        boolean extension(){return this==HUD_EXTENSION_WALK_COUPLED;}
-        boolean walkOnly(){return this==HUD_CORRIDOR_WALK_COUPLED||extension();}
+        boolean extension(){return this==HUD_EXTENSION_WALK_COUPLED||this==HUD_PHYSICAL_EXTENSION||this==HUD_PHYSICAL_EXTENSION_FIXTURE;}
+        boolean walkOnly(){return this==HUD_CORRIDOR_WALK_COUPLED||this==HUD_EXTENSION_WALK_COUPLED;}
         static Profile physical(boolean fixture,HudMovementSession session){
             return session.extended()?(fixture?HUD_PHYSICAL_EXTENDED_FIXTURE:HUD_PHYSICAL_EXTENDED):(fixture?HUD_PHYSICAL_FIXTURE:HUD_PHYSICAL);
         }
@@ -31,6 +32,11 @@ final class MovementTraceSink implements AutoCloseable {
             if(!corridor)return physical(fixture,session);
             if(!session.extended())throw new IllegalArgumentException("Physical corridor trace requires extended session");
             return fixture?HUD_PHYSICAL_CORRIDOR_FIXTURE:HUD_PHYSICAL_CORRIDOR;
+        }
+        static Profile physical(boolean fixture,HudMovementSession session,boolean corridor,boolean extension){
+            if(!extension)return physical(fixture,session,corridor);
+            if(corridor||!session.extended())throw new IllegalArgumentException("Physical extension trace requires its exclusive extended profile");
+            return fixture?HUD_PHYSICAL_EXTENSION_FIXTURE:HUD_PHYSICAL_EXTENSION;
         }
     }
     record Context(String run,String patchSha256,String sourceKind,String save,String world,
@@ -48,10 +54,10 @@ final class MovementTraceSink implements AutoCloseable {
             if(!run.matches("[A-Za-z0-9_-]{1,128}") || !patchSha256.matches("[0-9a-f]{64}") ||
                     !sourceKind.matches("[A-Za-z0-9_-]{1,64}") || !world.equals(UUID.fromString(world).toString()) ||
                     profile==null || (wide&&(profile.corridor()||profile.extension()||(!profile.physical&&profile!=Profile.HUD_COUPLED))) || !save.equals(profile.savePrefix+world) ||
-                    (profile!=Profile.GROUND && !sourceKind.equals(profile.extension()?"live_kcd_ground_extension":profile.corridor()?(profile.fixture?"standalone_corridor_fixture":"live_kcd_ground_corridor"):profile.fixture?"standalone_ground_fixture":"live_kcd_ground_patch")) || !finite(centerX,centerY,centerZ,anchorX,anchorY,anchorZ) ||
+                    (profile!=Profile.GROUND && !sourceKind.equals(profile.extension()?(profile.fixture?"standalone_ground_extension_fixture":"live_kcd_ground_extension"):profile.corridor()?(profile.fixture?"standalone_corridor_fixture":"live_kcd_ground_corridor"):profile.fixture?"standalone_ground_fixture":"live_kcd_ground_patch")) || !finite(centerX,centerY,centerZ,anchorX,anchorY,anchorZ) ||
                     Math.abs(anchorX)>.01 || Math.abs(anchorZ)>.01 || anchorY<52 || anchorY>76 ||
                     (!profile.physical && (anchorX!=0 || anchorY!=64 || anchorZ!=0)) ||
-                    (profile.corridor()&&profile.physical&&(anchorY<57.9||anchorY>67.5)) ||
+                    ((profile.corridor()||profile.extension())&&profile.physical&&(anchorY<57.9||anchorY>67.5)) ||
                     Math.abs(centerX)>10_000_000 || Math.abs(centerY)>10_000_000 || Math.abs(centerZ)>10_000_000)
                 throw new IllegalArgumentException("Invalid movement trace context");
         }
@@ -111,7 +117,7 @@ final class MovementTraceSink implements AutoCloseable {
                 client.corridor()!=context.profile().corridor() || server.corridor()!=context.profile().corridor() ||
                 client.extension()!=context.profile().extension() || server.extension()!=context.profile().extension())
             throw new IllegalArgumentException("Motion and trace walking-area profiles differ");
-        if(context.profile().physical&&context.profile().corridor()){
+        if(context.profile().physical&&(context.profile().corridor()||context.profile().extension())){
             requirePhysicalCorridorDisplacement(client);requirePhysicalCorridorDisplacement(server);
         }
         validatePhase(phase);
@@ -153,7 +159,7 @@ final class MovementTraceSink implements AutoCloseable {
     private String prefix(String kind,long utcMs) {
         if(utcMs<0)throw new IllegalArgumentException("Invalid UTC timestamp");
         return "{\"schema\":1,\"kind\":"+quote(kind)+",\"run\":"+quote(context.run())+
-                ",\"patch_sha256\":"+quote(context.patchSha256())+",\"source_kind\":"+quote(context.profile().extension()?"hud_extension_walk_coupled":context.profile().physical&&context.profile().corridor()?(context.profile().fixture?"standalone_hud_physical_movement_corridor_fixture":"live_kcd_hud_physical_movement_corridor"):context.profile().walkOnly()?"hud_corridor_walk_coupled":context.profile().corridor()?"hud_corridor_coupled":context.profile().physical?context.profile().session.traceSource(context.profile().fixture):context.sourceKind())+
+                ",\"patch_sha256\":"+quote(context.patchSha256())+",\"source_kind\":"+quote(context.profile().extension()?(context.profile().physical?(context.profile().fixture?"standalone_hud_physical_movement_extension_fixture":"live_kcd_hud_physical_movement_extension"):"hud_extension_walk_coupled"):context.profile().physical&&context.profile().corridor()?(context.profile().fixture?"standalone_hud_physical_movement_corridor_fixture":"live_kcd_hud_physical_movement_corridor"):context.profile().walkOnly()?"hud_corridor_walk_coupled":context.profile().corridor()?"hud_corridor_coupled":context.profile().physical?context.profile().session.traceSource(context.profile().fixture):context.sourceKind())+
                 ",\"save\":"+quote(context.save())+",\"world\":"+quote(context.world())+
                 ",\"seq\":"+(sequence+1)+",\"utc_ms\":"+utcMs+(context.profile().extension()?",\"walking_area\":\"extension\"":context.profile().corridor()?",\"walking_area\":\"corridor\"":context.wide()?",\"walking_area\":\"wide\"":"");
     }
@@ -178,7 +184,7 @@ final class MovementTraceSink implements AutoCloseable {
     }
     private void requirePhysicalCorridorDisplacement(Motion m){
         double x=m.x()-context.anchorX(),y=m.y()-context.anchorY(),z=m.z()-context.anchorZ();
-        if(x< -3.5||x>7.5||Math.abs(z)>3.5||y< -6.1||y>3.5)
+        if(x< -3.5||x>(context.profile().extension()?11.5:7.5)||Math.abs(z)>3.5||y< -6.1||y>3.5)
             throw new IllegalArgumentException("Physical corridor exceeds immutable anchor displacement bounds");
     }
     private static boolean finite(double... values){for(double value:values)if(!Double.isFinite(value))return false;return true;}

@@ -19,8 +19,15 @@ import java.util.concurrent.atomic.*;
 
 /** Live v2 input in the owned HUD world. The file trace has no authority to call KCD. */
 public final class HudPhysicalMovement {
-    private record Observation(Object world,Object player,long sequence,long at,MovementTraceSink.Motion motion){}
+    private record Observation(Object world,Object player,long sequence,long at,MovementTraceSink.Motion motion,String surfaceHash){}
     private final GroundSurface patch;
+    private final GroundExpansion expansion;
+    private volatile GroundSurface clientSurface,serverSurface;
+    private final AtomicBoolean extensionServerInstalled=new AtomicBoolean();
+    private volatile boolean extensionRequested,extensionClientInstalled;
+    private long extensionStartedAt,extensionFinishedAt,extensionTraceSamples;
+    private static final double EXTENSION_TRIGGER_X=4.0;
+    private static final long EXTENSION_DEADLINE_NS=2_000_000_000L;
     private final String save;
     private final HudInputProtocol.Identity identity;
     private final boolean fixture;
@@ -62,12 +69,14 @@ public final class HudPhysicalMovement {
         this(patchFile,traceFile,viewFile,save,identity,fixture,HudMovementSession.SHORT);
     }
     public HudPhysicalMovement(Path patchFile,Path traceFile,Path viewFile,String save,HudInputProtocol.Identity identity,boolean fixture,HudMovementSession session)throws IOException{
-        patch=HudPhysicalMovementMode.corridor(System.getProperties())?GroundCorridor.read(patchFile):GroundPatch.read(patchFile,HudPhysicalMovementMode.wide(System.getProperties()));this.traceFile=traceFile;this.viewFile=viewFile;this.save=save;this.identity=identity;this.fixture=fixture;
+        expansion=HudPhysicalMovementMode.extension(System.getProperties())?GroundExpansion.read(patchFile):null;
+        patch=expansion!=null?expansion.expanded():HudPhysicalMovementMode.corridor(System.getProperties())?GroundCorridor.read(patchFile):GroundPatch.read(patchFile,HudPhysicalMovementMode.wide(System.getProperties()));
+        clientSurface=serverSurface=initialSurface();this.traceFile=traceFile;this.viewFile=viewFile;this.save=save;this.identity=identity;this.fixture=fixture;
         this.session=java.util.Objects.requireNonNull(session);keys=new HudMovementKeys(session);
         if(patch.corridor()&&!session.extended())throw new IllegalArgumentException("Physical corridor requires extended session");
         inventoryEvidence=patch.corridor()||HudPhysicalMovementMode.walkingAimed(System.getProperties())||Boolean.getBoolean("minecome.hudWalkingAimedFixture")
                 ?new HudMovementInventoryEvidence():null;
-        if(!patch.sourceKind().equals(patch.corridor()?(fixture?"standalone_corridor_fixture":"live_kcd_ground_corridor"):fixture?"standalone_ground_fixture":"live_kcd_ground_patch") || patch.run().equals(identity.run()) ||
+        if(!patch.sourceKind().equals(expansion!=null?(fixture?"standalone_ground_extension_fixture":"live_kcd_ground_extension"):patch.corridor()?(fixture?"standalone_corridor_fixture":"live_kcd_ground_corridor"):fixture?"standalone_ground_fixture":"live_kcd_ground_patch") || patch.run().equals(identity.run()) ||
                 !patch.run().matches("[0-9a-f]{32}") || !save.equals("MineCome-HudStream-"+UUID.fromString(save.substring("MineCome-HudStream-".length()))) ||
                 !traceFile.isAbsolute() || !viewFile.isAbsolute())
             throw new IllegalArgumentException("Physical HUD requires matching patch provenance, owned save and absolute evidence files");
@@ -75,11 +84,20 @@ public final class HudPhysicalMovement {
     public void positionCorrection(){corrections.incrementAndGet();}
     public boolean completed(){return completed;}
     public HudMovementSession session(){return session;}
+    /** Stable plan identity and full reservation; not evidence of installed collision. */
+    public GroundSurface plannedSurface(){return patch;}
+    public GroundSurface initialSurface(){return expansion==null?patch:expansion.initial();}
+    public GroundSurface currentSurface(){return clientSurface;}
+    public boolean extensionRequested(){return extensionRequested;}
+    public boolean extensionComplete(){return extensionClientInstalled&&extensionServerInstalled.get();}
+    public boolean collisionMatches(BlockView world,boolean serverSide){
+        return GroundCollision.matches(world,serverSide?serverSurface:clientSurface,serverSide);
+    }
     public long startedAtNanos(){return keys.startedAt();}
     /** Fresh guest agreement only; a live aim adapter must also check the host pose. */
     public boolean interactionSettled(MinecraftClient client,long now){
         var sample=freshObservation(now);
-        if(!ready || closing || completed || sample==null || clientMotion==null || !keys.neutral(now)
+        if(!ready || closing || completed || extensionPending() || sample==null || clientMotion==null || !keys.neutral(now)
                 || client.currentScreen!=null || client.getOverlay()!=null || client.isPaused())return false;
         var actual=motion(client.player,hasGround(client.world,client.player));var remote=sample.motion();
         return grounded(actual) && grounded(remote) && distance(actual,remote)<=.01
@@ -117,7 +135,7 @@ public final class HudPhysicalMovement {
         if(!parent.startsWith(evidenceRoot.toRealPath()))throw new IOException("Physical readiness outside evidence");
         var e=new JsonObject();e.addProperty("schema",1);e.addProperty("kind",fixture?"minecome_hud_physical_fixture_ready_v1":"minecome_hud_physical_ready_v1");e.addProperty("ready",true);
         e.addProperty("scripted_input",fixture);
-        if(patch.corridor())e.addProperty("walking_area","corridor");else if(patch.wide())e.addProperty("walking_area","wide");
+        if(expansion!=null)e.addProperty("walking_area","extension");else if(patch.corridor())e.addProperty("walking_area","corridor");else if(patch.wide())e.addProperty("walking_area","wide");
         if(HudPhysicalMovementMode.walkingAimed(System.getProperties()))e.addProperty("ui_input_walking_aimed",true);
         if(session.extended())e.addProperty("movement_session",session.id());
         e.addProperty("run",identity.run());e.addProperty("save",save);e.addProperty("patch_run",patch.run());e.addProperty("patch_sha256",patch.sha256());
@@ -167,6 +185,10 @@ public final class HudPhysicalMovement {
         keys.expire(now);
         if(keys.ended()){release(client);return;}
         var motion=motion(client.player,hasGround(client.world,client.player));
+        updateExtension(client,motion,freshObservation(now));
+        // Keep genuine held edges and their original deadlines; only the actual
+        // vanilla bindings pause. Stale authority/inventory still uses suspend.
+        if(extensionPending()){release(client);return;}
         if(boundary!=null && !keys.neutral(now)){
             int forward=(keys.down(0x57,now)?1:0)-(keys.down(0x53,now)?1:0);
             int sideways=(keys.down(0x41,now)?1:0)-(keys.down(0x44,now)?1:0);
@@ -201,7 +223,7 @@ public final class HudPhysicalMovement {
                 if(!allAir(client.world) || !GroundCollision.available(false))throw new IllegalStateException("Physical HUD client collision ownership changed");
                 var view=views.current(System.currentTimeMillis(),now);
                 if(view!=null){
-                    GroundCollision.install(client.world,patch,false);clientInstalled=true;teleported=true;
+                    GroundCollision.install(client.world,clientSurface,false);clientInstalled=true;teleported=true;
                     float yaw=view.view().yaw(),pitch=view.view().pitch();
                     server.execute(()->{
                         try{var entity=server.getPlayerManager().getPlayer(playerId);requireServer(server,entity);
@@ -226,7 +248,7 @@ public final class HudPhysicalMovement {
         if(!GroundCollision.installed(client.world,false) || !allAir(client.world) ||
                 client.player.getAbilities().flying || client.player.getAbilities().allowFlying)
             throw new IllegalStateException("Physical HUD client collision/abilities contract changed");
-        if(patch.corridor()&&!GroundCollision.matches(client.world,patch,false))throw new IllegalStateException("Physical corridor client surface identity changed");
+        if(patch.corridor()&&!collisionMatches(client.world,false))throw new IllegalStateException("Physical corridor client surface identity changed");
         clientMotion=motion(client.player,hasGround(client.world,client.player));
         if(!ready){
             release(client);
@@ -238,7 +260,7 @@ public final class HudPhysicalMovement {
             else if(now-stableAt>=250_000_000L){
                 var view=views.current(System.currentTimeMillis(),System.nanoTime());
                 if(view!=null){
-                    var initial=new HudMovementBoundary(patch,sample.motion()).check(clientMotion,1,0,false,view.view().yaw(),
+                    var initial=new HudMovementBoundary(clientSurface,sample.motion(),expansion!=null).check(clientMotion,1,0,false,view.view().yaw(),
                             accelerationBound(client),jumpVelocity(client),false);
                     if(!initial.allow())throw new IllegalStateException("Physical HUD sampled ground has insufficient forward braking clearance: "+initial.reason()+"; use a more level starting patch or turn before starting the bounded lab");
                     ready=true;baselineCorrections=corrections.get();
@@ -260,8 +282,9 @@ public final class HudPhysicalMovement {
             }
         }
         var sm=sample.motion();
+        updateExtension(client,clientMotion,sample);
         if(patch.corridor()){
-            if(!corridorCoverage(clientMotion)||!corridorCoverage(sm))throw new IllegalStateException("Physical corridor displacement/coverage bound");
+            if(!corridorCoverage(clientMotion,clientSurface)||!corridorCoverage(sm,serverSurface))throw new IllegalStateException("Physical corridor displacement/coverage bound");
             clientMaxX=Math.max(clientMaxX,clientMotion.x());serverMaxX=Math.max(serverMaxX,sm.x());
         }else if(!patch.containsFeet(clientMotion.x(),clientMotion.z(),.31) || !patch.containsFeet(sm.x(),sm.z(),.31) ||
                 distance(clientMotion,anchor)>(patch.wide()?3.8:1.8) || distance(sm,anchor)>(patch.wide()?3.8:1.8) ||
@@ -285,12 +308,12 @@ public final class HudPhysicalMovement {
             // either passing or rejecting its final displacement proof.
             if(result==HudMovementCompletion.Result.INSUFFICIENT_WALK)
                 throw new IllegalStateException("Physical HUD ended without client/server walking proof");
-            if(result==HudMovementCompletion.Result.PASSED && writeTrace(sample,"PASSED",true)){
+            if(result==HudMovementCompletion.Result.PASSED && !extensionPending() && writeTrace(sample,"PASSED",true)){
                 trace.finish(System.currentTimeMillis(),"passed","PASSED","Physical HUD input produced bounded vanilla walking on client and server");
                 traceResult="passed";durationMs=(now-keys.startedAt())/1_000_000;completed=true;views.close();
                 if(inventoryEvidence!=null)inventoryEvidence.finish();
             }else writeTrace(sample,settled?"RESTING":"LANDING",false);
-        }else writeTrace(sample,!clientMotion.onGround()?"JUMPING":keys.neutral(now)?"RESTING":"WALKING",false);
+        }else writeTrace(sample,!clientMotion.onGround()?"JUMPING":extensionPending()||keys.neutral(now)?"RESTING":"WALKING",false);
     }
     private void startTrace(MinecraftClient client,long now)throws IOException{
         var sample=freshObservation(System.nanoTime());
@@ -298,10 +321,10 @@ public final class HudPhysicalMovement {
                 Math.abs(sample.motion().x())>.001 || Math.abs(sample.motion().z())>.001)
             throw new IllegalStateException("Physical HUD first edge lacks exact settled anchor");
         anchor=sample.motion();
-        boundary=new HudMovementBoundary(patch,anchor);
+        boundary=new HudMovementBoundary(clientSurface,anchor,expansion!=null);
         String world=save.substring("MineCome-HudStream-".length());
         var context=new MovementTraceSink.Context(patch.run(),patch.sha256(),patch.sourceKind(),save,world,
-                patch.centerX(),patch.centerY(),patch.centerZ(),MovementTraceSink.Profile.physical(fixture,session,patch.corridor()),anchor.x(),anchor.y(),anchor.z(),patch.wide()&&!patch.corridor());
+                patch.centerX(),patch.centerY(),patch.centerZ(),MovementTraceSink.Profile.physical(fixture,session,patch.corridor()&&expansion==null,expansion!=null),anchor.x(),anchor.y(),anchor.z(),patch.wide()&&!patch.corridor());
         trace=MovementTraceSink.open(traceFile,evidenceRoot,context,now,System.currentTimeMillis());traceResult="pending";
         if(!writeTrace(sample,"SETTLING",true))throw new IllegalStateException("Physical HUD initial trace sample rejected");
     }
@@ -309,7 +332,37 @@ public final class HudPhysicalMovement {
         // On a slab descent the client may already have landed while the fresh
         // server sample still has its previous onGround flag without support.
         phase=HudMovementPhase.forAuthoritativeGround(phase,grounded(sample.motion()));
-        return trace.sample(System.nanoTime(),System.currentTimeMillis(),phase,clientMotion,sample.motion(),sample.sequence(),sample.at(),force);
+        boolean written=trace.sample(System.nanoTime(),System.currentTimeMillis(),phase,clientMotion,sample.motion(),sample.sequence(),sample.at(),force);
+        if(written&&extensionPending())extensionTraceSamples++;
+        return written;
+    }
+    private boolean extensionPending(){return extensionRequested&&!extensionComplete();}
+    /** Server-first immutable collision admission; never block either game thread. */
+    private void updateExtension(MinecraftClient client,MovementTraceSink.Motion motion,Observation sample){
+        if(expansion==null || trace==null || completed || closing || extensionComplete())return;
+        long now=System.nanoTime();
+        if(!extensionRequested){
+            if(sample==null || Math.min(motion.x(),sample.motion().x())<EXTENSION_TRIGGER_X)return;
+            extensionRequested=true;extensionStartedAt=now;release(client);
+            server.execute(()->{
+                if(closing)return;
+                try{
+                    var entity=server.getPlayerManager().getPlayer(playerId);requireServer(server,entity);
+                    if(!allAir(server.getOverworld()) || !GroundCollision.replace(server.getOverworld(),serverSurface,patch,true))
+                        throw new IllegalStateException("Physical extension server admission ownership/reservation changed");
+                    serverSurface=patch;extensionServerInstalled.set(true);
+                }catch(Exception e){failure.set("Physical extension admission: "+e.getMessage());}
+            });
+        }
+        if(now-extensionStartedAt>EXTENSION_DEADLINE_NS)throw new IllegalStateException("Physical extension admission deadline");
+        // Require a new authoritative observation from the installed generation,
+        // plus a fresh view. afterTick keeps sending real samples while waiting.
+        if(!extensionServerInstalled.get() || sample==null || !sample.surfaceHash().equals(patch.sha256()) ||
+                views.current(System.currentTimeMillis(),now)==null)return;
+        if(!allAir(client.world) || !GroundCollision.replace(client.world,clientSurface,patch,false))
+            throw new IllegalStateException("Physical extension client admission ownership/reservation changed");
+        clientSurface=patch;boundary=new HudMovementBoundary(clientSurface,anchor,true);
+        extensionFinishedAt=now;extensionClientInstalled=true;
     }
     private void prepareServer(){
         server.execute(()->{
@@ -319,7 +372,7 @@ public final class HudPhysicalMovement {
                         !(world.getChunkManager().getChunkGenerator() instanceof FlatChunkGenerator generator) ||
                         !generator.getConfig().getLayerBlocks().isEmpty() || !allAir(world) || !GroundCollision.available(true))
                     throw new IllegalStateException("Physical HUD server is not owned empty flat world");
-                serverWorld=world;serverPlayer=entity;GroundCollision.install(world,patch,true);
+                serverWorld=world;serverPlayer=entity;GroundCollision.install(world,serverSurface,true);
                 // Inspected Yarn1.21.1: tickMovement gates double-jump on allowFlying;
                 // server sendAbilitiesUpdate publishes the authoritative S2C abilities.
                 entity.getAbilities().flying=false;entity.getAbilities().allowFlying=false;entity.sendAbilitiesUpdate();
@@ -333,7 +386,7 @@ public final class HudPhysicalMovement {
             var entity=source.getPlayerManager().getPlayer(playerId);requireServer(source,entity);
             if(!allAir(source.getOverworld()) || entity.getAbilities().flying || entity.getAbilities().allowFlying)
                 throw new IllegalStateException("Physical HUD server collision/abilities contract changed");
-            observed.set(new Observation(entity.getWorld(),entity,++sequence,System.nanoTime(),motion(entity,hasGround(source.getOverworld(),entity))));
+            observed.set(new Observation(entity.getWorld(),entity,++sequence,System.nanoTime(),motion(entity,hasGround(source.getOverworld(),entity)),serverSurface.sha256()));
         }catch(Exception e){failure.set("Physical HUD observation: "+e.getMessage());}
     }
     private Observation freshObservation(long now){
@@ -348,7 +401,7 @@ public final class HudPhysicalMovement {
         if(source!=server || source.getOverworld()!=serverWorld || player==null || player!=serverPlayer || player.getWorld()!=serverWorld ||
                 !save.equals(source.getSaveProperties().getLevelName()) || !GroundCollision.installed(source.getOverworld(),true))
             throw new IllegalStateException("Physical HUD server world/player changed");
-        if(patch.corridor()&&!GroundCollision.matches(source.getOverworld(),patch,true))throw new IllegalStateException("Physical corridor server surface identity changed");
+        if(patch.corridor()&&!collisionMatches(source.getOverworld(),true))throw new IllegalStateException("Physical corridor server surface identity changed");
     }
     private void checkFailure(){if(failure.get()!=null)throw new IllegalStateException(failure.get());if(views!=null && views.failure()!=null)throw new IllegalStateException(views.failure());}
     public void abort(MinecraftClient client,String reason){terminate("failed","FAILED",reason);close(client);}
@@ -373,7 +426,7 @@ public final class HudPhysicalMovement {
     }
     public JsonObject evidence(MinecraftClient client){
         var e=new JsonObject();e.addProperty("schema",1);e.addProperty("kind","minecome_hud_physical_movement_v1");
-        if(patch.corridor())e.addProperty("walking_area","corridor");else if(patch.wide())e.addProperty("walking_area","wide");
+        if(expansion!=null)e.addProperty("walking_area","extension");else if(patch.corridor())e.addProperty("walking_area","corridor");else if(patch.wide())e.addProperty("walking_area","wide");
         if(session.extended()){
             e.addProperty("movement_session",session.id());e.addProperty("active_limit_ms",session.activeNs()/1_000_000);
             e.addProperty("settle_limit_ms",HudMovementSession.SETTLE_NS/1_000_000);e.addProperty("start_window_ms",HudMovementSession.START_WINDOW_NS/1_000_000);
@@ -388,7 +441,8 @@ public final class HudPhysicalMovement {
         e.addProperty("client_land",clientLand);e.addProperty("server_land",serverLand);e.addProperty("duration_ms",durationMs);
         e.addProperty("trace_file",traceFile.toString());e.addProperty("trace_records",trace==null?0:trace.records());e.addProperty("trace_closed",trace!=null&&trace.closed());e.addProperty("trace_result",traceResult);
         var a=new JsonObject();if(anchor!=null){a.addProperty("x",anchor.x());a.addProperty("y",anchor.y());a.addProperty("z",anchor.z());}e.add("anchor_mc",a);
-        if(patch.corridor()){
+        if(expansion!=null)e.add("extension",extensionEvidence());
+        else if(patch.corridor()){
             var c=new JsonObject();var center=new JsonObject();center.addProperty("x",patch.centerX());center.addProperty("y",patch.centerY());center.addProperty("z",patch.centerZ());c.add("anchor",center);
             var hashes=new com.google.gson.JsonArray();for(var hash:((GroundCorridor)patch).tileHashes())hashes.add(hash);c.add("tile_sha256",hashes);
             c.addProperty("client_max_x",clientMaxX);c.addProperty("server_max_x",serverMaxX);
@@ -409,6 +463,26 @@ public final class HudPhysicalMovement {
         e.addProperty("boundary_awaiting_fresh_press",boundaryAwaitingResume);
         e.addProperty("post_settle_corrections",corrections.get()-baselineCorrections);e.addProperty("client_proxy_released",clientReleased);e.addProperty("server_proxy_released",serverReleased.get());
         e.addProperty("controls_released",!client.options.forwardKey.isPressed()&&!client.options.backKey.isPressed()&&!client.options.leftKey.isPressed()&&!client.options.rightKey.isPressed()&&!client.options.jumpKey.isPressed());
+        return e;
+    }
+    public JsonObject extensionEvidence(){
+        var e=new JsonObject();
+        if(expansion==null)return e;
+        e.addProperty("plan_sha256",patch.sha256());e.addProperty("initial_sha256",initialSurface().sha256());
+        e.addProperty("client_surface_sha256",clientSurface.sha256());e.addProperty("server_surface_sha256",serverSurface.sha256());
+        e.addProperty("initial_max_x",8);e.addProperty("expanded_max_x",12);e.addProperty("trigger_x",EXTENSION_TRIGGER_X);
+        e.addProperty("requested",extensionRequested);e.addProperty("client_installed",extensionClientInstalled);
+        e.addProperty("server_installed",extensionServerInstalled.get());e.addProperty("handoff_complete",extensionComplete());
+        e.addProperty("handoff_wait_ms",extensionFinishedAt==0?0:(extensionFinishedAt-extensionStartedAt)/1_000_000);
+        e.addProperty("handoff_trace_samples",extensionTraceSamples);
+        e.addProperty("coordinate_origin_preserved",initialSurface().centerX()==patch.centerX()&&initialSurface().centerY()==patch.centerY()&&initialSurface().centerZ()==patch.centerZ());
+        // Count distinct occupied vanilla coordinates, including slabs crossing
+        // two vertical cells, using the same reservation identity as the arena.
+        e.addProperty("protected_imported_cells",patch.cells().stream().mapToLong(c->BlockPos.asLong(c.x(),c.y(),c.z())).distinct().count());
+        e.addProperty("client_max_x",clientMaxX);e.addProperty("server_max_x",serverMaxX);
+        e.addProperty("client_vanilla_cells_air",clientAirAtCleanup);e.addProperty("server_vanilla_cells_air",serverAirAtCleanup);
+        var hashes=new com.google.gson.JsonArray();for(var hash:expansion.tileHashes())hashes.add(hash);e.add("tile_sha256",hashes);
+        var center=new JsonObject();center.addProperty("x",patch.centerX());center.addProperty("y",patch.centerY());center.addProperty("z",patch.centerZ());e.add("anchor",center);
         return e;
     }
     private void apply(MinecraftClient c,long now){
@@ -442,12 +516,13 @@ public final class HudPhysicalMovement {
                 sample==null?0:sample.sequence(),sample==null?0:sample.at(),grounded(actual),remote!=null&&grounded(remote),mask,beforeVanilla));
     }
     private boolean grounded(MovementTraceSink.Motion m){return m.onGround()&&m.proxySupport()&&Math.abs(m.y()-patch.groundForFeet(m.x(),m.z(),.3))<.15;}
-    private boolean corridorCoverage(MovementTraceSink.Motion m){
+    private boolean corridorCoverage(MovementTraceSink.Motion m,GroundSurface surface){
         double x=m.x()-anchor.x(),z=m.z()-anchor.z(),y=m.y()-anchor.y();
-        return patch.containsFeet(m.x(),m.z(),.5)&&x>=-3.5&&x<=7.5&&Math.abs(z)<=3.5&&y>=-6.1&&y<=3.5;
+        return surface.containsFeet(m.x(),m.z(),.5)&&x>=-3.5&&x<=(expansion!=null?11.5:7.5)&&Math.abs(z)<=3.5&&y>=-6.1&&y<=3.5;
     }
     private boolean clearSurface(BlockView world,boolean serverSide){
-        return patch.corridor()?GroundCollision.clear(world,patch.run(),patch.sha256(),serverSide):GroundCollision.clear(world,patch.run(),serverSide);
+        var surface=serverSide?serverSurface:clientSurface;
+        return patch.corridor()?GroundCollision.clear(world,surface.run(),surface.sha256(),serverSide):GroundCollision.clear(world,patch.run(),serverSide);
     }
     private boolean allAir(BlockView world){for(var cell:patch.cells())if(!world.getBlockState(new BlockPos(cell.x(),cell.y(),cell.z())).isAir())return false;return true;}
     private static boolean hasGround(CollisionView world,Entity player){
@@ -455,7 +530,7 @@ public final class HudPhysicalMovement {
         for(var shape:world.getBlockCollisions(player,below))if(!shape.isEmpty())return true;return false;
     }
     private MovementTraceSink.Motion motion(Entity entity,boolean support){
-        var p=entity.getPos();var v=entity.getVelocity();return new MovementTraceSink.Motion(p.x,p.y,p.z,v.x,v.y,v.z,entity.isOnGround(),support,patch.wide()&&!patch.corridor(),patch.corridor());
+        var p=entity.getPos();var v=entity.getVelocity();return new MovementTraceSink.Motion(p.x,p.y,p.z,v.x,v.y,v.z,entity.isOnGround(),support,patch.wide()&&!patch.corridor(),patch.corridor()&&expansion==null,expansion!=null);
     }
     private static double distance(MovementTraceSink.Motion a,MovementTraceSink.Motion b){return Math.sqrt(Math.pow(a.x()-b.x(),2)+Math.pow(a.y()-b.y(),2)+Math.pow(a.z()-b.z(),2));}
     private static double accelerationBound(MinecraftClient client){

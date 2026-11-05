@@ -93,6 +93,27 @@ public final class HudBuildRegionTests {
         check(region.bootstrapPoint().equals(new dev.minecome.protocol.Protocol.Vec3(2.5,64,.5)),"Legacy bootstrap retains its original face centre");
         reject(()->HudBuildRegion.corridorSupport(patch,63),"Ordinary patch cannot request corridor selection");
         reject(()->new HudBuildRegion(corridor,new Cell(9,63,0)),"Corridor cannot expand beyond its one-cell support perimeter");
+        var expansion=GroundExpansion.parse(GroundExpansionTests.fixture("standalone_fixture",0).toString().getBytes(StandardCharsets.UTF_8));
+        var reserved=new HudBuildRegion(expansion.expanded(),HudBuildRegion.corridorSupport(expansion.expanded(),63));
+        check(reserved.patchSha256().equals(expansion.sha256())&&!reserved.patchSha256().equals(expansion.initial().sha256()),
+                "Expanded arena pins the full plan before either collision owner changes generation");
+        check(reserved.support().equals(corridorRegion.support())&&reserved.seed().equals(corridorRegion.seed())
+                &&reserved.minimum().equals(corridorRegion.minimum())&&reserved.maximumInclusive().equals(corridorRegion.maximumInclusive()),
+                "Terrain admission neither relocates nor enlarges the owned block arena");
+        check(reserved.importedCells().size()==128,"Full plan reserves the extra32 cells while the initial96-cell surface is active");
+        var originalSeed=Set.of(reserved.seed());
+        check(reserved.ownedRejection(originalSeed)==null&&reserved.breakRejection(reserved.seed(),originalSeed)==null,
+                "Existing confirmed seed remains owned under the stable full-plan policy");
+        int futureCells=0;
+        for(var slab:expansion.expanded().cells()){
+            var cell=new Cell(slab.x(),slab.y(),slab.z());
+            if(cell.x()<8)continue;
+            futureCells++;
+            check(reserved.isImported(cell)&&reserved.placementRejection(cell,originalSeed)!=null
+                    &&reserved.breakRejection(cell,Set.of(cell))!=null&&reserved.cleanupRejection(cell,Set.of(cell))!=null,
+                    "Future imported cells cannot enter the stone ledger before admission");
+        }
+        check(futureCells==32,"All cells beyond the original east edge were reserved");
         System.out.println("HudBuildRegionTests: "+checks+" checks passed (no Minecraft/game bootstrap)");
     }
 }

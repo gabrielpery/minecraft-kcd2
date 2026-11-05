@@ -57,7 +57,7 @@ public final class HudGroundMovementMode {
                 "hudStoneFixture", "hudStoneLive", "hudAimedStoneBridge", "groundMovementLab",
                 "externalInputLab", "externalInputFixture", "aimedStoneLab", "aimedBridgeLab",
                 "hudAimedBridgeLab", "hudExportLab", "interactiveStoneLab", "smokeWorld", "dynamicBridgeSmoke",
-                "hudPhysicalMovement", "hudPhysicalMovementFixture", "hudPhysicalMovementExtended", "hudWalkingAimed", "hudWalkingAimedFixture", "hudFacingSeedFixture", "hudCorridorWalking")) {
+                "hudPhysicalMovement", "hudPhysicalMovementFixture", "hudPhysicalMovementExtended", "hudWalkingAimed", "hudWalkingAimedFixture", "hudFacingSeedFixture", "hudCorridorWalking", "hudExtensionWalking")) {
             if (Boolean.parseBoolean(properties.getProperty("minecome." + mode)))
                 throw new IllegalArgumentException("HUD ground fixture cannot combine with " + mode);
         }

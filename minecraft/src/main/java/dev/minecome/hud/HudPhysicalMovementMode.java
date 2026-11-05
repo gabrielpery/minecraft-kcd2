@@ -22,6 +22,11 @@ public final class HudPhysicalMovementMode {
         if(!value.equals("true")&&!value.equals("false"))throw new IllegalArgumentException("Wide walking option must be true or false");
         return value.equals("true");
     }
+    public static boolean extension(Properties p){
+        String value=p.getProperty("minecome.hudExtensionWalking","false");
+        if(!value.equals("true")&&!value.equals("false"))throw new IllegalArgumentException("Extension walking option must be true or false");
+        return value.equals("true");
+    }
     public static boolean corridor(Properties p){
         String value=p.getProperty("minecome.hudCorridorWalking","false");
         if(!value.equals("true")&&!value.equals("false"))throw new IllegalArgumentException("Corridor walking option must be true or false");
@@ -33,7 +38,7 @@ public final class HudPhysicalMovementMode {
         return value.equals("true");
     }
     static double fixtureYaw(Properties p){
-        boolean corridor=corridor(p);
+        boolean corridor=corridor(p)||extension(p);
         double yaw=Double.parseDouble(p.getProperty("minecome.hudPhysicalFixtureYaw",corridor?"-90":"0"));
         if(!Double.isFinite(yaw)||yaw < -180||yaw > 180)throw new IllegalArgumentException("Fixture yaw outside finite180 degrees");
         if(corridor&&yaw!= -90)throw new IllegalArgumentException("Corridor crossing fixture requires yaw minus90");
@@ -44,9 +49,16 @@ public final class HudPhysicalMovementMode {
     }
     public static boolean require(Properties p){
         boolean live=Boolean.parseBoolean(p.getProperty("minecome.hudPhysicalMovement")),fixture=fixture(p);
+        if(extension(p)){
+            if((!live&&!fixture)||!HudMovementSession.selected(p).extended())throw new IllegalArgumentException("Extension walking requires extended physical live or fixture movement");
+            for(String conflict:List.of("hudWideWalking","hudCorridorWalking","hudFacingSeedFixture","hudWalkingLateCutoffFixture",
+                    "hudGroundMovementFixture","hudGroundMovementCoupled","hudGroundCorridorFixture","hudGroundCorridorCoupled","hudGroundCorridorWalkOnly",
+                    "hudGroundExtensionFixture","hudGroundExtensionCoupled","hudGroundExtensionDelayFixture"))
+                if(Boolean.parseBoolean(p.getProperty("minecome."+conflict)))throw new IllegalArgumentException("Extension physical walking conflicts with "+conflict);
+        }
         if(corridor(p)){
             if((!live&&!fixture)||!HudMovementSession.selected(p).extended())throw new IllegalArgumentException("Corridor walking requires extended physical live or fixture movement");
-            for(String conflict:List.of("hudWideWalking","hudFacingSeedFixture",
+            for(String conflict:List.of("hudWideWalking","hudExtensionWalking","hudFacingSeedFixture",
                     "hudGroundMovementFixture","hudGroundMovementCoupled","hudGroundCorridorFixture","hudGroundCorridorCoupled","hudGroundCorridorWalkOnly"))
                 if(Boolean.parseBoolean(p.getProperty("minecome."+conflict)))throw new IllegalArgumentException("Corridor physical walking conflicts with "+conflict);
         }
@@ -78,7 +90,7 @@ public final class HudPhysicalMovementMode {
             if(!Boolean.parseBoolean(p.getProperty("minecome."+required)))throw new IllegalArgumentException("Physical HUD movement requires "+required);
         for(String conflict:fixture?List.of("hudStreamInput","hudStreamLiveMouse","hudStreamOffscreenPresentation"):List.of("hudStreamStandalone"))
             if(Boolean.parseBoolean(p.getProperty("minecome."+conflict)))throw new IllegalArgumentException("Physical HUD movement conflicts with "+conflict);
-        for(String conflict:List.of("hudGroundMovementFixture","hudGroundMovementCoupled","hudGroundCorridorFixture","hudGroundCorridorCoupled","hudGroundCorridorWalkOnly",
+        for(String conflict:List.of("hudGroundMovementFixture","hudGroundMovementCoupled","hudGroundCorridorFixture","hudGroundCorridorCoupled","hudGroundCorridorWalkOnly","hudGroundExtensionFixture","hudGroundExtensionCoupled","hudGroundExtensionDelayFixture",
                 "hudStreamInputFixture","hudStreamInputPointerFixture","hudStreamInputDelayFixture","hudStreamBackgroundTrial",
                 "hudStreamOffscreenTrial","hudStoneBridge","hudStoneFixture","hudStoneLive","hudAimedStoneBridge",
                 "groundMovementLab","externalInputLab","externalInputFixture","aimedStoneLab","aimedBridgeLab",

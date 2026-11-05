@@ -76,6 +76,21 @@ Reject {Assert-HudPhysicalFixtureResult $receipt $run ('c'*64)} 'Fixture patch h
 $bad=Clone $receipt;$bad.lab_evidence.input_tick_phase='end_after_vanilla';Reject {Assert-HudPhysicalFixtureResult $bad $run $hash} 'Fixture must run input before vanilla'
 $bad=Clone $receipt;$bad.lab_evidence.physical_controller_fixture.physical_movement.input_timing.truncated=$true;Reject {Assert-HudPhysicalFixtureResult $bad $run $hash} 'Fixture must retain accepted inputs'
 $bad=Clone $receipt;$bad.lab_evidence.physical_controller_fixture.physical_movement.input_timing.binding_states[0].mask=0;Reject {Assert-HudPhysicalFixtureResult $bad $run $hash} 'Accepted scripted press must reach real binding state'
+$resumed=Clone $receipt;$resumedTiming=$resumed.lab_evidence.physical_controller_fixture.physical_movement.input_timing
+$resumedTiming.binding_states=@($resumedTiming.binding_states[0],
+    (Clone @{stage='release';after_input_sequence=1;mask=0;monotonic_ns=1030000000L}),
+    (Clone @{stage='before_vanilla_poll';after_input_sequence=1;mask=1;monotonic_ns=1060000000L})) + @($resumedTiming.binding_states[1..2])
+$resumedTiming.binding_state_count=$resumedTiming.binding_states.Count
+$resumedProof=Assert-HudPhysicalFixtureResult $resumed $run $hash
+Check ($resumedProof.scripted_receive_to_binding_ms[0] -eq 1) 'Admission release/reapply keeps the first real binding as latency'
+$bad=Clone $resumed;$bad.lab_evidence.physical_controller_fixture.physical_movement.input_timing.binding_states[1].mask=1
+Reject {Assert-HudPhysicalFixtureResult $bad $run $hash} 'Repeated held binding needs an actual intervening release'
+$bad=Clone $resumed;$bad.lab_evidence.physical_controller_fixture.physical_movement.input_timing.binding_states[2].monotonic_ns=1000000000L
+Reject {Assert-HudPhysicalFixtureResult $bad $run $hash} 'Reapplied binding must follow its first application and release'
+$bad=Clone $resumed;$bad.lab_evidence.physical_controller_fixture.physical_movement.input_timing.binding_states[2].monotonic_ns=2000000000L
+Reject {Assert-HudPhysicalFixtureResult $bad $run $hash} 'Previous input cannot own a binding after the next input edge'
+$bad=Clone $receipt;$bad.lab_evidence.physical_controller_fixture.physical_movement.input_timing.binding_states[0].monotonic_ns=999999999L
+Reject {Assert-HudPhysicalFixtureResult $bad $run $hash} 'Binding cannot precede the accepted input'
 
 # The longer fixture must prove fresh presses after the old five-second cutoff,
 # reopening inventory without motion, and the selected complete time budget.

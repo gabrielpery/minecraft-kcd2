@@ -110,6 +110,19 @@ public final class HudMovementBoundaryTests {
         check(!descentStop.allow()&&descentStop.reason().equals("sampled_footprint_braking_clearance"),
                 "Recorded descent still releases W rather than weakening the sampled braking bound");
         check(descending.x()-.3>4,"Whole player footprint has already crossed the original edge before this stop");
+        var extension=GroundExpansion.parse(GroundExpansionTests.fixture("standalone_fixture",0).toString().getBytes(StandardCharsets.UTF_8));
+        var extensionAnchor=new MovementTraceSink.Motion(0,64,0,0,0,0,true,true,false,false,true);
+        var beforeAdmission=new HudMovementBoundary(extension.initial(),extensionAnchor,true);
+        var afterAdmission=new HudMovementBoundary(extension.expanded(),extensionAnchor,true);
+        var extensionCrossed=new MovementTraceSink.Motion(9.5,64,0,.1,-.0784,0,true,true,false,false,true);
+        check(!forward(beforeAdmission,extensionCrossed,-90).allow(),"Planned extra tile is not collision authority before admission");
+        check(forward(afterAdmission,extensionCrossed,-90).allow(),"Admitted extension allows genuine vanilla input beyond the former eight-metre edge");
+        check(afterAdmission.check(extensionCrossed,-1,0,false,-90,.13001,.42001,false).allow(),"Same original anchor allows return from admitted tile");
+        check(!forward(new HudMovementBoundary(extension.expanded(),extensionAnchor),extensionCrossed,-90).allow(),"Expanded geometry alone does not widen a legacy corridor profile");
+        var extensionEdge=new MovementTraceSink.Motion(11.2,64,0,.1,-.0784,0,true,true,false,false,true);
+        check(!forward(afterAdmission,extensionEdge,-90).allow(),"New edge still reserves complete braking clearance");
+        var extensionSide=new MovementTraceSink.Motion(9.5,64,3.3,0,-.0784,.1,true,true,false,false,true);
+        check(!forward(afterAdmission,extensionSide,0).allow(),"Extension does not widen transverse bounds");
         return checks;
     }
     private static void completion(){

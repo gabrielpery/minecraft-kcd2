@@ -305,4 +305,25 @@ Check $true 'Corridor preserves extended18-second and2047-write bounds'
 Reject {Assert-HudWalkingFollowerSession @($corridorSummary) -CorridorWalking} 'Corridor session inferred extension'
 Reject {Assert-HudWalkingFollowerSession @($corridorSummary) -ExtendedWalking -WideWalking -CorridorWalking} 'Corridor native session also wide'
 
+# The physical extension selects only the wider east edge; it retains the same
+# extended playback, receipt budget and immutable source-zero origin.
+$extensionAck=Clone $extendedAck;$extensionAck | Add-Member walking_area extension
+$extensionPoints=Clone $extendedPoints;$extensionPoints[-1].Target.x=11.5
+Check ((Assert-HudBufferedMovementReceipt $extensionAck $extensionPoints -ExtendedWalking -ExtensionWalking).SourceMs -eq 10100) 'Explicit extension accepts its exact east inset under extended playback'
+$bad=Clone $extensionPoints;$bad[-1].Target.x=11.501
+Reject {Assert-HudBufferedMovementReceipt $extensionAck $bad -ExtendedWalking -ExtensionWalking} 'Extension cannot exceed the11.5m source-zero edge'
+Reject {Assert-HudBufferedMovementReceipt $extensionAck $extensionPoints -ExtensionWalking} 'Extension cannot infer extended playback'
+Reject {Assert-HudBufferedMovementReceipt $extensionAck $extensionPoints -ExtendedWalking} 'Extension cannot enter the default area'
+Reject {Assert-HudBufferedMovementReceipt $extensionAck $extensionPoints -ExtendedWalking -CorridorWalking} 'Extension receipt cannot impersonate corridor'
+Reject {Assert-HudBufferedMovementReceipt $corridorAck $extensionPoints -ExtendedWalking -CorridorWalking} 'Existing corridor cannot inherit the wider east edge'
+Reject {Assert-HudBufferedMovementReceipt $corridorAck $extensionPoints -ExtendedWalking -ExtensionWalking} 'Corridor receipt cannot authorize extension'
+Reject {Assert-HudBufferedMovementReceipt $extensionAck $extensionPoints -ExtendedWalking -CorridorWalking -ExtensionWalking} 'Composite profiles cannot be combined'
+$extensionSummary=Clone $summary;$extensionSummary | Add-Member walking_area extension;$extensionSummary.writes=2048
+Assert-HudWalkingFollowerSession @($extensionSummary) -ExtendedWalking -ExtensionWalking
+Check $true 'Explicit extension retains the18-second deadline and original write budget'
+Reject {Assert-HudWalkingFollowerSession @($extensionSummary) -ExtensionWalking} 'Extension session cannot infer extended authority'
+Reject {Assert-HudWalkingFollowerSession @($extensionSummary) -ExtendedWalking -CorridorWalking} 'Extension session cannot impersonate corridor'
+$bad=Clone $extensionSummary;$bad.writes=2049
+Reject {Assert-HudWalkingFollowerSession @($bad) -ExtendedWalking -ExtensionWalking} 'Extension cannot enlarge the write budget'
+
 Write-Output "HUD_BUFFERED_MOVEMENT_TESTS_PASS checks=$checks game_calls=false"

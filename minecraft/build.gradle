@@ -61,6 +61,8 @@ loom {
                 vmArgs '-Dminecome.hudPhysicalMovementExtended=true'
             if (project.hasProperty('minecomeHudWideWalking'))
                 vmArgs '-Dminecome.hudWideWalking=true'
+            if (project.hasProperty('minecomeHudExtensionWalking'))
+                vmArgs '-Dminecome.hudExtensionWalking=true'
             if (project.hasProperty('minecomeHudCorridorWalking'))
                 vmArgs '-Dminecome.hudCorridorWalking=true'
             if (project.hasProperty('minecomeHudFacingSeedFixture'))

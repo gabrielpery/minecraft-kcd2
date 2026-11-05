@@ -362,8 +362,8 @@ public final class HudStreamLab {
                         boolean corridor=HudPhysicalMovementMode.corridor(System.getProperties());
                         var heading=physicalMovement.freshBuildHeading(System.nanoTime());
                         if(!wide || heading!=null){
-                            GroundSurface surface=corridor?GroundCorridor.read(Path.of(required("minecome.groundPatchFile"))):GroundPatch.read(Path.of(required("minecome.groundPatchFile")),wide);
-                            walkingSupport=new HudWalkingBuildSupport(client,surface,save,heading);
+                            GroundSurface surface=physicalMovement.plannedSurface();
+                            walkingSupport=new HudWalkingBuildSupport(client,surface,save,heading,physicalMovement);
                         }
                     }
                     if(walkingSupport!=null && walkingSupport.prepare(client))stoneBridge=new HudAimedStoneBridge(Path.of(required("minecome.tokenFile")),save,walkingSupport,physicalMovement,output);

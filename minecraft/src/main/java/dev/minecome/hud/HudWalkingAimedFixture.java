@@ -20,7 +20,7 @@ import java.util.concurrent.atomic.*;
  * It is neither a terrain export nor evidence of physical input or KCD rendering. */
 final class HudWalkingAimedFixture implements AutoCloseable {
     private record Observation(Object world,Object player,Vec3d position,Vec3d velocity,boolean grounded,
-                               long at,int supportState,boolean stonesAir,boolean importedAir) {}
+                               long at,int supportState,boolean stonesAir,boolean importedAir,int seedState,boolean plannedCollision) {}
     private record Settled(Observation server,double distance,double clientSpeed,double serverSpeed,double clientVertical) {}
     private record Confirmed(String label,AimedStoneArena.Result result,long at,Settled settled) {}
     private static final String[] LABELS={"bootstrap","top_place","upper_break","west_place","west_break","seed_break"};
@@ -31,6 +31,8 @@ final class HudWalkingAimedFixture implements AutoCloseable {
     private final UUID playerId;
     private final String save;
     private final GroundSurface patch;
+    private final HudPhysicalMovement movement;
+    private final boolean extension=HudPhysicalMovementMode.extension(System.getProperties());
     private final HudBuildRegion region;
     private final BlockPos support,seed,upper,side;
     private final boolean facingSeed;
@@ -57,18 +59,24 @@ final class HudWalkingAimedFixture implements AutoCloseable {
     private double walkBefore,walkAfter;
     private long cutoffAt,cutoffClosedAt;
     private int ownedAtCutoff;
+    private volatile long admissionStartedAt;
+    private volatile boolean admissionClientServerConfirmed;
+    private long admissionClientSamples;
+    private final AtomicInteger admissionServerSamples=new AtomicInteger();
+    private int admissionOwnedCount;
 
-    HudWalkingAimedFixture(MinecraftClient client,GroundSurface patch,String save){
+    HudWalkingAimedFixture(MinecraftClient client,GroundSurface patch,String save,HudPhysicalMovement movement){
         require(Boolean.getBoolean("minecome.hudWalkingAimedFixture") && HudPhysicalMovementMode.fixture(System.getProperties())
                 && !Boolean.getBoolean("minecome.hudStreamInput"),"Explicit standalone walking/aimed fixture required");
         require(client.isOnThread() && client.player!=null && client.world!=null && client.getServer()!=null,"Fixture owner missing");
         require(save!=null && save.matches("MineCome-HudStream-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
                 && save.equals(client.getServer().getSaveProperties().getLevelName()),"Exact owned HUD fixture save required");
-        require(patch.sourceKind().equals(patch.corridor()?"standalone_corridor_fixture":"standalone_ground_fixture"),"Fixture terrain provenance differs");
+        require(patch.sourceKind().equals(extension?"standalone_ground_extension_fixture":patch.corridor()?"standalone_corridor_fixture":"standalone_ground_fixture")
+                && movement.plannedSurface().sha256().equals(patch.sha256()),"Fixture terrain provenance differs");
         require(HudPhysicalMovementMode.fixtureYaw(System.getProperties())==(patch.corridor()?-90:0),
                 "Walking/aimed fixture yaw differs from its explicit walking profile");
         this.server=client.getServer();this.clientWorld=client.world;this.clientPlayer=client.player;
-        this.playerId=client.player.getUuid();this.patch=patch;this.save=save;initializedAt=System.nanoTime();
+        this.playerId=client.player.getUuid();this.patch=patch;this.movement=movement;this.save=save;initializedAt=System.nanoTime();
         require(!lateCutoff || patch.corridor(),"Late-cutoff fixture requires its explicit corridor profile");
         facingSeed=HudPhysicalMovementMode.facingFixture(System.getProperties());
         require(!facingSeed || patch.wide(),"Facing fixture requires the wide terrain profile");
@@ -91,8 +99,12 @@ final class HudWalkingAimedFixture implements AutoCloseable {
         try{
             var entity=source.getPlayerManager().getPlayer(playerId);requireServer(source,entity);
             var world=source.getOverworld();
+            int actualSeed=seedState(world);
+            if(admissionStartedAt>0&&!admissionClientServerConfirmed){
+                require(actualSeed==1,"Owned seed changed during server collision admission");admissionServerSamples.incrementAndGet();
+            }
             observation.set(new Observation(world,entity,entity.getPos(),entity.getVelocity(),entity.isOnGround(),
-                    System.nanoTime(),supportState(world),stonesAir(world),importedAir(world)));
+                    System.nanoTime(),supportState(world),stonesAir(world),importedAir(world),actualSeed,GroundCollision.matches(world,patch,true)));
         }catch(Exception e){failure.compareAndSet(null,"Walking/aimed server observation: "+e.getMessage());}
     }
 
@@ -133,8 +145,23 @@ final class HudWalkingAimedFixture implements AutoCloseable {
         firstMovementAt=now;
     }
 
+    void observeAdmission(MinecraftClient client,boolean completed){
+        if(admissionClientServerConfirmed)return;
+        check(client);
+        require(extension&&prepared&&firstMovementAt>0&&nextAction==1&&!arena.pending()
+                &&arena.ownedCells().equals(java.util.Set.of(seed)),"Collision admission changed the original owned seed ledger");
+        require(seedState(client.world)==1&&importedAir(client.world),"Collision admission changed owned seed or protected client cells");
+        if(admissionStartedAt==0){admissionStartedAt=System.nanoTime();admissionOwnedCount=arena.ownedCells().size();}
+        admissionClientSamples++;
+        var proof=observation.get();long now=System.nanoTime();
+        if(proof==null||proof.at()<admissionStartedAt||now<proof.at()||now-proof.at()>250_000_000L)return;
+        require(proof.seedState()==1&&proof.importedAir(),"Collision admission changed owned seed or protected server cells");
+        if(completed&&proof.plannedCollision()&&GroundCollision.matches(client.world,patch,false))admissionClientServerConfirmed=true;
+    }
+
     boolean tickInteractions(MinecraftClient client,long now){
         check(client);require(prepared && firstMovementAt>0,"Walking/aimed interaction started before preparation/walking");
+        require(!extension||admissionClientServerConfirmed,"Extension block actions preceded preserved-seed admission proof");
         if(interactionsDone)return true;
         require(now-firstMovementAt<(lateCutoff?HudWalkingAimGate.ACTIVE_NS+HudWalkingAimGate.DRAIN_NS:HudWalkingAimGate.ACTIVE_NS),
                 "Walking/aimed actions exhausted the remaining walking window");
@@ -243,14 +270,14 @@ final class HudWalkingAimedFixture implements AutoCloseable {
     private void check(MinecraftClient client){
         require(!closed && client.isOnThread() && client.world==clientWorld && client.player==clientPlayer
                 && client.getServer()==server && client.isIntegratedServerRunning() && client.player.isCreative(),"Walking/aimed client ownership changed");
-        require(GroundCollision.matches(client.world,patch,false),"Walking/aimed client proxy identity changed");
+        require(movement.collisionMatches(client.world,false),"Walking/aimed client proxy identity changed");
         require(failure.get()==null,"Walking/aimed fixture failure: "+failure.get());
     }
     private void requireServer(MinecraftServer source,ServerPlayerEntity entity){
         require(source==server && source.getOverworld()!=null && entity!=null && entity.getUuid().equals(playerId)
                 && entity.getWorld()==source.getOverworld() && entity.isCreative() && save.equals(source.getSaveProperties().getLevelName()),"Walking/aimed server ownership changed");
         if(serverWorld==null){serverWorld=source.getOverworld();serverPlayer=entity;}
-        require(serverWorld==source.getOverworld() && serverPlayer==entity && GroundCollision.matches(source.getOverworld(),patch,true),"Walking/aimed server proxy ownership changed");
+        require(serverWorld==source.getOverworld() && serverPlayer==entity && movement.collisionMatches(source.getOverworld(),true),"Walking/aimed server proxy ownership changed");
         for(var p:List.of(support,seed,upper,side))require(source.getOverworld().isChunkLoaded(p),"Walking/aimed chunk unavailable");
     }
     private void removeSupport(boolean abort){
@@ -268,6 +295,7 @@ final class HudWalkingAimedFixture implements AutoCloseable {
         }catch(Exception e){if(abort)abortCleanup="preserved_after_owner_or_cleanup_failure";else failure.compareAndSet(null,"Fixture support cleanup: "+e.getMessage());}
     }
     private boolean importedAir(BlockView world){for(var c:region.importedCells())if(!world.getBlockState(pos(c)).isAir())return false;return true;}
+    private int seedState(BlockView world){var value=world.getBlockState(seed);return value.isOf(Blocks.STONE)?1:value.isAir()?0:2;}
     private boolean stonesAir(BlockView world){for(var p:List.of(seed,upper,side))if(!world.getBlockState(p).isAir())return false;return true;}
     private int supportState(BlockView world){var state=world.getBlockState(support);return state.isAir()?0:state.isOf(Blocks.BEDROCK)?1:2;}
     private static double horizontal(Vec3d a,Vec3d b){return Math.hypot(a.x-b.x,a.z-b.z);}
@@ -304,11 +332,16 @@ final class HudWalkingAimedFixture implements AutoCloseable {
     JsonObject evidence(){
         var e=new JsonObject();e.addProperty("kind","standalone_hud_walking_aimed_fixture_v1");e.addProperty("scripted_input",true);
         if(patch.wide()){
-            e.addProperty("walking_area",patch.corridor()?"corridor":"wide");e.addProperty("max_host_ray_range",AimedStoneArena.MAX_HOST_RAY_RANGE);
+            e.addProperty("walking_area",extension?"extension":patch.corridor()?"corridor":"wide");e.addProperty("max_host_ray_range",AimedStoneArena.MAX_HOST_RAY_RANGE);
             var point=patch.corridor()?corridorTopAimPoint(cell(seed)):facingSeed?facingTopAimPoint(cell(seed)):topAimPoint(true,cell(seed));var top=new JsonObject();top.addProperty("x",point.x());top.addProperty("y",point.y());top.addProperty("z",point.z());
             e.add("top_aim_point",top);
         }
         if(patch.corridor())e.addProperty("support_selection","corridor_side_perimeter");
+        if(extension){
+            e.addProperty("seed_preserved_during_admission",admissionClientServerConfirmed&&admissionOwnedCount==1);
+            e.addProperty("admission_owned_count",admissionOwnedCount);e.addProperty("admission_client_server_confirmed",admissionClientServerConfirmed);
+            e.addProperty("admission_seed_client_samples",admissionClientSamples);e.addProperty("admission_seed_server_samples",admissionServerSamples.get());
+        }
         if(lateCutoff){
             e.addProperty("late_cutoff_fixture",true);e.addProperty("owned_at_cutoff",ownedAtCutoff);
             e.addProperty("cutoff_elapsed_ms",cutoffAt==0?0:(cutoffAt-firstMovementAt)/1_000_000);
