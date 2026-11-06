@@ -419,8 +419,12 @@ KCD2 depth buffer, leaving hands/UI untouched. It requires the exact executable
 and proxy, reflected camera/projection constants, matching live camera and depth
 source/backup identity. KCD2 uses DXIL, so reflection uses its hash-pinned shipped
 compiler and actual remapped bindings rather than assuming the source register.
-Unavailable or mismatched metadata leaves sampled ground as the fallback. This
-is not yet verified scenery/NPC occlusion.
+Unavailable or mismatched metadata leaves sampled ground as the fallback. Live
+ordering is verified with a controlled opaque KCD object in front of and behind
+a six-block Minecraft wall, including removal restoring the wall. Hands/HUD
+remain foreground. This does not establish all foliage, transparent materials
+or NPC cases. `Prepare-NativeDepthFixture.ps1` creates the isolated test save
+through a vanilla load datapack; its seeded blocks are not placement/input proof.
 
 `./scripts/Test-GameplayDepth.ps1` checks the production depth pass in actual
 Minecraft using controlled render-only terrain boxes. Seven fixed-camera PNGs

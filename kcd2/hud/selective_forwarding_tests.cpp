@@ -87,6 +87,23 @@ int main(){
     check(!busy.defer_busy(Result::busy,210),"busy pending drain cannot renew lease");
     check(busy.accept(Result::draining,pending,Mode::buttons,123,350)==Step::pending,"explicit successful renewal remains separate");
     check(!busy.defer_busy(Result::busy,361),"pending transition lifetime stays bounded despite renewal");
+    for(auto mode:{Mode::full,Mode::buttons}){
+        ForwardingLease renewal;
+        check(renewal.accept(Result::ok,sample(mode),mode,123,100)==Step::ready,"steady renewal fixture");
+        check(renewal.defer_renewal(Result::busy,mode,100)&&renewal.defer_renewal(Result::busy,mode,199),"busy unchanged renewal can wait inside original lease");
+        check(renewal.deadline()==200&&renewal.generation()==10&&renewal.allows(mode),"busy renewal changes no identity mode or deadline");
+        check(!renewal.defer_renewal(Result::busy,mode,200)&&!renewal.defer_renewal(Result::busy,mode,99),"busy renewal cannot survive expiry or clock regression");
+        for(auto wrong:{Mode::none,mode==Mode::full?Mode::buttons:Mode::full})
+            check(!renewal.defer_renewal(Result::busy,wrong,110),"busy mode change is not a renewal");
+        for(auto result:{Result::ok,Result::bad_argument,Result::unavailable,Result::foreign_owner,Result::draining})
+            check(!renewal.defer_renewal(result,mode,110),"only unapplied busy renewal can defer");
+        check(renewal.observe(Result::ok,sample(mode),123,150)&&renewal.accept(Result::ok,sample(mode),mode,123,150)==Step::ready&&renewal.deadline()==250,"only successful proven renewal extends deadline");
+        renewal.released();check(!renewal.defer_renewal(Result::busy,mode,151),"released capture cannot defer renewal");
+    }
+    check(!ForwardingLease{}.defer_renewal(Result::busy,Mode::full,110),"busy acquisition cannot defer");
+    auto transitionLease=full();pending=sample(Mode::full,11,active|draining);
+    check(transitionLease.accept(Result::draining,pending,Mode::buttons,123,110)==Step::pending,"renewal drain fixture");
+    check(!transitionLease.defer_renewal(Result::busy,Mode::buttons,120)&&!transitionLease.defer_renewal(Result::busy,Mode::full,120),"busy in-flight transition cannot defer renewal");
     ObservationRecovery recovery;
     check(recovery.update(1,1,1)&&!recovery.pending(),"normal input has no recovery barrier");
     recovery.defer();check(recovery.pending(),"busy observation starts recovery barrier");

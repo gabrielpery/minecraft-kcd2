@@ -11,6 +11,36 @@ required. The requested hovered-block wireframe now works and is verified.
 
 ## Latest milestone: separate world layers and native scene depth
 
+**Completed native acceptance:** the mouse is reconnected and KCD initializes it.
+Controlled opaque native geometry correctly hides overlapping Minecraft blocks;
+blocks in front remain visible and removing the native occluder restores the
+wall. Hands/hotbar remain foreground. Automated Computer Use performed the checks;
+no user input was needed after reconnecting the physical mouse.
+
+Also fixed a live BUSY mouse-renewal race in the coordinated proxy/addon. A busy
+same-mode renewal now pauses forwarding without extending its proven deadline;
+fresh validation and neutral recovery are required. Busy release, transitions
+and expiry still fail closed. The new behavior requires the exact rebuilt proxy
+hash. Chat profile pins and build receipt are updated. Focused native tests pass.
+
+The final 180-second native run PASS: 183,181ms active, three actual BUSY renewals
+recovered, 18/18 input events acknowledged, inventory mouse clicks working before
+and after recovery, 3,141 uploads/zero drops and normal save/client exit. Receipt:
+`runtime/evidence/gameplay-kcd-20261106-161735-3ee10184931741c48178183b37841036/native-depth-mouse-observation.json`.
+This verifies controlled opaque geometry, not every foliage/NPC/material path.
+The six-cell wall was seeded into a disposable copied save by the new
+`scripts/Prepare-NativeDepthFixture.ps1`; original source hashes are unchanged.
+Do not use the fixture as evidence of player placement or walking.
+
+**Next:** continue product work, batching native walking over partial shapes with
+broader collision acceptance when needed. Do not repeat the completed mouse,
+inventory or controlled occlusion checks. Third-person Steve, full block coverage,
+Survival/NPC combat and Elytra remain required. Both game clients are closed;
+temporary native cube removed; all renderer bundles restored, most recently
+`runtime/evidence/gameplay-hud-restore-20261106-162248-762efa63dc7246fa816d3632eff9d9bb`.
+Use a fresh deployment bundle. Current Chat proxy SHA starts `f0552e7cc1ea8f14`,
+addon `a7ee1019bb43e131`; exact hashes are in the profile.
+
 WorldBlocks now streams same-frame foreground RGBA, owned-world RGBA and raw
 float depth under one GPU fence (schema3 format2). Hands/HUD remain foreground;
 owned models/outlines can be compared against KCD depth. Captured-ground depth
@@ -29,21 +59,9 @@ compiler tests PASS. Actual Minecraft plane separation and paired model/outline/
 inventory/save fixtures PASS (151022-fba9233a74bb4c4fad770063eca892a9 and
 151408-6da5602ad31f4809969fd27774dc5585 under runtime/evidence).
 
-Live native projection/source association now works: 5,401 accepted views and
-2,803 frames with native depth comparison enabled, 613 uploads/zero drops;
-643 guest publications, max gap79.2234ms, normal client exit. Evidence:
-`runtime/evidence/gameplay-kcd-20261106-153528-6e51e45c7a534d3da26669851edd994d/native-depth-observation.json`.
-This is NOT visible block-occlusion acceptance: saved scene had no owned blocks,
-and input never armed. KCD reports no mouse installed and DirectInput system
-mouse creation fails with 0x80040154; prearm bit512/reason1/no_device. The full
-session verification correctly remains failed. Do not weaken input eligibility.
-
-Next: resolve/confirm the game's missing mouse device before another native
-interaction check, then batch visible scenery occlusion with block placement and
-walking over partial shapes. Do not repeat completed layer fixtures or inventory
-microtests. Third-person Steve, broader collision, Survival/NPC combat and Elytra
-remain product work. All three temporary native-depth bundles are restored;
-both game clients are closed. Use a fresh bundle for the next deployment.
+Earlier projection-only evidence and missing-device failures are preserved in
+docs/PROGRESS.md. Their empty scenes were not visible occlusion acceptance; the
+final combined native receipt above supersedes that pending milestone.
 
 ## Previous milestone: captured-terrain depth
 

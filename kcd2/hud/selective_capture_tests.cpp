@@ -192,21 +192,48 @@ void contention_tests(){
     check(snapshot.generation==generation&&(snapshot.flags&m::active)&&snapshot.lease_remaining_ms==50,"read contention preserves generation and original deadline");
     snapshot=a::policy.snapshot(owner,1100,true);
     check(!(snapshot.flags&m::active)&&snapshot.reason==static_cast<unsigned>(m::Reason::lease_expired),"busy query never renews expired ownership");
-    for(const bool release:{false,true}){
+    for(const auto token:{9ull,10ull})for(const auto mode:{m::Mode::buttons,m::Mode::full}){
         generation=prepare();snapshot={};
         AcquireSRWLockExclusive(&a::mutex);
-        const auto result=release?a::release(owner,9,&snapshot):a::request(owner,9,100,m::Mode::buttons,&snapshot);
+        const auto result=a::request(owner,token,100,mode,&snapshot);
         ReleaseSRWLockExclusive(&a::mutex);
-        check(result==m::Result::busy&&snapshot.flags==0&&a::revoke_pending.load(),"mutating contention remains fail closed");
+        check(result==m::Result::busy&&snapshot.flags==0&&snapshot.token==0&&snapshot.mode==m::Mode::none&&snapshot.lease_remaining_ms==0&&snapshot.reason==static_cast<unsigned>(m::Reason::lock_contention),"busy request certifies no ownership or requested mode");
+        check(!a::revoke_pending.load(),"busy request cannot revoke original capture");
         {a::Guard lock;}
-        snapshot=a::policy.snapshot(owner,1001,true);
-        check(!(snapshot.flags&m::active)&&snapshot.generation==generation+1&&snapshot.reason==static_cast<unsigned>(m::Reason::lock_contention),"failed mutation invalidates existing generation");
+        snapshot=a::policy.snapshot(owner,1050,true);
+        check(snapshot.generation==generation&&snapshot.flags==(m::active|m::eligible)&&snapshot.token==9&&snapshot.mode==m::Mode::buttons&&snapshot.lease_remaining_ms==50,"busy request preserves original generation identity mode and deadline");
+        snapshot=a::policy.snapshot(owner,1100,true);
+        check(!(snapshot.flags&m::active)&&snapshot.reason==static_cast<unsigned>(m::Reason::lease_expired),"busy request never renews original deadline");
     }
-    prepare();a::revoke_pending=true;snapshot={};
-    AcquireSRWLockExclusive(&a::mutex);a::query(owner,9,&snapshot);ReleaseSRWLockExclusive(&a::mutex);
-    check(a::revoke_pending.load(),"busy read cannot clear pending mutation revocation");
+    a::policy=ready();a::policy.cooperative(1,owner);snapshot={};
+    AcquireSRWLockExclusive(&a::mutex);const auto initial=a::request(owner,9,100,m::Mode::buttons,&snapshot);ReleaseSRWLockExclusive(&a::mutex);
+    check(initial==m::Result::busy&&!a::revoke_pending.load()&&!(a::policy.snapshot(owner,1000,true).flags&m::active),"busy initial request cannot create capture");
+    generation=prepare();
+    check(a::policy.request(owner,9,100,m::Mode::full,1001,true)==m::Result::draining,"contention fixture enters transition");
+    snapshot={};AcquireSRWLockExclusive(&a::mutex);const auto transition=a::request(owner,9,100,m::Mode::buttons,&snapshot);ReleaseSRWLockExclusive(&a::mutex);
     {a::Guard lock;}
-    check(!(a::policy.snapshot(owner,1001,true).flags&m::active),"pending revocation survives read deferral");
+    snapshot=a::policy.snapshot(owner,1051,true);
+    check(transition==m::Result::busy&&snapshot.flags==(m::active|m::draining)&&snapshot.generation==generation+1&&snapshot.mode==m::Mode::full&&snapshot.lease_remaining_ms==50,"busy request cannot reverse or complete pending transition");
+    generation=prepare();a::policy.snapshot(owner,1100,true);snapshot={};
+    AcquireSRWLockExclusive(&a::mutex);const auto expired=a::request(owner,9,100,m::Mode::buttons,&snapshot);ReleaseSRWLockExclusive(&a::mutex);
+    {a::Guard lock;}
+    snapshot=a::policy.snapshot(owner,1101,true);
+    check(expired==m::Result::busy&&!(snapshot.flags&m::active)&&(snapshot.flags&m::draining)&&snapshot.generation==generation+1&&snapshot.reason==static_cast<unsigned>(m::Reason::lease_expired),"busy request cannot restore expired ownership or bypass cleanup");
+    generation=prepare();snapshot={};
+    AcquireSRWLockExclusive(&a::mutex);const auto released=a::release(owner,9,&snapshot);ReleaseSRWLockExclusive(&a::mutex);
+    check(released==m::Result::busy&&snapshot.flags==0&&a::revoke_pending.load(),"busy release still schedules revocation");
+    {a::Guard lock;}
+    snapshot=a::policy.snapshot(owner,1001,true);
+    check(!(snapshot.flags&m::active)&&snapshot.generation==generation+1&&snapshot.reason==static_cast<unsigned>(m::Reason::lock_contention),"busy release invalidates existing generation");
+    for(const bool request:{false,true}){
+        prepare();a::revoke_pending=true;snapshot={};
+        AcquireSRWLockExclusive(&a::mutex);
+        if(request)a::request(owner,9,100,m::Mode::buttons,&snapshot);else a::query(owner,9,&snapshot);
+        ReleaseSRWLockExclusive(&a::mutex);
+        check(a::revoke_pending.load(),"busy query and request cannot clear pending release revocation");
+        {a::Guard lock;}
+        check(!(a::policy.snapshot(owner,1001,true).flags&m::active),"pending revocation survives query and request deferral");
+    }
     a::policy={};a::revoke_pending=false;DestroyWindow(window);
 }
 }

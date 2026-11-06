@@ -87,10 +87,12 @@ hands and HUD stay visible. Automated Minecraft pixel checks and a live KCD2
 buried-slab check cover this pass. It uses the approximate collision heightfield
 and does not by itself occlude blocks behind trees, buildings or NPCs.
 The renderer now transports world colour/depth separately from hands and UI,
-with automated pixel and save/reopen checks. Native scenery-depth comparison is
-implemented behind projection/resource checks. Its reader now handles KCD2's
-DXIL shaders and remapped bindings; native scenery occlusion is still undergoing
-verification.
+with automated pixel and save/reopen checks. Native depth ordering is verified
+in KCD2 against a controlled opaque object: nearer native geometry hides the
+overlapping Minecraft blocks, farther geometry stays behind them, and removal
+restores the blocks. Hands and HUD remain visible. This uses reflected KCD2 DXIL
+projection data and matching depth resources; foliage and NPC scenes still need
+broader coverage.
 Building remains bounded to 64 blocks inside captured coverage;
 fluids, waterlogged/transparent blocks, containers and other dynamic blocks are not
 included. Walking/flight with this new world layer has not been re-verified.

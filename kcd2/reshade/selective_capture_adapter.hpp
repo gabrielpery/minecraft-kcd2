@@ -160,10 +160,10 @@ template<class Original,class Drain> bool before_data(std::uintptr_t key,DWORD b
 }
 inline Result api_call(std::uintptr_t window,std::uint64_t token,std::uint32_t duration,Mode mode,Snapshot *out,unsigned operation) {
     if(!out||out->size!=sizeof(Snapshot)||out->version!=api_version||!owned_window(window,false))return Result::bad_argument;
-    // A read-only observation cannot revoke another thread's still-valid lease.
-    // It certifies nothing while busy; callers must defer within the original
-    // deadline. Failed mutations still revoke because their outcome is unknown.
-    if(!TryAcquireSRWLockExclusive(&mutex)){if(operation!=0)revoke_pending.store(true);*out={};out->reason=static_cast<unsigned>(Reason::lock_contention);return Result::busy;}
+    // Busy queries and requests do not touch policy or extend its deadline.
+    // They certify nothing; callers may rely only on their original lease.
+    // A release must still revoke even when the policy lock is unavailable.
+    if(!TryAcquireSRWLockExclusive(&mutex)){if(operation==2)revoke_pending.store(true);*out={};out->reason=static_cast<unsigned>(Reason::lock_contention);return Result::busy;}
     if(revoke_pending.exchange(false))policy.invalidate(Reason::lock_contention);
     const auto now=GetTickCount64();const bool valid=owned_window(window,true);policy.tick(now,owned_window(policy.window(),true));
     Result result=Result::ok;

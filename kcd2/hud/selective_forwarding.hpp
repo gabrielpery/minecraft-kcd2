@@ -48,6 +48,12 @@ public:
         return result==Result::busy&&owned_&&now>=observed_at_&&now<deadline_&&
             (!pending_||(now>=pending_at_&&now-pending_at_<=250));
     }
+    // The coordinated proxy leaves a BUSY request entirely unapplied. Only a
+    // steady renewal can retain the previously proven lease, never acquisition
+    // or a mode/drain transition. This does not refresh its original deadline.
+    bool defer_renewal(Result result,Mode requested,std::uint64_t now) const noexcept {
+        return !pending_&&requested==mode_&&defer_busy(result,now);
+    }
     bool observe(Result result,const Snapshot &s,std::uint64_t token,std::uint64_t now) const noexcept {
         if(result!=Result::ok)return false;
         if(!owned_)return (s.flags&eligible)!=0;

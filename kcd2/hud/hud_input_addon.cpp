@@ -256,7 +256,7 @@ struct Service {
     HMODULE renderer_module=nullptr,shader_compiler_module=nullptr;
 #endif
     std::wstring config;
-    std::atomic<bool> compatible{false}, terminal{false};
+    std::atomic<bool> compatible{false}, terminal{false}, busy_request_preserves_lease{false};
     std::atomic<std::shared_ptr<const Session>> session;
     std::atomic<std::shared_ptr<const st::Frame>> publication;
     std::atomic<std::shared_ptr<const ui::Status>> input_status;
@@ -268,7 +268,7 @@ struct Service {
     std::atomic<unsigned> input_request{0}; // 0 waiting, 1 arm, 2 close.
     std::atomic<std::uint64_t> last_input_render{0};
     std::atomic<api::effect_runtime *> input_owner{nullptr};
-    std::atomic<std::uint64_t> uploaded{0}, dropped{0}, submitted{0};
+    std::atomic<std::uint64_t> uploaded{0}, dropped{0}, submitted{0}, busy_renewals_deferred{0};
     std::atomic<unsigned> renderer_error{0};
     // Latest preactivation observation only; worker logs it at the existing
     // five-second cadence. Independent diagnostic fields may span two adjacent
@@ -396,7 +396,9 @@ struct Service {
         std::ostringstream counters;
         counters << "[MineComeHudInput] {\"schema\":1,\"event\":\"final_counters\",\"run\":\"" << run
                  << "\",\"uploaded\":" << uploaded.load() << ",\"dropped\":" << dropped.load()
-                 << ",\"submitted\":" << submitted.load() << ",\"visual_verified\":false}";
+                 << ",\"submitted\":" << submitted.load()
+                 << ",\"busy_renewals_deferred\":" << busy_renewals_deferred.load()
+                 << ",\"visual_verified\":false}";
         reshade::log::message(reshade::log::level::info,counters.str().c_str());
     }
 #ifdef MINECOME_HUD_REPEAT_SESSION
@@ -465,8 +467,12 @@ struct Service {
 #ifdef MINECOME_HUD_GAMEPLAY_CHAT
             // Generic Depth metadata is source-specific. Read it only with this
             // exact deployed v6.8.0.7 selective-r5 binary, not a version guess.
-            const bool depth_compatible=renderer_module && st::read_file(st::module_path(renderer_module),16u*1024u*1024u,stop.value,nullptr,&digest) &&
-                digest=="22a894022a0275f4ed355d97bfc06bc2ea838581f61fc5d0f0b85fde3a81362e";
+            const bool proxy_read=renderer_module && st::read_file(st::module_path(renderer_module),16u*1024u*1024u,stop.value,nullptr,&digest);
+            const bool depth_compatible=proxy_read && digest=="f0552e7cc1ea8f1490e2953d562639843e13c478502ab40eb2c315beb1ecfeab";
+            // The older same-ABI proxy revoked ownership after a BUSY request.
+            // Enable bounded renewal deferral only for the rebuilt exact proxy;
+            // this identity is independent of optional DXIL reflection support.
+            busy_request_preserves_lease.store(proxy_read && digest=="f0552e7cc1ea8f1490e2953d562639843e13c478502ab40eb2c315beb1ecfeab",std::memory_order_release);
             if(depth_compatible){
                 const auto existing=GetModuleHandleW(L"dxcompiler.dll");
                 const auto compiler_path=existing?std::filesystem::path(st::module_path(existing)):
@@ -648,7 +654,8 @@ struct Service {
                     std::ostringstream line;
                     line << "[MineComeHudInput] {\"schema\":1,\"event\":\"counters\",\"run\":\"" << identity.run
                          << "\",\"uploaded\":" << uploaded.load() << ",\"dropped\":" << dropped.load()
-                         << ",\"submitted\":" << submitted.load();
+                         << ",\"submitted\":" << submitted.load()
+                         << ",\"busy_renewals_deferred\":" << busy_renewals_deferred.load();
                     if(input_created&&inputs.status().state==0) {
                         const auto observed=prearm_observed.load(std::memory_order_relaxed);
                         line << ",\"prearm_samples\":" << prearm_samples.load(std::memory_order_relaxed)
@@ -1039,6 +1046,22 @@ void capture_keyboard(api::effect_runtime *runtime,RuntimeState &state,bool comp
     const auto old_generation=state.selective_lease.generation();
     const auto capture_result=mouse_api->request(reinterpret_cast<std::uintptr_t>(state.window),
         reinterpret_cast<std::uintptr_t>(runtime),100,requested,&world_capture);
+    if(service->busy_request_preserves_lease.load(std::memory_order_acquire)&&
+       state.selective_lease.defer_renewal(capture_result,requested,st::steady_ms())){
+        // Requires the coordinated proxy: an unapplied BUSY request preserves
+        // only the last proven lease. No deadline, generation, mode or control
+        // edge is accepted here. A subsequent fresh query/request must succeed
+        // before existing neutral recovery can resume forwarding.
+#ifdef MINECOME_HUD_WORLD_CLICKS
+        state.world_click.suspend();
+#endif
+#ifdef MINECOME_HUD_GAMEPLAY_BLOCKS
+        if(!queue_pointer(state,state.world_buttons.update(false,0,utc))){close_keyboard(runtime,ui::CloseCause::mailbox_overflow);release_mouse(runtime,state);return;}
+#endif
+        state.observation_recovery.defer();
+        service->busy_renewals_deferred.fetch_add(1,std::memory_order_relaxed);
+        return;
+    }
     const auto capture_step=state.selective_lease.accept(capture_result,world_capture,requested,
         reinterpret_cast<std::uintptr_t>(runtime),now);
     // A contradictory screen edge while a buttons-mode drain is pending ends

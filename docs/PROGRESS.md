@@ -1,5 +1,49 @@
 # MineCome progress — 2026-11-06
 
+## Native occlusion acceptance and mouse renewal repair
+
+The missing mouse was physical: Windows reported zero present mouse devices,
+matching KCD's DirectInput failure. Reconnecting restored two present devices;
+fresh KCD startup initializes its hardware mouse. No driver or Windows setting
+was changed, and input eligibility remains intact.
+
+Actual Minecraft magenta-concrete models now pass controlled native occlusion
+in KCD2. A native CGF cube in front hides only overlapping world pixels; moving
+that same cube behind the Minecraft wall leaves the wall visible; removing it
+restores the complete wall. Hands and hotbar remain foreground. Computer Use
+observed these states directly, including the native cube before Minecraft
+started. This proves opaque native geometry, not every foliage/NPC/material
+path. The seeded wall is a visual fixture, not new player-placement evidence.
+
+`Prepare-NativeDepthFixture.ps1` creates a new disposable instance from a closed,
+owned native save with an empty block ledger. It preserves source hashes and
+uses a vanilla 1.21.1 load datapack to seed the copied ledger's cells before
+reconciliation. No game assets or saves are committed. The original source save
+remains unchanged.
+
+The first two visual runs exposed a separate input race: a BUSY renewal at the
+proxy lock revoked capture and ended the session. The coordinated proxy/addon
+repair leaves BUSY requests unapplied, preserving only the original lease
+deadline. Eligible same-mode renewals pause forwarding, release held world
+intents and require a successful recheck plus neutral recovery. Acquisition,
+mode/drain changes, expiry and busy release remain fail-closed. This behavior is
+gated to the rebuilt proxy's exact SHA256, independently of DXC availability.
+Focused capture/adapter, forwarding, host-depth and FX compiler tests pass;
+the adapter suite covers 816 checks. The Chat deployment profile pins the new
+proxy, addon and verified build receipt.
+
+Final live acceptance passes with the repaired build: 183,181ms, 3,141 uploaded
+frames/zero drops, 14,218 native-depth compositions at the last sample, all 18
+input events acknowledged and normal save/client exit. Three BUSY renewals were
+deferred and recovered; Computer Use changed Creative inventory tabs before and
+after recovery. Near/far/removal occlusion passed again in this same session.
+Evidence: `runtime/evidence/gameplay-kcd-20261106-161735-3ee10184931741c48178183b37841036/native-depth-mouse-observation.json`.
+The earlier visual runs (155723-06655f8c6f70409a86c7f70a27c0cdca and
+160528-bc165c2b06d744ad8f4e242db791fe06) retain their premature BUSY shutdown logs;
+the latter's unbounded-session receipt alone is not stability acceptance.
+Both game clients are closed, the temporary native cube is removed and the
+renderer is restored: `runtime/evidence/gameplay-hud-restore-20261106-162248-762efa63dc7246fa816d3632eff9d9bb`.
+
 ## Separate world, depth and foreground layers
 
 Implemented and compiled schema3 format2: same-frame overlay RGBA, owned-world
