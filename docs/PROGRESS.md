@@ -1,5 +1,55 @@
 # MineCome progress — 2026-11-06
 
+## Captured-terrain depth
+
+WorldBlocks now writes the current immutable collision heightfield's finite
+slabs into depth before rendering owned models and outlines. It uses the same
+camera/projection, writes no terrain colour, restores render state, and clears
+depth separately for actual hands/HUD. No native protocol, shader or binary
+change. This covers captured ground, not native buildings/trees/NPCs or the
+entire underground volume.
+
+Actual-Minecraft depth fixture PASS on first run:
+`runtime/evidence/gameplay-depth-20261106-143024-ca082235a246425b9920b905365d7ccc/verification.json`.
+Seven fixed-camera PNGs use controlled render-only boxes through the production
+pass. The baseline has 12,915 block/outline samples; nearer terrain hides all,
+farther terrain retains all, partial cover retains 5,038/hides 7,877, and removing
+the occluder restores all. No stray terrain pixels; hands/hotbar stay visible.
+One real chat-supplied stone is placed/mined and the save closes normally.
+Offline assemble and 181 checks pass. Relevant paired regressions also PASS:
+`runtime/evidence/gameplay-shapes-20261106-143130-7c1c9b72f46e46229fc1d089ed760d48/verification.json`,
+`runtime/evidence/gameplay-world-blocks-20261106-143230-3652ede30e8f4c3abad192d942d5f983/verification.json`.
+
+Pinned API/source inspection:
+`runtime/evidence/terrain-depth-source-20261106`. ReShade already exposes DEPTH,
+but complete scenery occlusion requires a separate guest world-depth layer and
+verified KCD projection parameters. The flattened HUD/hand/world RGBA stream
+cannot safely implement it with a shader-only change.
+
+The first native attempt exposed a Windows atomic-publication race:
+`runtime/evidence/gameplay-kcd-20261106-143603-0d6361ff84f24c52b02e96f625694b94`.
+Host-view sequence35 published, but aim remained34 when ReplaceFile returned
+Win32 1175. The existing 100ms retry now includes that documented non-destructive
+failure, preserving the original bytes/timestamp; 1176/1177 still fail closed.
+Final errors identify the destination/code/duration. Focused host checks PASS10,
+including actual file-sharing recovery. Combined worker checks PASS6 after fixing
+their unrelated mock trajectory, which previously ended during startup before
+terrain admission could run. No freshness limits or native guards were relaxed.
+
+Automated native visual/input check PASS:
+`runtime/evidence/gameplay-kcd-20261106-144335-b4b5531b272a4935a9b5bf42a72a9ba2/terrain-depth-observation.json`.
+The saved pre-fix slab at (0,63,-4) stayed in the ledger but was hidden under the
+sampled ground; hands/HUD remained visible. A real typed local setblock command
+removed it. Two subsequent placements produced a visible double slab at
+(0,64,-4), confirming the ground-height correction; left-held camera drag mined
+it. This does not isolate exact top-face input or prove native stair/walking
+behavior. The 192s session published 3,405 frames, with maximum publication gap
+79.7135ms, 11,180 terrain-depth render frames, normal save/cleanup and no remaining
+owned blocks. One preceding attachment was attempted during KCD loading and
+timed out before arming (`c1ebb41dfe824114bc231d99f9337d4c`); no renderer crash.
+Both games closed normally; prior renderer restored:
+`runtime/evidence/gameplay-hud-restore-20261106-144842-fe11669edcab43c7aa118a3017b31f78`.
+
 ## Slabs and stairs
 
 Implemented and compiled 30 dry slab and 28 stair block types in WorldBlocks.

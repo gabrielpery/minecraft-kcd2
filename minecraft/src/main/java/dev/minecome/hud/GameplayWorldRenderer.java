@@ -4,6 +4,7 @@ import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.systems.VertexSorter;
 import dev.minecome.gameplay.GameplayBlocks;
 import dev.minecome.gameplay.GameplayBlocksPalette;
+import dev.minecome.terrain.GroundSurface;
 import net.minecraft.block.BlockRenderType;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.ShapeContext;
@@ -32,12 +33,12 @@ import java.util.Map;
  * WorldRenderer.render prepares client light updates before rendering layers.
  * Source inspection: runtime/evidence/world-blocks-source-20261106.
  * Host camera basis/FOV replace Minecraft camera bob and player-eye offsets.
- * This colour layer has block/block depth, but no KCD terrain/object depth.
+ * The captured heightfield occludes blocks; native object depth is not imported.
  */
 public final class GameplayWorldRenderer {
     private GameplayWorldRenderer(){}
-    /** outlined is null whenever the admitted target is not actually drawn. */
-    public record Result(int blocks,BlockPos outlined){}
+    /** outlined names submitted geometry; terrain depth can hide its pixels. */
+    public record Result(int blocks,BlockPos outlined,int terrainOccluders){}
     public record View(Vec3d origin,Vec3d forward,Vec3d up,double verticalFovRadians) {
         public View {
             if(!finite(origin)||!finite(forward)||!finite(up)||
@@ -49,13 +50,13 @@ public final class GameplayWorldRenderer {
         private static boolean finite(Vec3d v){return v!=null&&Double.isFinite(v.x)&&Double.isFinite(v.y)&&Double.isFinite(v.z);}
     }
 
-    static Result render(Camera camera,float tickDelta,View view,Map<BlockPos,BlockState> blocks,BlockHitResult hover){
+    static Result render(Camera camera,float tickDelta,View view,Map<BlockPos,BlockState> blocks,BlockHitResult hover,GroundSurface surface){
         RenderSystem.assertOnRenderThread();
-        if(view==null||blocks.isEmpty())return new Result(0,null);
+        if(view==null)return new Result(0,null,0);
         var client=MinecraftClient.getInstance();
-        if(client.world==null||client.player==null||client.getOverlay()!=null)return new Result(0,null);
+        if(client.world==null||client.player==null||client.getOverlay()!=null)return new Result(0,null,0);
         var framebuffer=client.getFramebuffer();
-        if(framebuffer.textureWidth<=0||framebuffer.textureHeight<=0)return new Result(0,null);
+        if(framebuffer.textureWidth<=0||framebuffer.textureHeight<=0)return new Result(0,null,0);
         var projection=new Matrix4f(RenderSystem.getProjectionMatrix());
         var sorting=RenderSystem.getVertexSorting();
         float lineWidth=RenderSystem.getShaderLineWidth();
@@ -76,6 +77,7 @@ public final class GameplayWorldRenderer {
             var f=view.forward();var u=view.up();
             var rotation=new Matrix4f().setLookAt(0,0,0,(float)f.x,(float)f.y,(float)f.z,(float)u.x,(float)u.y,(float)u.z);
             var matrices=new MatrixStack();matrices.multiply(new Quaternionf().setFromNormalized(rotation));
+            int terrainOccluders=GameplayTerrainDepth.render(matrices,view.origin(),surface);
             var random=Random.create();int rendered=0;
             for(var entry:blocks.entrySet()){
                 var pos=entry.getKey();var state=entry.getValue();
@@ -105,7 +107,7 @@ public final class GameplayWorldRenderer {
                     }
                 }
             }
-            return new Result(rendered,outlined);
+            return new Result(rendered,outlined,terrainOccluders);
         } finally {
             modelView.popMatrix();RenderSystem.applyModelViewMatrix();
             RenderSystem.setProjectionMatrix(projection,sorting);

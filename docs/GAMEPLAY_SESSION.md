@@ -396,15 +396,35 @@ terrain case verifies that a buried slab moves up one cell, remains targetable
 with the terrain obstruction check, and can be mined. Final evidence:
 `runtime/evidence/gameplay-shapes-20261106-141741-e1dac345d69a466abfab38b4408ec546/verification.json`.
 Collision queries are verified; this fixture does not walk the player on stairs.
-The native KCD2 check observed one rendered half slab and exposed that terrain
-case. The correction, native merging and native stair visuals have not yet had
-a combined KCD2 acceptance check.
+The initial native KCD2 check observed one rendered half slab and exposed that
+terrain case. A later automated KCD2 check placed above ground, merged and mined
+the slab with the depth pass active. Native stairs, walking over partial shapes
+and precisely isolated top-face merge input remain unverified.
 
 World blocks share the existing 20 FPS transparent capture and aspect-fit
-compositor with hands and UI. They depth-test against one another, but the layer
-does not test against KCD terrain or objects: a host obstruction can therefore
+compositor with hands and UI. They depth-test against one another and the same
+captured heightfield slabs used for player collision. The terrain pass writes
+only depth, before block models and outlines; the hand pass clears depth again
+so the actual hands and HUD remain visible. The immutable surface updates with
+admitted terrain coverage. This is finite sampled-ground occlusion, not the
+native scene depth buffer. An unsampled ground area or native object can still
 be drawn behind a Minecraft block. Minecraft supplies model lighting; native
 lighting/shadows, unrestricted building and third-person Steve remain unfinished.
+
+`./scripts/Test-GameplayDepth.ps1` checks the production depth pass in actual
+Minecraft using controlled render-only terrain boxes. Seven fixed-camera PNGs
+verify no terrain colour, complete and partial occlusion of an owned block and
+outline, no change with farther terrain, restoration, and preserved hands/HUD.
+Real chat supplies the stone; normal controller placement/mining and save cleanup
+are checked. It does not claim native scene-depth extraction. Evidence:
+`runtime/evidence/gameplay-depth-20261106-143024-ca082235a246425b9920b905365d7ccc/verification.json`.
+
+An automated native KCD2 session also observed the old buried slab hidden while
+it remained in the ledger, with hands/HUD visible. It removed that test slab by
+local chat command, placed/merged the corrected above-ground slab and mined it,
+then saved normally with no remaining owned blocks. This verifies the captured
+heightfield pass, not arbitrary native scenery depth. Evidence:
+`runtime/evidence/gameplay-kcd-20261106-144335-b4b5531b272a4935a9b5bf42a72a9ba2/terrain-depth-observation.json`.
 
 `./scripts/Test-GameplayWorldBlocks.ps1` launches isolated actual Minecraft twice.
 Real ChatScreen commands supply items, then controller clicks place dirt, planks,

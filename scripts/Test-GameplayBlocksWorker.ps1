@@ -77,7 +77,10 @@ function Invoke-MineComeToolsRequest([string]$PathAndQuery,[int]$TimeoutMillisec
  }
  $script:fixtureSequence++;$utc=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
  $expanded=$Context.Explore -and [IO.File]::Exists($TerrainState.AckFile)
- $x=if($expanded){5.}elseif($Context.Explore){[Math]::Min(.9,.3+.2*$script:fixtureSequence)}else{1.}
+ # Begin/heartbeat batches can advance several mock requests before the first
+ # two poses reach the frontier tracker. Keep moving long enough to cross its
+ # request threshold instead of exhausting the path during startup.
+ $x=if($expanded){5.}elseif($Context.Explore){[Math]::Min(2.,.3+.02*$script:fixtureSequence)}else{1.}
  $p=[ordered]@{schema=1;kind='minecome_gameplay_pose_v1';run=$Identity.Run;world_id=$Identity.WorldId;target_pid=$Identity.Pid;target_start_filetime=$Identity.Start;patch_run=$Identity.PatchRun;patch_sha256=$Identity.PatchHash;seq=$script:fixtureSequence;utc_ms=$utc;source_ms=$script:fixtureSequence*10;position=@{x=$x;y=2.;z=3.}}
  [IO.File]::WriteAllText($PoseFile,($p|ConvertTo-Json -Depth 5 -Compress))
  $p.Remove('position');$p.Remove('source_ms');$p.kind='minecome_gameplay_blocks_v1';$p.revision=$(if($expanded){1}else{0});$p.blocks=@(@{x=$(if($expanded){5}else{1});y=64;z=2;state='minecraft:stone'})

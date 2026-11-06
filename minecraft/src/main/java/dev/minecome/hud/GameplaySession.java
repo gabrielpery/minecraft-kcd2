@@ -62,7 +62,8 @@ public final class GameplaySession {
     private GameplayChatFixture chatFixture;
     private GameplayFlightFixture flightFixture;
     private GameplayHandsFixture handsFixture; private GameplayWorldBlocksFixture worldBlocksFixture; private int renderedWorldBlocks; private long worldBlockFrames,worldOutlineFrames;
-    private GameplayShapesFixture shapesFixture;
+    private GameplayShapesFixture shapesFixture; private GameplayDepthFixture depthFixture;
+    private int renderedTerrainOccluders; private long terrainDepthFrames;
     private net.minecraft.util.math.BlockPos outlinedBlock;
     private boolean handFrameRendered;
     private long handRenderStarts,handRenderPasses,handCapturedFrames;
@@ -128,7 +129,7 @@ public final class GameplaySession {
     }
     private void beforeTick(MinecraftClient client){
         if(stopping||movement==null)return;
-        try{if(shapesFixture!=null)shapesFixture.beforeTick(client);if(worldBlocksFixture!=null)worldBlocksFixture.beforeTick(client);if(handsFixture!=null)handsFixture.beforeTick(client);if(flightFixture!=null)flightFixture.beforeTick(client);if(chatFixture!=null)chatFixture.beforeTick(client);if(terrainFixture!=null)terrainFixture.beforeTick(client);if(blocksFixture!=null)blocksFixture.beforeTick(client);if(movementFixture!=null)movementFixture.beforeTick(client);movement.beforeTick(client,System.nanoTime());}
+        try{if(depthFixture!=null)depthFixture.beforeTick(client);if(shapesFixture!=null)shapesFixture.beforeTick(client);if(worldBlocksFixture!=null)worldBlocksFixture.beforeTick(client);if(handsFixture!=null)handsFixture.beforeTick(client);if(flightFixture!=null)flightFixture.beforeTick(client);if(chatFixture!=null)chatFixture.beforeTick(client);if(terrainFixture!=null)terrainFixture.beforeTick(client);if(blocksFixture!=null)blocksFixture.beforeTick(client);if(movementFixture!=null)movementFixture.beforeTick(client);movement.beforeTick(client,System.nanoTime());}
         catch(Exception e){requestStop(client,"movement_failure",e.toString());}
     }
     private boolean owns(MinecraftClient client){return ready&&!stopping&&client.world==world&&client.player==player&&client.getServer()==server&&client.isIntegratedServerRunning();}
@@ -198,6 +199,7 @@ public final class GameplaySession {
                         if(fixtureMode.startsWith("flight"))flightFixture=new GameplayFlightFixture(fixtureMode,movement,save,wire,directory.getParent(),proof->{
                             fixtureResult=proof.deepCopy();requestStop(MinecraftClient.getInstance(),"flight_fixture_complete",proof.get("result").getAsString().equals("passed")?null:proof.toString());
                         });
+                        if(fixtureMode.equals("depth"))depthFixture=new GameplayDepthFixture(fixtureMode,blocks,movement,save,wire,directory.getParent(),proof->{fixtureResult=proof.deepCopy();requestStop(MinecraftClient.getInstance(),"depth_fixture_complete",proof.get("result").getAsString().equals("passed")?null:proof.toString());});
                         if(fixtureMode.startsWith("shapes"))shapesFixture=new GameplayShapesFixture(fixtureMode,blocks,movement,save,wire,directory.getParent(),proof->{fixtureResult=proof.deepCopy();requestStop(MinecraftClient.getInstance(),"shapes_fixture_complete",proof.get("result").getAsString().equals("passed")?null:proof.toString());});
                         if(fixtureMode.startsWith("world-blocks"))worldBlocksFixture=new GameplayWorldBlocksFixture(fixtureMode,blocks,movement,save,wire,directory.getParent(),proof->{fixtureResult=proof.deepCopy();requestStop(MinecraftClient.getInstance(),"world_blocks_fixture_complete",proof.get("result").getAsString().equals("passed")?null:proof.toString());}); if(fixtureMode.equals("hands"))handsFixture=new GameplayHandsFixture(fixtureMode,movement,save,wire,directory.getParent(),proof->{
                             fixtureResult=proof.deepCopy();requestStop(MinecraftClient.getInstance(),"hands_fixture_complete",proof.get("result").getAsString().equals("passed")?null:proof.toString());
@@ -217,7 +219,7 @@ public final class GameplaySession {
                 save.verifyOwnership();world=client.world;player=client.player;server=client.getServer();
                 if(!standalone){ui=new HudVanillaUiAdapter(client,true,chatMode);hideOwnedWindow(client);}
                 ready=true;readyAt=System.nanoTime();
-                if(!fixtureMode.isEmpty()&&!fixtureMode.startsWith("walking")&&!fixtureMode.startsWith("blocks")&&!fixtureMode.startsWith("terrain")&&!fixtureMode.startsWith("chat")&&!fixtureMode.startsWith("flight")&&!fixtureMode.equals("hands")&&!fixtureMode.startsWith("world-blocks")&&!fixtureMode.startsWith("shapes"))fixture=new GameplayPersistenceFixture(fixtureMode,save,directory.getParent(),proof->{
+                if(!fixtureMode.isEmpty()&&!fixtureMode.startsWith("walking")&&!fixtureMode.startsWith("blocks")&&!fixtureMode.startsWith("terrain")&&!fixtureMode.startsWith("chat")&&!fixtureMode.startsWith("flight")&&!fixtureMode.equals("hands")&&!fixtureMode.startsWith("world-blocks")&&!fixtureMode.startsWith("shapes")&&!fixtureMode.equals("depth"))fixture=new GameplayPersistenceFixture(fixtureMode,save,directory.getParent(),proof->{
                     fixtureResult=proof.deepCopy();boolean passed=proof.has("result")&&proof.get("result").getAsString().equals("passed");
                     requestStop(MinecraftClient.getInstance(),"fixture_complete",passed?null:proof.toString());
                 });
@@ -258,7 +260,7 @@ public final class GameplaySession {
             if(terrainFixture!=null&&!stopping)terrainFixture.tick(client);
             if(chatFixture!=null&&!stopping)chatFixture.tick(client);
             if(flightFixture!=null&&!stopping)flightFixture.tick(client);
-            if(handsFixture!=null&&!stopping)handsFixture.tick(client);if(worldBlocksFixture!=null&&!stopping)worldBlocksFixture.tick(client);if(shapesFixture!=null&&!stopping)shapesFixture.tick(client);
+            if(handsFixture!=null&&!stopping)handsFixture.tick(client);if(worldBlocksFixture!=null&&!stopping)worldBlocksFixture.tick(client);if(shapesFixture!=null&&!stopping)shapesFixture.tick(client);if(depthFixture!=null&&!stopping)depthFixture.tick(client);
             if(blocks!=null&&!stopping)blocks.tick(client,!movement.terrainTransition()&&(standalone||input!=null&&input.connected()&&input.hostState()==1));
             if(movementFixture!=null&&!stopping)movementFixture.tick(client);
             if(fixture!=null&&output.isReady()&&output.publishedFrames()>0&&!stopping)fixture.tick(client);
@@ -392,25 +394,26 @@ public final class GameplaySession {
     }
     public static void handRenderStarted(){var s=active;if(s!=null&&s.handsMode&&s.frameTransparent&&s.owns(MinecraftClient.getInstance()))s.handRenderStarts++;}
     public static boolean worldBlocksEnabled(){var s=active;return s!=null&&s.worldBlocksMode&&s.owns(MinecraftClient.getInstance());}
-    public record WorldFrame(GameplayWorldRenderer.View view,java.util.Map<net.minecraft.util.math.BlockPos,net.minecraft.block.BlockState> blocks,net.minecraft.util.hit.BlockHitResult hover){}
+    public record WorldFrame(GameplayWorldRenderer.View view,java.util.Map<net.minecraft.util.math.BlockPos,net.minecraft.block.BlockState> blocks,net.minecraft.util.hit.BlockHitResult hover,dev.minecome.terrain.GroundSurface surface){}
     public static WorldFrame worldBlocksFrame(){
         var s=active;if(!worldBlocksEnabled()||s.blocks==null)return null;
         GameplayWorldRenderer.View view;GameplayBlocks.Aim ray;
-        if(s.shapesFixture!=null){view=s.shapesFixture.view();ray=s.shapesFixture.renderAim();}
+        if(s.depthFixture!=null){view=s.depthFixture.view();ray=s.depthFixture.renderAim();}
+        else if(s.shapesFixture!=null){view=s.shapesFixture.view();ray=s.shapesFixture.renderAim();}
         else if(s.worldBlocksFixture!=null){view=s.worldBlocksFixture.view();ray=s.worldBlocksFixture.renderAim();}
         else{var sample=s.aimReader==null?null:s.aimReader.worldSample();if(sample==null)return null;view=sample.view();ray=sample.aim();}
         var client=MinecraftClient.getInstance();
-        return new WorldFrame(view,s.blocks.ownedBlockStates(client),s.blocks.hoveredBlock(client,ray));
+        return new WorldFrame(view,s.blocks.ownedBlockStates(client),s.blocks.hoveredBlock(client,ray),s.depthFixture!=null?s.depthFixture.surface():s.movement.surface());
     }
     public static void beforeWorldClear(){var s=active;if(worldBlocksEnabled()&&!s.frameTransparent)s.beginTransparentFrame(MinecraftClient.getInstance());}
-    public static void worldRenderCompleted(GameplayWorldRenderer.Result result){var s=active;if(worldBlocksEnabled()&&s.frameTransparent){s.renderedWorldBlocks=result.blocks();s.outlinedBlock=result.outlined();if(result.blocks()>0)s.worldBlockFrames++;if(s.outlinedBlock!=null)s.worldOutlineFrames++;}}
+    public static void worldRenderCompleted(GameplayWorldRenderer.Result result){var s=active;if(worldBlocksEnabled()&&s.frameTransparent){s.renderedWorldBlocks=result.blocks();s.outlinedBlock=result.outlined();s.renderedTerrainOccluders=result.terrainOccluders();if(result.blocks()>0)s.worldBlockFrames++;if(s.outlinedBlock!=null)s.worldOutlineFrames++;if(result.terrainOccluders()>0)s.terrainDepthFrames++;}}
     private boolean suppressWorldPixels(){return renderedWorldBlocks==0;}
     public static void handRenderCompleted(){var s=active;if(s!=null&&s.handsMode&&s.frameTransparent&&s.owns(MinecraftClient.getInstance())){s.handFrameRendered=true;s.handRenderPasses++;}}
     private void beginTransparentFrame(MinecraftClient client){
         RenderSystem.assertOnRenderThread();
         if(frameTransparent){requestStop(client,"render_failure","Nested gameplay HUD frame");return;}
         priorBlend=new int[]{GL11.glGetInteger(GL14.GL_BLEND_SRC_RGB),GL11.glGetInteger(GL14.GL_BLEND_DST_RGB),GL11.glGetInteger(GL14.GL_BLEND_SRC_ALPHA),GL11.glGetInteger(GL14.GL_BLEND_DST_ALPHA)};
-        frameTransparent=true;handFrameRendered=false;renderedWorldBlocks=0;outlinedBlock=null;
+        frameTransparent=true;handFrameRendered=false;renderedWorldBlocks=0;renderedTerrainOccluders=0;outlinedBlock=null;
         float[] color=new float[4];GL11.glGetFloatv(GL11.GL_COLOR_CLEAR_VALUE,color);
         var mask=org.lwjgl.BufferUtils.createByteBuffer(4);GL11.glGetBooleanv(GL11.GL_COLOR_WRITEMASK,mask);
         boolean scissor=GL11.glIsEnabled(GL11.GL_SCISSOR_TEST);int[] box=new int[4];GL11.glGetIntegerv(GL11.GL_SCISSOR_BOX,box);
@@ -426,12 +429,12 @@ public final class GameplaySession {
         catch(Exception e){s.requestStop(client,"render_failure",e.toString());}
         finally{s.restoreBlend();}
     }
-    private void restoreBlend(){frameTransparent=false;handFrameRendered=false;renderedWorldBlocks=0;outlinedBlock=null;if(priorBlend!=null){RenderSystem.blendFuncSeparate(priorBlend[0],priorBlend[1],priorBlend[2],priorBlend[3]);priorBlend=null;}}
+    private void restoreBlend(){frameTransparent=false;handFrameRendered=false;renderedWorldBlocks=0;renderedTerrainOccluders=0;outlinedBlock=null;if(priorBlend!=null){RenderSystem.blendFuncSeparate(priorBlend[0],priorBlend[1],priorBlend[2],priorBlend[3]);priorBlend=null;}}
     private void capture(MinecraftClient client){
         readback.poll(frame->{
             if(frame.id()<=lastReadbackId)return;lastReadbackId=frame.id();if(stopping||output==null)return;
             var meta=JsonParser.parseString(frame.metadata()).getAsJsonObject();
-            if(handsFixture!=null)handsFixture.captured(frame);if(worldBlocksFixture!=null)worldBlocksFixture.captured(frame);if(shapesFixture!=null)shapesFixture.captured(frame);
+            if(handsFixture!=null)handsFixture.captured(frame);if(worldBlocksFixture!=null)worldBlocksFixture.captured(frame);if(shapesFixture!=null)shapesFixture.captured(frame);if(depthFixture!=null)depthFixture.captured(frame);
             output.offer(new HudStreamProducer.Frame(frame.width(),frame.height(),frame.bottomUp(),meta.get("captured_utc_ms").getAsLong(),meta.get("selected_slot").getAsInt(),meta.get("screen").getAsInt(),frame.metadata()));
         });
         long now=System.nanoTime();if(output==null||!output.isReady()||client.getOverlay()!=null||now-lastCaptureAt<50_000_000L)return;
@@ -444,9 +447,11 @@ public final class GameplaySession {
         if(!standalone||handsMode)meta.addProperty("hand_pixels",handsMode&&handFrameRendered);
         if(handsMode)meta.addProperty("hand_pass_rendered",handFrameRendered);if(worldBlocksMode){
             meta.addProperty("world_block_pixels",renderedWorldBlocks>0);meta.addProperty("rendered_world_blocks",renderedWorldBlocks);meta.addProperty("world_block_outline",outlinedBlock!=null);
+            meta.addProperty("terrain_depth_occlusion",renderedTerrainOccluders>0);meta.addProperty("terrain_depth_boxes",renderedTerrainOccluders);
             if(outlinedBlock!=null){var position=new JsonObject();position.addProperty("x",outlinedBlock.getX());position.addProperty("y",outlinedBlock.getY());position.addProperty("z",outlinedBlock.getZ());meta.add("outline_position",position);}
         }if(worldBlocksFixture!=null){var stage=worldBlocksFixture.captureStage();if(stage!=null)meta.addProperty("world_blocks_fixture_stage",stage);}
         if(shapesFixture!=null){var stage=shapesFixture.captureStage();if(stage!=null)meta.addProperty("world_blocks_fixture_stage",stage);}
+        if(depthFixture!=null){var stage=depthFixture.captureStage();if(stage!=null)meta.addProperty("world_blocks_fixture_stage",stage);}
         if(handsFixture!=null){var stage=handsFixture.captureStage();if(stage!=null)meta.addProperty("hands_fixture_stage",stage);}
         meta.addProperty("health_client",client.player.getHealth());meta.addProperty("food_client",client.player.getHungerManager().getFoodLevel());
         if(readback.capture(client.getFramebuffer(),++captureId,meta.toString())){lastCaptureAt=now;if(handFrameRendered)handCapturedFrames++;}
@@ -470,6 +475,7 @@ public final class GameplaySession {
         e.addProperty("flight_enabled",flightMode);
         e.addProperty("world_blocks_enabled",worldBlocksMode);e.addProperty("world_block_render_frames",worldBlockFrames);e.addProperty("world_outline_render_frames",worldOutlineFrames);e.addProperty("hands_enabled",handsMode);e.addProperty("hand_render_starts",handRenderStarts);e.addProperty("hand_render_passes",handRenderPasses);e.addProperty("hand_captured_frames",handCapturedFrames);
         e.addProperty("inventory_prepared_before_input",uiWarmupComplete);e.addProperty("inventory_preparation_frames",uiWarmupFrames);
+        if(worldBlocksMode)e.addProperty("terrain_depth_render_frames",terrainDepthFrames);
         if(ui!=null&&chatMode)e.add("chat_input",ui.chatDiagnostics());
         e.addProperty("normal_shutdown_requested",stopping);e.addProperty("controls_released",gate.heldKeyCount()==0&&gate.heldButtonCount()==0);
         e.addProperty("producer_finished",output!=null&&output.isFinished());e.addProperty("producer_failure",output==null?null:output.failure());
@@ -492,7 +498,7 @@ public final class GameplaySession {
             Files.writeString(temporary,notice.toString(),StandardCharsets.UTF_8,StandardOpenOption.CREATE_NEW);
             Files.move(temporary,directory.getParent().resolve("gameplay-stopping.json"),java.nio.file.StandardCopyOption.ATOMIC_MOVE);
         }catch(Exception e){if(failure==null)failure="Stop notice: "+e;}
-        try{if(shapesFixture!=null)shapesFixture.close();if(worldBlocksFixture!=null)worldBlocksFixture.close();if(handsFixture!=null)handsFixture.close();if(flightFixture!=null)flightFixture.close();if(chatFixture!=null)chatFixture.close();if(terrainFixture!=null)terrainFixture.close();if(blocksFixture!=null)blocksFixture.close();if(aimReader!=null)aimReader.close();if(blocks!=null)blocks.close(client);}catch(Exception e){if(failure==null)failure=e.toString();}
+        try{if(depthFixture!=null)depthFixture.close();if(shapesFixture!=null)shapesFixture.close();if(worldBlocksFixture!=null)worldBlocksFixture.close();if(handsFixture!=null)handsFixture.close();if(flightFixture!=null)flightFixture.close();if(chatFixture!=null)chatFixture.close();if(terrainFixture!=null)terrainFixture.close();if(blocksFixture!=null)blocksFixture.close();if(aimReader!=null)aimReader.close();if(blocks!=null)blocks.close(client);}catch(Exception e){if(failure==null)failure=e.toString();}
         try{if(movementFixture!=null)movementFixture.close();if(movement!=null){if(failure==null)movement.close(client);else movement.abort(client,failure);}}catch(Exception e){if(failure==null)failure=e.toString();}
         try{if(ui!=null)ui.releaseAndClose(client);}catch(Exception e){if(failure==null)failure=e.toString();}
         gate.releaseAll();

@@ -9,6 +9,42 @@ work; do not repeat their completed acceptance sequences. Full block coverage,
 third-person Steve, complete host collision, Survival/NPC combat and Elytra remain
 required. The requested hovered-block wireframe now works and is verified.
 
+## Latest milestone: captured-terrain depth
+
+WorldBlocks now writes the immutable collision surface's finite slabs into depth
+before owned models/outlines, using the same view/projection. No terrain colour,
+no native binary/protocol changes. Render state restores and hands clear depth
+afterwards. Sampled terrain occlusion only: objects/NPCs, unsampled ground and
+full underground volume remain unsupported.
+
+Actual-Minecraft fixture PASS first run, seven fixed-camera PNGs:
+`runtime/evidence/gameplay-depth-20261106-143024-ca082235a246425b9920b905365d7ccc/verification.json`.
+Near/partial/far controlled render-only boxes fully hide/partly hide/retain the
+same block+outline. No stray terrain colour; hand/HUD intact; real placement,
+mining and save cleanup. Offline build/181 checks and paired shape + cube/
+inventory/save regressions PASS (143130-7c1c9b72f46e46229fc1d089ed760d48,
+143230-3652ede30e8f4c3abad192d942d5f983).
+
+Native automated visual/input PASS, no manual check:
+`runtime/evidence/gameplay-kcd-20261106-144335-b4b5531b272a4935a9b5bf42a72a9ba2/terrain-depth-observation.json`.
+Saved buried slab hidden; hands/HUD visible. Real local chat removed the old
+slab, two right-click placements produced a visible double slab at (0,64,-4),
+and left-held camera drag mined it. Corrected above-ground placement confirmed;
+isolated top-face input, native stairs and walking over shapes remain unverified.
+192s, 3,405 publications, max gap79.7135ms, 11,180 depth frames, normal save/cleanup.
+
+First native attempt found aim-file ReplaceFile Win32 1175. Added it to the
+existing bounded 100ms sharing retry without renewing timestamps; 1176/1177 stay
+terminal. Host checks PASS10, combined worker PASS6 (also fixed its mock trajectory
+ending before frontier tracking started). No freshness/guard changes. Another
+attachment timed out while KCD was loading; wait for actual world readiness.
+
+Full native scene-depth path is now identified, not implemented: ReShade's
+built-in Generic Depth binds DEPTH/bufready_depth, but MC world depth/color must
+be separate from hands/HUD. Verify KCD near/far/reversed-Z before comparing;
+do not copy Elden Ring constants. Pinned source refs and API inspection:
+`runtime/evidence/terrain-depth-source-20261106/host-depth-notes.txt`.
+
 ## Latest milestone: slabs and stairs
 
 WorldBlocks now supports 30 dry slab and 28 stair types. Vanilla placement context
@@ -33,9 +69,9 @@ It exposed a buried-ground case: slab top63.5 below native hit63.614/captured
 ground63.689. Obstruction correctly suppressed selection. Ground placement now
 lifts an otherwise buried shape one grid cell, preserving vanilla half/facing
 and obstruction checks. Reject if the allowed native/sample height mismatch
-would still bury it after the lift. Full-height placement is unchanged. Native
-merge/stair/mining acceptance remains unverified;
-the session ended normally on focus loss before further input. No crash.
+would still bury it after the lift. Full-height placement is unchanged. That
+initial session ended normally on focus loss, without a crash. The newer native
+check above confirms corrected placement/merge/mining; stairs remain unverified.
 
 ## Latest milestone: hovered-block outline
 
@@ -66,7 +102,8 @@ vertical FOV. Aim schema2 carries those together; legacy stone paths retain v1.
 WorldBlocks disables the native stone mirror. Actual canonical states persist,
 including log axes and item BLOCK_STATE placement components. Opaque full cubes
 only: dirt, masonry, planks, logs, wool, concrete and mineral blocks. See palette.
-Capacity64, Y56..80, captured terrain coverage remain. No KCD scenery depth.
+Capacity64, Y56..80, captured terrain coverage remain. Captured terrain now has
+the depth pass described above; full native scenery depth remains unfinished.
 
 Automated paired Minecraft PASS, nine PNGs:
 `runtime/evidence/gameplay-world-blocks-20261106-131410-b90d6a6eca0246ed8d1c5c426c107399/verification.json`.
@@ -123,9 +160,10 @@ renderers and host lighting are unverified. These are documented limitations.
 
 ## Next integrated feature
 
-Expand host-world depth/collision as integrated feature work; reuse real models,
-no per-block KCD assets. Include corrected slab selection in the next combined
-native milestone, rather than restarting a small manual acceptance loop.
+Expand actual host-world depth/collision beyond the captured-heightfield pass;
+reuse real models, no per-block KCD assets. True scene depth needs distinct
+world/overlay transport and verified KCD projection, as noted above. Batch native
+checks rather than restarting a small manual acceptance loop.
 Player collision with owned blocks and placement directly on captured ground
 already exist. Arbitrary KCD walls/trees/objects are not captured as buildable
 surfaces, and KCD NPCs do not collide with these composited blocks. Native depth
@@ -159,12 +197,12 @@ Elytra still needs faster/3D collision admission, not just raised speed limits.
 
 Branch codex/initial-import; public github.com/gabrielpery/minecraft-kcd2.
 JDK C:/Program Files/Java/jdk-24; offline Gradle cache minecraft/.gradle-user-home.
-Both games closed; WorldBlocks native world saved with one bottom oak slab at
-(0,63,-4), placed before the ground-height fix. It is below the sampled surface;
-do not use it as acceptance of the corrected placement. Slot3 contains oak slab.
+Both games closed; WorldBlocks native world saved with no remaining owned blocks.
+The pre-fix buried slab was removed through a local Minecraft command. The new
+raised/merged slab was mined normally. Slot3 contains oak slab.
 Prior renderer restored:
-`runtime/evidence/gameplay-hud-restore-20261106-140812-b77922cd41144c4f91f456cade45eb51`.
-Bundle runtime/hud-gameplay-shapes-20261106 is restored; do not reuse its receipt.
+`runtime/evidence/gameplay-hud-restore-20261106-144842-fe11669edcab43c7aa118a3017b31f78`.
+Bundle runtime/hud-gameplay-depth-20261106 is restored; do not reuse its receipt.
 Use a fresh BundleDirectory after changes. Assets/runtimes/saves stay out of Git.
 Exact official tools1.5.5 exe SHA256:
 a32d077e6b54e5cd0c5a5f3194f473779706ff266a711e4745ccdb598843340a.

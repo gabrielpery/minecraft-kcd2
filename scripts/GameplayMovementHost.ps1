@@ -42,6 +42,13 @@ function ConvertTo-GameplayMovementRequests([string]$Run,[string[]]$Bodies){
     # must not partially send an otherwise invalid batch.
     return $requests.ToArray()
 }
+function Test-GameplayPublicationRetry([Exception]$PublicationException){
+    $cause=$PublicationException.GetBaseException();$code=$cause.HResult -band 0xffff
+    # ReplaceFileW's 1175 leaves both file names intact. Do NOT retry 1176/1177:
+    # those failures may already have moved/deleted the destination.
+    # https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-replacefilew
+    return (($cause -is [IO.IOException] -or $cause -is [UnauthorizedAccessException]) -and $code -in @(5,32,33,1175))
+}
 function Publish-GameplayMovementView([string]$Temporary,[string]$Destination,[ValidateRange(1,100)][int]$RetryMilliseconds=100){
     # Windows can briefly deny replacement while another process opens the old
     # snapshot. Retry only sharing/access conflicts, using the original bytes
@@ -53,7 +60,9 @@ function Publish-GameplayMovementView([string]$Temporary,[string]$Destination,[V
             return
         }catch{
             $cause=$_.Exception.GetBaseException();$code=$cause.HResult -band 0xffff
-            if(($cause -isnot [IO.IOException] -and $cause -isnot [UnauthorizedAccessException]) -or $code -notin @(5,32,33) -or $watch.ElapsedMilliseconds -ge $RetryMilliseconds){throw}
+            if(-not (Test-GameplayPublicationRetry $_.Exception) -or $watch.ElapsedMilliseconds -ge $RetryMilliseconds){
+                throw [IO.IOException]::new("Gameplay snapshot publication failed for '$Destination' (Win32 $code, $($watch.ElapsedMilliseconds) ms): $($cause.Message)",$cause)
+            }
             Start-Sleep -Milliseconds ([int][Math]::Max(0,[Math]::Min(5,$RetryMilliseconds-$watch.ElapsedMilliseconds)))
         }
     }

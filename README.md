@@ -79,10 +79,14 @@ bricks, restore them after reopening, keep them visible through inventory, and
 remove each with an aimed click. The selection border also passed an automated
 KCD2 placement/inventory/mining check. Automated Minecraft checks also verify
 slab merging, stair corners, partial collision and saved shape states. A native
-half-slab check found a terrain-height issue, now fixed and covered automatically;
-native acceptance of that correction and stairs remains pending.
-This layer has no KCD terrain/object depth
-occlusion yet. Building remains bounded to 64 blocks inside captured coverage;
+half-slab check found a terrain-height issue, now fixed and covered automatically.
+A subsequent automated KCD2 check placed the slab above ground, merged it and
+mined it; native stairs and walking over partial shapes remain unverified.
+Captured ground now hides blocks and their outlines through a depth-only pass;
+hands and HUD stay visible. Automated Minecraft pixel checks and a live KCD2
+buried-slab check cover this pass. It uses the approximate collision heightfield,
+not KCD2's complete scenery depth: trees, buildings and NPCs remain unoccluded.
+Building remains bounded to 64 blocks inside captured coverage;
 fluids, waterlogged/transparent blocks, containers and other dynamic blocks are not
 included. Walking/flight with this new world layer has not been re-verified.
 

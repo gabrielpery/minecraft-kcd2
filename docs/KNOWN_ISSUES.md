@@ -13,11 +13,16 @@ supported. Dry slabs and stairs use vanilla placement, collision and shape updat
 other partial shapes are not yet in the supported palette.
 Shape placement remains grid-aligned. A bottom slab that would be buried in
 captured ground moves up one cell and can sit above an uneven surface. The
-automated Minecraft regression covers this case; the native correction and
-stairs have not yet had a combined KCD2 visual/input acceptance check.
+automated Minecraft regression covers this case. A native check also places the
+slab above ground, merges and mines it. Native stairs and walking over partial
+shapes remain unverified; exact isolated top-face merge input was not checked.
 
-The transparent world layer has block/block depth, but no KCD terrain/object
-depth occlusion. Blocks can appear in front of host obstructions. It inherits
+The transparent world layer has block/block depth and a depth-only pass for the
+same finite captured ground slabs used by collision. Blocks and their outlines
+are hidden behind that sampled geometry; hands and HUD stay in front. This is
+approximate heightfield occlusion, not KCD's actual scene depth. Unsampled ground,
+buildings, trees and NPCs can still be drawn over. The finite slabs do not model
+the entire underground volume. It inherits
 20 FPS capture/aspect-fit and Minecraft model lighting, without KCD lighting or
 shadows. Minecraft owns player/block collision; this layer does not add native
 block collision for KCD NPCs. Saved worlds containing non-stone blocks require
@@ -26,8 +31,8 @@ the matching `-WorldBlocks` profile on reopening.
 The hovered-block outline uses vanilla shapes and the same admitted mining ray.
 It is limited to owned supported blocks within reach, and disappears in UI or
 with stale/obstructed aim. It does not outline arbitrary KCD scenery. Native ray
-obstruction suppresses selection; that is separate from the missing host depth
-occlusion for rendered blocks.
+obstruction suppresses selection; it remains separate from the captured-ground
+render depth pass. Full native object depth is still missing.
 
 The initial native check stopped on a 380ms publication gap during the first
 inventory open. Preparing the actual inventory before WorldBlocks readiness

@@ -33,6 +33,15 @@ try{
     [IO.File]::WriteAllText($poseFile,$json);Refuses {Read-GameplayMovementPose $poseFile $identity $bounds 0 -1 $now};$passed++
     [IO.File]::WriteAllText($poseFile,' '*4097);Refuses {Read-GameplayMovementPose $poseFile $identity $bounds 0 -1 $now};$passed++
 
+    # Windows ReplaceFile can report the deletion phase as 1175 instead of a
+    # normal sharing violation. Only that replacement error preserves both
+    # paths; 1176/1177 must still fail closed even when wrapped by PowerShell.
+    foreach($code in @(5,32,33,1175,1176,1177,2,87)){
+        $io=[IO.IOException]::new('publication fixture',([int](-2147024896+$code)))
+        $wrapped=[Reflection.TargetInvocationException]::new($io)
+        Require ((Test-GameplayPublicationRetry $wrapped) -eq ($code -in @(5,32,33,1175))) "Wrong publication retry policy for Win32 $code."
+    };$passed++
+
     # Exercise the actual Windows sharing conflict. Failed attempts retain the
     # original bytes/UTC and bounded retry succeeds after the reader releases.
     $replaceTarget=Join-Path $directory 'sharing-view.json';$replaceTemp=$replaceTarget+'.tmp'
