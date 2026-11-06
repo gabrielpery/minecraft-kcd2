@@ -27,7 +27,7 @@ import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL14;
 import java.util.Map;
 
-/** Draws only server-owned blocks with Minecraft's actual baked state models.
+/** Draws server-owned blocks and the local player with Minecraft's actual models.
  * Inspected Yarn1.21.1+build.3: BlockRenderManager.renderBlock delegates to the
  * world BlockModelRenderer with the state's position-dependent rendering seed;
  * WorldRenderer.render prepares client light updates before rendering layers.
@@ -38,8 +38,8 @@ import java.util.Map;
  */
 public final class GameplayWorldRenderer {
     private GameplayWorldRenderer(){}
-    /** outlined names submitted geometry; terrain depth can hide its pixels. */
-    public record Result(int blocks,BlockPos outlined,int terrainOccluders){}
+    /** Outline/player results name submitted geometry; depth can hide its pixels. */
+    public record Result(int blocks,BlockPos outlined,int terrainOccluders,boolean playerRendered){}
     public record View(Vec3d origin,Vec3d forward,Vec3d up,double verticalFovRadians) {
         public View {
             if(!finite(origin)||!finite(forward)||!finite(up)||
@@ -53,11 +53,11 @@ public final class GameplayWorldRenderer {
 
     static Result render(Camera camera,float tickDelta,View view,Map<BlockPos,BlockState> blocks,BlockHitResult hover,GroundSurface surface){
         RenderSystem.assertOnRenderThread();
-        if(view==null)return new Result(0,null,0);
+        if(view==null)return new Result(0,null,0,false);
         var client=MinecraftClient.getInstance();
-        if(client.world==null||client.player==null||client.getOverlay()!=null)return new Result(0,null,0);
+        if(client.world==null||client.player==null||client.getOverlay()!=null)return new Result(0,null,0,false);
         var framebuffer=client.getFramebuffer();
-        if(framebuffer.textureWidth<=0||framebuffer.textureHeight<=0)return new Result(0,null,0);
+        if(framebuffer.textureWidth<=0||framebuffer.textureHeight<=0)return new Result(0,null,0,false);
         var projection=new Matrix4f(RenderSystem.getProjectionMatrix());
         var sorting=RenderSystem.getVertexSorting();
         float lineWidth=RenderSystem.getShaderLineWidth();
@@ -66,7 +66,7 @@ public final class GameplayWorldRenderer {
         var modelView=RenderSystem.getModelViewStack();
         var vertices=client.getBufferBuilders().getEntityVertexConsumers();
         // All model/layer calls remain on Minecraft's render thread. The ordinary
-        // world pass is suppressed, so no chunk/entity vertices share this pass.
+        // world pass is suppressed; only owned models share these buffers.
         GameplayHandRenderState.begin(camera,tickDelta);
         modelView.pushMatrix();
         try {
@@ -90,6 +90,7 @@ public final class GameplayWorldRenderer {
                     vertices.getBuffer(RenderLayers.getBlockLayer(state)),true,random);
                 matrices.pop();rendered++;
             }
+            boolean playerRendered=GameplayPlayerRenderer.render(tickDelta,view.origin(),matrices,vertices);
             vertices.draw();
             BlockPos outlined=null;
             if(hover!=null&&hover.getType()==HitResult.Type.BLOCK&&client.currentScreen==null&&!client.options.hudHidden&&
@@ -108,7 +109,7 @@ public final class GameplayWorldRenderer {
                     }
                 }
             }
-            return new Result(rendered,outlined,terrainOccluders);
+            return new Result(rendered,outlined,terrainOccluders,playerRendered);
         } finally {
             modelView.popMatrix();RenderSystem.applyModelViewMatrix();
             RenderSystem.setProjectionMatrix(projection,sorting);

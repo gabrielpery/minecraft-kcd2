@@ -1,5 +1,39 @@
 # MineCome progress — 2026-11-06
 
+## Steve body/equipment rendering and native camera capability
+
+Implemented and compiled the real local-player renderer in WorldBlocks' separate
+world/depth layer. It uses vanilla pose interpolation, limb animation, armor and
+held-item features with classic wide Steve from installed Minecraft assets.
+First-person arms/inventory use the same scoped skin. No copied game assets,
+entity-position writes or native binary changes are involved.
+
+Actual-Minecraft scripted acceptance PASS (6,534ms, nine stages/18 PNGs): back and
+front views, equipment via real ChatScreen commands, walking animation, camera
+follow, matching client/server 1.2915m movement, inventory suppression, first-person
+body removal and hand return, saved state and clean shutdown. Every visible body
+pixel has valid same-frame world depth. The initial extended fixture hit its
+conservative movement forecast boundary before capture two; a shorter stride
+fixed the fixture without changing production guards. Final evidence:
+`runtime/evidence/gameplay-player-20261106-190337-1d5bd07bc530461584c97e10925786ab/verification.json`.
+Assemble and existing 252 block/37 movement checks pass; focused review found no
+rendering/cleanup regressions.
+
+Native camera-only acceptance also PASS with no human inputs. The documented
+CryAction camera override/reset pair was exercised behind the exact-tools process
+gate. Back 0.25m/300ms and front 2.5m/1000ms matched requested camera readbacks,
+preserved feet and restored the original camera/basis/FOV. Receipts:
+`runtime/evidence/perspective-probe-20261106-185859-488f32f8b87542a89f4f7334c3cc3e5d`
+and `runtime/evidence/perspective-probe-20261106-185915-1383a49e9aca47fab5e38ab2d389201b`.
+The new probe has 23 Lua lifecycle cases and four offline runner scenarios; its
+registered CTest passes. KCD was closed normally after restoration.
+
+This does **not** establish third-person Steve gameplay in KCD. Native F5 remains
+disabled pending independent mouse-look and render-camera/player-eye aim handling,
+camera collision and native body visibility. The existing native session remains
+first-person; its prior guest perspective is restored on exit. Both clients are
+closed and the previous renderer restoration remains intact.
+
 ## Connected fences/walls and actual partial-shape walking
 
 WorldBlocks now supports 12 dry fence types and 10 masonry wall types, including

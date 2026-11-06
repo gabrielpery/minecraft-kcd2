@@ -67,6 +67,14 @@ hides them in chat/inventory, and restores the stone after inventory closes.
 This uses the player's vanilla skin and item models; third-person Steve and NPC
 combat remain separate work.
 
+The WorldBlocks renderer now also supports classic Steve's full body, armor and
+held items in its separate world/depth layer. Automated actual-Minecraft checks
+verify front/back views, equipment, walking animation, camera follow, inventory
+suppression and restoration of first-person hands.
+KCD2's bounded camera offset/reset checks pass, but native perspective controls,
+mouse-look alignment and third-person camera collision are not connected yet.
+See [player rendering and perspective](docs/GAMEPLAY_SESSION.md#player-rendering-and-perspective).
+
 The [`-WorldBlocks` profile](docs/GAMEPLAY_SESSION.md#minecraft-world-blocks) adds
 an initial palette of solid blocks, including planks, oriented logs, wool,
 concrete, masonry, dry slabs/stairs, fences and walls. Minecraft renders their actual state models into a

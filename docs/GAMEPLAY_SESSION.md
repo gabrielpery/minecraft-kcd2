@@ -499,6 +499,41 @@ After stopping the session with F8 and closing KCD2:
 & './scripts/Install-GameplayHud.ps1' -WorldBlocks -BundleDirectory $bundle -Restore
 ```
 
+## Player rendering and perspective
+
+WorldBlocks uses the installed Minecraft classic wide Steve skin for the owned
+player's body, first-person arms and inventory preview. The real vanilla player
+renderer supplies equipment and limb animation. Body geometry joins the same
+world/depth layer as owned blocks; hands and UI keep their separate foreground
+layer. No skin or model assets are shipped in this repository.
+
+The automated check runs in a new isolated save:
+
+```powershell
+& './scripts/Test-GameplayPlayer.ps1'
+```
+
+It exercises vanilla front/back cameras, armor and a held sword obtained through
+actual chat commands, third-person walking, inventory suppression and return to
+first person. Captures include separate world pixels and float-depth coverage.
+This is actual Minecraft verification, not integrated KCD third-person gameplay.
+The passing run contains nine stages/18 PNGs, matching 1.2915m client/server
+walking, animated limbs and camera follow:
+`runtime/evidence/gameplay-player-20261106-190337-1d5bd07bc530461584c97e10925786ab/verification.json`.
+
+The native camera-only check uses the documented `CryAction.SetViewCamera` and
+`CryAction.ResetToNormalCamera` pair behind the existing exact-tools guard.
+Back 0.25m/300ms and front 2.5m/1000ms probes passed camera readback, unchanged
+player feet and restoration. Their receipts are under
+`runtime/evidence/perspective-probe-20261106-185859-488f32f8b87542a89f4f7334c3cc3e5d`
+and `runtime/evidence/perspective-probe-20261106-185915-1383a49e9aca47fab5e38ab2d389201b`.
+
+Native sessions still start in first person and restore the guest's prior
+perspective afterward. F5 is not forwarded yet. Third-person integration must
+separate the displaced render camera from player-eye interaction reach, retain
+an independent mouse-look source, and handle camera collision/native player
+visibility. Moving the Minecraft model alone does not establish those behaviors.
+
 ## Minecraft hands and held items
 
 `-Hands` includes `-Flight` (and therefore chat, walking and blocks). It reuses

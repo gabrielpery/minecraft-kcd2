@@ -9,7 +9,49 @@ work; do not repeat their completed acceptance sequences. Full block coverage,
 third-person Steve, complete host collision, Survival/NPC combat and Elytra remain
 required. The requested hovered-block wireframe now works and is verified.
 
-## Latest milestone: connected fences/walls and actual shape walking
+## Latest milestone: Steve body/equipment and reversible native camera
+
+The WorldBlocks renderer now submits the real local Minecraft player through
+vanilla PlayerEntityRenderer, including armor, held items and limb animation.
+Classic wide Steve comes from the installed game asset, scoped to the owned
+WorldBlocks session (including hands and inventory). Body pixels share the
+world/depth plane; first-person hands keep their separate foreground pass.
+
+Automated actual-Minecraft acceptance PASS, 6,534ms, nine stages/18 PNGs: back/front
+views, diamond helmet/chestplate/sword through real chat, animated walking with
+matching client/server 1.2915m displacement and camera follow, inventory W
+suppression, and first-person body removal/hand return. Save/cleanup and perspective
+restoration pass. Evidence:
+`runtime/evidence/gameplay-player-20261106-190337-1d5bd07bc530461584c97e10925786ab/verification.json`.
+Run with `scripts/Test-GameplayPlayer.ps1`. The initial walking extension crossed
+the conservative fixture forecast boundary before its second image; the final
+shorter stride preserves all production limits. Source/assemble and existing
+252 block/37 movement checks also pass.
+
+**Native camera-only checks PASS:** exact tools executable, actual
+`CryAction.SetViewCamera(position,{dx,dy,dz})` / `ResetToNormalCamera()` from pinned
+`Scripts/Scripts/CommandExecutor/cube.xml:14–38`. Back 0.25m/300ms and front
+2.5m/1000ms readbacks matched; feet stayed fixed; camera, basis and FOV restored.
+`scripts/Test-KcdPerspectiveProbe.ps1` records the separate facts. Evidence:
+`runtime/evidence/perspective-probe-20261106-185859-488f32f8b87542a89f4f7334c3cc3e5d`
+and `runtime/evidence/perspective-probe-20261106-185915-1383a49e9aca47fab5e38ab2d389201b`.
+Lua lifecycle: 23 cases; runner mock: four scenarios; registered CTest PASS.
+Both games closed normally afterward; no renderer install/binary changes.
+
+**Next implementation:** connect native perspective authority, independent mouse
+look, and separate render-camera versus player-eye aim/reach. Current native
+sessions explicitly start first-person and restore the guest's prior setting;
+F5 is not forwarded. Native third-person Steve is NOT yet verified. Existing
+movement Lua rejects camera/player separation over 3m. `GetViewCameraDir` reads
+the overridden camera; observed `actor.GetHeadDir` is horizontal and has not been
+shown to track pitch/mouse while overridden. Do not substitute it blindly.
+Also handle camera collision and native player-body visibility. The renderer,
+equipment and vanilla walking fixture are complete; do not repeat them without
+a related change. Input key arrays currently use `i>=11` for chat openers, and
+HudVanillaUiAdapter's final key fallback is a hotbar index: adding F5 requires an
+explicit protocol/input path, not just extending the accepted-key list.
+
+## Previous milestone: connected fences/walls and actual shape walking
 
 WorldBlocks now supports 22 dry fence/wall block IDs and 1,812 canonical connected
 states. Vanilla neighbor updates determine fence arms, wall heights and posts;
@@ -47,8 +89,8 @@ Both clients are closed, renderer restored using bundle
 `runtime/hud-connected-blocks-20261106`; receipt
 `runtime/evidence/gameplay-hud-restore-20261106-165259-d72ea05e646f47a7b285a45cb719f705`.
 
-**Next product priority:** third-person Steve/body/equipment and camera support
-in the same gameplay session. Preserve completed controls, first-person hands,
+**Continuing product priority:** native third-person camera integration for the
+now-implemented Steve/body/equipment renderer. Preserve completed controls, first-person hands,
 connected construction and depth integration. Batch native shape walking with
 broader collision acceptance when needed; do not repeat the completed inventory,
 mouse, controlled occlusion or connected-block fixture sequences. Broader host
