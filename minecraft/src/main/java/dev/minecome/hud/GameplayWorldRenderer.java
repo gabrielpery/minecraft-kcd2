@@ -2,17 +2,28 @@ package dev.minecome.hud;
 
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.systems.VertexSorter;
+import dev.minecome.gameplay.GameplayBlocks;
+import dev.minecome.gameplay.GameplayBlocksPalette;
 import net.minecraft.block.BlockRenderType;
 import net.minecraft.block.BlockState;
+import net.minecraft.block.ShapeContext;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.render.Camera;
+import net.minecraft.client.render.RenderLayer;
 import net.minecraft.client.render.RenderLayers;
+import net.minecraft.client.render.VertexConsumer;
 import net.minecraft.client.util.math.MatrixStack;
+import net.minecraft.util.hit.BlockHitResult;
+import net.minecraft.util.hit.HitResult;
 import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.MathHelper;
 import net.minecraft.util.math.Vec3d;
 import net.minecraft.util.math.random.Random;
+import net.minecraft.util.shape.VoxelShape;
 import org.joml.Matrix4f;
 import org.joml.Quaternionf;
+import org.lwjgl.opengl.GL11;
+import org.lwjgl.opengl.GL14;
 import java.util.Map;
 
 /** Draws only server-owned blocks with Minecraft's actual baked state models.
@@ -25,6 +36,8 @@ import java.util.Map;
  */
 public final class GameplayWorldRenderer {
     private GameplayWorldRenderer(){}
+    /** outlined is null whenever the admitted target is not actually drawn. */
+    public record Result(int blocks,BlockPos outlined){}
     public record View(Vec3d origin,Vec3d forward,Vec3d up,double verticalFovRadians) {
         public View {
             if(!finite(origin)||!finite(forward)||!finite(up)||
@@ -36,14 +49,18 @@ public final class GameplayWorldRenderer {
         private static boolean finite(Vec3d v){return v!=null&&Double.isFinite(v.x)&&Double.isFinite(v.y)&&Double.isFinite(v.z);}
     }
 
-    static int render(Camera camera,float tickDelta,View view,Map<BlockPos,BlockState> blocks){
+    static Result render(Camera camera,float tickDelta,View view,Map<BlockPos,BlockState> blocks,BlockHitResult hover){
         RenderSystem.assertOnRenderThread();
-        if(view==null||blocks.isEmpty())return 0;
+        if(view==null||blocks.isEmpty())return new Result(0,null);
         var client=MinecraftClient.getInstance();
-        if(client.world==null||client.player==null||client.getOverlay()!=null)return 0;
+        if(client.world==null||client.player==null||client.getOverlay()!=null)return new Result(0,null);
         var framebuffer=client.getFramebuffer();
-        if(framebuffer.textureWidth<=0||framebuffer.textureHeight<=0)return 0;
+        if(framebuffer.textureWidth<=0||framebuffer.textureHeight<=0)return new Result(0,null);
         var projection=new Matrix4f(RenderSystem.getProjectionMatrix());
+        var sorting=RenderSystem.getVertexSorting();
+        float lineWidth=RenderSystem.getShaderLineWidth();
+        int blendSourceRgb=GL11.glGetInteger(GL14.GL_BLEND_SRC_RGB),blendDestinationRgb=GL11.glGetInteger(GL14.GL_BLEND_DST_RGB);
+        int blendSourceAlpha=GL11.glGetInteger(GL14.GL_BLEND_SRC_ALPHA),blendDestinationAlpha=GL11.glGetInteger(GL14.GL_BLEND_DST_ALPHA);
         var modelView=RenderSystem.getModelViewStack();
         var vertices=client.getBufferBuilders().getEntityVertexConsumers();
         // All model/layer calls remain on Minecraft's render thread. The ordinary
@@ -71,11 +88,45 @@ public final class GameplayWorldRenderer {
                 matrices.pop();rendered++;
             }
             vertices.draw();
-            return rendered;
+            BlockPos outlined=null;
+            if(hover!=null&&hover.getType()==HitResult.Type.BLOCK&&client.currentScreen==null&&!client.options.hudHidden&&
+                client.options.getPerspective().isFirstPerson()&&!MinecraftClient.isFabulousGraphicsOrBetter()){
+                var pos=hover.getBlockPos();var state=blocks.get(pos);
+                if(state!=null&&state.getRenderType()==BlockRenderType.MODEL&&client.world.isChunkLoaded(pos)&&
+                    client.world.getBlockState(pos)==state&&GameplayBlocksPalette.supportsState(GameplayBlocks.stateName(state))){
+                    var shape=state.getOutlineShape(client.world,pos,ShapeContext.of(client.player));
+                    if(!shape.isEmpty()){
+                        // Same camera and depth buffer as the owned models above. This
+                        // receives the controller's admitted hit, never an independent ray.
+                        // The vanilla line layer supplies scaled width, view-offset and LEQUAL.
+                        drawOutline(matrices,vertices.getBuffer(RenderLayer.getLines()),shape,
+                            pos.getX()-view.origin().x,pos.getY()-view.origin().y,pos.getZ()-view.origin().z);
+                        vertices.draw(RenderLayer.getLines());outlined=pos.toImmutable();
+                    }
+                }
+            }
+            return new Result(rendered,outlined);
         } finally {
             modelView.popMatrix();RenderSystem.applyModelViewMatrix();
-            RenderSystem.setProjectionMatrix(projection,VertexSorter.BY_DISTANCE);
+            RenderSystem.setProjectionMatrix(projection,sorting);
+            RenderSystem.lineWidth(lineWidth);
             GameplayHandRenderState.end();
+            RenderSystem.blendFuncSeparate(blendSourceRgb,blendDestinationRgb,blendSourceAlpha,blendDestinationAlpha);
         }
+    }
+
+    /** Pinned Yarn1.21.1+build.3 WorldRenderer.drawBlockOutline uses the private
+     * drawCuboidShapeOutline and method_3278 edge consumer. Match that edge loop:
+     * the public drawShapeOutline debug helper splits boxes and adds internal seams.
+     * Inspected bytecode: runtime/evidence/block-outline-source-20261106/WorldRenderer.txt.
+     */
+    private static void drawOutline(MatrixStack matrices,VertexConsumer vertices,VoxelShape shape,double x,double y,double z){
+        var entry=matrices.peek();
+        shape.forEachEdge((x1,y1,z1,x2,y2,z2)->{
+            float dx=(float)(x2-x1),dy=(float)(y2-y1),dz=(float)(z2-z1);
+            float length=MathHelper.sqrt(dx*dx+dy*dy+dz*dz);dx/=length;dy/=length;dz/=length;
+            vertices.vertex(entry,(float)(x1+x),(float)(y1+y),(float)(z1+z)).color(0f,0f,0f,.4f).normal(entry,dx,dy,dz);
+            vertices.vertex(entry,(float)(x2+x),(float)(y2+y),(float)(z2+z)).color(0f,0f,0f,.4f).normal(entry,dx,dy,dz);
+        });
     }
 }

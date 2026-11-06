@@ -79,6 +79,18 @@ public final class GameplayBlocks {
             if(entry.getValue().equals(stateName(state)))result.put(position,state);}
         return Map.copyOf(result);
     }
+    /** Read-only render selection, with the same reach, shape and obstruction checks as mining. */
+    public BlockHitResult hoveredBlock(MinecraftClient client,Aim ray){
+        if(!ready()||!actions||ray==null||!client.isOnThread()||client.world!=clientWorld||client.player!=clientPlayer||
+            client.getServer()!=server||!client.isIntegratedServerRunning()||client.currentScreen!=null||client.getOverlay()!=null||client.isPaused())return null;
+        var observed=observation.get();long now=System.nanoTime();
+        if(observed==null||now<observed.at()||now-observed.at()>250_000_000L)return null;
+        var confirmed=owned.get();
+        try{
+            var selected=select(client.world,client.player,ray,0,confirmed.keySet());
+            return stateName(client.world.getBlockState(selected.target())).equals(confirmed.get(cell(selected.target())))?selected.hit():null;
+        }catch(IllegalArgumentException rejected){return null;}
+    }
     private void check(){if(files.failure()!=null)failure.compareAndSet(null,files.failure());if(failure.get()!=null)throw new IllegalStateException(failure.get());}
     public void tick(MinecraftClient client,boolean enabled){
         if(closing)return;check();if(client.world==null||client.player==null||client.getServer()==null||client.interactionManager==null)return;

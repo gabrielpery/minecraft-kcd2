@@ -7,7 +7,27 @@ automated tests and minimal manual checks. Preserve working controls and labs.
 Creative flight, first-person hands and a bounded non-stone building palette now
 work; do not repeat their completed acceptance sequences. Full block coverage,
 third-person Steve, complete host collision, Survival/NPC combat and Elytra remain
-required. User also asked for the hovered-block wireframe: implement that next.
+required. The requested hovered-block wireframe now works and is verified.
+
+## Latest milestone: hovered-block outline
+
+WorldBlocks draws the actual vanilla shape using the standard black/0.4 line
+layer. A read-only selection uses the same fresh admitted mining ray, server
+ownership, reach and native obstruction checks. One camera/ray publication feeds
+both model projection and targeting. UI/hidden HUD/third person/stale or blocked
+aim suppress the border. No native binary changes.
+
+Paired actual-Minecraft PASS (14 PNGs, saved four-type blocks and reopen/mining):
+`runtime/evidence/gameplay-world-blocks-20261106-133430-88e40d3dc1904018b8fe47635874d13b/verification.json`.
+Same-scene edge pixels verify hover, stale/blocked/miss suppression and return
+after inventory; crosshair/hands/HUD excluded. Offline build and 117 checks pass.
+Native automated visual/input PASS, no manual test:
+`runtime/evidence/gameplay-kcd-20261106-133803-f26019fca51046919afbbf81a40eb7dc/outline-observation.json`.
+Bricks placed on ground with visible border, inventory closed back to outline,
+aimed mining succeeded. Two placements/two breaks, no remaining blocks. 121s,
+2,284 outline frames, 2,143 publications, max gap 82.144ms, normal save/cleanup.
+Camera drag also mines: do not use it as look-away-only proof. No new walking/
+flight/host-depth claim. Preserve and move on; do not repeat acceptance.
 
 ## Latest milestone: actual Minecraft world blocks
 
@@ -75,14 +95,12 @@ renderers and host lighting are unverified. These are documented limitations.
 
 ## Next integrated feature
 
-Add the Minecraft hovered-block outline using the same fresh native ray and
-vanilla block outline shape as placement/mining, rendered through WorldBlocks.
-Do not outline a separate guessed box. Then expand shapes and host-world depth/
+Expand block shapes and host-world depth/
 collision as integrated feature work; reuse real models, no per-block KCD assets.
 Player collision with owned blocks and placement directly on captured ground
 already exist. Arbitrary KCD walls/trees/objects are not captured as buildable
-surfaces, and KCD NPCs do not collide with these composited blocks. Outline,
-native depth occlusion and third-person Steve remain unfinished.
+surfaces, and KCD NPCs do not collide with these composited blocks. Native depth
+occlusion and third-person Steve remain unfinished.
 Elytra still needs faster/3D collision admission, not just raised speed limits.
 
 ## Prior foundations — preserve, do not redo
@@ -114,8 +132,8 @@ Branch codex/initial-import; public github.com/gabrielpery/minecraft-kcd2.
 JDK C:/Program Files/Java/jdk-24; offline Gradle cache minecraft/.gradle-user-home.
 Both games closed; WorldBlocks native world saved (both test blocks mined).
 Prior renderer restored:
-`runtime/evidence/gameplay-hud-restore-20261106-131857-04f9a3357cda4b42a4e352185095263c`.
-Bundle runtime/hud-gameplay-world-blocks-20261106 is restored; do not reuse its receipt.
+`runtime/evidence/gameplay-hud-restore-20261106-134128-b91fe09687594c038674bb7cb6b2e7e8`.
+Bundle runtime/hud-gameplay-outline-20261106 is restored; do not reuse its receipt.
 Use a fresh BundleDirectory after changes. Assets/runtimes/saves stay out of Git.
 Exact official tools1.5.5 exe SHA256:
 a32d077e6b54e5cd0c5a5f3194f473779706ff266a711e4745ccdb598843340a.

@@ -18,6 +18,12 @@ shadows. Minecraft owns player/block collision; this layer does not add native
 block collision for KCD NPCs. Saved worlds containing non-stone blocks require
 the matching `-WorldBlocks` profile on reopening.
 
+The hovered-block outline uses vanilla shapes and the same admitted mining ray.
+It is limited to owned supported blocks within reach, and disappears in UI or
+with stale/obstructed aim. It does not outline arbitrary KCD scenery. Native ray
+obstruction suppresses selection; that is separate from the missing host depth
+occlusion for rendered blocks.
+
 The initial native check stopped on a 380ms publication gap during the first
 inventory open. Preparing the actual inventory before WorldBlocks readiness
 fixed the focused retry: inventory and both aimed removals passed, with maximum

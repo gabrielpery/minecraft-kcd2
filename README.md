@@ -71,11 +71,13 @@ The [`-WorldBlocks` profile](docs/GAMEPLAY_SESSION.md#minecraft-world-blocks) ad
 an initial palette of opaque blocks, including planks, oriented logs, wool,
 concrete and masonry. Minecraft renders their actual state models into a
 transparent layer aligned to KCD2's camera; it also owns placement, collision,
-mining and saved block states. An automated two-launch Minecraft check places
-dirt, planks, bricks and a sideways log, verifies nine model/UI images, reopens
+mining and saved block states. Hovered blocks use Minecraft's black shape outline,
+with the same targeting checks as mining. An automated two-launch Minecraft check places
+dirt, planks, bricks and a sideways log, verifies fourteen model/outline/UI images, reopens
 the same save and breaks all four. Automated live KCD2 checks also place dirt and
 bricks, restore them after reopening, keep them visible through inventory, and
-remove each with an aimed click. This layer has no KCD terrain/object depth
+remove each with an aimed click. The selection border also passed an automated
+KCD2 placement/inventory/mining check. This layer has no KCD terrain/object depth
 occlusion yet. Building remains bounded to 64 blocks inside captured coverage;
 fluids, transparent blocks, slabs, containers and other dynamic blocks are not
 included. Walking/flight with this new world layer has not been re-verified.

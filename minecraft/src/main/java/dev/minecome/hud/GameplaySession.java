@@ -61,7 +61,8 @@ public final class GameplaySession {
     private GameplayTerrainFixture terrainFixture;
     private GameplayChatFixture chatFixture;
     private GameplayFlightFixture flightFixture;
-    private GameplayHandsFixture handsFixture; private GameplayWorldBlocksFixture worldBlocksFixture; private int renderedWorldBlocks; private long worldBlockFrames;
+    private GameplayHandsFixture handsFixture; private GameplayWorldBlocksFixture worldBlocksFixture; private int renderedWorldBlocks; private long worldBlockFrames,worldOutlineFrames;
+    private net.minecraft.util.math.BlockPos outlinedBlock;
     private boolean handFrameRendered;
     private long handRenderStarts,handRenderPasses,handCapturedFrames;
     private Object world,player,server;
@@ -389,17 +390,24 @@ public final class GameplaySession {
     }
     public static void handRenderStarted(){var s=active;if(s!=null&&s.handsMode&&s.frameTransparent&&s.owns(MinecraftClient.getInstance()))s.handRenderStarts++;}
     public static boolean worldBlocksEnabled(){var s=active;return s!=null&&s.worldBlocksMode&&s.owns(MinecraftClient.getInstance());}
-    public static java.util.Map<net.minecraft.util.math.BlockPos,net.minecraft.block.BlockState> worldBlocksToRender(){var s=active;return worldBlocksEnabled()&&s.blocks!=null?s.blocks.ownedBlockStates(MinecraftClient.getInstance()):java.util.Map.of();}
-    public static GameplayWorldRenderer.View worldBlocksView(){var s=active;if(!worldBlocksEnabled())return null;return s.worldBlocksFixture!=null?s.worldBlocksFixture.view():s.aimReader==null?null:s.aimReader.worldView();}
+    public record WorldFrame(GameplayWorldRenderer.View view,java.util.Map<net.minecraft.util.math.BlockPos,net.minecraft.block.BlockState> blocks,net.minecraft.util.hit.BlockHitResult hover){}
+    public static WorldFrame worldBlocksFrame(){
+        var s=active;if(!worldBlocksEnabled()||s.blocks==null)return null;
+        GameplayWorldRenderer.View view;GameplayBlocks.Aim ray;
+        if(s.worldBlocksFixture!=null){view=s.worldBlocksFixture.view();ray=s.worldBlocksFixture.renderAim();}
+        else{var sample=s.aimReader==null?null:s.aimReader.worldSample();if(sample==null)return null;view=sample.view();ray=sample.aim();}
+        var client=MinecraftClient.getInstance();
+        return new WorldFrame(view,s.blocks.ownedBlockStates(client),s.blocks.hoveredBlock(client,ray));
+    }
     public static void beforeWorldClear(){var s=active;if(worldBlocksEnabled()&&!s.frameTransparent)s.beginTransparentFrame(MinecraftClient.getInstance());}
-    public static void worldRenderCompleted(int count){var s=active;if(worldBlocksEnabled()&&s.frameTransparent){s.renderedWorldBlocks=count;if(count>0)s.worldBlockFrames++;}}
+    public static void worldRenderCompleted(GameplayWorldRenderer.Result result){var s=active;if(worldBlocksEnabled()&&s.frameTransparent){s.renderedWorldBlocks=result.blocks();s.outlinedBlock=result.outlined();if(result.blocks()>0)s.worldBlockFrames++;if(s.outlinedBlock!=null)s.worldOutlineFrames++;}}
     private boolean suppressWorldPixels(){return renderedWorldBlocks==0;}
     public static void handRenderCompleted(){var s=active;if(s!=null&&s.handsMode&&s.frameTransparent&&s.owns(MinecraftClient.getInstance())){s.handFrameRendered=true;s.handRenderPasses++;}}
     private void beginTransparentFrame(MinecraftClient client){
         RenderSystem.assertOnRenderThread();
         if(frameTransparent){requestStop(client,"render_failure","Nested gameplay HUD frame");return;}
         priorBlend=new int[]{GL11.glGetInteger(GL14.GL_BLEND_SRC_RGB),GL11.glGetInteger(GL14.GL_BLEND_DST_RGB),GL11.glGetInteger(GL14.GL_BLEND_SRC_ALPHA),GL11.glGetInteger(GL14.GL_BLEND_DST_ALPHA)};
-        frameTransparent=true;handFrameRendered=false;renderedWorldBlocks=0;
+        frameTransparent=true;handFrameRendered=false;renderedWorldBlocks=0;outlinedBlock=null;
         float[] color=new float[4];GL11.glGetFloatv(GL11.GL_COLOR_CLEAR_VALUE,color);
         var mask=org.lwjgl.BufferUtils.createByteBuffer(4);GL11.glGetBooleanv(GL11.GL_COLOR_WRITEMASK,mask);
         boolean scissor=GL11.glIsEnabled(GL11.GL_SCISSOR_TEST);int[] box=new int[4];GL11.glGetIntegerv(GL11.GL_SCISSOR_BOX,box);
@@ -415,7 +423,7 @@ public final class GameplaySession {
         catch(Exception e){s.requestStop(client,"render_failure",e.toString());}
         finally{s.restoreBlend();}
     }
-    private void restoreBlend(){frameTransparent=false;handFrameRendered=false;renderedWorldBlocks=0;if(priorBlend!=null){RenderSystem.blendFuncSeparate(priorBlend[0],priorBlend[1],priorBlend[2],priorBlend[3]);priorBlend=null;}}
+    private void restoreBlend(){frameTransparent=false;handFrameRendered=false;renderedWorldBlocks=0;outlinedBlock=null;if(priorBlend!=null){RenderSystem.blendFuncSeparate(priorBlend[0],priorBlend[1],priorBlend[2],priorBlend[3]);priorBlend=null;}}
     private void capture(MinecraftClient client){
         readback.poll(frame->{
             if(frame.id()<=lastReadbackId)return;lastReadbackId=frame.id();if(stopping||output==null)return;
@@ -431,7 +439,10 @@ public final class GameplaySession {
         meta.addProperty("captured_utc_ms",System.currentTimeMillis());meta.addProperty("world_id",save.id().toString());
         meta.addProperty("gameplay",true);meta.addProperty("no_world_pixels",(!standalone||handsMode)&&suppressWorldPixels());
         if(!standalone||handsMode)meta.addProperty("hand_pixels",handsMode&&handFrameRendered);
-        if(handsMode)meta.addProperty("hand_pass_rendered",handFrameRendered);if(worldBlocksMode){meta.addProperty("world_block_pixels",renderedWorldBlocks>0);meta.addProperty("rendered_world_blocks",renderedWorldBlocks);}if(worldBlocksFixture!=null){var stage=worldBlocksFixture.captureStage();if(stage!=null)meta.addProperty("world_blocks_fixture_stage",stage);}
+        if(handsMode)meta.addProperty("hand_pass_rendered",handFrameRendered);if(worldBlocksMode){
+            meta.addProperty("world_block_pixels",renderedWorldBlocks>0);meta.addProperty("rendered_world_blocks",renderedWorldBlocks);meta.addProperty("world_block_outline",outlinedBlock!=null);
+            if(outlinedBlock!=null){var position=new JsonObject();position.addProperty("x",outlinedBlock.getX());position.addProperty("y",outlinedBlock.getY());position.addProperty("z",outlinedBlock.getZ());meta.add("outline_position",position);}
+        }if(worldBlocksFixture!=null){var stage=worldBlocksFixture.captureStage();if(stage!=null)meta.addProperty("world_blocks_fixture_stage",stage);}
         if(handsFixture!=null){var stage=handsFixture.captureStage();if(stage!=null)meta.addProperty("hands_fixture_stage",stage);}
         meta.addProperty("health_client",client.player.getHealth());meta.addProperty("food_client",client.player.getHungerManager().getFoodLevel());
         if(readback.capture(client.getFramebuffer(),++captureId,meta.toString())){lastCaptureAt=now;if(handFrameRendered)handCapturedFrames++;}
@@ -453,7 +464,7 @@ public final class GameplaySession {
         e.addProperty("blocks_enabled",blocksMode);
         e.addProperty("chat_enabled",chatMode);
         e.addProperty("flight_enabled",flightMode);
-        e.addProperty("world_blocks_enabled",worldBlocksMode);e.addProperty("world_block_render_frames",worldBlockFrames);e.addProperty("hands_enabled",handsMode);e.addProperty("hand_render_starts",handRenderStarts);e.addProperty("hand_render_passes",handRenderPasses);e.addProperty("hand_captured_frames",handCapturedFrames);
+        e.addProperty("world_blocks_enabled",worldBlocksMode);e.addProperty("world_block_render_frames",worldBlockFrames);e.addProperty("world_outline_render_frames",worldOutlineFrames);e.addProperty("hands_enabled",handsMode);e.addProperty("hand_render_starts",handRenderStarts);e.addProperty("hand_render_passes",handRenderPasses);e.addProperty("hand_captured_frames",handCapturedFrames);
         e.addProperty("inventory_prepared_before_input",uiWarmupComplete);e.addProperty("inventory_preparation_frames",uiWarmupFrames);
         if(ui!=null&&chatMode)e.add("chat_input",ui.chatDiagnostics());
         e.addProperty("normal_shutdown_requested",stopping);e.addProperty("controls_released",gate.heldKeyCount()==0&&gate.heldButtonCount()==0);

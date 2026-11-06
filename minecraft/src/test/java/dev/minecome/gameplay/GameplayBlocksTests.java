@@ -214,18 +214,18 @@ public final class GameplayBlocksTests {
         Path viewDirectory=Files.createDirectories(root.resolve("runtime/evidence/world-camera-reader"));
         view.addProperty("utc_ms",System.currentTimeMillis());write(viewDirectory.resolve("gameplay-aim.json"),view);
         try(var reader=new GameplayAimReader(viewDirectory,id,SURFACE,world,true)){
-            long deadline=System.nanoTime()+1_000_000_000L;while(reader.worldView()==null&&reader.failure()==null&&System.nanoTime()<deadline)Thread.sleep(2);
-            var camera=reader.worldView();check(camera!=null&&reader.current()!=null&&reader.failure()==null,"World-block reader publishes matching aim and camera");
+            long deadline=System.nanoTime()+1_000_000_000L;while(reader.worldSample()==null&&reader.failure()==null&&System.nanoTime()<deadline)Thread.sleep(2);
+            var sample=reader.worldSample();check(sample!=null&&sample.aim().equals(reader.current())&&reader.failure()==null,"World-block reader publishes matching aim and camera");var camera=sample.view();
             check(camera.origin().squaredDistanceTo(new net.minecraft.util.math.Vec3d(2.5,65.62,.5))<1e-15,"World camera origin uses native coordinate transform");
             check(camera.forward().squaredDistanceTo(new net.minecraft.util.math.Vec3d(1,0,0))<1e-15&&camera.up().squaredDistanceTo(new net.minecraft.util.math.Vec3d(0,1,0))<1e-15,"World camera basis uses same transform as aiming");
             check(Math.abs(camera.verticalFovRadians()-1.2)<1e-12,"World camera retains actual vertical FOV");
-            Thread.sleep(320);check(reader.worldView()==null&&reader.current()==null&&reader.failure()==null,"Expired camera cannot keep world blocks rendered at a stale view");
+            Thread.sleep(320);check(reader.worldSample()==null&&reader.current()==null&&reader.failure()==null,"Expired camera cannot keep world blocks rendered at a stale view");
         }
         Path legacyView=Files.createDirectories(root.resolve("runtime/evidence/world-camera-legacy"));
         write(legacyView.resolve("gameplay-aim.json"),aimJson(id,save,System.currentTimeMillis()));
         try(var reader=new GameplayAimReader(legacyView,id,SURFACE,world,true)){
             long deadline=System.nanoTime()+1_000_000_000L;while(reader.failure()==null&&System.nanoTime()<deadline)Thread.sleep(2);
-            check(reader.failure()!=null&&reader.worldView()==null,"World renderer rejects legacy aim without camera/FOV instead of guessing");
+            check(reader.failure()!=null&&reader.worldSample()==null,"World renderer rejects legacy aim without camera/FOV instead of guessing");
         }
     }
 }

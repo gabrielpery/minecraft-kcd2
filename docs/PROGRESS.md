@@ -1,5 +1,33 @@
 # MineCome progress — 2026-11-06
 
+## Hovered-block outline
+
+Implemented and compiled in `-WorldBlocks`: the fresh admitted mining ray selects
+the confirmed owned block, and the renderer draws its actual vanilla outline
+shape with the vanilla black/0.4 line layer. Camera and ray share one publication;
+UI, hidden HUD, third person, stale aim, native obstruction and reach suppress
+the outline. No guessed target box or new native binary. Existing host depth
+limitation remains.
+
+Automated paired actual-Minecraft PASS, fourteen PNGs:
+`runtime/evidence/gameplay-world-blocks-20261106-133430-88e40d3dc1904018b8fe47635874d13b/verification.json`.
+The same camera/scene produces 2,529 changed edge pixels (1,265 darkened) for the
+targeted log, zero changed edges for stale/obstructed/out-of-range samples, and
+restores the border after inventory. The mask excludes crosshair/hands/HUD.
+Four-type placement, exact save/reopen, mining and normal cleanup still pass.
+Offline assemble and 117 focused checks pass.
+
+Automated live KCD2 PASS, no human test:
+`runtime/evidence/gameplay-kcd-20261106-133803-f26019fca51046919afbbf81a40eb7dc/outline-observation.json`.
+Computer Use placed bricks directly on captured ground, observed black selection
+edges, opened/closed actual inventory and observed the border return, then mined
+the selected block. Two placements/two breaks confirmed, zero blocks left. A
+camera drag mined the first block because it also holds left mouse; no separate
+native look-away proof is claimed. The 121s session rendered 2,284 outline frames,
+published 2,143 frames (maximum gap 82.144ms), saved and cleaned up normally.
+Inventory capture confirms no outline. KCD closed and prior renderer restored.
+Walking/flight and host depth were not tested by this stationary check.
+
 ## Actual Minecraft world blocks
 
 Implemented and compiled `-WorldBlocks`, including Hands/Flight/Chat/Blocks/Movement

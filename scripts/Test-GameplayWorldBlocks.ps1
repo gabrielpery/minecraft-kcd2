@@ -33,7 +33,7 @@ try{
     ($f.actual_states -join '|') -cne 'minecraft:dirt|minecraft:oak_planks|minecraft:bricks|minecraft:oak_log[axis=x]'){throw 'Four distinct actual blocks and log axis did not persist.'}
    $expectedCommands=@('dirt','oak_planks','bricks','oak_log')|ForEach-Object {"/item replace entity @s hotbar.0 with minecraft:$_"}
    if(($f.submitted_commands -join '|') -cne ($expectedCommands -join '|')){throw 'Items did not come through real Minecraft chat.'}
-   $names=@('empty','dirt','oak_planks','bricks','oak_log','inventory','restored')
+   $names=@('empty','dirt','oak_planks','bricks','oak_log','outline_stale','outline_hover','outline_blocked','outline_miss','outline_restored','inventory','restored')
   }else{
    if($session.new_world -or $session.world_id -cne $proofs[0].session.world_id -or $f.player_id -cne $proofs[0].session.fixture.player_id -or
     -not $f.resume_verified -or -not $m.resume_position_restored -or $b.owned_count -ne 0 -or $b.places -ne 0 -or $b.breaks -ne 4 -or
@@ -50,8 +50,25 @@ try{
    if([bool]$capture.metadata.hand_pass_rendered -eq $inventory -or $capture.metadata.screen -ne $(if($inventory){1}else{0}) -or
     $capture.metadata.screen_kind -cne $(if($inventory){'CreativeInventoryScreen'}else{'none'})){throw 'Inventory did not hide hands/restore the world view.'}
    if(-not $inventory -and ($capture.clear_region_pixels -ne 0 -or $capture.transparent_pixels -lt $capture.pixels*.25)){throw 'Opaque world leaked outside owned models.'}
-   $count=switch($capture.stage){'empty'{0};'dirt'{1};'oak_planks'{2};'bricks'{3};'oak_log'{4};'inventory'{4};'restored'{4};'resumed'{4};'cleared'{0}}
+   $count=switch($capture.stage){'empty'{0};'dirt'{1};'oak_planks'{2};'bricks'{3};'cleared'{0};default{4}}
    if($capture.metadata.rendered_world_blocks -ne $count -or [bool]$capture.metadata.world_block_pixels -ne ($count -gt 0) -or ($count -gt 0 -and $capture.world_region_pixels -lt 200)){throw 'Actual model render pass missing.'}
+   $outlined=$capture.stage -cin @('outline_hover','outline_restored','restored')
+   if([bool]$capture.metadata.world_block_outline -ne $outlined -or [bool]$capture.metadata.PSObject.Properties['outline_position'] -ne $outlined){throw 'Outline was missing or survived a denied target/UI state.'}
+   if($outlined){
+    $position=$capture.metadata.outline_position
+    $log=@($f.blocks.blocks|Where-Object state -CEQ 'minecraft:oak_log[axis=x]')
+    if($log.Count -ne 1 -or $position.x -ne $log[0].x -or $position.y -ne $log[0].y -or $position.z -ne $log[0].z){throw 'Outline target differs from the confirmed owned oak log.'}
+   }
+   if($capture.stage.StartsWith('outline_') -or $capture.stage -ceq 'restored'){
+    $baseline=@($f.images|Where-Object stage -CEQ 'outline_stale')[0]
+    if($capture.outline_comparison_baseline -cne 'outline_stale' -or
+     ($capture.outline_view|ConvertTo-Json -Depth 8 -Compress) -cne ($baseline.outline_view|ConvertTo-Json -Depth 8 -Compress) -or
+     $capture.outline_edge_pixels -ne $baseline.outline_edge_pixels -or $capture.outline_edge_pixels -lt 100){throw 'Outline comparison did not use the same camera/projected cube edge mask.'}
+    if($outlined){
+     if($capture.outline_changed_pixels -lt 20 -or $capture.outline_darkened_pixels -lt 10 -or
+      $capture.outline_changed_pixels -gt $capture.outline_edge_pixels*.6 -or $capture.outline_changed_pixels -gt $capture.pixels*.025){throw 'Actual outline pixels were absent or not localized to cube edges.'}
+    }elseif($capture.outline_changed_pixels -gt 20){throw 'Stale/blocked/missed targeting changed the settled cube-edge pixels.'}
+   }
   }
   $proofs.Add([pscustomobject]@{phase=$phase;directory=$result[0].EvidenceDirectory;session=$session})
  }

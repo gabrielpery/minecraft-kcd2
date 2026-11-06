@@ -18,7 +18,7 @@ public final class GameplayAimReader implements AutoCloseable {
     static{var keys=new java.util.HashSet<>(KEYS);keys.add("up");keys.add("vertical_fov");VIEW_KEYS=Set.copyOf(keys);}
     private final Path file;private final HudInputProtocol.Identity identity;private final GroundSurface surface;private final String worldId;
     private volatile GameplayBlocks.Aim latest;private volatile String failure;private volatile boolean closing;
-    private record RenderSample(GameplayBlocks.Aim aim,GameplayWorldRenderer.View view){}
+    public record RenderSample(GameplayBlocks.Aim aim,GameplayWorldRenderer.View view){}
     private volatile RenderSample renderSample;private final boolean worldBlocks;
     public GameplayAimReader(Path directory,HudInputProtocol.Identity identity,GroundSurface surface,String worldId){
         this(directory,identity,surface,worldId,false);
@@ -30,7 +30,8 @@ public final class GameplayAimReader implements AutoCloseable {
     }
     public GameplayBlocks.Aim current(){if(closing||failure!=null)return null;var a=latest;return a!=null&&a.fresh(System.currentTimeMillis(),System.nanoTime())?a:null;}
     public String failure(){return failure;}
-    public GameplayWorldRenderer.View worldView(){var sample=renderSample;return !closing&&failure==null&&sample!=null&&sample.aim().fresh(System.currentTimeMillis(),System.nanoTime())?sample.view():null;}
+    /** One publication supplies both projection and target; never mix adjacent native samples. */
+    public RenderSample worldSample(){var sample=renderSample;return !closing&&failure==null&&sample!=null&&sample.aim().fresh(System.currentTimeMillis(),System.nanoTime())?sample:null;}
     private void readLoop(){long sequence=0,utc=0,failedAt=0;String previous=null;try{
         while(!closing){
             String text=null;
