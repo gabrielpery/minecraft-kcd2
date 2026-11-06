@@ -4,10 +4,10 @@
 param([Parameter(Mandatory)][string]$EvidenceDirectory,[Parameter(Mandatory)][string]$InstanceDirectory,
  [Parameter(Mandatory)][string]$Run,[Parameter(Mandatory)][int]$TargetPid,
  [Parameter(Mandatory)][string]$TargetStart,[Parameter(Mandatory)][long]$Expires,
- [Parameter(Mandatory)][string]$JavaHome,[ValidateSet('','create','resume','walking','walking-resume','blocks','blocks-resume','blocks-survival','terrain','terrain-resume','chat','chat-resume','flight','flight-resume','flight-fall','flight-fall-resume','hands')][string]$FixturePhase='',
- [switch]$Connected,[switch]$Movement,[switch]$Blocks,[switch]$Explore,[switch]$Chat,[switch]$Flight,[switch]$Hands,[string]$GroundPatchFile)
+ [Parameter(Mandatory)][string]$JavaHome,[ValidateSet('','create','resume','walking','walking-resume','blocks','blocks-resume','blocks-survival','terrain','terrain-resume','chat','chat-resume','flight','flight-resume','flight-fall','flight-fall-resume','hands','world-blocks','world-blocks-resume')][string]$FixturePhase='',
+ [switch]$Connected,[switch]$Movement,[switch]$Blocks,[switch]$Explore,[switch]$Chat,[switch]$Flight,[switch]$Hands,[switch]$WorldBlocks,[string]$GroundPatchFile)
 $ErrorActionPreference='Stop'
-if($Hands){$Flight=$true};if($Flight){$Chat=$true}
+if($WorldBlocks){$Hands=$true};if($Hands){$Flight=$true};if($Flight){$Chat=$true}
 if($Explore -or $Chat){$Blocks=$true};if($Blocks){$Movement=$true}
 $root=Split-Path -Parent $PSScriptRoot
 $env:JAVA_HOME=$JavaHome
@@ -23,7 +23,7 @@ if($Blocks){$arguments+='-PminecomeGameplayBlocks'}
 if($Explore){$arguments+='-PminecomeGameplayExplore'}
 if($Chat){$arguments+='-PminecomeGameplayChat'}
 if($Flight){$arguments+='-PminecomeGameplayFlight'}
-if($Hands){$arguments+='-PminecomeGameplayHands'}
+if($Hands){$arguments+='-PminecomeGameplayHands'};if($WorldBlocks){$arguments+='-PminecomeGameplayWorldBlocks'}
 if($Movement){if(-not $GroundPatchFile){throw 'Movement requires its persistent captured terrain file.'};$arguments+=@('-PminecomeGameplayMovement',"-PminecomeGameplayGroundFile=$GroundPatchFile")}
 $code=1
 try{& (Join-Path $root 'minecraft/gradlew.bat') @arguments; $code=$LASTEXITCODE}

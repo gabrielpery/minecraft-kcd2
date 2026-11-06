@@ -4,11 +4,12 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.util.Set;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
 
 /** Constant-space latest server snapshot; all ongoing disk work stays off game threads. */
 final class GameplayBlocksFiles {
-    private record Frame(long revision,Set<GameplayBlocksLedger.Cell> cells,String json){}
+    private record Frame(long revision,Map<GameplayBlocksLedger.Cell,String> cells,String json){}
     private final GameplayBlocksLedger ledger;private final Path output;
     private final AtomicReference<Frame> latest=new AtomicReference<>();
     private volatile boolean closing,finished;private volatile String failure;private volatile long writes,persistedRevision;
@@ -17,7 +18,8 @@ final class GameplayBlocksFiles {
         output=directory.resolve("gameplay-blocks.json");if(Files.exists(output))throw new IOException("Block output already exists");persistedRevision=ledger.initialRevision;
         var worker=new Thread(this::run,"MineComeGameplayBlocksFiles");worker.setDaemon(true);worker.start();
     }
-    void publish(long revision,Set<GameplayBlocksLedger.Cell> cells,String json){if(json.length()>GameplayBlocksLedger.MAX_BYTES)throw new IllegalArgumentException("Block snapshot too large");latest.set(new Frame(revision,Set.copyOf(cells),json));}
+    void publish(long revision,Set<GameplayBlocksLedger.Cell> cells,String json){publish(revision,GameplayBlocksLedger.stones(cells),json);}
+    void publish(long revision,Map<GameplayBlocksLedger.Cell,String> cells,String json){if(json.length()>GameplayBlocksLedger.MAX_BYTES)throw new IllegalArgumentException("Block snapshot too large");latest.set(new Frame(revision,Map.copyOf(cells),json));}
     void close(){closing=true;}boolean finished(){return finished;}String failure(){return failure;}long writes(){return writes;}long persistedRevision(){return persistedRevision;}
     static void atomic(Path path,String json)throws IOException,InterruptedException {
         var temp=path.resolveSibling(path.getFileName()+".tmp");Files.writeString(temp,json,StandardCharsets.UTF_8,StandardOpenOption.CREATE,StandardOpenOption.TRUNCATE_EXISTING);

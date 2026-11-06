@@ -95,7 +95,7 @@ function Read-GameplayMovementPose([string]$Path,$Identity,$Bounds,[long]$LastSe
 }
 function Get-GameplayMovementWorker {
     return {
-        param($Context,$Identity,$Bounds,[string]$PoseFile,[string]$ViewFile,[long]$ExpiresUtcMs,[long]$LogOffset,$Shared,$Token,[string]$ProjectRoot,$BlocksState,$TerrainState,[bool]$Flight=$false)
+        param($Context,$Identity,$Bounds,[string]$PoseFile,[string]$ViewFile,[long]$ExpiresUtcMs,[long]$LogOffset,$Shared,$Token,[string]$ProjectRoot,$BlocksState,$TerrainState,[bool]$Flight=$false,[bool]$WorldBlocks=$false)
         $ErrorActionPreference='Stop';Set-StrictMode -Version Latest
         . (Join-Path $ProjectRoot 'scripts/GameplayMovementHost.ps1')
         $run=$Identity.Run;$stopwatch=[Diagnostics.Stopwatch]::StartNew();$limit=$ExpiresUtcMs-[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
@@ -163,7 +163,7 @@ function Get-GameplayMovementWorker {
                 if($BlocksState){$command=Get-GameplayBlocksCommands $BlocksState $utc;if($command){$parts.Add((RejectWrapper $command))}}
                 if($pose){$parts.Add((RejectWrapper "MineCome.GameplayMovementPose('$run',$($pose.seq),$(Numeric $pose.source_ms),$(Numeric $pose.position.x),$(Numeric $pose.position.y),$(Numeric $pose.position.z))"))}
                 $requestView=$elapsed-$lastViewAt -ge 90
-                if($requestView){$viewSequence++;$requestedUtc=$utc;$aimArgument=if($BlocksState){',true'}else{''};$parts.Add((RejectWrapper "MineCome.GameplayMovementSample('$run',$viewSequence$aimArgument)"));$lastViewAt=$elapsed}
+                if($requestView){$viewSequence++;$requestedUtc=$utc;$aimArgument=if($BlocksState -or $WorldBlocks){',true'}else{''};$parts.Add((RejectWrapper "MineCome.GameplayMovementSample('$run',$viewSequence$aimArgument)"));$lastViewAt=$elapsed}
                 if($parts.Count){Send $parts.ToArray();if($pose){$sequence=[long]$pose.seq;$source=[double]$pose.source_ms;$poses++;$lastPoseUtc=[long]$pose.utc_ms;$lastPoseAt=$elapsed}}
                 if($poses -gt 0 -and $elapsed-$lastPoseAt -gt 350){throw 'Gameplay guest pose expired.'}
                 $until=$stopwatch.Elapsed.TotalMilliseconds+$(if($requestView){300}else{0})
@@ -181,8 +181,12 @@ function Get-GameplayMovementWorker {
                                 $f=[IO.FileStream]::new($temp,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
                                 try{$f.Write($bytes);$f.Flush($false)}finally{$f.Dispose()}
                                 Publish-GameplayMovementView $temp $ViewFile
-                                if($BlocksState){
+                                if($BlocksState -or $WorldBlocks){
                                     $aim=[ordered]@{schema=1;kind='minecome_gameplay_aim_v1';run=$run;world_id=$Identity.WorldId;patch_run=$Identity.PatchRun;patch_sha256=$Identity.PatchHash;target_pid=$Identity.Pid;target_start_filetime=$Identity.Start;seq=$viewSequence;utc_ms=$requestedUtc;origin=$r.camera;direction=$r.forward;range=$r.aim.range;known=$r.aim.known;distance=$r.aim.distance;terrain_hit=$r.aim.terrain_hit}
+                                    if($WorldBlocks){
+                                        if(-not(Test-GameplayHostNumber $r.fov) -or $r.fov -le .05 -or $r.fov -ge ([Math]::PI-.05)){throw 'World block camera FOV unavailable.'}
+                                        $aim.schema=2;$aim.kind='minecome_gameplay_aim_v2';$aim.up=$r.up;$aim.vertical_fov=$r.fov
+                                    }
                                     [IO.File]::WriteAllText($aimTemp,($aim|ConvertTo-Json -Depth 5 -Compress),[Text.UTF8Encoding]::new($false));Publish-GameplayMovementView $aimTemp $aimFile
                                 }
                                 $views++
@@ -234,8 +238,8 @@ function Get-GameplayMovementWorker {
     }
 }
 function Start-GameplayMovementHost {
-    param($Context,[string]$Run,[string]$WorldId,$Patch,[string]$PoseFile,[string]$ViewFile,[long]$ExpiresUtcMs,$Bounds,[switch]$Blocks,[switch]$Explore,[string]$TerrainCacheFile,[switch]$Flight)
-    if($Flight){$Blocks=$true}
+    param($Context,[string]$Run,[string]$WorldId,$Patch,[string]$PoseFile,[string]$ViewFile,[long]$ExpiresUtcMs,$Bounds,[switch]$Blocks,[switch]$Explore,[string]$TerrainCacheFile,[switch]$Flight,[switch]$WorldBlocks)
+    if($Flight -or $WorldBlocks){$Blocks=$true}
     if($Explore){$Blocks=$true;if(-not $TerrainCacheFile){throw 'Explore requires the owned terrain cache path.'}}
     $root=$Context.ProjectRoot
     if($Run -cnotmatch '^[0-9a-f]{32}$' -or $WorldId -cnotmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' -or $Patch.Run -cnotmatch '^[0-9a-f]{32}$' -or $Patch.Hash -cnotmatch '^[0-9a-f]{64}$'){throw 'Invalid gameplay host identity.'}
@@ -252,14 +256,14 @@ function Start-GameplayMovementHost {
     $probe=New-MineComeProbeRun $Context 'gameplay-movement' (Join-Path $root 'kcd2/gameplay/movement_session.lua') 'GameplayMovementBegin'
     $evidenceDirectory=Split-Path -Parent $PoseFile
     $terrainState=if($Explore){New-GameplayTerrainHost -Context $Context -Run $Run -WorldId $WorldId -Patch $Patch -CacheFile $TerrainCacheFile -AdmissionFile (Join-Path $evidenceDirectory 'terrain-admission.json') -AckFile (Join-Path $evidenceDirectory 'terrain-ack.json') -ExpiresUtcMs $ExpiresUtcMs}else{$null}
-    $blocksState=if($Blocks){New-GameplayBlocksHost -Context $Context -Run $Run -WorldId $WorldId -Patch $Patch -SnapshotFile (Join-Path $evidenceDirectory 'gameplay-blocks.json') -ExpiresUtcMs $ExpiresUtcMs -TerrainState $terrainState}else{$null}
+    $blocksState=if($Blocks -and -not $WorldBlocks){New-GameplayBlocksHost -Context $Context -Run $Run -WorldId $WorldId -Patch $Patch -SnapshotFile (Join-Path $evidenceDirectory 'gameplay-blocks.json') -ExpiresUtcMs $ExpiresUtcMs -TerrainState $terrainState}else{$null}
     $identity=[pscustomobject]@{Run=$Run;WorldId=$WorldId;Pid=$Context.GamePid;Start=$Context.GameStartedUtc.ToFileTimeUtc().ToString();PatchRun=$Patch.Run;PatchHash=$Patch.Hash}
     $shared=[Collections.Concurrent.ConcurrentDictionary[string,object]]::new([StringComparer]::Ordinal)
     $shared['Snapshot']=[pscustomobject]@{Stopped=$false;Failure=$null;Stage='starting';PoseCount=0L;ViewCount=0L;LastPoseSequence=0L;LastPoseUtcMs=0L;RequestCount=0L;MaxRequestPathLength=0;LastDispatch=$null;Begin=$null;Terminal=$null;LastView=$null;Blocks=$null;Terrain=$null}
     $cancellation=[Threading.CancellationTokenSource]::new();$runspace=[RunspaceFactory]::CreateRunspace();$pipeline=[PowerShell]::Create()
     try{
         $runspace.Open();$pipeline.Runspace=$runspace
-        $null=$pipeline.AddScript((Get-GameplayMovementWorker).ToString()).AddArgument($Context).AddArgument($identity).AddArgument($Bounds).AddArgument($PoseFile).AddArgument($ViewFile).AddArgument($ExpiresUtcMs).AddArgument((Get-Item -LiteralPath $Context.GameLog).Length).AddArgument($shared).AddArgument($cancellation.Token).AddArgument($root).AddArgument($blocksState).AddArgument($terrainState).AddArgument([bool]$Flight)
+        $null=$pipeline.AddScript((Get-GameplayMovementWorker).ToString()).AddArgument($Context).AddArgument($identity).AddArgument($Bounds).AddArgument($PoseFile).AddArgument($ViewFile).AddArgument($ExpiresUtcMs).AddArgument((Get-Item -LiteralPath $Context.GameLog).Length).AddArgument($shared).AddArgument($cancellation.Token).AddArgument($root).AddArgument($blocksState).AddArgument($terrainState).AddArgument([bool]$Flight).AddArgument([bool]$WorldBlocks)
         $async=$pipeline.BeginInvoke()
         return [pscustomobject]@{Runspace=$runspace;PowerShell=$pipeline;Async=$async;Shared=$shared;Cancellation=$cancellation;Probe=$probe;Final=$null;Disposed=$false;Bounds=$Bounds;Identity=$identity}
     }catch{$cancellation.Cancel();$pipeline.Dispose();$runspace.Dispose();$cancellation.Dispose();throw}

@@ -86,7 +86,41 @@ public final class GameplayBlocksTests {
         reject(()->new GameplayBlocksFiles(root,outside,finalLedger),"Session output stays in evidence directory");
         aimTests(root,save);
         terrainLedgerTests(root);
+        worldBlockStateTests(root);
         System.out.println("GameplayBlocksTests: "+checks+" checks passed; no game calls");
+    }
+    private static void worldBlockStateTests(Path root)throws Exception{
+        for(var state:List.of("minecraft:stone","minecraft:dirt","minecraft:oak_planks","minecraft:bricks",
+                "minecraft:red_concrete","minecraft:blue_wool","minecraft:oak_log[axis=x]","minecraft:oak_log[axis=y]","minecraft:oak_log[axis=z]"))
+            check(GameplayBlocksPalette.supportsState(state),"Supported canonical world block state: "+state);
+        for(var state:List.of("minecraft:air","minecraft:water","minecraft:sand","minecraft:glass","minecraft:grass_block",
+                "minecraft:oak_stairs[facing=north]","minecraft:oak_log","minecraft:oak_log[axis=q]","minecraft:oak_log[axis=X]",
+                "minecraft:oak_log[axis=x,axis=y]","minecraft:dirt[snowy=false]","minecraft:stone ","stone","foreign:stone"))
+            check(!GameplayBlocksPalette.supportsState(state),"Unsupported or noncanonical world state rejected: "+state);
+        check(GameplayBlocksPalette.supportsBlock("minecraft:oak_log")&&!GameplayBlocksPalette.supportsBlock("minecraft:oak_log[axis=x]"),"Block item policy distinguishes registry ID from placed state");
+        var save=GameplayWorld.prepare(root.resolve("world-blocks-instance/saves"),root);
+        var a=new GameplayBlocksLedger.Cell(0,64,0);var b=new GameplayBlocksLedger.Cell(1,64,0);var c=new GameplayBlocksLedger.Cell(2,64,0);
+        var legacy=new GameplayBlocksLedger(save,SURFACE);legacy.persist(1,Set.of(a));
+        var ledger=new GameplayBlocksLedger(save,SURFACE,true);
+        check(ledger.initialStates.equals(Map.of(a,"minecraft:stone")),"World renderer adopts existing stone ledger without migration");
+        var mixed=Map.of(a,"minecraft:dirt",b,"minecraft:oak_log[axis=x]",c,"minecraft:bricks");ledger.persist(2,mixed);
+        var reopened=new GameplayBlocksLedger(save,SURFACE,true);
+        check(reopened.initialStates.equals(mixed)&&reopened.initialRevision==2,"Material and log orientation survive ownership reopen");
+        check(GameplayBlocksLedger.blocks(mixed).get(1).getAsJsonObject().get("state").getAsString().equals("minecraft:oak_log[axis=x]"),"Canonical snapshot retains actual state instead of replacing with stone");
+        reject(()->new GameplayBlocksLedger(save,SURFACE),"Legacy stone renderer cannot silently adopt nonstone world");
+        var rotated=Map.of(a,"minecraft:dirt",b,"minecraft:oak_log[axis=z]",c,"minecraft:bricks");reopened.persist(3,rotated);
+        check(new GameplayBlocksLedger(save,SURFACE,true).initialStates.equals(rotated),"State-only ownership revision persists with unchanged positions");
+        reject(()->reopened.persist(4,Map.of(a,"minecraft:water")),"Checkpoint rejects unsupported fluid state");
+        reject(()->reopened.persist(4,Map.of(a,"minecraft:oak_log[axis=q]")),"Checkpoint rejects malformed state properties");
+        var good=JsonParser.parseString(Files.readString(reopened.path)).getAsJsonObject();
+        var changed=good.deepCopy();changed.getAsJsonArray("blocks").get(0).getAsJsonObject().addProperty("state","minecraft:oak_log[axis=q]");write(reopened.path,changed);
+        reject(()->new GameplayBlocksLedger(save,SURFACE,true),"Malformed saved block properties rejected before world attachment");
+        write(reopened.path,good);
+        var workerLedger=new GameplayBlocksLedger(save,SURFACE,true);var evidence=Files.createDirectories(root.resolve("runtime/evidence/world-block-writer"));
+        var worker=new GameplayBlocksFiles(root,evidence,workerLedger);worker.publish(4,Map.of(b,"minecraft:oak_log[axis=y]"),"{\"revision\":4}");worker.close();
+        long deadline=System.nanoTime()+3_000_000_000L;while(!worker.finished()&&System.nanoTime()<deadline)Thread.sleep(5);
+        check(worker.finished()&&worker.failure()==null&&worker.persistedRevision()==4,"Mixed-state worker drains without game-thread IO");
+        check(new GameplayBlocksLedger(save,SURFACE,true).initialStates.equals(Map.of(b,"minecraft:oak_log[axis=y]")),"Worker persists removal and orientation atomically");
     }
     private static void terrainLedgerTests(Path root)throws Exception{
         var seed=GameplayTerrain.initial(tile(0));var grown=seed.admit(1,0,tile(1));
@@ -119,6 +153,16 @@ public final class GameplayBlocksTests {
         long now=System.currentTimeMillis();var id=new HudInputProtocol.Identity("b".repeat(32),12,345,34,678,now+60_000);
         var valid=aimJson(id,save,now);String world=save.id().toString();
         GameplayAimReader.parse(valid.toString(),id,world,SURFACE,now);checks++;
+        var view=valid.deepCopy();view.addProperty("schema",2);view.addProperty("kind","minecome_gameplay_aim_v2");
+        view.add("up",JsonParser.parseString("{\"x\":0,\"y\":0,\"z\":1}"));view.addProperty("vertical_fov",1.2);
+        check(GameplayAimReader.parse(view.toString(),id,world,SURFACE,now).get("schema").getAsInt()==2,"World-block aim v2 accepts exact orthogonal camera/FOV");
+        for(double bad:List.of(0.0,.05,Math.PI,4.0)){
+            var changed=view.deepCopy();changed.addProperty("vertical_fov",bad);reject(()->GameplayAimReader.parse(changed.toString(),id,world,SURFACE,now),"Invalid vertical FOV rejected");
+        }
+        var missingUp=view.deepCopy();missingUp.remove("up");reject(()->GameplayAimReader.parse(missingUp.toString(),id,world,SURFACE,now),"World camera cannot omit up basis");
+        var nonunitUp=view.deepCopy();nonunitUp.getAsJsonObject("up").addProperty("z",2);reject(()->GameplayAimReader.parse(nonunitUp.toString(),id,world,SURFACE,now),"Nonunit up rejected");
+        var parallelUp=view.deepCopy();parallelUp.add("up",view.get("direction").deepCopy());reject(()->GameplayAimReader.parse(parallelUp.toString(),id,world,SURFACE,now),"Parallel camera basis rejected");
+        var textFov=view.deepCopy();textFov.addProperty("vertical_fov","1.2");reject(()->GameplayAimReader.parse(textFov.toString(),id,world,SURFACE,now),"String camera FOV rejected");
         for(String key:List.of("kind","run","world_id","patch_run","patch_sha256","target_start_filetime")){
             var j=valid.deepCopy();j.addProperty(key,"foreign");reject(()->GameplayAimReader.parse(j.toString(),id,world,SURFACE,now),"Foreign aim identity rejected: "+key);
         }
@@ -166,5 +210,22 @@ public final class GameplayBlocksTests {
         write(closingDirectory.resolve("gameplay-aim.json"),aimJson(id,save,System.currentTimeMillis()));
         var closing=new GameplayAimReader(closingDirectory,id,SURFACE,world);closing.close();
         Thread.sleep(20);check(closing.current()==null,"Closing never exposes a concurrently finishing read");
+
+        Path viewDirectory=Files.createDirectories(root.resolve("runtime/evidence/world-camera-reader"));
+        view.addProperty("utc_ms",System.currentTimeMillis());write(viewDirectory.resolve("gameplay-aim.json"),view);
+        try(var reader=new GameplayAimReader(viewDirectory,id,SURFACE,world,true)){
+            long deadline=System.nanoTime()+1_000_000_000L;while(reader.worldView()==null&&reader.failure()==null&&System.nanoTime()<deadline)Thread.sleep(2);
+            var camera=reader.worldView();check(camera!=null&&reader.current()!=null&&reader.failure()==null,"World-block reader publishes matching aim and camera");
+            check(camera.origin().squaredDistanceTo(new net.minecraft.util.math.Vec3d(2.5,65.62,.5))<1e-15,"World camera origin uses native coordinate transform");
+            check(camera.forward().squaredDistanceTo(new net.minecraft.util.math.Vec3d(1,0,0))<1e-15&&camera.up().squaredDistanceTo(new net.minecraft.util.math.Vec3d(0,1,0))<1e-15,"World camera basis uses same transform as aiming");
+            check(Math.abs(camera.verticalFovRadians()-1.2)<1e-12,"World camera retains actual vertical FOV");
+            Thread.sleep(320);check(reader.worldView()==null&&reader.current()==null&&reader.failure()==null,"Expired camera cannot keep world blocks rendered at a stale view");
+        }
+        Path legacyView=Files.createDirectories(root.resolve("runtime/evidence/world-camera-legacy"));
+        write(legacyView.resolve("gameplay-aim.json"),aimJson(id,save,System.currentTimeMillis()));
+        try(var reader=new GameplayAimReader(legacyView,id,SURFACE,world,true)){
+            long deadline=System.nanoTime()+1_000_000_000L;while(reader.failure()==null&&System.nanoTime()<deadline)Thread.sleep(2);
+            check(reader.failure()!=null&&reader.worldView()==null,"World renderer rejects legacy aim without camera/FOV instead of guessing");
+        }
     }
 }

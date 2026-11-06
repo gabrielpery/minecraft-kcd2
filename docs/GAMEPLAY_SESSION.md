@@ -329,6 +329,81 @@ normally. Evidence and observation scope:
 `runtime/evidence/gameplay-kcd-20261105-201229-cf98ac724f5f4ce2a7b84e588b1f4bee/chat-observation.json`.
 This proves that command path; it is not a human typing-speed or flight check.
 
+## Minecraft world blocks
+
+`-WorldBlocks` includes `-Hands`, `-Flight`, `-Chat`, `-Blocks` and `-Movement`,
+and combines with `-Explore`. It uses the same native Chat/Flight bundle. The
+guest renders owned blocks with Minecraft's actual baked block-state models and
+textures, aligned to the captured KCD camera position, basis and vertical FOV.
+This profile disables the older native stone-only mirror to avoid double rendering.
+
+With KCD2 closed, prepare/install a fresh bundle and start the test world:
+
+```powershell
+$bundle = Join-Path (Get-Location) ('runtime/hud-gameplay-world-blocks-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+& './scripts/Prepare-GameplayHud.ps1' -WorldBlocks -BundleDirectory $bundle
+& './scripts/Install-GameplayHud.ps1' -WorldBlocks -BundleDirectory $bundle
+& './scripts/Start-Kcd2ToolsTest.ps1'
+```
+
+Once the world has loaded:
+
+```powershell
+& './scripts/Start-GameplaySession.ps1' -WorldBlocks -Explore -BundleDirectory $bundle
+```
+
+Select a supported block from Creative inventory or obtain one through Minecraft
+chat, for example `/give @s minecraft:oak_planks 64`. Right-click captured ground
+or an owned block face to place; left-click to mine through the vanilla block
+controller. Minecraft decides the placed state, including a log's axis. Block
+identity and properties remain in the saved world and ownership ledger. Reopen
+worlds containing these additional blocks with `-WorldBlocks`; the legacy stone
+profile does not adopt unsupported saved states. Placement currently targets
+captured terrain or owned blocks, not arbitrary KCD walls or other native objects.
+
+The initial palette contains opaque full cubes: dirt/coarse dirt, common stone
+and masonry variants, planks, ordinary and stripped logs, wool, concrete, mineral
+blocks and obsidian. The exact list is in
+[`GameplayBlocksPalette.java`](../minecraft/src/main/java/dev/minecome/gameplay/GameplayBlocksPalette.java).
+It excludes fluids, glass, leaves, slabs/stairs, containers, redstone and other
+blocks requiring additional shapes, transparency or behavior integration.
+The existing 64-block capacity, Minecraft Y56..80 bounds and captured-terrain
+coverage remain. The new rendering layer does not create native KCD physics for
+NPCs; Minecraft supplies the player's owned-block collision.
+
+World blocks share the existing 20 FPS transparent capture and aspect-fit
+compositor with hands and UI. They depth-test against one another, but the layer
+does not test against KCD terrain or objects: a host obstruction can therefore
+be drawn behind a Minecraft block. Minecraft supplies model lighting; native
+lighting/shadows, unrestricted building and third-person Steve remain unfinished.
+
+`./scripts/Test-GameplayWorldBlocks.ps1` launches isolated actual Minecraft twice.
+Real ChatScreen commands supply items, then controller clicks place dirt, planks,
+bricks and a sideways oak log. Nine captured PNGs verify model pixels, clear
+surroundings, inventory with the blocks behind it, hidden hands, and restored
+hands after closing inventory. The second launch checks exact saved states,
+including `axis=x`, and mines all four blocks. Both normal saves and collision/
+ownership cleanup pass. Evidence:
+`runtime/evidence/gameplay-world-blocks-20261106-131410-b90d6a6eca0246ed8d1c5c426c107399/verification.json`.
+
+Separate automated live KCD2 checks placed dirt on captured ground and bricks
+on its top face, with actual server confirmation and visible models. The first
+inventory open exposed a 380ms publication gap and correctly stopped the session.
+The native WorldBlocks path now prepares the actual inventory before announcing
+readiness; the 250ms freshness limit remains unchanged. A fresh session restored
+both saved blocks, opened/closed inventory without losing the layer, then removed
+each block with one aimed click. Its 104-second run published 1,830 frames with
+a maximum publication gap of 77.98ms and saved/cleaned up normally. Observation:
+`runtime/evidence/gameplay-kcd-20261106-131615-e75830f6a946424d8b4b232771114561/world-blocks-observation.json`.
+These checks do not establish host depth occlusion or repeat walking/flight
+acceptance with the new world layer.
+
+After stopping the session with F8 and closing KCD2:
+
+```powershell
+& './scripts/Install-GameplayHud.ps1' -WorldBlocks -BundleDirectory $bundle -Restore
+```
+
 ## Minecraft hands and held items
 
 `-Hands` includes `-Flight` (and therefore chat, walking and blocks). It reuses
@@ -354,12 +429,14 @@ Hotbar selection changes the actual vanilla held model. An empty slot shows the
 saved player's Minecraft arm/skin. Inventory and chat hide the hand pass; it
 returns after closing them. The vanilla renderer supplies models, equip/swing
 animation, projection and lighting. This does not force a Steve skin, render a
-third-person character, add NPC combat or make non-stone blocks buildable in KCD2.
+third-person character or add NPC combat. `-Hands` alone keeps stone-only building;
+use `-WorldBlocks` above for the additional palette.
 
 Hands share the existing 20 FPS HUD capture and aspect-fit scaling. They are a
 first-person overlay without host-world depth occlusion. Opaque skin, stone and
 an unenchanted sword have pixel checks; translucent/glint/special item renderers
-need further coverage. The Minecraft world remains suppressed.
+need further coverage. Ordinary Minecraft world rendering remains suppressed;
+`-WorldBlocks` adds a separate pass for owned blocks.
 
 `./scripts/Test-GameplayHands.ps1` runs one isolated actual-Minecraft session. It
 captures seven PNGs covering empty hand, stone, sword, swing, inventory, restored

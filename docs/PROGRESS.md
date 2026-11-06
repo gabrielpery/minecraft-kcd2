@@ -1,5 +1,52 @@
 # MineCome progress — 2026-11-06
 
+## Actual Minecraft world blocks
+
+Implemented and compiled `-WorldBlocks`, including Hands/Flight/Chat/Blocks/Movement
+and optional Explore. Confirmed owned block states render through Minecraft's
+actual baked models and textures using the captured native camera position,
+direction, up vector and vertical FOV. Strict aim schema2 shares that camera with
+the existing targeting path; old stone profiles retain schema1 and their native
+mirror. WorldBlocks disables that mirror, so models are not drawn twice.
+
+The bounded palette supports dirt, masonry, planks, logs, wool, concrete and
+mineral blocks. Vanilla placement, mining and collision remain authoritative;
+the ownership ledger now preserves canonical states, including oriented logs
+and block-state item components. No Minecraft assets are shipped in Git.
+Opaque full cubes only; capacity64 and Y56..80 remain. This layer handles
+block/block depth, but cannot yet hide blocks behind KCD terrain or objects.
+
+Automated actual-Minecraft paired check PASS:
+`runtime/evidence/gameplay-world-blocks-20261106-131410-b90d6a6eca0246ed8d1c5c426c107399/verification.json`.
+Real ChatScreen commands supply dirt, oak planks, bricks and oak log. Vanilla
+controller clicks place four blocks, including `oak_log[axis=x]`; nine PNGs check
+model pixels, clear surroundings, inventory hiding hands and closing back to
+the world. A second launch retains the exact world/player/states, then mines all
+four. Normal saves and collision/ownership cleanup pass. Root inspected PNGs.
+Offline build and117 focused checks pass, as do9 host worker/contract checks,
+Lua movement lifecycle and PowerShell parsing. These alone are not native proof.
+
+Automated live KCD2 rendering/input PASS:
+`runtime/evidence/gameplay-kcd-20261106-131615-e75830f6a946424d8b4b232771114561/world-blocks-observation.json`.
+Computer Use supplied dirt and bricks through native Minecraft chat in the
+preceding run, placed dirt directly on captured ground and bricks on its top,
+and observed both actual textures over KCD scenery. First inventory opening
+caused a380ms publication gap and a controlled save/shutdown under the existing
+250ms guard. Native WorldBlocks startup now renders the actual inventory before
+publishing READY, without weakening freshness or processing stale input.
+The retry restored both saved blocks, opened/closed inventory with world pixels
+preserved and hands correctly hidden/restored, then broke each with one aimed
+click. It ran104s with1830 publications and max78ms publication gap; normal save,
+host cleanup and native bundle restoration passed. Both games are closed.
+An intermediate pre-arm attempt timed out while KCD was still loading.
+
+No manual testing was required. This stationary check does not revalidate
+walking, flight, frontier crossing or host depth. Player collision with owned
+blocks and placement on captured ground already exist; arbitrary host wall/tree
+surfaces and NPC block collision do not. Hovered-block outline is the next small
+rendering feature. Full block shapes, third-person Steve, Survival/NPC combat
+and Elytra remain required product work.
+
 ## Actual Minecraft hands and held items
 
 Implemented and compiled `-Hands`, including Flight/Chat/Blocks/Movement and
@@ -37,7 +84,8 @@ visual evidence is recorded separately rather than inferred from frame counters.
 
 The layer retains the existing 20 FPS capture/aspect-fit compositor. It has no
 host-world depth occlusion and uses the saved player's skin rather than forcing
-Steve. Third-person Steve, non-stone world blocks, translucent/glint/special item
+Steve. This hands-only milestone did not cover non-stone world blocks (added
+above). Third-person Steve, translucent/glint/special item
 coverage, NPC combat and host lighting integration remain unfinished.
 
 ## Creative flight in sustained gameplay

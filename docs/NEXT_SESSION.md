@@ -4,9 +4,39 @@
 
 Deliver docs/PRODUCT.md in integrated feature batches. User prioritizes progress,
 automated tests and minimal manual checks. Preserve working controls and labs.
-Creative flight and first-person hands now work; do not repeat their completed
-acceptance sequences. General block rendering, third-person Steve, complete host
-collision, Minecraft Survival/NPC combat and Elytra remain required.
+Creative flight, first-person hands and a bounded non-stone building palette now
+work; do not repeat their completed acceptance sequences. Full block coverage,
+third-person Steve, complete host collision, Survival/NPC combat and Elytra remain
+required. User also asked for the hovered-block wireframe: implement that next.
+
+## Latest milestone: actual Minecraft world blocks
+
+`-WorldBlocks` implies Hands+Flight+Chat+Blocks+Movement; optional Explore. It uses
+the unchanged Chat native bundle. GameplayWorldRenderer draws confirmed owned
+states through vanilla BlockRenderManager with native camera origin, basis and
+vertical FOV. Aim schema2 carries those together; legacy stone paths retain v1.
+WorldBlocks disables the native stone mirror. Actual canonical states persist,
+including log axes and item BLOCK_STATE placement components. Opaque full cubes
+only: dirt, masonry, planks, logs, wool, concrete and mineral blocks. See palette.
+Capacity64, Y56..80, captured terrain coverage remain. No KCD scenery depth.
+
+Automated paired Minecraft PASS, nine PNGs:
+`runtime/evidence/gameplay-world-blocks-20261106-131410-b90d6a6eca0246ed8d1c5c426c107399/verification.json`.
+Real chat items, four vanilla placements (dirt/planks/bricks/log axis=x), inventory
+open/close, exact save/reopen, four breaks and normal cleanup. 117 unit checks,
+9 host checks, Lua movement lifecycle, compile and script parse also passed.
+
+Native visual/input proof, no manual testing:
+`runtime/evidence/gameplay-kcd-20261106-131615-e75830f6a946424d8b4b232771114561/world-blocks-observation.json`.
+Prior run fa1a258a27f748c3b0d7a75d9e7be0f9 placed dirt directly on captured ground
+and bricks on top. Its first inventory produced a380ms publication gap and the
+250ms guard stopped it; both blocks saved. Fixed by rendering real inventory
+before publication/READY in native WorldBlocks startup (12frames/750ms minimum,
+10s deadline), not by weakening freshness. Retry restored both, passed inventory
+and hand transitions, then single aimed clicks broke each. 104s,1830 publications,
+max publication gap78ms, normal save/cleanup. An intermediate attempt started
+before KCD finished loading and timed out pre-arm; no feature failure inferred.
+No walking/flight/frontier/host-depth claims from this stationary native check.
 
 ## New working milestone: actual Minecraft hands
 
@@ -45,13 +75,14 @@ renderers and host lighting are unverified. These are documented limitations.
 
 ## Next integrated feature
 
-Extend real Minecraft content rendering to general placed blocks, preserving
-saved block identity, shape, collision and existing aimed interactions. Inspect
-current block/aim ownership before altering it. Current KCD world representation
-is still stone-only (64 owned blocks, Y56..80); rendering other held items does
-not expand placeable block support. First-person overlay does not solve world
-camera projection/depth or third-person Steve. Reuse the existing transparent
-capture/native compositor where valid; avoid creating one KCD asset per item.
+Add the Minecraft hovered-block outline using the same fresh native ray and
+vanilla block outline shape as placement/mining, rendered through WorldBlocks.
+Do not outline a separate guessed box. Then expand shapes and host-world depth/
+collision as integrated feature work; reuse real models, no per-block KCD assets.
+Player collision with owned blocks and placement directly on captured ground
+already exist. Arbitrary KCD walls/trees/objects are not captured as buildable
+surfaces, and KCD NPCs do not collide with these composited blocks. Outline,
+native depth occlusion and third-person Steve remain unfinished.
 Elytra still needs faster/3D collision admission, not just raised speed limits.
 
 ## Prior foundations — preserve, do not redo
@@ -81,9 +112,10 @@ Elytra still needs faster/3D collision admission, not just raised speed limits.
 
 Branch codex/initial-import; public github.com/gabrielpery/minecraft-kcd2.
 JDK C:/Program Files/Java/jdk-24; offline Gradle cache minecraft/.gradle-user-home.
-Both games closed; hands test world saved. Prior renderer restored:
-`runtime/evidence/gameplay-hud-restore-20261106-125202-73f3bd9a73ac4f9ab6e9da674a05f0da`.
-Bundle runtime/hud-gameplay-hands-20261106 is restored; do not reuse its receipt.
+Both games closed; WorldBlocks native world saved (both test blocks mined).
+Prior renderer restored:
+`runtime/evidence/gameplay-hud-restore-20261106-131857-04f9a3357cda4b42a4e352185095263c`.
+Bundle runtime/hud-gameplay-world-blocks-20261106 is restored; do not reuse its receipt.
 Use a fresh BundleDirectory after changes. Assets/runtimes/saves stay out of Git.
 Exact official tools1.5.5 exe SHA256:
 a32d077e6b54e5cd0c5a5f3194f473779706ff266a711e4745ccdb598843340a.

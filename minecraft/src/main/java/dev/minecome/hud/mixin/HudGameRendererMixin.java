@@ -3,6 +3,8 @@ package dev.minecome.hud.mixin;
 import dev.minecome.hud.HudRenderHooks;
 import net.minecraft.client.render.Camera;
 import net.minecraft.client.render.GameRenderer;
+import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.render.RenderTickCounter;
 import org.joml.Matrix4f;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.*;
@@ -13,6 +15,10 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * Local inspection: runtime/evidence/hands-source-20261106/GameRenderer.txt. */
 @Mixin(GameRenderer.class)
 public abstract class HudGameRendererMixin {
+    @Inject(method="renderWorld(Lnet/minecraft/client/render/RenderTickCounter;)V",at=@At(value="INVOKE",target="Lnet/minecraft/client/render/WorldRenderer;render(Lnet/minecraft/client/render/RenderTickCounter;ZLnet/minecraft/client/render/Camera;Lnet/minecraft/client/render/GameRenderer;Lnet/minecraft/client/render/LightmapTextureManager;Lorg/joml/Matrix4f;Lorg/joml/Matrix4f;)V"))
+    private void minecome$ownedWorldLayer(RenderTickCounter counter,CallbackInfo info){
+        HudRenderHooks.beforeWorld(MinecraftClient.getInstance().gameRenderer.getCamera(),counter.getTickDelta(false));
+    }
     @Inject(method="render(Lnet/minecraft/client/render/RenderTickCounter;Z)V",at=@At(value="INVOKE",target="Lcom/mojang/blaze3d/systems/RenderSystem;clear(IZ)V",ordinal=0))
     private void minecome$transparentUi(CallbackInfo info){HudRenderHooks.beforeGuiClear();}
     @Inject(method="render(Lnet/minecraft/client/render/RenderTickCounter;Z)V",at=@At("RETURN"))

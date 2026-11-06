@@ -1,8 +1,8 @@
 # Persistent guest foundation. Actual Minecraft window; no KCD launch or input capture.
 [CmdletBinding()]
 param([string]$JavaHome='C:/Program Files/Java/jdk-24',[string]$InstanceDirectory,
- [string]$EvidenceDirectory,[string]$ReceiverPath,[ValidateSet('','create','resume','walking','walking-resume','blocks','blocks-resume','blocks-survival','terrain','terrain-resume','chat','chat-resume','flight','flight-resume','flight-fall','flight-fall-resume','hands')][string]$FixturePhase='',
- [switch]$Movement,[switch]$Blocks,[switch]$Explore,[switch]$Chat,[switch]$Flight,[switch]$Hands,[string]$GroundPatchFile,[switch]$PreflightOnly)
+ [string]$EvidenceDirectory,[string]$ReceiverPath,[ValidateSet('','create','resume','walking','walking-resume','blocks','blocks-resume','blocks-survival','terrain','terrain-resume','chat','chat-resume','flight','flight-resume','flight-fall','flight-fall-resume','hands','world-blocks','world-blocks-resume')][string]$FixturePhase='',
+ [switch]$Movement,[switch]$Blocks,[switch]$Explore,[switch]$Chat,[switch]$Flight,[switch]$Hands,[switch]$WorldBlocks,[string]$GroundPatchFile,[switch]$PreflightOnly)
 . (Join-Path $PSScriptRoot 'powershell7.ps1')
 if($PSVersionTable.PSVersion.Major -lt 7){
  $code=Invoke-MineComePowerShell7 -ScriptPath $PSCommandPath -BoundParameters $PSBoundParameters
@@ -11,10 +11,10 @@ if($PSVersionTable.PSVersion.Major -lt 7){
 $ErrorActionPreference='Stop';Set-StrictMode -Version Latest
 $root=[IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
 . (Join-Path $PSScriptRoot 'HudGroundMovement.ps1')
-if($Hands){$Flight=$true};if($Flight){$Chat=$true}
+if($WorldBlocks){$Hands=$true};if($Hands){$Flight=$true};if($Flight){$Chat=$true}
 if($Explore -or $Chat){$Blocks=$true};if($Blocks){$Movement=$true}
 if($FixturePhase.StartsWith('flight') -and -not $Flight){throw 'Flight fixture requires -Flight.'}
-if($FixturePhase -eq 'hands' -and -not $Hands){throw 'Hands fixture requires -Hands.'}
+if($FixturePhase.StartsWith('world-blocks') -and -not $WorldBlocks){throw 'World block fixtures require -WorldBlocks.'};if($FixturePhase -eq 'hands' -and -not $Hands){throw 'Hands fixture requires -Hands.'}
 if($FixturePhase.StartsWith('terrain') -and -not $Explore){throw 'Terrain fixture requires -Explore.'}
 if($FixturePhase.StartsWith('chat') -and -not $Chat){throw 'Chat fixture requires -Chat.'}
 if($FixturePhase.StartsWith('blocks') -and -not $Blocks){throw 'Block fixtures require -Blocks.'}
@@ -54,7 +54,7 @@ try{
  if($Explore){$childArgs+='-Explore'}
  if($Chat){$childArgs+='-Chat'}
  if($Flight){$childArgs+='-Flight'}
- if($Hands){$childArgs+='-Hands'}
+ if($Hands){$childArgs+='-Hands'};if($WorldBlocks){$childArgs+='-WorldBlocks'}
  $helper=Start-GameplayChild $powerShell $childArgs 'client'
  $deadline=[DateTime]::UtcNow.AddSeconds(120)
  $readyPath=Join-Path $EvidenceDirectory 'capture/stream-ready.json'
@@ -108,7 +108,7 @@ finally{
   [void]$helper.WaitForExit(10000)
  }
  [ordered]@{schema=1;kind='minecome_gameplay_guest_session_v1';run=$run;result=$(if($passed){'passed'}else{'failed'});failure=$failure;
-  instance=$InstanceDirectory;fixture=$FixturePhase;movement=[bool]$Movement;blocks=[bool]$Blocks;explore=[bool]$Explore;chat=[bool]$Chat;flight=[bool]$Flight;hands=[bool]$Hands;kcd_connected=$false;normal_client_exit=($helper -and $helper.HasExited -and $helper.ExitCode -eq 0)}|
+  instance=$InstanceDirectory;fixture=$FixturePhase;movement=[bool]$Movement;blocks=[bool]$Blocks;explore=[bool]$Explore;chat=[bool]$Chat;flight=[bool]$Flight;hands=[bool]$Hands;world_blocks=[bool]$WorldBlocks;kcd_connected=$false;normal_client_exit=($helper -and $helper.HasExited -and $helper.ExitCode -eq 0)}|
   ConvertTo-Json|Set-Content -LiteralPath (Join-Path $EvidenceDirectory 'verification.json') -Encoding utf8NoBOM
 }
 [pscustomobject]@{EvidenceDirectory=$EvidenceDirectory;VerificationFile=(Join-Path $EvidenceDirectory 'verification.json')}

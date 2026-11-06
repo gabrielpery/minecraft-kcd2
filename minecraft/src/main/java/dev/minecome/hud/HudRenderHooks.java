@@ -18,6 +18,12 @@ public final class HudRenderHooks {
         GameplaySession.beforeHandClear();
         if(GameplaySession.handsEnabled()&&GameplaySession.transparentFrame())GameplayHandRenderState.begin(camera,tickDelta);
     }
+    public static void beforeWorld(Camera camera,float tickDelta) {
+        if(!GameplaySession.worldBlocksEnabled())return;
+        GameplaySession.beforeWorldClear();
+        if(GameplaySession.transparentFrame())GameplaySession.worldRenderCompleted(
+            GameplayWorldRenderer.render(camera,tickDelta,GameplaySession.worldBlocksView(),GameplaySession.worldBlocksToRender()));
+    }
     public static void handRenderStarted() { if(GameplaySession.handsEnabled())GameplaySession.handRenderStarted(); }
     public static void handRenderCompleted() { if(GameplaySession.handsEnabled())GameplaySession.handRenderCompleted(); }
     public static void afterHand() { GameplayHandRenderState.end(); }

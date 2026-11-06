@@ -80,7 +80,7 @@ local function emit(p,event,result,s,seq)
  if not System or type(System.LogAlways)~='function' then return false end
  local t='{"schema":1,"run":'..quote(p.run)..',"event":'..quote(event)..',"result":'..quote(result)..',"seq":'..number(seq or 0)
   ..',"active":'..tostring(not p.terminal)..',"pose_seq":'..number(p.sequence or 0)..',"applied_seq":'..number(p.applied or 0)..',"writes":'..number(p.writes or 0)
-  ..',"sampled_engine_seconds":'..number(clock())..',"player":'..vec(s and s.position)..',"camera":'..vec(s and s.camera)..',"forward":'..vec(s and s.forward)..',"up":'..vec(s and s.up)
+  ..',"sampled_engine_seconds":'..number(clock())..',"player":'..vec(s and s.position)..',"camera":'..vec(s and s.camera)..',"forward":'..vec(s and s.forward)..',"up":'..vec(s and s.up)..',"fov":'..number(s and s.fov)
   ..(s and s.aim and (',"aim":{"known":'..tostring(s.aim.known)..',"distance":'..number(s.aim.distance)..',"terrain_hit":'..tostring(s.aim.terrain_hit)..',"range":4.5}') or '')
   ..',"camera_basis_valid":'..tostring(s~=nil and normal(s))..',"timers_cancelled":'..tostring(p.timers_cancelled==true)..',"position_restored":false,"control_state_changed":false}'
  local ok,v=pcall(System.LogAlways,'[MineComeGameplayMovement] '..t);return ok and v~=false

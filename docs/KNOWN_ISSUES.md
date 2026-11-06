@@ -1,19 +1,44 @@
 # Known issues and blockers
 
+## World block rendering limits
+
+`-WorldBlocks` adds actual Minecraft model rendering and saved states for a
+bounded palette of opaque full cubes. The automated two-launch Minecraft check
+passes dirt/planks/bricks/oriented-log placement, pixels, inventory, persistence
+and mining. Automated live KCD2 checks pass dirt/bricks placement, reopening,
+inventory and aimed removal. This path retains the 64-block
+limit, Minecraft Y56..80 bounds and captured-terrain coverage. Fluids, glass,
+leaves, partial shapes, containers, redstone and dynamic block behavior are not
+supported by the initial palette.
+
+The transparent world layer has block/block depth, but no KCD terrain/object
+depth occlusion. Blocks can appear in front of host obstructions. It inherits
+20 FPS capture/aspect-fit and Minecraft model lighting, without KCD lighting or
+shadows. Minecraft owns player/block collision; this layer does not add native
+block collision for KCD NPCs. Saved worlds containing non-stone blocks require
+the matching `-WorldBlocks` profile on reopening.
+
+The initial native check stopped on a 380ms publication gap during the first
+inventory open. Preparing the actual inventory before WorldBlocks readiness
+fixed the focused retry: inventory and both aimed removals passed, with maximum
+publication gap 77.98ms. The 250ms freshness guard was preserved. Walking/flight
+with this world layer remains unverified. Placement against arbitrary native
+walls/objects is not implemented; captured ground and owned-block faces already work.
+
 ## First-person rendering limits
 
 The `-Hands` profile adds actual vanilla hands/held items to the HUD overlay.
 It uses the player's Minecraft skin, does not force Steve, and does not render a
 third-person character. Capture remains 20 FPS with aspect-fit scaling and no
 host depth occlusion. Opaque skin, stone and an unenchanted sword have image
-coverage; special/translucent/glint item renderers need further checks. General
-world blocks and KCD NPC combat are not supplied by this visual layer.
+coverage; special/translucent/glint item renderers need further checks. Additional
+world blocks use the separate `-WorldBlocks` path; KCD NPC combat remains unfinished.
 
 ## Sustained gameplay and Creative flight
 
 The separate [gameplay profiles](GAMEPLAY_SESSION.md) now provide persistent worlds,
-walking, owned stone construction, growing terrain coverage, commands and Creative
-flight. Historical bounded-lab restrictions below do not describe every profile.
+walking, bounded owned-block construction, growing terrain coverage, commands and
+Creative flight. Historical bounded-lab restrictions below do not describe every profile.
 Creative flight has automated native takeoff/hover/inventory/landing evidence;
 actual-Minecraft fixtures also cover horizontal/sprint/descent and airborne reload.
 It remains limited to captured heightfield/owned-stone collision, an 18m ceiling

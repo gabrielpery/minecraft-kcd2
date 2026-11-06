@@ -1,9 +1,9 @@
 #Requires -Version 5.1
 # Explicit reversible tools-only replacement. Never launches/stops games or arms HUD.
 [CmdletBinding()]
-param([string]$BundleDirectory,[switch]$PreflightOnly,[switch]$Restore,[switch]$Movement,[switch]$Blocks,[switch]$Chat,[switch]$Flight,[switch]$Hands)
+param([string]$BundleDirectory,[switch]$PreflightOnly,[switch]$Restore,[switch]$Movement,[switch]$Blocks,[switch]$Chat,[switch]$Flight,[switch]$Hands,[switch]$WorldBlocks)
 $ErrorActionPreference='Stop';Set-StrictMode -Version Latest
-if($Flight -or $Hands){$Chat=$true}
+if($Flight -or $Hands -or $WorldBlocks){$Chat=$true}
 . (Join-Path $PSScriptRoot 'GameplayHudProfile.ps1')
 if(-not $BundleDirectory){$BundleDirectory=Join-Path $script:mcGameplayRoot $(if($Chat){'runtime/hud-compositor-gameplay-chat'}elseif($Blocks){'runtime/hud-compositor-gameplay-blocks'}elseif($Movement){'runtime/hud-compositor-gameplay-movement'}else{'runtime/hud-compositor-gameplay'})}
 $bundle=Resolve-MineComeGameplayPath $BundleDirectory -InRuntime;$profile=Get-MineComeGameplayProfile -Movement:$Movement -Blocks:$Blocks -Chat:$Chat;$manifest=Assert-MineComeGameplayBundle $bundle $profile

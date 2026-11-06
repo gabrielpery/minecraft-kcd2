@@ -30,7 +30,8 @@ terrain; `-Blocks` adds vanilla placement/mining for up to 64 owned stones. Thes
 paths have no demo walking cutoff or timed return. Actual-Minecraft checks pass
 walking, inventory suppression, placement on different faces, Survival mining and
 saved-world restoration. Sustained native HUD attachment and cleanup also pass;
-physical walking/building acceptance in these new profiles remains pending.
+physical walking acceptance in these new profiles remains pending. Additional
+block placement now has the native verification described below.
 
 The new [`-Explore` entry](docs/GAMEPLAY_SESSION.md#grow-captured-terrain-during-a-session)
 adds on-demand 8×8 metre terrain tiles, keeps the original coordinate origin and
@@ -53,8 +54,8 @@ and Ctrl sprints. Automated actual-Minecraft checks cover those controls, invent
 and chat suppression, landing and airborne save/reopen. An automated live KCD2
 check also passes native takeoff, ascent, hovering, inventory and landing with the
 HUD visible. Flight currently uses captured terrain and owned stone collision,
-with an 18m height ceiling above the original capture origin. General blocks,
-complete host collision, Steve, cross-game combat and Elytra remain unfinished.
+with an 18m height ceiling above the original capture origin. Complete host
+collision, third-person Steve, cross-game combat and Elytra remain unfinished.
 Bounded labs remain available.
 
 The [`-Hands` profile](docs/GAMEPLAY_SESSION.md#minecraft-hands-and-held-items)
@@ -63,8 +64,21 @@ rendering to the HUD stream. A real-Minecraft automated check captures empty han
 stone, sword, swing and inventory transitions with transparent world pixels and
 normal cleanup. An automated live KCD2 check also shows the arm and held stone,
 hides them in chat/inventory, and restores the stone after inventory closes.
-This uses the player's vanilla skin and item models; third-person
-Steve, world rendering for general blocks and NPC combat remain separate work.
+This uses the player's vanilla skin and item models; third-person Steve and NPC
+combat remain separate work.
+
+The [`-WorldBlocks` profile](docs/GAMEPLAY_SESSION.md#minecraft-world-blocks) adds
+an initial palette of opaque blocks, including planks, oriented logs, wool,
+concrete and masonry. Minecraft renders their actual state models into a
+transparent layer aligned to KCD2's camera; it also owns placement, collision,
+mining and saved block states. An automated two-launch Minecraft check places
+dirt, planks, bricks and a sideways log, verifies nine model/UI images, reopens
+the same save and breaks all four. Automated live KCD2 checks also place dirt and
+bricks, restore them after reopening, keep them visible through inventory, and
+remove each with an aimed click. This layer has no KCD terrain/object depth
+occlusion yet. Building remains bounded to 64 blocks inside captured coverage;
+fluids, transparent blocks, slabs, containers and other dynamic blocks are not
+included. Walking/flight with this new world layer has not been re-verified.
 
 The new [repeat-session development profile](kcd2/MOVEMENT-LAB.md#repeat-sessions-in-one-kcd-process)
 is implemented and compiled, with automated cleanup/rearm checks passing.
@@ -133,7 +147,8 @@ deviation during landing; it is not counted as a passing walking check.
 | Minecraft stone in KCD2 | Actual Minecraft-derived stone appears and disappears in the official KCD2 development world after vanilla placement/breaking. |
 | Hotbar and Creative inventory | Minecraft's real UI is composited inside KCD2. Physical slot selection, inventory opening/closing, clicks, dragging and scrolling have passed live tests. |
 | Creative flight | Native KCD2 takeoff, ascent, hover, inventory and landing pass an automated live check with the HUD visible. Actual-Minecraft fixtures also verify descent, horizontal/sprint flight and airborne save/reopen. Limited to captured terrain/owned stone collision and an 18m ceiling; no Elytra yet. |
-| First-person hands and held items | The `-Hands` profile renders the actual vanilla arm, selected item and swing animation in the transparent stream. Seven actual-Minecraft image checks pass. An automated live KCD2 check passes arm/held stone and chat/inventory hiding/restoration. No third-person character or general world blocks yet. |
+| First-person hands and held items | The `-Hands` profile renders the actual vanilla arm, selected item and swing animation in the transparent stream. Seven actual-Minecraft image checks pass. An automated live KCD2 check passes arm/held stone and chat/inventory hiding/restoration. No third-person character yet. |
+| Additional world blocks | `-WorldBlocks` renders actual opaque Minecraft block models. A two-launch Minecraft fixture passes dirt/planks/bricks/oriented-log placement, model pixels, inventory, saved-state restoration and mining. Automated live KCD2 checks pass dirt/bricks placement, reopening, inventory and aimed removal; no host depth occlusion or unrestricted block support. |
 | Camera and block controls together | KCD camera look works outside inventory and stays still inside it. Right-click/place and left-click/break work in one fixed nearby cell during a bounded live session. |
 | Minecraft aiming | After fixing KCD's default stone rotation, a live right-click places on the original block's top face and the next two clicks break both blocks, with matching Minecraft/KCD records and user confirmation. The standalone actual-Minecraft lab passes 28 targeting/control scenarios with synthetic host rays, including hotbar changes while an action finishes. |
 | Movement groundwork | In an automatic two-game test, KCD follows walking/jumping from the Minecraft HUD world over sampled KCD ground, then returns the player to the starting position. The same save completes its HUD/inventory sequence. This bounded scripted lab uses a standalone HUD receiver; the separate gameplay path removes its timed return. |
