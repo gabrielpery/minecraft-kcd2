@@ -9,6 +9,34 @@ work; do not repeat their completed acceptance sequences. Full block coverage,
 third-person Steve, complete host collision, Survival/NPC combat and Elytra remain
 required. The requested hovered-block wireframe now works and is verified.
 
+## Latest milestone: slabs and stairs
+
+WorldBlocks now supports 30 dry slab and 28 stair types. Vanilla placement context
+handles same-cell slab merging, half/facing and stair corner updates. Placement
+collision and standing support use actual shapes instead of full-cell bounds.
+Owned neighbor changes persist through the existing server reconciliation.
+No native protocol/binary or GroundCollision mixin change. Legacy cubes preserved.
+
+Final paired actual-Minecraft run PASS:
+`runtime/evidence/gameplay-shapes-20261106-141741-e1dac345d69a466abfab38b4408ec546/verification.json`.
+Real chat/clicks: bottom slab, merge double, top slab, straight stair, outer-right
+corner, remove neighbor back to straight. Client/server shape volumes and support
+heights verified; 13 PNGs include raised-slab placement/mining above ground Y64.6
+with a ray checked against the fixture heightfield. Exact save/reopen and
+remaining mining/normal cleanup pass. Offline assemble and 181 checks pass.
+This verifies collision queries, not actual walking over the shapes. Waterlogged
+states, other partial blocks, transparency and dynamic behavior remain excluded.
+
+Native visual/input check placed and saved one bottom oak slab:
+`runtime/evidence/gameplay-kcd-20261106-135937-1280e71f3aff4dd190245e8e70b6a848/shapes-observation.json`.
+It exposed a buried-ground case: slab top63.5 below native hit63.614/captured
+ground63.689. Obstruction correctly suppressed selection. Ground placement now
+lifts an otherwise buried shape one grid cell, preserving vanilla half/facing
+and obstruction checks. Reject if the allowed native/sample height mismatch
+would still bury it after the lift. Full-height placement is unchanged. Native
+merge/stair/mining acceptance remains unverified;
+the session ended normally on focus loss before further input. No crash.
+
 ## Latest milestone: hovered-block outline
 
 WorldBlocks draws the actual vanilla shape using the standard black/0.4 line
@@ -95,8 +123,9 @@ renderers and host lighting are unverified. These are documented limitations.
 
 ## Next integrated feature
 
-Expand block shapes and host-world depth/
-collision as integrated feature work; reuse real models, no per-block KCD assets.
+Expand host-world depth/collision as integrated feature work; reuse real models,
+no per-block KCD assets. Include corrected slab selection in the next combined
+native milestone, rather than restarting a small manual acceptance loop.
 Player collision with owned blocks and placement directly on captured ground
 already exist. Arbitrary KCD walls/trees/objects are not captured as buildable
 surfaces, and KCD NPCs do not collide with these composited blocks. Native depth
@@ -130,10 +159,12 @@ Elytra still needs faster/3D collision admission, not just raised speed limits.
 
 Branch codex/initial-import; public github.com/gabrielpery/minecraft-kcd2.
 JDK C:/Program Files/Java/jdk-24; offline Gradle cache minecraft/.gradle-user-home.
-Both games closed; WorldBlocks native world saved (both test blocks mined).
+Both games closed; WorldBlocks native world saved with one bottom oak slab at
+(0,63,-4), placed before the ground-height fix. It is below the sampled surface;
+do not use it as acceptance of the corrected placement. Slot3 contains oak slab.
 Prior renderer restored:
-`runtime/evidence/gameplay-hud-restore-20261106-134128-b91fe09687594c038674bb7cb6b2e7e8`.
-Bundle runtime/hud-gameplay-outline-20261106 is restored; do not reuse its receipt.
+`runtime/evidence/gameplay-hud-restore-20261106-140812-b77922cd41144c4f91f456cade45eb51`.
+Bundle runtime/hud-gameplay-shapes-20261106 is restored; do not reuse its receipt.
 Use a fresh BundleDirectory after changes. Assets/runtimes/saves stay out of Git.
 Exact official tools1.5.5 exe SHA256:
 a32d077e6b54e5cd0c5a5f3194f473779706ff266a711e4745ccdb598843340a.

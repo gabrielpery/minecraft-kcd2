@@ -3,13 +3,18 @@
 ## World block rendering limits
 
 `-WorldBlocks` adds actual Minecraft model rendering and saved states for a
-bounded palette of opaque full cubes. The automated two-launch Minecraft check
+bounded palette of opaque full cubes and dry slabs/stairs. The automated two-launch Minecraft check
 passes dirt/planks/bricks/oriented-log placement, pixels, inventory, persistence
 and mining. Automated live KCD2 checks pass dirt/bricks placement, reopening,
 inventory and aimed removal. This path retains the 64-block
 limit, Minecraft Y56..80 bounds and captured-terrain coverage. Fluids, glass,
-leaves, partial shapes, containers, redstone and dynamic block behavior are not
-supported by the initial palette.
+leaves, waterlogged shapes, containers, redstone and dynamic block behavior are not
+supported. Dry slabs and stairs use vanilla placement, collision and shape updates;
+other partial shapes are not yet in the supported palette.
+Shape placement remains grid-aligned. A bottom slab that would be buried in
+captured ground moves up one cell and can sit above an uneven surface. The
+automated Minecraft regression covers this case; the native correction and
+stairs have not yet had a combined KCD2 visual/input acceptance check.
 
 The transparent world layer has block/block depth, but no KCD terrain/object
 depth occlusion. Blocks can appear in front of host obstructions. It inherits

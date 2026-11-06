@@ -68,8 +68,8 @@ This uses the player's vanilla skin and item models; third-person Steve and NPC
 combat remain separate work.
 
 The [`-WorldBlocks` profile](docs/GAMEPLAY_SESSION.md#minecraft-world-blocks) adds
-an initial palette of opaque blocks, including planks, oriented logs, wool,
-concrete and masonry. Minecraft renders their actual state models into a
+an initial palette of solid blocks, including planks, oriented logs, wool,
+concrete, masonry, dry slabs and stairs. Minecraft renders their actual state models into a
 transparent layer aligned to KCD2's camera; it also owns placement, collision,
 mining and saved block states. Hovered blocks use Minecraft's black shape outline,
 with the same targeting checks as mining. An automated two-launch Minecraft check places
@@ -77,9 +77,13 @@ dirt, planks, bricks and a sideways log, verifies fourteen model/outline/UI imag
 the same save and breaks all four. Automated live KCD2 checks also place dirt and
 bricks, restore them after reopening, keep them visible through inventory, and
 remove each with an aimed click. The selection border also passed an automated
-KCD2 placement/inventory/mining check. This layer has no KCD terrain/object depth
+KCD2 placement/inventory/mining check. Automated Minecraft checks also verify
+slab merging, stair corners, partial collision and saved shape states. A native
+half-slab check found a terrain-height issue, now fixed and covered automatically;
+native acceptance of that correction and stairs remains pending.
+This layer has no KCD terrain/object depth
 occlusion yet. Building remains bounded to 64 blocks inside captured coverage;
-fluids, transparent blocks, slabs, containers and other dynamic blocks are not
+fluids, waterlogged/transparent blocks, containers and other dynamic blocks are not
 included. Walking/flight with this new world layer has not been re-verified.
 
 The new [repeat-session development profile](kcd2/MOVEMENT-LAB.md#repeat-sessions-in-one-kcd-process)

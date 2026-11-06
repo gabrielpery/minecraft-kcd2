@@ -6,6 +6,7 @@ import dev.minecome.terrain.GroundSurface;
 import dev.minecome.terrain.GameplayTerrain;
 import net.minecraft.block.Blocks;
 import net.minecraft.block.BlockState;
+import net.minecraft.block.ShapeContext;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.component.DataComponentTypes;
 import net.minecraft.entity.player.PlayerEntity;
@@ -130,7 +131,7 @@ public final class GameplayBlocks {
         var current=aim;long now=System.nanoTime();lastDispatch=now;if(current==null||!current.fresh(System.currentTimeMillis(),now)){rejections++;lastResult="aim_stale";return;}
         try{
             var selected=select(client.world,client.player,current,action,owned.get().keySet());
-            if(action==1&&owned.get().size()>=GameplayBlocksLedger.MAX_BLOCKS){rejections++;lastResult="block_capacity";return;}
+            if(action==1&&!owned.get().containsKey(cell(selected.target()))&&owned.get().size()>=GameplayBlocksLedger.MAX_BLOCKS){rejections++;lastResult="block_capacity";return;}
             var expected=action==1?placementState(client.player,selected):"minecraft:air";
             int slot=client.player.getInventory().selectedSlot;var stack=client.player.getInventory().getStack(slot);
             pending=new Plan(++ids,action,current,selected,slot,Registries.ITEM.getId(stack.getItem()).toString(),stack.getCount(),client.player.isCreative(),expected,now);
@@ -167,22 +168,43 @@ public final class GameplayBlocks {
             if(!cells.contains(cell(hit.getBlockPos()))||!supported(world.getBlockState(hit.getBlockPos())))throw new IllegalArgumentException("unowned_target");
             double distance=hit.getPos().distanceTo(ray.origin());
             if(ray.obstructionDistance()>=0&&ray.obstructionDistance()<distance-.05)throw new IllegalArgumentException("native_obstruction");
-            var target=action==1?hit.getBlockPos().offset(hit.getSide()):hit.getBlockPos();validateTarget(world,player,target,action,cells);
+            // Vanilla chooses the replaceable hit cell for a slab merge, otherwise
+            // its adjacent cell. Never assume every placement offsets a full cube.
+            var target=action==1?new ItemPlacementContext(player,Hand.MAIN_HAND,player.getMainHandStack(),hit).getBlockPos():hit.getBlockPos();validateTarget(world,player,target,action,cells);
             return new Selection(target.toImmutable(),hit,false);
         }
         if(action==0||!ray.terrainHit()||ray.obstructionDistance()<0)throw new IllegalArgumentException("no_owned_block_hit");
         var point=ray.origin().add(ray.direction().multiply(ray.obstructionDistance()));
         if(!surface.containsFeet(point.x,point.z,.001)||Math.abs(surface.heightAt(point.x,point.z)-point.y)>.65)throw new IllegalArgumentException("terrain_hit_outside_capture");
-        var target=BlockPos.ofFloored(point);validateTarget(world,player,target,1,cells);
+        var target=BlockPos.ofFloored(point);
+        var groundHit=new BlockHitResult(point,Direction.UP,target,false);
+        if(worldBlocks&&player.getMainHandStack().getItem() instanceof BlockItem item){
+            var context=new ItemPlacementContext(player,Hand.MAIN_HAND,player.getMainHandStack(),groundHit);
+            var candidate=item.getBlock().getPlacementState(context);
+            var component=player.getMainHandStack().get(DataComponentTypes.BLOCK_STATE);
+            if(candidate!=null&&component!=null)candidate=component.applyToState(candidate);
+            if(candidate!=null&&supported(candidate)){
+                var shape=candidate.getOutlineShape(world,target,ShapeContext.of(player));
+                // A fractional heightfield can cover an entire bottom slab in
+                // the floored cell. Keep vanilla half/facing and obstruction
+                // rules; use the next grid cell only for a buried candidate.
+                double ground=Math.max(point.y,surface.heightAt(point.x,point.z));
+                if(!shape.isEmpty()&&shape.getMax(Direction.Axis.Y)<1&&target.getY()+shape.getMax(Direction.Axis.Y)<=ground+.05){
+                    target=target.up();
+                    if(target.getY()+shape.getMax(Direction.Axis.Y)<=ground+.05)throw new IllegalArgumentException("terrain_covers_placement");
+                    groundHit=new BlockHitResult(new Vec3d(point.x,target.getY(),point.z),Direction.UP,target,false);
+                }
+            }
+        }
+        validateTarget(world,player,target,1,cells);
         // Inspected Yarn1.21.1 ItemPlacementContext replaces a clicked AIR cell;
         // PlayerInteractBlock's usual reach/collision/mode checks remain vanilla.
         // This user-placed block can overlap the sampled slab; breaking it restores AIR.
-        return new Selection(target,new BlockHitResult(point,Direction.UP,target,false),true);
+        return new Selection(target,groundHit,true);
     }
     private void validateTarget(World world,PlayerEntity player,BlockPos target,int action,Set<GameplayBlocksLedger.Cell> cells){
         if(!GameplayBlocksLedger.allowed(surface,cell(target))||!world.isChunkLoaded(target)||!player.canInteractWithBlockAt(target,0))throw new IllegalArgumentException("outside_build_coverage_or_reach");
-        if(action==1){if(!world.getBlockState(target).isAir()||cells.contains(cell(target)))throw new IllegalArgumentException("occupied_target");
-            if(new Box(target).intersects(player.getBoundingBox()))throw new IllegalArgumentException("player_occupies_target");}
+        if(action==1){if(!world.getBlockState(target).isAir()&&(!cells.contains(cell(target))||!supported(world.getBlockState(target))))throw new IllegalArgumentException("occupied_target");}
         else if(!cells.contains(cell(target))||!supported(world.getBlockState(target)))throw new IllegalArgumentException("unowned_target");
     }
     /** Called only on END_SERVER_TICK, including the short orderly-shutdown drain. */
@@ -239,7 +261,15 @@ public final class GameplayBlocks {
     }
     public double groundForFeet(BlockView world,double x,double y,double z,double half){
         double result=surface.groundForFeet(x,z,half);var candidates=new HashSet<>(owned.get().keySet());var p=intent.get();if(p!=null&&p.plan().action()==1)candidates.add(cell(p.plan().selection().target()));
-        for(var c:candidates)if(c.y()+1<=y+.2&&x+half>c.x()&&x-half<c.x()+1&&z+half>c.z()&&z-half<c.z()+1&&supported(world.getBlockState(pos(c))))result=Math.max(result,c.y()+1);
+        for(var c:candidates){var position=pos(c);var state=world.getBlockState(position);
+            if(x+half<=c.x()||x-half>=c.x()+1||z+half<=c.z()||z-half>=c.z()+1||!supported(state))continue;
+            // Same vanilla collision boxes used by the player, including the
+            // captured ground union. Stairs can support different heights within
+            // one cell; a slab's empty half is not a full-cube support surface.
+            for(var box:state.getCollisionShape(world,position).getBoundingBoxes())
+                if(c.y()+box.maxY<=y+.2&&x+half>c.x()+box.minX&&x-half<c.x()+box.maxX&&z+half>c.z()+box.minZ&&z-half<c.z()+box.maxZ)
+                    result=Math.max(result,c.y()+box.maxY);
+        }
         return result;
     }
     public void close(MinecraftClient client){if(closing)return;suspend(client);closing=true;closeAt=System.nanoTime();if(server==null||!serverInitialized){serverClosed=true;files.close();}}
@@ -260,16 +290,22 @@ public final class GameplayBlocks {
         var stack=player.getMainHandStack();
         if(!(stack.getItem() instanceof BlockItem item)||(!worldBlocks&&!stack.isOf(Items.STONE))||
             (worldBlocks&&!GameplayBlocksPalette.supportsBlock(Registries.BLOCK.getId(item.getBlock()).toString())))throw new IllegalArgumentException("unsupported_block_item");
-        // The bounded palette uses ordinary BlockItem placement and full-cube
-        // Block.getPlacementState (logs derive axis from the clicked face).
+        // Pinned ItemPlacementContext/BlockItem placement: replacement, half,
+        // facing, stair neighbors and collision stay under vanilla control.
+        // See runtime/evidence/block-shapes-source-20261106.
         var context=new ItemPlacementContext(player,Hand.MAIN_HAND,stack,selected.hit());
+        if(!context.canPlace())throw new IllegalArgumentException("occupied_target");
         var state=item.getBlock().getPlacementState(context);
+        if(state==null||!state.canPlaceAt(player.getWorld(),context.getBlockPos())||!player.getWorld().canPlace(state,context.getBlockPos(),ShapeContext.of(player)))throw new IllegalArgumentException("vanilla_placement_collision");
         // Pinned BlockItem.placeFromNbt applies BLOCK_STATE after ordinary
         // placement (runtime/evidence/world-blocks-source-20261106/BlockItem.txt).
         // Predict that same vanilla override, including command-created log axes.
         var component=stack.get(DataComponentTypes.BLOCK_STATE);
         if(state!=null&&component!=null)state=component.applyToState(state);
         if(!context.getBlockPos().equals(selected.target())||state==null||!supported(state))throw new IllegalArgumentException("unsupported_placement_state");
+        // Command-created state components can change geometry after vanilla's
+        // initial collision check; never admit an overridden shape inside an entity.
+        if(!player.getWorld().canPlace(state,selected.target(),ShapeContext.of(player)))throw new IllegalArgumentException("vanilla_placement_collision");
         return stateName(state);
     }
     private static String state(BlockView world,BlockPos p){return stateName(world.getBlockState(p));}

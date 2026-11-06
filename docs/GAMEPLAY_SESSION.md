@@ -368,15 +368,37 @@ worlds containing these additional blocks with `-WorldBlocks`; the legacy stone
 profile does not adopt unsupported saved states. Placement currently targets
 captured terrain or owned blocks, not arbitrary KCD walls or other native objects.
 
-The initial palette contains opaque full cubes: dirt/coarse dirt, common stone
+The palette contains opaque full cubes: dirt/coarse dirt, common stone
 and masonry variants, planks, ordinary and stripped logs, wool, concrete, mineral
 blocks and obsidian. The exact list is in
 [`GameplayBlocksPalette.java`](../minecraft/src/main/java/dev/minecome/gameplay/GameplayBlocksPalette.java).
-It excludes fluids, glass, leaves, slabs/stairs, containers, redstone and other
-blocks requiring additional shapes, transparency or behavior integration.
+It also includes 30 dry slab and 28 stair types across wood and masonry. Slabs
+place in the upper/lower half and merge into double slabs; stairs use vanilla
+facing, upside-down placement and inner/outer corner updates. Their model,
+selection border and player collision use the actual shape. Standing support
+and checkpoints use each collision box's height rather than the whole cell.
+The ownership ledger retains neighbor-driven stair shapes across saves.
+On captured ground, a short shape that would be buried is placed in the next
+grid cell. This retains normal slab orientation and obstruction checks; the
+block may sit above uneven ground because placement remains grid-aligned.
+Fluids, waterlogged blocks, glass, leaves, containers, redstone and other
+blocks requiring transparency or additional behavior integration remain excluded.
 The existing 64-block capacity, Minecraft Y56..80 bounds and captured-terrain
 coverage remain. The new rendering layer does not create native KCD physics for
 NPCs; Minecraft supplies the player's owned-block collision.
+
+`./scripts/Test-GameplayShapes.ps1` runs an isolated Minecraft save twice. Real
+chat items and controller clicks verify bottom/top slabs, same-cell merging,
+stair facing, a neighbor-driven corner and its restoration after mining. It
+checks client/server collision volumes and support heights, thirteen actual model/
+outline PNGs, exact saved states and mining after reopening. A fractional-height
+terrain case verifies that a buried slab moves up one cell, remains targetable
+with the terrain obstruction check, and can be mined. Final evidence:
+`runtime/evidence/gameplay-shapes-20261106-141741-e1dac345d69a466abfab38b4408ec546/verification.json`.
+Collision queries are verified; this fixture does not walk the player on stairs.
+The native KCD2 check observed one rendered half slab and exposed that terrain
+case. The correction, native merging and native stair visuals have not yet had
+a combined KCD2 acceptance check.
 
 World blocks share the existing 20 FPS transparent capture and aspect-fit
 compositor with hands and UI. They depth-test against one another, but the layer

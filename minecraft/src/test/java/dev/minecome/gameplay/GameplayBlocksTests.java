@@ -98,6 +98,24 @@ public final class GameplayBlocksTests {
                 "minecraft:oak_log[axis=x,axis=y]","minecraft:dirt[snowy=false]","minecraft:stone ","stone","foreign:stone"))
             check(!GameplayBlocksPalette.supportsState(state),"Unsupported or noncanonical world state rejected: "+state);
         check(GameplayBlocksPalette.supportsBlock("minecraft:oak_log")&&!GameplayBlocksPalette.supportsBlock("minecraft:oak_log[axis=x]"),"Block item policy distinguishes registry ID from placed state");
+        for(var type:List.of("bottom","top","double"))for(var material:List.of("oak","brick"))
+            check(GameplayBlocksPalette.supportsState("minecraft:"+material+"_slab[type="+type+",waterlogged=false]"),"Dry slab state supported: "+material+" "+type);
+        for(var facing:List.of("north","south","east","west"))for(var half:List.of("bottom","top"))
+            for(var shape:List.of("straight","inner_left","inner_right","outer_left","outer_right"))
+                check(GameplayBlocksPalette.supportsState("minecraft:oak_stairs[facing="+facing+",half="+half+",shape="+shape+",waterlogged=false]"),"Canonical dry stair orientation/corner supported");
+        for(var invalid:List.of("minecraft:oak_slab","minecraft:oak_slab[type=bottom]","minecraft:oak_slab[type=bottom,waterlogged=true]",
+                "minecraft:oak_slab[type=double,waterlogged=true]","minecraft:oak_slab[type=middle,waterlogged=false]",
+                "minecraft:oak_slab[waterlogged=false,type=bottom]","minecraft:oak_slab[type=bottom,waterlogged=false,extra=false]",
+                "minecraft:oak_stairs","minecraft:oak_stairs[facing=up,half=bottom,shape=straight,waterlogged=false]",
+                "minecraft:oak_stairs[facing=north,half=double,shape=straight,waterlogged=false]",
+                "minecraft:oak_stairs[facing=north,half=bottom,shape=straight,waterlogged=true]",
+                "minecraft:oak_stairs[facing=north,half=bottom,shape=curved,waterlogged=false]",
+                "minecraft:oak_stairs[facing=north,half=bottom,shape=straight]",
+                "minecraft:oak_stairs[facing=north,half=bottom,shape=straight,waterlogged=false,extra=false]",
+                "minecraft:oak_stairs[half=bottom,facing=north,shape=straight,waterlogged=false]"))
+            check(!GameplayBlocksPalette.supportsState(invalid),"Malformed, noncanonical or wet shape rejected: "+invalid);
+        check(GameplayBlocksPalette.supportsBlock("minecraft:oak_slab")&&GameplayBlocksPalette.supportsBlock("minecraft:brick_stairs")&&
+            !GameplayBlocksPalette.supportsBlock("minecraft:oak_slab[type=bottom,waterlogged=false]"),"Shape item policy uses bare registry IDs");
         var save=GameplayWorld.prepare(root.resolve("world-blocks-instance/saves"),root);
         var a=new GameplayBlocksLedger.Cell(0,64,0);var b=new GameplayBlocksLedger.Cell(1,64,0);var c=new GameplayBlocksLedger.Cell(2,64,0);
         var legacy=new GameplayBlocksLedger(save,SURFACE);legacy.persist(1,Set.of(a));
@@ -121,6 +139,11 @@ public final class GameplayBlocksTests {
         long deadline=System.nanoTime()+3_000_000_000L;while(!worker.finished()&&System.nanoTime()<deadline)Thread.sleep(5);
         check(worker.finished()&&worker.failure()==null&&worker.persistedRevision()==4,"Mixed-state worker drains without game-thread IO");
         check(new GameplayBlocksLedger(save,SURFACE,true).initialStates.equals(Map.of(b,"minecraft:oak_log[axis=y]")),"Worker persists removal and orientation atomically");
+        var shapeLedger=new GameplayBlocksLedger(save,SURFACE,true);
+        var shaped=Map.of(a,"minecraft:oak_slab[type=top,waterlogged=false]",b,"minecraft:brick_stairs[facing=west,half=bottom,shape=outer_left,waterlogged=false]");
+        shapeLedger.persist(5,shaped);
+        check(new GameplayBlocksLedger(save,SURFACE,true).initialStates.equals(shaped),"Slab half and stair facing/corner survive saved ownership reopen");
+        reject(()->shapeLedger.persist(6,Map.of(a,"minecraft:oak_slab[type=bottom,waterlogged=true]")),"Saved ownership cannot adopt waterlogged shapes");
     }
     private static void terrainLedgerTests(Path root)throws Exception{
         var seed=GameplayTerrain.initial(tile(0));var grown=seed.admit(1,0,tile(1));

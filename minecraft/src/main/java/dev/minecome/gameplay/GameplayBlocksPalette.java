@@ -2,13 +2,17 @@ package dev.minecome.gameplay;
 
 import java.util.*;
 
-/** Initial world-rendered palette: opaque full cubes without scheduled behaviour.
+/** Bounded world-rendered palette: solid cubes and dry slabs/stairs.
  * State names are canonical and validated without initializing Minecraft registries,
  * so saved ownership validation also runs in the offline protocol tests.
  */
 public final class GameplayBlocksPalette {
     private static final Set<String> PLAIN;
     private static final Set<String> AXIS;
+    private static final Set<String> SLABS;
+    private static final Set<String> STAIRS;
+    private static final Set<String> SLAB_SUFFIXES=Set.of("[type=bottom,waterlogged=false]","[type=top,waterlogged=false]","[type=double,waterlogged=false]");
+    private static final Set<String> STAIR_SUFFIXES;
     static {
         var plain=new HashSet<String>();
         for(var name:List.of("stone","cobblestone","dirt","coarse_dirt","granite","polished_granite",
@@ -29,16 +33,36 @@ public final class GameplayBlocksPalette {
             axis.add("minecraft:"+wood+"_log");axis.add("minecraft:stripped_"+wood+"_log");
         }
         AXIS=Set.copyOf(axis);
+        var slab=new HashSet<String>();var stair=new HashSet<String>();
+        for(var material:List.of("oak","spruce","birch","jungle","acacia","dark_oak","mangrove","cherry",
+                "bamboo","crimson","warped","stone","cobblestone","granite","polished_granite","diorite",
+                "polished_diorite","andesite","polished_andesite","brick","stone_brick","mossy_stone_brick",
+                "sandstone","smooth_sandstone","red_sandstone","smooth_red_sandstone","quartz","smooth_quartz")){
+            slab.add("minecraft:"+material+"_slab");stair.add("minecraft:"+material+"_stairs");
+        }
+        slab.add("minecraft:cut_sandstone_slab");slab.add("minecraft:cut_red_sandstone_slab");
+        SLABS=Set.copyOf(slab);STAIRS=Set.copyOf(stair);
+        // Inspected pinned Yarn1.21.1+build.3 SlabBlock/StairsBlock appendProperties
+        // and their enums; stateName serializes these properties alphabetically.
+        // Evidence: runtime/evidence/block-shapes-source-20261106.
+        var stairSuffixes=new HashSet<String>();
+        for(var facing:List.of("north","south","east","west"))for(var half:List.of("bottom","top"))
+            for(var shape:List.of("straight","inner_left","inner_right","outer_left","outer_right"))
+                stairSuffixes.add("[facing="+facing+",half="+half+",shape="+shape+",waterlogged=false]");
+        STAIR_SUFFIXES=Set.copyOf(stairSuffixes);
     }
     private GameplayBlocksPalette(){}
-    public static boolean supportsBlock(String id){return PLAIN.contains(id)||AXIS.contains(id);}
+    public static boolean supportsBlock(String id){return id!=null&&(PLAIN.contains(id)||AXIS.contains(id)||SLABS.contains(id)||STAIRS.contains(id));}
     public static boolean supportsState(String state){
         if(state==null)return false;if(PLAIN.contains(state))return true;
         for(var value:List.of("x","y","z")){
             var suffix="[axis="+value+"]";
             if(state.endsWith(suffix)&&AXIS.contains(state.substring(0,state.length()-suffix.length())))return true;
         }
+        int properties=state.indexOf('[');
+        if(properties>0){var block=state.substring(0,properties);var suffix=state.substring(properties);
+            return SLABS.contains(block)&&SLAB_SUFFIXES.contains(suffix)||STAIRS.contains(block)&&STAIR_SUFFIXES.contains(suffix);}
         return false;
     }
-    public static Set<String> blockIds(){var all=new TreeSet<>(PLAIN);all.addAll(AXIS);return Collections.unmodifiableSet(all);}
+    public static Set<String> blockIds(){var all=new TreeSet<>(PLAIN);all.addAll(AXIS);all.addAll(SLABS);all.addAll(STAIRS);return Collections.unmodifiableSet(all);}
 }

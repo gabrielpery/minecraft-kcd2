@@ -1,5 +1,49 @@
 # MineCome progress — 2026-11-06
 
+## Slabs and stairs
+
+Implemented and compiled 30 dry slab and 28 stair block types in WorldBlocks.
+Vanilla ItemPlacementContext selects replacement versus adjacent cells, allowing
+same-cell double-slab merging even at the owned-cell capacity. Placement uses
+actual vanilla entity collision checks instead of a full-cell box. Supported
+item state overrides also receive a final shape collision check. Standing
+support uses real collision boxes, including half-height treads. Existing server
+reconciliation persists stair corner updates. Renderer/outline already consume
+actual shapes; native protocol/binary and GroundCollision mixin are unchanged.
+
+Automated paired actual-Minecraft PASS on first run:
+`runtime/evidence/gameplay-shapes-20261106-135408-ff9f0a17c862498dbc143f812db5630d/verification.json`.
+Real chat items and vanilla clicks place bottom slab, merge double, place top
+slab, place north-facing stair and an east-facing neighbor; the first stair
+becomes outer_right and returns straight when its neighbor is mined. Client and
+server collision volumes/support heights pass. Eleven PNGs have zero mismatches
+between predicted occupied/empty regions and actual pixels. Exact states survive
+reopening, then all three remaining cells are mined and saved normally. This
+checks collision queries, not a claim of actual player walking on the shapes.
+Offline assemble and 181 focused checks pass. All 58 IDs match pinned resources;
+API inspection is under runtime/evidence/block-shapes-source-20261106.
+The existing cube/outline/inventory paired regression also passes:
+`runtime/evidence/gameplay-world-blocks-20261106-135601-b89cee8489734b0089045ec6d89359e1/verification.json`.
+
+Native partial check:
+`runtime/evidence/gameplay-kcd-20261106-135937-1280e71f3aff4dd190245e8e70b6a848/shapes-observation.json`.
+Computer Use supplied oak slab through vanilla chat and placed a visible half
+slab at (0,63,-4). Its top63.5 was below the actual terrain hit63.614 and sampled
+ground63.689, correctly preventing targeting through the host ground. Fixed
+short-shape ground placement to use the next grid cell when otherwise buried;
+it rejects a still-buried result and preserves full-height placement/obstruction.
+The native session saved normally on focus loss, with no crash or stale frame
+failure (5,336 publications, max gap81.993ms). KCD closed; prior renderer restored.
+One pre-fix slab remains saved. Native merge/stairs and the ground correction
+remain unverified; no manual test is required for this implementation milestone.
+
+Final paired actual-Minecraft regression PASS:
+`runtime/evidence/gameplay-shapes-20261106-141741-e1dac345d69a466abfab38b4408ec546/verification.json`.
+Adds ground Y64.6 placement at Y65, targetable outline/support Y65.5 and mining using
+a ray checked against the fixture heightfield. Thirteen PNGs plus all original
+shape/save/reopen checks; zero occupied/empty pixel mismatches. Final offline
+build and 181 checks pass.
+
 ## Hovered-block outline
 
 Implemented and compiled in `-WorldBlocks`: the fresh admitted mining ray selects
