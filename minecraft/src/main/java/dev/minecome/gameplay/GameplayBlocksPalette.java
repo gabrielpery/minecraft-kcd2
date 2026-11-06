@@ -2,7 +2,7 @@ package dev.minecome.gameplay;
 
 import java.util.*;
 
-/** Bounded world-rendered palette: solid cubes and dry slabs/stairs.
+/** Bounded world-rendered palette: solid cubes and dry slabs/stairs/fences/walls.
  * State names are canonical and validated without initializing Minecraft registries,
  * so saved ownership validation also runs in the offline protocol tests.
  */
@@ -11,8 +11,12 @@ public final class GameplayBlocksPalette {
     private static final Set<String> AXIS;
     private static final Set<String> SLABS;
     private static final Set<String> STAIRS;
+    private static final Set<String> FENCES;
+    private static final Set<String> WALLS;
     private static final Set<String> SLAB_SUFFIXES=Set.of("[type=bottom,waterlogged=false]","[type=top,waterlogged=false]","[type=double,waterlogged=false]");
     private static final Set<String> STAIR_SUFFIXES;
+    private static final Set<String> FENCE_SUFFIXES;
+    private static final Set<String> WALL_SUFFIXES;
     static {
         var plain=new HashSet<String>();
         for(var name:List.of("stone","cobblestone","dirt","coarse_dirt","granite","polished_granite",
@@ -50,9 +54,30 @@ public final class GameplayBlocksPalette {
             for(var shape:List.of("straight","inner_left","inner_right","outer_left","outer_right"))
                 stairSuffixes.add("[facing="+facing+",half="+half+",shape="+shape+",waterlogged=false]");
         STAIR_SUFFIXES=Set.copyOf(stairSuffixes);
+        var fences=new HashSet<String>();
+        for(var wood:List.of("oak","spruce","birch","jungle","acacia","dark_oak","mangrove","cherry",
+                "bamboo","crimson","warped"))fences.add("minecraft:"+wood+"_fence");
+        fences.add("minecraft:nether_brick_fence");FENCES=Set.copyOf(fences);
+        var walls=new HashSet<String>();
+        for(var material:List.of("cobblestone","mossy_cobblestone","brick","granite","diorite","andesite",
+                "stone_brick","mossy_stone_brick","sandstone","red_sandstone"))walls.add("minecraft:"+material+"_wall");
+        WALLS=Set.copyOf(walls);
+        // Pinned FenceBlock/WallBlock appendProperties, WallShape names and
+        // neighbor updates inspected in runtime/evidence/connected-shapes-source-20261106.
+        // stateName uses alphabetical ordering; all vanilla dry connections,
+        // including wall post changes, must survive neighbor updates and saves.
+        var fenceSuffixes=new HashSet<String>();var wallSuffixes=new HashSet<String>();
+        for(var east:List.of(false,true))for(var north:List.of(false,true))
+            for(var south:List.of(false,true))for(var west:List.of(false,true))
+                fenceSuffixes.add("[east="+east+",north="+north+",south="+south+",waterlogged=false,west="+west+"]");
+        for(var east:List.of("none","low","tall"))for(var north:List.of("none","low","tall"))
+            for(var south:List.of("none","low","tall"))for(var up:List.of(false,true))
+                for(var west:List.of("none","low","tall"))
+                    wallSuffixes.add("[east="+east+",north="+north+",south="+south+",up="+up+",waterlogged=false,west="+west+"]");
+        FENCE_SUFFIXES=Set.copyOf(fenceSuffixes);WALL_SUFFIXES=Set.copyOf(wallSuffixes);
     }
     private GameplayBlocksPalette(){}
-    public static boolean supportsBlock(String id){return id!=null&&(PLAIN.contains(id)||AXIS.contains(id)||SLABS.contains(id)||STAIRS.contains(id));}
+    public static boolean supportsBlock(String id){return id!=null&&(PLAIN.contains(id)||AXIS.contains(id)||SLABS.contains(id)||STAIRS.contains(id)||FENCES.contains(id)||WALLS.contains(id));}
     public static boolean supportsState(String state){
         if(state==null)return false;if(PLAIN.contains(state))return true;
         for(var value:List.of("x","y","z")){
@@ -61,8 +86,9 @@ public final class GameplayBlocksPalette {
         }
         int properties=state.indexOf('[');
         if(properties>0){var block=state.substring(0,properties);var suffix=state.substring(properties);
-            return SLABS.contains(block)&&SLAB_SUFFIXES.contains(suffix)||STAIRS.contains(block)&&STAIR_SUFFIXES.contains(suffix);}
+            return SLABS.contains(block)&&SLAB_SUFFIXES.contains(suffix)||STAIRS.contains(block)&&STAIR_SUFFIXES.contains(suffix)||
+                FENCES.contains(block)&&FENCE_SUFFIXES.contains(suffix)||WALLS.contains(block)&&WALL_SUFFIXES.contains(suffix);}
         return false;
     }
-    public static Set<String> blockIds(){var all=new TreeSet<>(PLAIN);all.addAll(AXIS);all.addAll(SLABS);all.addAll(STAIRS);return Collections.unmodifiableSet(all);}
+    public static Set<String> blockIds(){var all=new TreeSet<>(PLAIN);all.addAll(AXIS);all.addAll(SLABS);all.addAll(STAIRS);all.addAll(FENCES);all.addAll(WALLS);return Collections.unmodifiableSet(all);}
 }

@@ -33,7 +33,8 @@ import java.util.Map;
  * WorldRenderer.render prepares client light updates before rendering layers.
  * Source inspection: runtime/evidence/world-blocks-source-20261106.
  * Host camera basis/FOV replace Minecraft camera bob and player-eye offsets.
- * The captured heightfield occludes blocks; native object depth is not imported.
+ * The captured heightfield occludes blocks here; the native compositor also
+ * compares this world layer against matching KCD2 scene depth.
  */
 public final class GameplayWorldRenderer {
     private GameplayWorldRenderer(){}

@@ -21,8 +21,10 @@ it with persistent owned stones and a native mirror. `-Explore` adds on-demand
 terrain tiles and persists the admitted coverage, using the same blocks bundle.
 The separate `-Chat` profile adds Minecraft's real chat editor and commands to
 walking and blocks; it can also be combined with `-Explore`.
-General blocks, Steve's body/hands, cross-game health/combat and flight remain
-unfinished in this sustained path. Existing bounded gameplay labs remain separate.
+The additional `-Flight`, `-Hands` and `-WorldBlocks` profiles described below add
+Creative flight, first-person hands/items and a bounded palette of Minecraft
+models. Third-person Steve, unrestricted blocks, cross-game health/combat and
+Elytra remain unfinished. Existing bounded gameplay labs remain separate.
 
 ## Run the standalone guest
 
@@ -378,6 +380,11 @@ facing, upside-down placement and inner/outer corner updates. Their model,
 selection border and player collision use the actual shape. Standing support
 and checkpoints use each collision box's height rather than the whole cell.
 The ownership ledger retains neighbor-driven stair shapes across saves.
+Dry connected blocks add 12 fence types (the eleven supported woods and nether
+brick) and 10 masonry wall types. Vanilla updates their arms and wall posts when
+neighbors change; the renderer, selection outline and saved ledger follow those
+states. Their collision rises 1.5 blocks, including the portion above the visible
+model. Fence gates, leads and NPC interaction are not included.
 On captured ground, a short shape that would be buried is placed in the next
 grid cell. This retains normal slab orientation and obstruction checks; the
 block may sit above uneven ground because placement remains grid-aligned.
@@ -400,6 +407,20 @@ The initial native KCD2 check observed one rendered half slab and exposed that
 terrain case. A later automated KCD2 check placed above ground, merged and mined
 the slab with the depth pass active. Native stairs, walking over partial shapes
 and precisely isolated top-face merge input remain unverified.
+
+`./scripts/Test-GameplayConnectedBlocks.ps1` places oak fences and cobblestone
+walls through the actual controller, verifies reciprocal connections and removal,
+checks ten model/outline images, then reopens the save and mines both remaining
+posts. It validates all 22 registry IDs and 1,812 dry state combinations. Evidence:
+`runtime/evidence/gameplay-connected-20261106-163159-b21f62d6c2cb471caeb7be0fcdedb051/verification.json`.
+
+`./scripts/Test-GameplayShapeWalking.ps1` uses ordinary movement keys on actual
+controller-placed blocks. Both client and server step onto a bottom slab, onto
+a stair, back down to ground, and stop at a fence. A normal jump cannot cross
+the fence; inventory W input leaves the player still on the stair. No fixture
+position, velocity or block-state writes are used. This is automated Minecraft
+acceptance with the world/HUD layer active, not native KCD walking acceptance.
+Evidence: `runtime/evidence/gameplay-shape-walking-20261106-163317-1ae31f8068074029892b6de9bb052720/verification.json`.
 
 World blocks use the existing 20 FPS capture and aspect-fit compositor. The
 WorldBlocks profile now sends separate world colour, raw depth and foreground

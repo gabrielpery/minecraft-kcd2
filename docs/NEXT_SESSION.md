@@ -9,7 +9,52 @@ work; do not repeat their completed acceptance sequences. Full block coverage,
 third-person Steve, complete host collision, Survival/NPC combat and Elytra remain
 required. The requested hovered-block wireframe now works and is verified.
 
-## Latest milestone: separate world layers and native scene depth
+## Latest milestone: connected fences/walls and actual shape walking
+
+WorldBlocks now supports 22 dry fence/wall block IDs and 1,812 canonical connected
+states. Vanilla neighbor updates determine fence arms, wall heights and posts;
+the existing ownership ledger preserves those states across saves. Models,
+selection outlines and collision use their actual partial geometry. Gates,
+waterlogged states and other dynamic/transparent blocks remain outside this batch.
+
+Automated actual-Minecraft connected-block placement, neighbor restoration,
+model/outline pixels and save/reopen PASS, with ten PNGs:
+`runtime/evidence/gameplay-connected-20261106-163159-b21f62d6c2cb471caeb7be0fcdedb051/verification.json`.
+The actual-Minecraft walking fixture also PASS (13,355ms): ordinary input ascends
+controller-placed bottom slabs and stair treads, inventory suppresses W while
+standing on the stair, S descends to ground, and fences block walking and a normal
+jump. Both client/server feet and support heights agree; no direct position,
+velocity or block-state writes are used. Normal save and collision cleanup pass:
+`runtime/evidence/gameplay-shape-walking-20261106-163317-1ae31f8068074029892b6de9bb052720/verification.json`.
+Offline assemble, 252 block checks and 37 movement checks PASS.
+
+Native oak-fence placement/render/outline/mining PASS via Computer Use. Selected
+from Creative inventory, placed against the existing full block and mined; one
+place/one break, revisions 14→15→16, original six-cell fixture wall preserved.
+348,389ms active, 40/40 events acknowledged, 6,052 uploads/zero drops, normal save:
+`runtime/evidence/gameplay-kcd-20261106-164555-e4a786edaca946908957c3dfad578c43/native-fence-observation.json`.
+Native walls and walking over partial shapes remain unverified; standalone
+walking does not establish native camera-follow behavior.
+
+Known follow-up: place and break each needed a second automated click; two
+controller rejections lack cause history. Computer Use text entry delivered zero
+chat characters, so use Creative inventory for automated item selection. Earlier
+native attempt ended after 167s on mouse+keyboard 100ms lease expiry (mask 3072), with
+fresh frames/ACK and foreground. Specific stall unknown; not a Minecraft crash
+or the previously repaired BUSY revocation. Same-process rearm did not activate;
+fresh KCD succeeded. Preserve deadline guards; diagnose cause before changing.
+Both clients are closed, renderer restored using bundle
+`runtime/hud-connected-blocks-20261106`; receipt
+`runtime/evidence/gameplay-hud-restore-20261106-165259-d72ea05e646f47a7b285a45cb719f705`.
+
+**Next product priority:** third-person Steve/body/equipment and camera support
+in the same gameplay session. Preserve completed controls, first-person hands,
+connected construction and depth integration. Batch native shape walking with
+broader collision acceptance when needed; do not repeat the completed inventory,
+mouse, controlled occlusion or connected-block fixture sequences. Broader host
+collision, full block coverage, Survival/NPC combat and Elytra remain required.
+
+## Previous milestone: separate world layers and native scene depth
 
 **Completed native acceptance:** the mouse is reconnected and KCD initializes it.
 Controlled opaque native geometry correctly hides overlapping Minecraft blocks;
@@ -32,13 +77,10 @@ The six-cell wall was seeded into a disposable copied save by the new
 `scripts/Prepare-NativeDepthFixture.ps1`; original source hashes are unchanged.
 Do not use the fixture as evidence of player placement or walking.
 
-**Next:** continue product work, batching native walking over partial shapes with
-broader collision acceptance when needed. Do not repeat the completed mouse,
-inventory or controlled occlusion checks. Third-person Steve, full block coverage,
-Survival/NPC combat and Elytra remain required. Both game clients are closed;
-temporary native cube removed; all renderer bundles restored, most recently
+At completion of this prior depth milestone, both game clients were closed,
+the temporary native cube removed and all renderer bundles restored, most recently
 `runtime/evidence/gameplay-hud-restore-20261106-162248-762efa63dc7246fa816d3632eff9d9bb`.
-Use a fresh deployment bundle. Current Chat proxy SHA starts `f0552e7cc1ea8f14`,
+Current Chat proxy SHA starts `f0552e7cc1ea8f14`,
 addon `a7ee1019bb43e131`; exact hashes are in the profile.
 
 WorldBlocks now streams same-frame foreground RGBA, owned-world RGBA and raw

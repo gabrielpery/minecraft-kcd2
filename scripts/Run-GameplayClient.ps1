@@ -4,7 +4,7 @@
 param([Parameter(Mandatory)][string]$EvidenceDirectory,[Parameter(Mandatory)][string]$InstanceDirectory,
  [Parameter(Mandatory)][string]$Run,[Parameter(Mandatory)][int]$TargetPid,
  [Parameter(Mandatory)][string]$TargetStart,[Parameter(Mandatory)][long]$Expires,
- [Parameter(Mandatory)][string]$JavaHome,[ValidateSet('','create','resume','walking','walking-resume','blocks','blocks-resume','blocks-survival','terrain','terrain-resume','chat','chat-resume','flight','flight-resume','flight-fall','flight-fall-resume','hands','world-blocks','world-blocks-resume','shapes','shapes-resume','depth')][string]$FixturePhase='',
+ [Parameter(Mandatory)][string]$JavaHome,[ValidateSet('','create','resume','walking','walking-resume','blocks','blocks-resume','blocks-survival','terrain','terrain-resume','chat','chat-resume','flight','flight-resume','flight-fall','flight-fall-resume','hands','world-blocks','world-blocks-resume','shapes','shapes-resume','depth','connected','connected-resume','shape-walking')][string]$FixturePhase='',
  [switch]$Connected,[switch]$Movement,[switch]$Blocks,[switch]$Explore,[switch]$Chat,[switch]$Flight,[switch]$Hands,[switch]$WorldBlocks,[string]$GroundPatchFile)
 $ErrorActionPreference='Stop'
 if($WorldBlocks){$Hands=$true};if($Hands){$Flight=$true};if($Flight){$Chat=$true}

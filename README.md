@@ -69,7 +69,7 @@ combat remain separate work.
 
 The [`-WorldBlocks` profile](docs/GAMEPLAY_SESSION.md#minecraft-world-blocks) adds
 an initial palette of solid blocks, including planks, oriented logs, wool,
-concrete, masonry, dry slabs and stairs. Minecraft renders their actual state models into a
+concrete, masonry, dry slabs/stairs, fences and walls. Minecraft renders their actual state models into a
 transparent layer aligned to KCD2's camera; it also owns placement, collision,
 mining and saved block states. Hovered blocks use Minecraft's black shape outline,
 with the same targeting checks as mining. An automated two-launch Minecraft check places
@@ -82,6 +82,13 @@ slab merging, stair corners, partial collision and saved shape states. A native
 half-slab check found a terrain-height issue, now fixed and covered automatically.
 A subsequent automated KCD2 check placed the slab above ground, merged it and
 mined it; native stairs and walking over partial shapes remain unverified.
+The palette also includes 12 fence and 10 wall types with vanilla neighbor
+connections, outlines, collision and saved states. Automated Minecraft checks
+place/connect/remove/reopen them, walk up and down slabs/stairs, and verify that
+fences block normal walking and jumping. Inventory suppresses movement on stairs.
+An automated KCD2 check also selected, placed and mined an oak fence with its
+actual model and selection outline visible. Native walls and walking over partial
+shapes still await acceptance; some automated clicks required retries.
 Captured ground now hides blocks and their outlines through a depth-only pass;
 hands and HUD stay visible. Automated Minecraft pixel checks and a live KCD2
 buried-slab check cover this pass. It uses the approximate collision heightfield
@@ -95,7 +102,7 @@ projection data and matching depth resources; foliage and NPC scenes still need
 broader coverage.
 Building remains bounded to 64 blocks inside captured coverage;
 fluids, waterlogged/transparent blocks, containers and other dynamic blocks are not
-included. Walking/flight with this new world layer has not been re-verified.
+included. Native KCD2 walking/flight with this new world layer has not been re-verified.
 
 The new [repeat-session development profile](kcd2/MOVEMENT-LAB.md#repeat-sessions-in-one-kcd-process)
 is implemented and compiled, with automated cleanup/rearm checks passing.

@@ -1,5 +1,57 @@
 # MineCome progress — 2026-11-06
 
+## Connected fences/walls and actual partial-shape walking
+
+WorldBlocks now supports 12 dry fence types and 10 masonry wall types, including
+all canonical vanilla arm/post states. Existing vanilla placement, neighbor
+updates, rendering, outline, collision and ownership persistence handle these
+shapes; no native binary or shader change is required. Wet states, gates, leads,
+containers and other dynamic interactions remain excluded. Pinned bytecode and
+all 22 multipart resources were inspected under
+`runtime/evidence/connected-shapes-source-20261106` (not shipped).
+
+Offline assemble, 252 block checks and 37 movement checks PASS. The actual
+Minecraft two-launch check passes on its first run: real controller placement,
+reciprocal fence/wall connections, removal restoring the original post, exact
+save/reopen/mining, 1.5-block collision support and ten PNGs. All 22 registry IDs
+and 1,812 dry state combinations are accepted; model posts and transparent gaps
+are checked against real pixels. Evidence:
+`runtime/evidence/gameplay-connected-20261106-163159-b21f62d6c2cb471caeb7be0fcdedb051/verification.json`.
+
+The new walking check also passes first run (13.355s of actions): ordinary keys
+step both client and server onto bottom slabs (Y64.5), up to stairs (Y65), back
+to ground, and against a fence. Inventory W input keeps the player on the stair;
+a real jump rises but cannot cross the 1.5-block fence. Blocks were placed through
+the production controller, with no fixture position/velocity/block-state writes.
+World/HUD rendering, authoritative feet/support, saved checkpoint and normal
+collision/ledger cleanup pass. This is actual Minecraft acceptance with scripted
+input, not native KCD walking acceptance. Evidence:
+`runtime/evidence/gameplay-shape-walking-20261106-163317-1ae31f8068074029892b6de9bb052720/verification.json`.
+
+Native automated fence acceptance also completed without user input. Creative
+inventory supplied the oak fence; right-click placed it at (0,65,-3), connected
+north to the existing full block. Computer Use observed the actual post, held
+item and selection outline in KCD2, then its removal. Ledger revisions 14→15→16
+confirm one placement/one break and the original six-cell wall preserved.
+The 348,389ms run saved normally, acknowledged 40/40 input events and uploaded
+6,052 frames with zero drops. Evidence:
+`runtime/evidence/gameplay-kcd-20261106-164555-e4a786edaca946908957c3dfad578c43/native-fence-observation.json`.
+This is native fence placement/render/mining acceptance, not wall or native
+walking acceptance. Both placement and mining needed a second click; two
+controller rejections were recorded, without per-rejection cause history.
+Computer Use text entry produced no chat characters; real key input and inventory
+worked. Do not count that attempt as native command-typing acceptance.
+
+An earlier native attempt stopped after 167s when both 100ms input leases expired
+(eligibility mask 3072), despite fresh frames/ACKs and foreground state. It saved
+normally, not a Minecraft crash. BUSY deferrals recovered earlier in that run;
+the specific renewal stall is unknown. Restart was needed before reattachment.
+Preserved in `gameplay-kcd-20261106-163705-54fc956f14d241358d906fe949ec1eb8/native-connected-attempt.json`
+under runtime/evidence. Keep this reliability limitation for focused follow-up;
+do not loosen the ownership deadline to hide it. Both clients are now closed and
+the renderer bundle restored:
+`runtime/evidence/gameplay-hud-restore-20261106-165259-d72ea05e646f47a7b285a45cb719f705`.
+
 ## Native occlusion acceptance and mouse renewal repair
 
 The missing mouse was physical: Windows reported zero present mouse devices,

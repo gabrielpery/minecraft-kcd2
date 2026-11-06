@@ -116,6 +116,35 @@ public final class GameplayBlocksTests {
             check(!GameplayBlocksPalette.supportsState(invalid),"Malformed, noncanonical or wet shape rejected: "+invalid);
         check(GameplayBlocksPalette.supportsBlock("minecraft:oak_slab")&&GameplayBlocksPalette.supportsBlock("minecraft:brick_stairs")&&
             !GameplayBlocksPalette.supportsBlock("minecraft:oak_slab[type=bottom,waterlogged=false]"),"Shape item policy uses bare registry IDs");
+        var fence="minecraft:oak_fence[east=false,north=true,south=false,waterlogged=false,west=true]";
+        var wall="minecraft:cobblestone_wall[east=none,north=low,south=tall,up=false,waterlogged=false,west=none]";
+        for(var wood:List.of("oak","spruce","birch","jungle","acacia","dark_oak","mangrove","cherry","bamboo","crimson","warped","nether_brick")){
+            var id="minecraft:"+wood+"_fence";
+            check(GameplayBlocksPalette.supportsBlock(id)&&GameplayBlocksPalette.blockIds().contains(id),"Fence item is in the supported palette: "+id);
+            check(GameplayBlocksPalette.supportsState(id+fence.substring(fence.indexOf('['))),"Connected dry fence state supported: "+id);
+        }
+        for(var material:List.of("cobblestone","mossy_cobblestone","brick","granite","diorite","andesite","stone_brick","mossy_stone_brick","sandstone","red_sandstone")){
+            var id="minecraft:"+material+"_wall";
+            check(GameplayBlocksPalette.supportsBlock(id)&&GameplayBlocksPalette.blockIds().contains(id),"Wall item is in the supported palette: "+id);
+            check(GameplayBlocksPalette.supportsState(id+wall.substring(wall.indexOf('['))),"Low/tall dry wall state supported: "+id);
+        }
+        for(var state:List.of(
+                "minecraft:oak_fence[east=false,north=false,south=false,waterlogged=false,west=false]",
+                "minecraft:oak_fence[east=true,north=true,south=true,waterlogged=false,west=true]",
+                "minecraft:cobblestone_wall[east=none,north=none,south=none,up=true,waterlogged=false,west=none]",
+                "minecraft:cobblestone_wall[east=low,north=none,south=none,up=false,waterlogged=false,west=low]",
+                "minecraft:cobblestone_wall[east=tall,north=tall,south=tall,up=true,waterlogged=false,west=tall]"))
+            check(GameplayBlocksPalette.supportsState(state),"Disconnected, straight and fully connected dry states remain serializable");
+        for(var invalid:List.of("minecraft:oak_fence","minecraft:cobblestone_wall",fence.replace("waterlogged=false","waterlogged=true"),
+                wall.replace("waterlogged=false","waterlogged=true"),fence.replace(",waterlogged=false",""),wall.replace(",up=false",""),
+                fence.replace("north=true","north=low"),wall.replace("north=low","north=true"),wall.replace("south=tall","south=full"),
+                fence.replace("east=false,north=true","north=true,east=false"),wall.replace("up=false,waterlogged=false","waterlogged=false,up=false"),
+                fence.replace("north=true","north=true,north=false"),wall.replace("up=false","up=false,up=true"),
+                fence.replace("west=true]","west=true,extra=false]"),wall.replace("up=false","up=False"),
+                fence.replace("oak_fence","oak_fence_gate"),fence.replace("oak_fence","iron_bars")))
+            check(!GameplayBlocksPalette.supportsState(invalid),"Wet, incomplete, noncanonical or foreign connected shape rejected: "+invalid);
+        check(!GameplayBlocksPalette.supportsBlock(fence)&&!GameplayBlocksPalette.supportsBlock(wall)&&
+            !GameplayBlocksPalette.supportsBlock("minecraft:oak_fence_gate"),"Connected items use bare supported registry IDs, excluding gates");
         var save=GameplayWorld.prepare(root.resolve("world-blocks-instance/saves"),root);
         var a=new GameplayBlocksLedger.Cell(0,64,0);var b=new GameplayBlocksLedger.Cell(1,64,0);var c=new GameplayBlocksLedger.Cell(2,64,0);
         var legacy=new GameplayBlocksLedger(save,SURFACE);legacy.persist(1,Set.of(a));
@@ -144,6 +173,14 @@ public final class GameplayBlocksTests {
         shapeLedger.persist(5,shaped);
         check(new GameplayBlocksLedger(save,SURFACE,true).initialStates.equals(shaped),"Slab half and stair facing/corner survive saved ownership reopen");
         reject(()->shapeLedger.persist(6,Map.of(a,"minecraft:oak_slab[type=bottom,waterlogged=true]")),"Saved ownership cannot adopt waterlogged shapes");
+        var connected=Map.of(a,fence,b,wall);shapeLedger.persist(6,connected);
+        var connectedLedger=new GameplayBlocksLedger(save,SURFACE,true);
+        check(connectedLedger.initialStates.equals(connected)&&connectedLedger.initialRevision==6,"Fence connections and wall post/heights survive saved ownership reopen");
+        var neighborChanged=Map.of(a,fence.replace("north=true","north=false"),b,wall.replace("south=tall","south=none").replace("up=false","up=true"));
+        connectedLedger.persist(7,neighborChanged);
+        check(new GameplayBlocksLedger(save,SURFACE,true).initialStates.equals(neighborChanged),"Neighbor-driven connection/post changes persist without changing cell ownership");
+        reject(()->connectedLedger.persist(8,Map.of(a,fence.replace("waterlogged=false","waterlogged=true"))),"Connected checkpoint rejects wet fence");
+        reject(()->connectedLedger.persist(8,Map.of(b,wall.replace("waterlogged=false","waterlogged=true"))),"Connected checkpoint rejects wet wall");
     }
     private static void terrainLedgerTests(Path root)throws Exception{
         var seed=GameplayTerrain.initial(tile(0));var grown=seed.admit(1,0,tile(1));
