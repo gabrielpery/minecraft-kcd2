@@ -1,4 +1,44 @@
-# MineCome progress — 2026-11-05
+# MineCome progress — 2026-11-06
+
+## Actual Minecraft hands and held items
+
+Implemented and compiled `-Hands`, including Flight/Chat/Blocks/Movement and
+optional Explore, on the existing HUD3/input6 Chat native bundle. No native binary
+or renderer-proxy change. The normal `GameRenderer.renderHand` and
+`HeldItemRenderer.renderItem` path supplies the player's actual skin/arm, selected
+item model, equip/swing animation, lightmap and projection. Transparent clearing
+now precedes that pass, and the GUI pass preserves its pixels. The skipped world
+renderer's depth/lighting/dispatcher prerequisites are prepared explicitly from
+inspected pinned 1.21.1 bytecode. Inventory/chat/third person suppress hands;
+existing HUD-only labs keep their previous behavior.
+
+Actual Minecraft image check PASS on its first run:
+`runtime/evidence/gameplay-hands-20261106-124151-40b756f8a9a74603aeb42bfa6702df55/verification.json`.
+Seven PNGs capture empty hand, held stone, unenchanted diamond sword, a vanilla
+swing, inventory, restored sword and empty hand again. Actual hand-pass calls,
+transparent clear regions and changed image bytes verify the result; normal save
+and movement/block cleanup pass. Item commands use real ChatScreen input and
+client/server inventory agreement. The swing is scripted through vanilla's
+animation/packet API and does not establish native attack or combat support.
+The image worker stays off the render thread; the run completed 92 PBO readbacks
+without busy skips. Root visually inspected the actual PNGs.
+
+Automated live KCD2 check PASS:
+`runtime/evidence/gameplay-kcd-20261106-124608-4bcb28a9873c418fa72fbf184702f769/hands-observation.json`.
+Computer Use observed the actual arm, typed `/give minecomelab stone` through
+Minecraft chat, and observed the held stone over KCD2 terrain. Chat and Creative
+inventory hid the hand layer; closing inventory restored the stone. The session
+ran for 282 seconds, captured 1,985 hand frames and uploaded 5,010 HUD frames with
+zero drops. All 40 native input events were acknowledged. Normal Minecraft save,
+input/movement/block/terrain cleanup and native bundle restoration passed; both
+games are closed. This check did not repeat walking, flight, attacks or terrain
+frontier crossing. Native log `visual_verified=false` remains unchanged because
+visual evidence is recorded separately rather than inferred from frame counters.
+
+The layer retains the existing 20 FPS capture/aspect-fit compositor. It has no
+host-world depth occlusion and uses the saved player's skin rather than forcing
+Steve. Third-person Steve, non-stone world blocks, translucent/glint/special item
+coverage, NPC combat and host lighting integration remain unfinished.
 
 ## Creative flight in sustained gameplay
 

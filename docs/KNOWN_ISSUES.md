@@ -1,5 +1,14 @@
 # Known issues and blockers
 
+## First-person rendering limits
+
+The `-Hands` profile adds actual vanilla hands/held items to the HUD overlay.
+It uses the player's Minecraft skin, does not force Steve, and does not render a
+third-person character. Capture remains 20 FPS with aspect-fit scaling and no
+host depth occlusion. Opaque skin, stone and an unenchanted sword have image
+coverage; special/translucent/glint item renderers need further checks. General
+world blocks and KCD NPC combat are not supplied by this visual layer.
+
 ## Sustained gameplay and Creative flight
 
 The separate [gameplay profiles](GAMEPLAY_SESSION.md) now provide persistent worlds,

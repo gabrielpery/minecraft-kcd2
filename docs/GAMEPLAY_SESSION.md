@@ -329,6 +329,51 @@ normally. Evidence and observation scope:
 `runtime/evidence/gameplay-kcd-20261105-201229-cf98ac724f5f4ce2a7b84e588b1f4bee/chat-observation.json`.
 This proves that command path; it is not a human typing-speed or flight check.
 
+## Minecraft hands and held items
+
+`-Hands` includes `-Flight` (and therefore chat, walking and blocks). It reuses
+the same native Chat/Flight bundle and adds the real Minecraft first-person hand
+pass to the transparent HUD stream. It also combines with `-Explore`.
+
+With KCD2 closed, prepare/install a fresh bundle and load a fresh test world:
+
+```powershell
+$bundle = Join-Path (Get-Location) ('runtime/hud-gameplay-hands-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+& './scripts/Prepare-GameplayHud.ps1' -Hands -BundleDirectory $bundle
+& './scripts/Install-GameplayHud.ps1' -Hands -BundleDirectory $bundle
+& './scripts/Start-Kcd2ToolsTest.ps1'
+```
+
+Once the world has loaded:
+
+```powershell
+& './scripts/Start-GameplaySession.ps1' -Hands -Explore -BundleDirectory $bundle
+```
+
+Hotbar selection changes the actual vanilla held model. An empty slot shows the
+saved player's Minecraft arm/skin. Inventory and chat hide the hand pass; it
+returns after closing them. The vanilla renderer supplies models, equip/swing
+animation, projection and lighting. This does not force a Steve skin, render a
+third-person character, add NPC combat or make non-stone blocks buildable in KCD2.
+
+Hands share the existing 20 FPS HUD capture and aspect-fit scaling. They are a
+first-person overlay without host-world depth occlusion. Opaque skin, stone and
+an unenchanted sword have pixel checks; translucent/glint/special item renderers
+need further coverage. The Minecraft world remains suppressed.
+
+`./scripts/Test-GameplayHands.ps1` runs one isolated actual-Minecraft session. It
+captures seven PNGs covering empty hand, stone, sword, swing, inventory, restored
+sword and return to empty hand; checks actual hand-pass visibility, transparency
+and changed pixels; then verifies normal save and collision/ledger cleanup.
+It uses vanilla chat/hotbar/UI actions and a scripted vanilla swing. It does not
+claim native attack or NPC combat acceptance.
+
+After stopping and closing KCD2:
+
+```powershell
+& './scripts/Install-GameplayHud.ps1' -Hands -BundleDirectory $bundle -Restore
+```
+
 ## Creative flight
 
 `-Flight` includes chat, walking and blocks and uses the chat native bundle.

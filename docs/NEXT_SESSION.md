@@ -1,95 +1,92 @@
-# Resume checkpoint — 5 November 2026
+# Resume checkpoint — 6 November 2026
 
 ## Direction
 
 Deliver docs/PRODUCT.md in integrated feature batches. User prioritizes progress,
-automated tests and no repeated F8/manual checks. Preserve existing labs. Required
-remaining scope includes Steve/hands/equipment, general blocks, complete host
-collision, Minecraft Survival/NPC combat, Elytra and the broader systems checklist.
-Creative flight is now connected; do not redo its already-passed native sequence.
+automated tests and minimal manual checks. Preserve working controls and labs.
+Creative flight and first-person hands now work; do not repeat their completed
+acceptance sequences. General block rendering, third-person Steve, complete host
+collision, Minecraft Survival/NPC combat and Elytra remain required.
 
-## Working Creative flight milestone
+## New working milestone: actual Minecraft hands
 
--Flight implies Chat+Blocks+Movement and can combine with -Explore. Prepare,
-Install, Start and Restore accept -Flight, using the rebuilt Chat addon (input6,
-HUD3, unchanged pinned ReShade v5 proxy). Vanilla double-Space toggles flight,
-Space/Shift rises/descends, WASD moves and Ctrl sprints. Native input forwards
-Shift/Ctrl and recovers short Space taps; a bounded Java edge queue makes vanilla
-consume separate jump edges. No direct flying/allowFlying writes.
+-Hands implies Flight+Chat+Blocks+Movement, optionally Explore. Prepare, Install,
+Start and Restore accept -Hands and reuse the unchanged Chat/Flight native bundle.
+The normal GameRenderer/HeldItemRenderer path renders actual player skin, selected
+item model and equip/swing animation. Transparent clear moved before hands; GUI
+preserves their pixels. GameplayHandRenderState supplies depth, lighting and
+renderer-dispatcher prerequisites skipped with WorldRenderer. Exact pinned
+1.21.1 bytecode was inspected under runtime/evidence/hands-source-20261106.
+Inventory/chat/third person hide hands; legacy HUD-only paths retain behavior.
 
-Flight remains inside captured heightfield/owned-stone collision, with feet
-ceiling Minecraft Y82 (18m above original capture origin), default fly speed only.
-Inventory/chat/lease loss/frontier admission release input and cancel flight
-inertia. Native Lua follower accepts24m/s only with explicit Flight (walking12).
-This is not complete native obstacle collision, unrestricted roaming or Elytra.
+Actual Minecraft fixture PASS first run:
+`runtime/evidence/gameplay-hands-20261106-124151-40b756f8a9a74603aeb42bfa6702df55/verification.json`.
+Seven PNGs: empty, stone, diamond sword, swing, inventory, restored sword, empty.
+Real chat item commands, client/server agreement, actual hand-pass markers and
+transparent image regions; 92 readbacks, zero busy skips, normal save/cleanup.
+Runner scripts/Test-GameplayHands.ps1; hands-restored.png shows the full sword.
+Swing is scripted through vanilla animation/packet API, not native combat proof.
 
-Actual Minecraft paired flight PASS:
-`runtime/evidence/gameplay-flight-20261105-202840-dbf5c73f022645229d03dd00213087c4/verification.json`.
-Takeoff/ascent/descent/horizontal/sprint, UI suppression, actual chat mode changes,
-landing, second takeoff and save/reopen airborne. Same world/player/checkpoint
-(0.502,67.619,1.602), saved vanilla abilities, later ascent/descent/landing; normal
-cleanup. Runner scripts/Test-GameplayFlight.ps1. Earlier attempts stopped near the
-8m fixture edge; fixed fixture by recentering with real S input, no relaxed bounds.
+Automated live KCD2 PASS:
+`runtime/evidence/gameplay-kcd-20261106-124608-4bcb28a9873c418fa72fbf184702f769/hands-observation.json`.
+Computer Use observed empty arm, typed /give minecomelab stone, observed held
+stone over terrain, chat/inventory hiding and item restoration after E close.
+282s session, 6524 actual hand passes, 1985 captured hand frames, 5010 native HUD
+uploads/zero drops, 40/40 input events acknowledged. Normal save and full cleanup.
+No walking/flight/frontier/native attack claims from this stationary visual check.
+The native log's visual_verified=false is intentionally separate from the
+explicit Computer Use observation receipt. No human testing was needed.
 
-Automated native KCD2 PASS:
-`runtime/evidence/gameplay-kcd-20261105-203016-5755cf27bbf549a3a956968e384a247a/flight-observation.json`.
-Computer Use double-Space takeoff, later Space ascent, hover, E inventory open/close,
-double-Space landing with HUD.1300 client/server flight ticks,2.438m maximum
-altitude,15/15 native events ACKed,2130 HUD uploads/zero drops,125 native position
-writes; normal save and all cleanup. No native horizontal/sprint/held-Shift,
-airborne reconnect or frontier-crossing acceptance claimed by this sequence.
+Offline assemble, launcher PowerShell parse and diff checks passed. Focused
+independent review found no launcher/gating regression. No native rebuild needed.
+Hands inherit 20 FPS capture and aspect-fit, have no host depth occlusion, and use
+the saved player's skin rather than forcing Steve. Special translucent/glint item
+renderers and host lighting are unverified. These are documented limitations.
 
-Review caught clean stop during a fall after mode change. Final checkpoint now
-captures current actual abilities/position on the owning server cleanup task,
-not a cached50ms observation; optional falling/fall_distance tags preserve fall state.
-Reopen restores checkpoint position/distance, validates saved abilities and lets
-vanilla land before controls attach. No ability/damage writes. Vanilla server player
-constructor grants60ticks join invulnerability, so immediate Survival landing on
-reopen correctly retainshealth20. Preserve this rule; don't force damage to satisfy
-an incorrect test expectation. Focused actual Minecraft fall/save/reopen PASS:
-`runtime/evidence/gameplay-flight-fall-20261105-203651-2903172718104064b8ae261d787ddf7d/fall-continuation-verification.json`.
-Same untouched checkpointY67.274/fallDistance4.844 restored, accumulated7.539,
-landed atplayerage26/health20, then saved groundcheckpoint with fullcleanup.
-Original pair's incorrect damage-expectation failure is preserved; only resume
-repeated. Final assemble/movement37 passed. All test games are now closed.
+## Next integrated feature
 
-## Prior verified foundations
+Extend real Minecraft content rendering to general placed blocks, preserving
+saved block identity, shape, collision and existing aimed interactions. Inspect
+current block/aim ownership before altering it. Current KCD world representation
+is still stone-only (64 owned blocks, Y56..80); rendering other held items does
+not expand placeable block support. First-person overlay does not solve world
+camera projection/depth or third-person Steve. Reuse the existing transparent
+capture/native compositor where valid; avoid creating one KCD asset per item.
+Elytra still needs faster/3D collision admission, not just raised speed limits.
 
-- Chat: native typed /gamemode survival, real vanilla feedback/hearts/hunger,
-  normal save/cleanup. Evidence gameplay-kcd-20261105-201229-cf98ac724f5f4ce2a7b84e588b1f4bee.
-  Real ChatScreen methods; keyboard-only, no clipboard/IME/dead-key/AltGr.
-- Explore: additive8x8 captures, max64tiles/offsets[-8,8], fixedorigin, persisted
-  coverage. Both Minecraft collision owners install before acknowledgement.
-  Actual MC paired admission/build/reopen PASS gameplay-terrain-20261105-191017-ee2686489a414ba49e3ab306887d2b3e.
+## Prior foundations — preserve, do not redo
+
+- Sustained saves and movement, Blocks, Explore, Chat and Flight: docs/GAMEPLAY_SESSION.md.
+- Flight double-Space, Space/Shift, WASD/Ctrl uses vanilla abilities; 18m feet
+  ceiling above original capture origin, captured heightfield/owned stone only.
+  Actual-Minecraft paired save/reopen PASS:
+  gameplay-flight-20261105-202840-dbf5c73f022645229d03dd00213087c4.
+  Native takeoff/ascent/hover/inventory/landing PASS:
+  gameplay-kcd-20261105-203016-5755cf27bbf549a3a956968e384a247a.
+- Falling checkpoint captures current server state/fall distance on cleanup.
+  Reopen respects vanilla 60-tick join invulnerability. PASS:
+  gameplay-flight-fall-20261105-203651-2903172718104064b8ae261d787ddf7d.
+- Native typed /gamemode survival and hearts/hunger PASS:
+  gameplay-kcd-20261105-201229-cf98ac724f5f4ce2a7b84e588b1f4bee.
+- Explore uses additive 8x8 tiles, max64/offsets[-8,8], fixed origin, persisted
+  coverage; both MC collision owners install before ACK. Paired MC PASS:
+  gameplay-terrain-20261105-191017-ee2686489a414ba49e3ab306887d2b3e.
   Live capture PASS gameplay-terrain-capture-20261105-191937-77679be45b4d4619be9b208946fca580.
-  Native coupled frontier crossing still unverified. Stone only, max64,Y56..80.
-- Console dispatch splits only between complete calls at2000 encoded path chars,
-  including flush overhead. Do not remove: KCD console truncates longer requests.
-- Native gameplay addon accepts one session per KCD process currently; bounded
-  diagnostic repeat-session behavior is separate.
-
-## Checks / next work
-
-Native chat/input1425 and legacy suites PASS; Java movement37,wire193,HudInput353;
-Lua gameplay movement and console batching17 PASS. Final fall regression/review
-passed as above. Avoid broad repeated tests without a changed concern.
-
-Next integrated feature: general Minecraft rendering for hands/held items/Steve
-and blocks, reusing real Minecraft content instead of adding one KCD asset per
-item. Preserve sustained commands/flight/world ownership. Elytra remains required
-but needs faster/3D collision admission; do not just raise a position/speed limit.
+  Native coupled frontier crossing remains unverified.
+- Console dispatch splits only between complete calls at 2000 encoded path chars,
+  including flush overhead; KCD truncates longer requests.
+- Native gameplay accepts one session per KCD process; bounded repeat labs differ.
 
 ## Environment / deployment
 
 Branch codex/initial-import; public github.com/gabrielpery/minecraft-kcd2.
 JDK C:/Program Files/Java/jdk-24; offline Gradle cache minecraft/.gradle-user-home.
-CMake/CTest under Visual Studio2022 Community/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin.
+Both games closed; hands test world saved. Prior renderer restored:
+`runtime/evidence/gameplay-hud-restore-20261106-125202-73f3bd9a73ac4f9ab6e9da674a05f0da`.
+Bundle runtime/hud-gameplay-hands-20261106 is restored; do not reuse its receipt.
+Use a fresh BundleDirectory after changes. Assets/runtimes/saves stay out of Git.
 Exact official tools1.5.5 exe SHA256:
 a32d077e6b54e5cd0c5a5f3194f473779706ff266a711e4745ccdb598843340a.
-KCD2 closed; previous renderer restored. Latest bundle
-runtime/hud-gameplay-flight-20261105 is restored (do not reuse its receipt).
-Restore receipt gameplay-hud-restore-20261105-203542-39a8a3005fc14292b98ce41f91b09092.
-Final addon361472bytes SHA256:
+Native addon361472bytes SHA256:
 3ab80c4ea675716a4d1e8a09d143beec6b9858a5d6d8c14dcef7bb2ce9950628.
-Pinned config config/hud-gameplay-chat-profile-v5.json. Always use a fresh
-BundleDirectory after source/binary changes. Assets/runtimes/saves stay out of Git.
+Pinned config config/hud-gameplay-chat-profile-v5.json. Retail unsupported.

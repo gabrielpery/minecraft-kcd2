@@ -1,9 +1,9 @@
 #Requires -Version 5.1
 # Stage the exact built v5 proxy and gameplay addon in the workspace only.
 [CmdletBinding()]
-param([string]$BundleDirectory,[switch]$Movement,[switch]$Blocks,[switch]$Chat,[switch]$Flight)
+param([string]$BundleDirectory,[switch]$Movement,[switch]$Blocks,[switch]$Chat,[switch]$Flight,[switch]$Hands)
 $ErrorActionPreference='Stop';Set-StrictMode -Version Latest
-if($Flight){$Chat=$true}
+if($Flight -or $Hands){$Chat=$true}
 . (Join-Path $PSScriptRoot 'GameplayHudProfile.ps1')
 if(-not $BundleDirectory){$BundleDirectory=Join-Path $script:mcGameplayRoot $(if($Chat){'runtime/hud-compositor-gameplay-chat'}elseif($Blocks){'runtime/hud-compositor-gameplay-blocks'}elseif($Movement){'runtime/hud-compositor-gameplay-movement'}else{'runtime/hud-compositor-gameplay'})}
 $bundle=Resolve-MineComeGameplayPath $BundleDirectory -InRuntime;$profile=Get-MineComeGameplayProfile -Movement:$Movement -Blocks:$Blocks -Chat:$Chat

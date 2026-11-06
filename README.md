@@ -57,6 +57,15 @@ with an 18m height ceiling above the original capture origin. General blocks,
 complete host collision, Steve, cross-game combat and Elytra remain unfinished.
 Bounded labs remain available.
 
+The [`-Hands` profile](docs/GAMEPLAY_SESSION.md#minecraft-hands-and-held-items)
+includes those controls and adds Minecraft's actual first-person arm and held-item
+rendering to the HUD stream. A real-Minecraft automated check captures empty hand,
+stone, sword, swing and inventory transitions with transparent world pixels and
+normal cleanup. An automated live KCD2 check also shows the arm and held stone,
+hides them in chat/inventory, and restores the stone after inventory closes.
+This uses the player's vanilla skin and item models; third-person
+Steve, world rendering for general blocks and NPC combat remain separate work.
+
 The new [repeat-session development profile](kcd2/MOVEMENT-LAB.md#repeat-sessions-in-one-kcd-process)
 is implemented and compiled, with automated cleanup/rearm checks passing.
 Two bounded sessions now work in the same KCD2 process, with live user confirmation.
@@ -124,6 +133,7 @@ deviation during landing; it is not counted as a passing walking check.
 | Minecraft stone in KCD2 | Actual Minecraft-derived stone appears and disappears in the official KCD2 development world after vanilla placement/breaking. |
 | Hotbar and Creative inventory | Minecraft's real UI is composited inside KCD2. Physical slot selection, inventory opening/closing, clicks, dragging and scrolling have passed live tests. |
 | Creative flight | Native KCD2 takeoff, ascent, hover, inventory and landing pass an automated live check with the HUD visible. Actual-Minecraft fixtures also verify descent, horizontal/sprint flight and airborne save/reopen. Limited to captured terrain/owned stone collision and an 18m ceiling; no Elytra yet. |
+| First-person hands and held items | The `-Hands` profile renders the actual vanilla arm, selected item and swing animation in the transparent stream. Seven actual-Minecraft image checks pass. An automated live KCD2 check passes arm/held stone and chat/inventory hiding/restoration. No third-person character or general world blocks yet. |
 | Camera and block controls together | KCD camera look works outside inventory and stays still inside it. Right-click/place and left-click/break work in one fixed nearby cell during a bounded live session. |
 | Minecraft aiming | After fixing KCD's default stone rotation, a live right-click places on the original block's top face and the next two clicks break both blocks, with matching Minecraft/KCD records and user confirmation. The standalone actual-Minecraft lab passes 28 targeting/control scenarios with synthetic host rays, including hotbar changes while an action finishes. |
 | Movement groundwork | In an automatic two-game test, KCD follows walking/jumping from the Minecraft HUD world over sampled KCD ground, then returns the player to the starting position. The same save completes its HUD/inventory sequence. This bounded scripted lab uses a standalone HUD receiver; the separate gameplay path removes its timed return. |
