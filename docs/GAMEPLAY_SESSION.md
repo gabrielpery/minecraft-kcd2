@@ -401,8 +401,11 @@ terrain case. A later automated KCD2 check placed above ground, merged and mined
 the slab with the depth pass active. Native stairs, walking over partial shapes
 and precisely isolated top-face merge input remain unverified.
 
-World blocks share the existing 20 FPS transparent capture and aspect-fit
-compositor with hands and UI. They depth-test against one another and the same
+World blocks use the existing 20 FPS capture and aspect-fit compositor. The
+WorldBlocks profile now sends separate world colour, raw depth and foreground
+hands/UI planes in schema3 format2; install the newly pinned Chat compositor and
+shader together with the updated client. Older flat profiles remain format1.
+World blocks depth-test against one another and the same
 captured heightfield slabs used for player collision. The terrain pass writes
 only depth, before block models and outlines; the hand pass clears depth again
 so the actual hands and HUD remain visible. The immutable surface updates with
@@ -410,6 +413,14 @@ admitted terrain coverage. This is finite sampled-ground occlusion, not the
 native scene depth buffer. An unsampled ground area or native object can still
 be drawn behind a Minecraft block. Minecraft supplies model lighting; native
 lighting/shadows, unrestricted building and third-person Steve remain unfinished.
+
+The native shader can additionally compare world depth with ReShade's selected
+KCD2 depth buffer, leaving hands/UI untouched. It requires the exact executable
+and proxy, reflected camera/projection constants, matching live camera and depth
+source/backup identity. KCD2 uses DXIL, so reflection uses its hash-pinned shipped
+compiler and actual remapped bindings rather than assuming the source register.
+Unavailable or mismatched metadata leaves sampled ground as the fallback. This
+is not yet verified scenery/NPC occlusion.
 
 `./scripts/Test-GameplayDepth.ps1` checks the production depth pass in actual
 Minecraft using controlled render-only terrain boxes. Seven fixed-camera PNGs

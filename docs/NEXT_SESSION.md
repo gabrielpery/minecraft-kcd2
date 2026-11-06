@@ -9,7 +9,43 @@ work; do not repeat their completed acceptance sequences. Full block coverage,
 third-person Steve, complete host collision, Survival/NPC combat and Elytra remain
 required. The requested hovered-block wireframe now works and is verified.
 
-## Latest milestone: captured-terrain depth
+## Latest milestone: separate world layers and native scene depth
+
+WorldBlocks now streams same-frame foreground RGBA, owned-world RGBA and raw
+float depth under one GPU fence (schema3 format2). Hands/HUD remain foreground;
+owned models/outlines can be compared against KCD depth. Captured-ground depth
+remains the fallback. Flat profiles preserve format1. Mapping capacity is
+24,883,456 bytes; logical viewport/input coordinates are unchanged.
+
+Native reader reflects actual KCD DXIL through the game's hash-pinned DXC DLL,
+resolves engine-remapped CB registers/spaces, and reads CPU-visible upload buffers
+through public ReShade callbacks. Depth use requires current camera/lens/viewport
+and exact GenericDepth original/backup association, behind the pinned proxy hash.
+No guessed engine offsets or near/far constants. See docs/PROGRESS.md and
+protocol/HUD_STREAM.md for implementation/guards.
+
+Automated Java assemble/456 checks, native transport/reflection and real FX
+compiler tests PASS. Actual Minecraft plane separation and paired model/outline/
+inventory/save fixtures PASS (151022-fba9233a74bb4c4fad770063eca892a9 and
+151408-6da5602ad31f4809969fd27774dc5585 under runtime/evidence).
+
+Live native projection/source association now works: 5,401 accepted views and
+2,803 frames with native depth comparison enabled, 613 uploads/zero drops;
+643 guest publications, max gap79.2234ms, normal client exit. Evidence:
+`runtime/evidence/gameplay-kcd-20261106-153528-6e51e45c7a534d3da26669851edd994d/native-depth-observation.json`.
+This is NOT visible block-occlusion acceptance: saved scene had no owned blocks,
+and input never armed. KCD reports no mouse installed and DirectInput system
+mouse creation fails with 0x80040154; prearm bit512/reason1/no_device. The full
+session verification correctly remains failed. Do not weaken input eligibility.
+
+Next: resolve/confirm the game's missing mouse device before another native
+interaction check, then batch visible scenery occlusion with block placement and
+walking over partial shapes. Do not repeat completed layer fixtures or inventory
+microtests. Third-person Steve, broader collision, Survival/NPC combat and Elytra
+remain product work. All three temporary native-depth bundles are restored;
+both game clients are closed. Use a fresh bundle for the next deployment.
+
+## Previous milestone: captured-terrain depth
 
 WorldBlocks now writes the immutable collision surface's finite slabs into depth
 before owned models/outlines, using the same view/projection. No terrain colour,
@@ -39,10 +75,8 @@ terminal. Host checks PASS10, combined worker PASS6 (also fixed its mock traject
 ending before frontier tracking started). No freshness/guard changes. Another
 attachment timed out while KCD was loading; wait for actual world readiness.
 
-Full native scene-depth path is now identified, not implemented: ReShade's
-built-in Generic Depth binds DEPTH/bufready_depth, but MC world depth/color must
-be separate from hands/HUD. Verify KCD near/far/reversed-Z before comparing;
-do not copy Elden Ring constants. Pinned source refs and API inspection:
+The subsequent milestone above implements the separate planes and native-depth
+reader identified here. Initial pinned source refs and API inspection:
 `runtime/evidence/terrain-depth-source-20261106/host-depth-notes.txt`.
 
 ## Latest milestone: slabs and stairs
@@ -160,14 +194,14 @@ renderers and host lighting are unverified. These are documented limitations.
 
 ## Next integrated feature
 
-Expand actual host-world depth/collision beyond the captured-heightfield pass;
-reuse real models, no per-block KCD assets. True scene depth needs distinct
-world/overlay transport and verified KCD projection, as noted above. Batch native
-checks rather than restarting a small manual acceptance loop.
+Complete native-depth visual acceptance and expand host-world collision beyond
+the captured-heightfield pass; reuse real models, no per-block KCD assets. The
+world/overlay transport and live projection reader are now implemented above.
+Batch native checks rather than restarting a small manual acceptance loop.
 Player collision with owned blocks and placement directly on captured ground
 already exist. Arbitrary KCD walls/trees/objects are not captured as buildable
 surfaces, and KCD NPCs do not collide with these composited blocks. Native depth
-occlusion and third-person Steve remain unfinished.
+visual acceptance and third-person Steve remain unfinished.
 Elytra still needs faster/3D collision admission, not just raised speed limits.
 
 ## Prior foundations — preserve, do not redo
@@ -201,11 +235,13 @@ Both games closed; WorldBlocks native world saved with no remaining owned blocks
 The pre-fix buried slab was removed through a local Minecraft command. The new
 raised/merged slab was mined normally. Slot3 contains oak slab.
 Prior renderer restored:
-`runtime/evidence/gameplay-hud-restore-20261106-144842-fe11669edcab43c7aa118a3017b31f78`.
-Bundle runtime/hud-gameplay-depth-20261106 is restored; do not reuse its receipt.
+`runtime/evidence/gameplay-hud-restore-20261106-154102-5c8f3fda52834d8799461c59f58415ce`.
+Bundle runtime/hud-gameplay-native-depth-r3-20261106 is restored; do not reuse its receipt.
 Use a fresh BundleDirectory after changes. Assets/runtimes/saves stay out of Git.
 Exact official tools1.5.5 exe SHA256:
 a32d077e6b54e5cd0c5a5f3194f473779706ff266a711e4745ccdb598843340a.
-Native addon361472bytes SHA256:
-3ab80c4ea675716a4d1e8a09d143beec6b9858a5d6d8c14dcef7bb2ce9950628.
+Native addon413696bytes SHA256:
+11f132a8502adee7a8a27cb27266aa727871c7f77904070ec301f10fcb3bc9ca.
+Native effect4696bytes SHA256:
+54e4bbd996d25e17fdb8e654fa7d0ffdbe453000ba557c3b635a8ed64ac59c81.
 Pinned config config/hud-gameplay-chat-profile-v5.json. Retail unsupported.

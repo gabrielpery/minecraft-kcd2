@@ -10,6 +10,14 @@ namespace minecome::hud::stream {
 inline constexpr std::size_t header_bytes = 256;
 inline constexpr std::size_t pixel_capacity = 1920u * 1080u * 4u;
 inline constexpr std::size_t mapping_bytes = header_bytes + pixel_capacity;
+inline constexpr std::size_t gameplay_pixel_capacity = pixel_capacity * 3u;
+inline constexpr std::size_t gameplay_mapping_bytes = header_bytes + gameplay_pixel_capacity;
+inline constexpr std::size_t capacity_for_schema(std::uint32_t schema) noexcept {
+    return schema == 3 ? gameplay_pixel_capacity : pixel_capacity;
+}
+inline constexpr std::size_t mapping_for_schema(std::uint32_t schema) noexcept {
+    return header_bytes + capacity_for_schema(schema);
+}
 inline constexpr std::size_t max_arm_bytes = 4096;
 inline constexpr std::uint64_t max_lease_ms = 180000, gameplay_max_lease_ms = 24ull*60*60*1000, fresh_ms = 500;
 struct Identity {
@@ -24,7 +32,11 @@ inline constexpr std::uint64_t maximum_lease(const Identity &id) noexcept {
 struct Header {
     std::uint64_t sequence = 0, capture_utc_ms = 0;
     std::uint32_t width = 0, height = 0, pitch = 0, bytes = 0;
-    std::uint32_t state = 0, selected = 0, screen = 0;
+    // Format2: overlay RGBA8, world RGBA8, raw GL depth32F; three same-size planes.
+    std::uint32_t state = 0, selected = 0, screen = 0, format = 1;
+    std::uint64_t camera_utc_ms = 0;
+    std::array<float,3> camera_position{},camera_direction{},camera_up{};
+    float vertical_fov = 0, near_plane = 0, far_plane = 0;
 };
 bool valid_identity(const Identity &identity) noexcept;
 bool parse_arm(std::string_view text, std::uint32_t target_pid, std::uint64_t target_start,
@@ -46,7 +58,7 @@ private:
     Identity identity_;
     bool consumed_ = false, terminal_ = false, have_frame_ = false;
     std::uint64_t begun_ = 0, deadline_ = 0, sequence_ = 0, observed_ = 0;
-    std::uint32_t width_ = 0, height_ = 0;
+    std::uint32_t width_ = 0, height_ = 0, format_ = 0;
     std::string reason_;
 };
 bool uploaded_fresh(std::uint64_t observation, std::uint64_t now) noexcept;

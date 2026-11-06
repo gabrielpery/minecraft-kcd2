@@ -48,7 +48,7 @@ int wmain(int argc, wchar_t **argv) {
             !number(args[L"--producer-pid"],id.producer_pid) || !number(args[L"--producer-start"],id.producer_start) ||
             !number(args[L"--expires"],id.expires_utc_ms) || !st::valid_identity(id)) return 2;
         st::Channel channel;
-        std::uint64_t accepted=0, repeated=0, busy=0, nontransparent=0, first=0,last=0;
+        std::uint64_t accepted=0, repeated=0, busy=0, nontransparent=0, first=0,last=0,layered=0;
         bool closed=false, stale=false, resumed=false, had_fresh=false;
         std::set<std::pair<std::uint32_t,std::uint32_t>> states;
         std::string reason;
@@ -63,7 +63,9 @@ int wmain(int argc, wchar_t **argv) {
                 if (result == st::Poll::frame) {
                     ++accepted; if (!first) first=frame->header.sequence; last=frame->header.sequence;
                     states.emplace(frame->header.selected,frame->header.screen);
-                    for (std::size_t i=3;i<frame->premultiplied.size();i+=4)
+                    if(frame->header.format==2)++layered;
+                    const auto colors=std::size_t(frame->header.pitch)*frame->header.height*(frame->header.format==2?2u:1u);
+                    for (std::size_t i=3;i<colors;i+=4)
                         if (frame->premultiplied[i]) { ++nontransparent; break; }
                 } else if (result == st::Poll::unchanged) ++repeated;
                 else if (result == st::Poll::busy) ++busy;
@@ -76,7 +78,7 @@ int wmain(int argc, wchar_t **argv) {
         std::ostringstream json;
         json << "{\n  \"schema\":1,\n  \"run\":\"" << id.run << "\",\n  \"result\":\"" << (passed?"passed":"failed")
              << "\",\n  \"stream_schema\":" << id.schema << ",\n  \"reason\":\"" << reason << "\",\n  \"accepted_frames\":" << accepted
-             << ",\n  \"nontransparent_frames\":" << nontransparent << ",\n  \"first_sequence\":" << first << ",\n  \"last_sequence\":" << last
+             << ",\n  \"nontransparent_frames\":" << nontransparent << ",\n  \"layered_frames\":" << layered << ",\n  \"first_sequence\":" << first << ",\n  \"last_sequence\":" << last
              << ",\n  \"repeated_polls\":" << repeated << ",\n  \"busy_polls\":" << busy
              << ",\n  \"closed_seen\":" << (closed?"true":"false") << ",\n  \"stale_hidden_verified\":" << (stale?"true":"false")
              << ",\n  \"fresh_resumption_verified\":" << (resumed?"true":"false") << ",\n  \"kcd_compositing_verified\":false,\n  \"states_seen\":[";

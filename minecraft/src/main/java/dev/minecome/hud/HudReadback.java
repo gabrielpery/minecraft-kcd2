@@ -11,8 +11,14 @@ import java.util.function.Consumer;
 
 /** Exact1.21.1 OpenGL backend: three bounded PBOs, zero-timeout fence polls, skip when busy. */
 final class HudReadback implements AutoCloseable {
-    record Completed(int id,int width,int height,byte[] bottomUp,String metadata) {}
-    private static final class Slot { int buffer,width,height,id; long fence,preReadFence,preReadObservedAt,enqueuedAt; String metadata; }
+    static final class Completed {
+        private final int id,width,height;private byte[] bottomUp;private final String metadata;private final byte[] layersBottomUp;
+        Completed(int id,int width,int height,byte[] bottomUp,String metadata){this(id,width,height,bottomUp,metadata,null);}
+        Completed(int id,int width,int height,byte[] bottomUp,String metadata,byte[] layersBottomUp){this.id=id;this.width=width;this.height=height;this.bottomUp=bottomUp;this.metadata=metadata;this.layersBottomUp=layersBottomUp;}
+        int id(){return id;}int width(){return width;}int height(){return height;}String metadata(){return metadata;}byte[] layersBottomUp(){return layersBottomUp;}
+        byte[] bottomUp(){if(bottomUp==null)bottomUp=HudLayerPixels.flattenBottomUp(layersBottomUp,width,height);return bottomUp;}
+    }
+    private static final class Slot { int buffer,width,height,id,bytes; boolean layered; long fence,preReadFence,preReadObservedAt,enqueuedAt; String metadata; }
     private final Slot[] slots={new Slot(),new Slot(),new Slot()};
     private final boolean pairedFenceDiagnostics;
     private long captureCalls,enqueued,busySkips,fenceTimeouts,completed;
@@ -22,23 +28,29 @@ final class HudReadback implements AutoCloseable {
     HudReadback(){this(false);}
     HudReadback(boolean pairedFenceDiagnostics){this.pairedFenceDiagnostics=pairedFenceDiagnostics;}
     boolean capture(Framebuffer framebuffer,int id,String metadata) {
+        return capture(framebuffer,null,id,metadata);
+    }
+    boolean capture(Framebuffer framebuffer,Framebuffer world,int id,String metadata) {
         RenderSystem.assertOnRenderThread();long begun=System.nanoTime();captureCalls++;
-        try {return enqueue(framebuffer,id,metadata,begun);}
+        try {return enqueue(framebuffer,world,id,metadata,begun);}
         finally {maxEnqueueDuration=Math.max(maxEnqueueDuration,System.nanoTime()-begun);}
     }
-    private boolean enqueue(Framebuffer framebuffer,int id,String metadata,long begun) {
-        int size=HudPixels.byteSize(framebuffer.textureWidth,framebuffer.textureHeight);
+    private boolean enqueue(Framebuffer framebuffer,Framebuffer world,int id,String metadata,long begun) {
+        boolean layered=world!=null;int plane=HudPixels.byteSize(framebuffer.textureWidth,framebuffer.textureHeight),size=layered?plane*3:plane;
+        if(layered&&(world.textureWidth!=framebuffer.textureWidth||world.textureHeight!=framebuffer.textureHeight||!world.useDepthAttachment))throw new IllegalArgumentException("World readback dimensions/depth differ");
+        if(layered&&java.nio.ByteOrder.nativeOrder()!=java.nio.ByteOrder.LITTLE_ENDIAN)throw new IllegalStateException("Layered HUD requires little-endian GL floats");
         Slot free=null; for(Slot slot:slots)if(slot.fence==0){free=slot;break;} if(free==null){busySkips++;return false;}
         int pack=GL11.glGetInteger(GL21.GL_PIXEL_PACK_BUFFER_BINDING), read=GL11.glGetInteger(GL30.GL_READ_FRAMEBUFFER_BINDING);
         int readBuffer=GL11.glGetInteger(GL11.GL_READ_BUFFER);
-        int[] stores={GL11.GL_PACK_ALIGNMENT,GL11.GL_PACK_ROW_LENGTH,GL11.GL_PACK_SKIP_ROWS,GL11.GL_PACK_SKIP_PIXELS};
+        int[] stores={GL11.GL_PACK_ALIGNMENT,GL11.GL_PACK_ROW_LENGTH,GL11.GL_PACK_SKIP_ROWS,GL11.GL_PACK_SKIP_PIXELS,GL11.GL_PACK_SWAP_BYTES};
         int[] previous=new int[stores.length];for(int i=0;i<stores.length;i++)previous[i]=GL11.glGetInteger(stores[i]);
         try {
             if(free.buffer==0)free.buffer=GL15.glGenBuffers();
             GL15.glBindBuffer(GL21.GL_PIXEL_PACK_BUFFER,free.buffer);
-            if(free.width!=framebuffer.textureWidth || free.height!=framebuffer.textureHeight){
-                GL15.glBufferData(GL21.GL_PIXEL_PACK_BUFFER,size,GL15.GL_STREAM_READ);free.width=framebuffer.textureWidth;free.height=framebuffer.textureHeight;
+            if(free.width!=framebuffer.textureWidth || free.height!=framebuffer.textureHeight||free.bytes!=size){
+                GL15.glBufferData(GL21.GL_PIXEL_PACK_BUFFER,size,GL15.GL_STREAM_READ);free.width=framebuffer.textureWidth;free.height=framebuffer.textureHeight;free.bytes=size;
             }
+            free.layered=layered;
             GlStateManager._glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER,framebuffer.fbo);GL11.glReadBuffer(GL30.GL_COLOR_ATTACHMENT0);
             GlStateManager._pixelStore(GL11.GL_PACK_ALIGNMENT,1);
             for(int i=1;i<stores.length;i++)GlStateManager._pixelStore(stores[i],0);
@@ -47,6 +59,11 @@ final class HudReadback implements AutoCloseable {
                 if(free.preReadFence==0)throw new IllegalStateException("HUD pre-read GL fence creation failed");
             }
             GL11.glReadPixels(0,0,free.width,free.height,GL11.GL_RGBA,GL11.GL_UNSIGNED_BYTE,0L);
+            if(layered){
+                GlStateManager._glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER,world.fbo);GL11.glReadBuffer(GL30.GL_COLOR_ATTACHMENT0);
+                GL11.glReadPixels(0,0,free.width,free.height,GL11.GL_RGBA,GL11.GL_UNSIGNED_BYTE,(long)plane);
+                GL11.glReadPixels(0,0,free.width,free.height,GL11.GL_DEPTH_COMPONENT,GL11.GL_FLOAT,2L*plane);
+            }
             free.fence=GL32.glFenceSync(GL32.GL_SYNC_GPU_COMMANDS_COMPLETE,0);
             if(free.fence==0)throw new IllegalStateException("HUD GL fence creation failed");
             free.id=id;free.metadata=metadata;free.enqueuedAt=begun;enqueued++;lastEnqueueUtc=System.currentTimeMillis();return true;
@@ -87,14 +104,14 @@ final class HudReadback implements AutoCloseable {
                 GL15.glBindBuffer(GL21.GL_PIXEL_PACK_BUFFER,slot.buffer);
                 long mapAt=System.nanoTime();byte[] pixels;
                 try {
-                    ByteBuffer mapped=GL30.glMapBufferRange(GL21.GL_PIXEL_PACK_BUFFER,0,HudPixels.byteSize(slot.width,slot.height),GL30.GL_MAP_READ_BIT);
+                    ByteBuffer mapped=GL30.glMapBufferRange(GL21.GL_PIXEL_PACK_BUFFER,0,slot.bytes,GL30.GL_MAP_READ_BIT);
                     if(mapped==null)throw new IllegalStateException("HUD completed PBO map failed");
                     pixels=new byte[mapped.remaining()];
                     try {mapped.get(pixels);} finally {if(!GL15.glUnmapBuffer(GL21.GL_PIXEL_PACK_BUFFER))throw new IllegalStateException("HUD PBO contents invalidated");}
                 } finally {maxMapCopyDuration=Math.max(maxMapCopyDuration,System.nanoTime()-mapAt);}
                 deleteFences(slot);
                 completed++;lastCompletionUtc=System.currentTimeMillis();maxCompletionAge=Math.max(maxCompletionAge,System.nanoTime()-slot.enqueuedAt);slot.enqueuedAt=0;
-                consumer.accept(new Completed(slot.id,slot.width,slot.height,pixels,slot.metadata));slot.metadata=null;
+                consumer.accept(new Completed(slot.id,slot.width,slot.height,slot.layered?null:pixels,slot.metadata,slot.layered?pixels:null));slot.metadata=null;
                 }catch(RuntimeException|Error failure){deleteFences(slot);slot.enqueuedAt=0;slot.metadata=null;throw failure;}
             }
         } finally {GL15.glBindBuffer(GL21.GL_PIXEL_PACK_BUFFER,pack);}
@@ -133,6 +150,6 @@ final class HudReadback implements AutoCloseable {
         slot.preReadObservedAt=0;
     }
     @Override public void close(){
-        RenderSystem.assertOnRenderThread();for(Slot slot:slots){deleteFences(slot);if(slot.buffer!=0)GL15.glDeleteBuffers(slot.buffer);slot.buffer=0;slot.enqueuedAt=0;slot.metadata=null;}
+        RenderSystem.assertOnRenderThread();for(Slot slot:slots){deleteFences(slot);if(slot.buffer!=0)GL15.glDeleteBuffers(slot.buffer);slot.buffer=0;slot.bytes=0;slot.enqueuedAt=0;slot.metadata=null;}
     }
 }

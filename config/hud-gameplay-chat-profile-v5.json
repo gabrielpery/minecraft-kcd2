@@ -34,13 +34,14 @@
     },
     {
       "path": "minecome-hud/addons/MineComeHudCompositor.addon64",
-      "bytes": 361472,
-      "sha256": "3ab80c4ea675716a4d1e8a09d143beec6b9858a5d6d8c14dcef7bb2ce9950628"
+      "bytes": 413696,
+      "sha256": "11f132a8502adee7a8a27cb27266aa727871c7f77904070ec301f10fcb3bc9ca"
     },
     {
       "path": "minecome-hud/shaders/MineComeHud.fx",
-      "bytes": 2549,
-      "sha256": "ba09f039fbcd616200456f7f79a1fca913bbbe3e8bf672576dc5098c1c25d0b6"
+      "bytes": 4696,
+      "sha256": "54e4bbd996d25e17fdb8e654fa7d0ffdbe453000ba557c3b635a8ed64ac59c81"
     }
-  ]
+  ],
+  "shader_source": "build/native/kcd2/hud/gameplay_chat/Release/MineComeHud.fx"
 }

@@ -13,7 +13,7 @@ import java.util.concurrent.atomic.*;
 
 /** Protocol/HUD_STREAM.md. Native operations and pixel conversion are confined to one worker. */
 public final class HudStreamProducer implements AutoCloseable {
-    public static final int HEADER_BYTES=256, MAPPING_BYTES=HEADER_BYTES+1920*1080*4;
+    public static final int HEADER_BYTES=256, MAPPING_BYTES=HEADER_BYTES+1920*1080*4, GAMEPLAY_MAPPING_BYTES=HEADER_BYTES+1920*1080*12;
     public record Identity(String run,int targetPid,long targetStart,long expiresUtcMs) {
         public Identity {
             if(run==null || !run.matches("[0-9a-f]{32}") || targetPid<=0 || targetStart<=0 || expiresUtcMs<=0)
@@ -23,11 +23,14 @@ public final class HudStreamProducer implements AutoCloseable {
         public String mutexName(){return "Local\\MineComeHudLock_"+run;}
     }
     /** Ownership of bottomUp transfers to the mailbox; no caller may mutate it afterward. */
-    public record Frame(int width,int height,byte[] bottomUp,long capturedUtcMs,int selectedSlot,int screen,String metadata) {
+    public record Frame(int width,int height,byte[] bottomUp,long capturedUtcMs,int selectedSlot,int screen,String metadata,byte[] layersBottomUp) {
+        public Frame(int width,int height,byte[] bottomUp,long capturedUtcMs,int selectedSlot,int screen,String metadata){this(width,height,bottomUp,capturedUtcMs,selectedSlot,screen,metadata,null);}
         public Frame {
-            if(bottomUp.length!=HudPixels.byteSize(width,height) || capturedUtcMs<=0 || selectedSlot<0 || selectedSlot>8 || screen<0 || screen>1 || metadata==null || metadata.length()>16384)
+            int plane=HudPixels.byteSize(width,height);
+            if((bottomUp==null&&layersBottomUp==null)||(bottomUp!=null&&bottomUp.length!=plane)||(layersBottomUp!=null&&layersBottomUp.length!=plane*3)||capturedUtcMs<=0 || selectedSlot<0 || selectedSlot>8 || screen<0 || screen>1 || metadata==null || metadata.length()>16384)
                 throw new IllegalArgumentException("Invalid stream frame");
         }
+        @Override public byte[] bottomUp(){return bottomUp!=null?bottomUp:HudLayerPixels.flattenBottomUp(layersBottomUp,width,height);}
     }
     private record Sample(byte[] rgba,int width,int height,JsonObject metadata,String name){}
     private static final Set<String> WALKING_AIMED_SAMPLE_STATES=Set.of(
@@ -40,6 +43,8 @@ public final class HudStreamProducer implements AutoCloseable {
     private final String save;
     private final boolean genuine;
     private final boolean gameplay=dev.minecome.gameplay.GameplayMode.enabled();
+    private final int frameFormat=gameplay&&Boolean.getBoolean("minecome.gameplayWorldBlocks")?2:1;
+    private final int mappingBytes=gameplay?GAMEPLAY_MAPPING_BYTES:MAPPING_BYTES;
     private final int inputMode;
     private final boolean inputDelayFixture,inputPointerFixture,liveMouse,stoneBridge,stoneFixture,stoneLive,aimedStone;
     private final boolean backgroundTrial;
@@ -150,7 +155,11 @@ public final class HudStreamProducer implements AutoCloseable {
         return header(id,producerPid,producerStart,sequence,captured,width,height,selected,screen,state,1);
     }
     public static byte[] header(Identity id,int producerPid,long producerStart,long sequence,long captured,int width,int height,int selected,int screen,int state,int schema) {
+        return header(id,producerPid,producerStart,sequence,captured,width,height,selected,screen,state,schema,1,null);
+    }
+    public static byte[] header(Identity id,int producerPid,long producerStart,long sequence,long captured,int width,int height,int selected,int screen,int state,int schema,int format,JsonObject camera) {
         if(schema!=1&&schema!=3)throw new IllegalArgumentException("Unknown HUD stream schema");
+        if(format!=1&&format!=2||format==2&&schema!=3||format==1&&camera!=null)throw new IllegalArgumentException("Invalid stream frame format");
         if(producerPid<=0 || producerStart<=0 || sequence<0 || captured<0 || state<0 || state>2 || selected<0 || selected>8 || screen<0 || screen>1)
             throw new IllegalArgumentException("Invalid header fields");
         int size=(width==0 && height==0 && state!=1)?0:HudPixels.byteSize(width,height);
@@ -159,14 +168,26 @@ public final class HudStreamProducer implements AutoCloseable {
         b.put((schema==3?"MCHUDS03":"MCHUDS01").getBytes(StandardCharsets.US_ASCII)).putInt(schema).putInt(HEADER_BYTES);
         b.put(id.run().getBytes(StandardCharsets.US_ASCII)).putInt(producerPid).putInt(id.targetPid());
         b.putLong(producerStart).putLong(id.targetStart()).putLong(id.expiresUtcMs()).putLong(sequence).putLong(captured);
-        b.putInt(width).putInt(height).putInt(width*4).putInt(size).putInt(1).putInt(state).putInt(selected).putInt(screen);
+        b.putInt(width).putInt(height).putInt(width*4).putInt(format==2?size*3:size).putInt(format).putInt(state).putInt(selected).putInt(screen);
+        if(format==2&&size!=0){
+            if(camera==null){b.position(176);b.putFloat(.05f).putFloat(512f);}
+            else{
+                long utc=camera.get("utc_ms").getAsLong();if(utc<0||utc>captured+250)throw new IllegalArgumentException("Invalid world camera timestamp");
+                b.putLong(utc);putVector(b,camera.getAsJsonObject("origin"));putVector(b,camera.getAsJsonObject("forward"));putVector(b,camera.getAsJsonObject("up"));
+                float fov=finiteFloat(camera,"vertical_fov"),near=finiteFloat(camera,"near"),far=finiteFloat(camera,"far");
+                if(fov<=.05f||fov>=Math.PI-.05||near!=.05f||far!=512f)throw new IllegalArgumentException("Invalid world camera projection");
+                b.putFloat(fov).putFloat(near).putFloat(far);
+            }
+        }
         return b.array();
     }
+    private static void putVector(ByteBuffer b,JsonObject value){for(String axis:List.of("x","y","z"))b.putFloat(finiteFloat(value,axis));}
+    private static float finiteFloat(JsonObject value,String key){float number=value.get(key).getAsFloat();if(!Float.isFinite(number))throw new IllegalArgumentException("Nonfinite world camera "+key);return number;}
     private JsonObject identityReceipt(int pid,long start) {
         var r=new JsonObject();r.addProperty("schema",gameplay?3:1);if(gameplay)r.addProperty("session_kind","gameplay");r.addProperty("run",identity.run());r.addProperty("pid",pid);r.addProperty("producer_pid",pid);
         r.addProperty("producer_start_filetime",Long.toUnsignedString(start));r.addProperty("target_pid",identity.targetPid());
         r.addProperty("target_start_filetime",Long.toUnsignedString(identity.targetStart()));r.addProperty("expires_utc_ms",identity.expiresUtcMs());
-        r.addProperty("mapping",identity.mappingName());r.addProperty("mapping_name",identity.mappingName());r.addProperty("mutex_name",identity.mutexName());r.addProperty("mapping_bytes",MAPPING_BYTES);
+        r.addProperty("mapping",identity.mappingName());r.addProperty("mapping_name",identity.mappingName());r.addProperty("mutex_name",identity.mutexName());r.addProperty("mapping_bytes",mappingBytes);if(gameplay)r.addProperty("frame_format",frameFormat);
         r.addProperty("save",save);r.addProperty("source_kind",genuine?"minecraft_vanilla_ui_stream_v1":"standalone_transport_fixture");
         if(groundMovementMode!=HudGroundMovementMode.Mode.NONE){
             if(HudGroundMovementMode.extensionDelayFixture(System.getProperties()))r.addProperty("ui_ground_extension_delay_fixture",true);
@@ -197,6 +218,7 @@ public final class HudStreamProducer implements AutoCloseable {
     private void run() {
         Kernel32 api=null;WinNT.HANDLE mapping=null,mutex=null;Pointer view=null;
         Path target=null;int pid=0,width=0,height=0,selected=0,screen=0;long start=0,sequence=0,lastCaptured=0,skippedBusy=0,staleDrops=0;
+        JsonObject lastCamera=null;
         boolean closed=false,unmapped=false,mappingClosed=false,mutexClosed=false;
         var samples=new JsonArray();var states=new LinkedHashSet<String>();String result="failed";
         var pendingSamples=new ArrayList<Sample>(8);
@@ -208,21 +230,21 @@ public final class HudStreamProducer implements AutoCloseable {
             if(!evidence.startsWith(realRoot) || !parent.startsWith(evidence) || parent.equals(realRoot))throw new IOException("Stream output escapes runtime/evidence");
             target=parent.resolve(directory.getFileName());Files.createDirectory(target);
             // Signatures/constants inspected in Minecraft's cached JNA 5.14.0 platform jar.
-            // JNA exposes MapViewOfFile length as int; fixed 8,294,656 bytes fits exactly.
+            // JNA exposes MapViewOfFile length as int; bounded schema1/schema3 capacities fit exactly.
             api=Kernel32.INSTANCE;pid=api.GetCurrentProcessId();
             var creation=new WinBase.FILETIME();
             if(!api.GetProcessTimes(api.GetCurrentProcess(),creation,new WinBase.FILETIME(),new WinBase.FILETIME(),new WinBase.FILETIME()))throw nativeFailure(api,"GetProcessTimes");
             start=(Integer.toUnsignedLong(creation.dwHighDateTime)<<32)|Integer.toUnsignedLong(creation.dwLowDateTime);
             producerPid=pid;producerStart=start;
-            mapping=api.CreateFileMapping(WinBase.INVALID_HANDLE_VALUE,null,WinNT.PAGE_READWRITE,0,MAPPING_BYTES,identity.mappingName());
+            mapping=api.CreateFileMapping(WinBase.INVALID_HANDLE_VALUE,null,WinNT.PAGE_READWRITE,0,mappingBytes,identity.mappingName());
             int mappingError=api.GetLastError();
             if(mapping==null || mappingError==WinError.ERROR_ALREADY_EXISTS)throw new IOException("CreateFileMapping failed/existing: "+mappingError);
             mutex=api.CreateMutex(null,false,identity.mutexName());int mutexError=api.GetLastError();
             if(mutex==null || mutexError==WinError.ERROR_ALREADY_EXISTS)throw new IOException("CreateMutex failed/existing: "+mutexError);
-            view=api.MapViewOfFile(mapping,WinNT.FILE_MAP_ALL_ACCESS,0,0,MAPPING_BYTES);
+            view=api.MapViewOfFile(mapping,WinNT.FILE_MAP_ALL_ACCESS,0,0,mappingBytes);
             if(view==null)throw nativeFailure(api,"MapViewOfFile");
             if(!lock(api,mutex))throw new IOException("Fresh mutex unexpectedly busy");
-            try {view.clear(MAPPING_BYTES);view.write(0,header(identity,pid,start,0,0,0,0,0,0,0,gameplay?3:1),0,HEADER_BYTES);}
+            try {view.clear(mappingBytes);view.write(0,header(identity,pid,start,0,0,0,0,0,0,0,gameplay?3:1,frameFormat,null),0,HEADER_BYTES);}
             finally {unlock(api,mutex);}
             publicationStage("initial_ready_receipt");writeJson(target.resolve("stream-ready.json"),identityReceipt(pid,start));evidenceWriter=new HudEvidenceWriter(HudStreamProducer::writeJson);ready.set(true);
             while(true) {
@@ -244,23 +266,29 @@ public final class HudStreamProducer implements AutoCloseable {
                 long now=System.currentTimeMillis();
                 if(frame.capturedUtcMs()>now+250 || frame.capturedUtcMs()<now-1000){staleDrops++;continue;}
                 if(width!=0 && (frame.width()!=width || frame.height()!=height))throw new IOException("Stream dimensions changed");
-                publicationStage("pixel_conversion");long convertAt=System.nanoTime();byte[] rgba=HudPixels.straightTopLeft(frame.bottomUp(),frame.width(),frame.height());maxConversionNanos=Math.max(maxConversionNanos,System.nanoTime()-convertAt);
+                if((frame.layersBottomUp()!=null)!=(frameFormat==2))throw new IOException("Immutable stream format changed");
+                JsonObject meta=JsonParser.parseString(frame.metadata()).getAsJsonObject();
+                publicationStage("pixel_conversion");long convertAt=System.nanoTime();
+                byte[] payload=frameFormat==2?HudLayerPixels.straightTopLeft(frame.layersBottomUp(),frame.width(),frame.height()):HudPixels.straightTopLeft(frame.bottomUp(),frame.width(),frame.height());
+                maxConversionNanos=Math.max(maxConversionNanos,System.nanoTime()-convertAt);
                 publicationStage("mapping_mutex");
                 if(!lock(api,mutex)){skippedBusy++;continue;}
                 try {
                     publicationStage("mapping_write");long writeAt=System.nanoTime();
                     width=frame.width();height=frame.height();selected=frame.selectedSlot();screen=frame.screen();lastCaptured=frame.capturedUtcMs();
-                    byte[] head=header(identity,pid,start,++sequence,lastCaptured,width,height,selected,screen,1,gameplay?3:1);
-                    view.write(HEADER_BYTES,rgba,0,rgba.length);view.write(0,head,0,head.length);
+                    byte[] head=header(identity,pid,start,++sequence,lastCaptured,width,height,selected,screen,1,gameplay?3:1,frameFormat,meta.getAsJsonObject("world_camera"));
+                    view.write(HEADER_BYTES,payload,0,payload.length);view.write(0,head,0,head.length);
+                    lastCamera=meta.has("world_camera")?meta.getAsJsonObject("world_camera").deepCopy():null;
                     maxMapWriteNanos=Math.max(maxMapWriteNanos,System.nanoTime()-writeAt);
                 } finally {unlock(api,mutex);}
                 published.incrementAndGet();
                 long publishedAt=System.nanoTime();if(lastPublishedAt!=0)maxPublicationGapNanos=Math.max(maxPublicationGapNanos,publishedAt-lastPublishedAt);lastPublishedAt=publishedAt;
                 lastPublishedUtcMs=System.currentTimeMillis();lastPublishedCaptureUtcMs=frame.capturedUtcMs();maxPublishedCaptureAgeMs=Math.max(maxPublishedCaptureAgeMs,lastPublishedUtcMs-frame.capturedUtcMs());publicationStage("frame_metadata");
-                JsonObject meta=JsonParser.parseString(frame.metadata()).getAsJsonObject();String stage=meta.get("state").getAsString();
+                String stage=meta.get("state").getAsString();
                 if(recordSampleState(states,stage,walkingAimedFixture)) {
                     String name="sample-"+stage+".png";
-                    meta.addProperty("width",width);meta.addProperty("height",height);meta.addProperty("sequence",sequence);pendingSamples.add(new Sample(rgba,width,height,meta,name));
+                    byte[] sample=frameFormat==2?HudPixels.straightTopLeft(frame.bottomUp(),width,height):payload;
+                    meta.addProperty("width",width);meta.addProperty("height",height);meta.addProperty("sequence",sequence);pendingSamples.add(new Sample(sample,width,height,meta,name));
                 }
             }
             if(result.equals("passed") && (!genuine || published.get()<30 || !states.containsAll(HudPhysicalMovementMode.fixture(System.getProperties())?
@@ -301,7 +329,7 @@ public final class HudStreamProducer implements AutoCloseable {
             if(api!=null && view!=null && mutex!=null)try {
                 // Three bounded attempts; never wait indefinitely to close a foreign-owned mutex.
                 for(int attempt=0;attempt<3 && !closed;attempt++)if(lock(api,mutex))try {
-                    byte[] head=header(identity,pid,start,sequence,lastCaptured,width,height,selected,screen,2,gameplay?3:1);view.write(0,head,0,head.length);closed=true;
+                    byte[] head=header(identity,pid,start,sequence,lastCaptured,width,height,selected,screen,2,gameplay?3:1,frameFormat,lastCamera);view.write(0,head,0,head.length);closed=true;
                 }finally {unlock(api,mutex);}
                 if(closed)Thread.sleep(150);
             }catch(Exception e){failure.compareAndSet(null,e.toString());}

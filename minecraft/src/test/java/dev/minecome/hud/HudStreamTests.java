@@ -25,6 +25,7 @@ public final class HudStreamTests {
         rejects(()->new HudStreamLayout(640,480,3),"GUI scale below vanilla minimum canvas");
         rejects(()->new HudStreamLayout(1280,720,0),"automatic GUI scale refused");
         var id=new HudStreamProducer.Identity("0123456789abcdef0123456789abcdef",123,0x0102030405060708L,1_800_000_000_000L);
+        layeredFrames(id);
         byte[] bytes=HudStreamProducer.header(id,456,0x1122334455667788L,9,1_700_000_000_000L,2,1,3,1,1);
         var b=ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
         check(bytes.length==256,"header size");check(new String(bytes,0,8,java.nio.charset.StandardCharsets.US_ASCII).equals("MCHUDS01"),"magic");
@@ -80,6 +81,31 @@ public final class HudStreamTests {
         mouseModeReceipts(root,parent);
         stoneModeReceipts(root,parent);
         System.out.println("HudStreamTests: "+checks+" checks passed; original Win32 transport fixture, no games launched; evidence="+parent);
+    }
+    private static void layeredFrames(HudStreamProducer.Identity id){
+        var camera=JsonParser.parseString("{\"utc_ms\":1234,\"origin\":{\"x\":12.5,\"y\":23,\"z\":34},\"forward\":{\"x\":0,\"y\":1,\"z\":0},\"up\":{\"x\":0,\"y\":0,\"z\":1},\"vertical_fov\":1.2,\"near\":0.05,\"far\":512}").getAsJsonObject();
+        var head=ByteBuffer.wrap(HudStreamProducer.header(id,456,88,1,1235,1,2,0,0,1,3,2,camera)).order(ByteOrder.LITTLE_ENDIAN);
+        check(head.getInt(8)==3&&head.getInt(104)==4&&head.getInt(108)==24&&head.getInt(112)==2,"Layered schema3 has three planes and one colour/depth pixel pitch");
+        check(head.getLong(128)==1234&&head.getFloat(136)==12.5f&&head.getFloat(144)==34&&head.getFloat(152)==1&&head.getFloat(168)==1,"Layer camera bytes follow the exact native offsets");
+        check(head.getFloat(172)==1.2f&&head.getFloat(176)==.05f&&head.getFloat(180)==512,"Layer projection keeps the actual GL near/far");
+        for(int i=184;i<256;i++)check(head.get(i)==0,"Layer reserved bytes stay zero");
+        var waiting=ByteBuffer.wrap(HudStreamProducer.header(id,456,88,0,0,0,0,0,0,0,3,2,null)).order(ByteOrder.LITTLE_ENDIAN);
+        check(waiting.getInt(112)==2&&waiting.getInt(108)==0,"Waiting layer format is fixed");
+        for(int i=128;i<256;i++)check(waiting.get(i)==0,"Waiting layer camera extension remains zero");
+        rejects(()->HudStreamProducer.header(id,456,88,1,1235,1,2,0,0,1,1,2,camera),"Legacy schema cannot carry layers");
+        var invalid=camera.deepCopy();invalid.addProperty("near",.1);rejects(()->HudStreamProducer.header(id,456,88,1,1235,1,2,0,0,1,3,2,invalid),"Wrong near plane rejected");
+        byte[] layers={64,0,0,(byte)128, 0,0,0,0, 0,80,0,(byte)255, 10,20,30,(byte)255, 0,0,0,0, 0,0,(byte)128,63};
+        byte[] wire=HudLayerPixels.straightTopLeft(layers,1,2);
+        check(wire[0]==0&&(wire[4]&255)==128&&(wire[7]&255)==128,"Overlay rows flip and only colour unpremultiplies");
+        check(wire[8]==10&&wire[9]==20&&wire[10]==30&&wire[13]==80,"World colour rows flip independently");
+        var raw=ByteBuffer.wrap(wire).order(ByteOrder.LITTLE_ENDIAN);
+        check(raw.getInt(16)==0x3f800000&&raw.getInt(20)==0,"Raw float depth bits survive row flip and alpha conversion");
+        byte[] flat=HudLayerPixels.flattenBottomUp(layers,1,2);
+        check((flat[0]&255)==64&&(flat[1]&255)==40&&(flat[3]&255)==255&&flat[4]==10&&flat[6]==30,"Legacy evidence composites premultiplied overlay over world without using depth as colour");
+        var frame=new HudStreamProducer.Frame(1,2,null,1235,0,0,"{}",layers);
+        check(Arrays.equals(frame.bottomUp(),flat),"Layered frame retains lazy legacy fixture pixels");
+        rejects(()->new HudStreamProducer.Frame(1,2,null,1235,0,0,"{}",new byte[23]),"Truncated depth plane rejected");
+        check(HudStreamProducer.GAMEPLAY_MAPPING_BYTES==256+1920*1080*12&&HudStreamProducer.MAPPING_BYTES==256+1920*1080*4,"Schema3 mapping reserves all planes while schema1 remains unchanged");
     }
     private static void mouseModeReceipts(Path root,Path parent)throws Exception {
         String previous=System.getProperty("minecome.hudStreamLiveMouse");

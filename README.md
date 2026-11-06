@@ -84,8 +84,13 @@ A subsequent automated KCD2 check placed the slab above ground, merged it and
 mined it; native stairs and walking over partial shapes remain unverified.
 Captured ground now hides blocks and their outlines through a depth-only pass;
 hands and HUD stay visible. Automated Minecraft pixel checks and a live KCD2
-buried-slab check cover this pass. It uses the approximate collision heightfield,
-not KCD2's complete scenery depth: trees, buildings and NPCs remain unoccluded.
+buried-slab check cover this pass. It uses the approximate collision heightfield
+and does not by itself occlude blocks behind trees, buildings or NPCs.
+The renderer now transports world colour/depth separately from hands and UI,
+with automated pixel and save/reopen checks. Native scenery-depth comparison is
+implemented behind projection/resource checks. Its reader now handles KCD2's
+DXIL shaders and remapped bindings; native scenery occlusion is still undergoing
+verification.
 Building remains bounded to 64 blocks inside captured coverage;
 fluids, waterlogged/transparent blocks, containers and other dynamic blocks are not
 included. Walking/flight with this new world layer has not been re-verified.

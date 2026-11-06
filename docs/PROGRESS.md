@@ -1,5 +1,62 @@
 # MineCome progress — 2026-11-06
 
+## Separate world, depth and foreground layers
+
+Implemented and compiled schema3 format2: same-frame overlay RGBA, owned-world
+RGBA and raw float depth, copied under one GPU fence. Minecraft hands/HUD and
+inventory remain in the foreground; only owned models/outlines participate in
+scene-depth comparison. The native compositor uploads one persistent three-plane
+atlas, preserves the camera belonging to the resident upload, and keeps the
+existing captured-ground pass as fallback. Flat/lab profiles retain format1.
+The gameplay mapping capacity is now 24,883,456 bytes; logical dimensions and
+input coordinates are unchanged. Malformed depth/camera/frame data fail closed.
+
+KCD projection tracking uses reflected `CBPerViewGlobal` fields from actual
+shader bytecode, public ReShade command callbacks, and CPU-visible upload buffers.
+No guessed engine offsets or near/far constants. Native depth requires a fresh
+matching camera/lens/viewport and the exact GenericDepth original/backup resource
+association. Reading its source-specific metadata also requires the exact loaded
+selective-r5 proxy SHA256. Unsupported/reflection-stripped shaders leave the
+comparison disabled. The game actually uses DXIL (inside DXBC containers), with
+engine-remapped registers/spaces. The reader now uses the game's hash-pinned
+`Win64Shared/dxcompiler.dll` and resolves reflected registers dynamically. Actual
+installed linearize/vegetation VS/PS reflection passes offline: 1,136-byte buffer,
+respectively b0/space1 and b0/space3. The original source declaration b6/space0 is
+not assumed to survive compilation. Installed shader evidence stays in ignored
+`runtime/evidence/host-depth-source-20261106/`; game shader assets are not shipped.
+
+Automated checks pass: Java assemble/456 transport checks, native stream framing
+and shared-memory tests, actual DXBC reflection/projection tests, and both real
+ReShade FX entrypoints. Actual-Minecraft independent plane/pixel check passes:
+`runtime/evidence/gameplay-depth-20261106-151022-fba9233a74bb4c4fad770063eca892a9/verification.json`.
+Paired model/outline/inventory/save regression passes:
+`runtime/evidence/gameplay-world-blocks-20261106-151408-6da5602ad31f4809969fd27774dc5585/verification.json`.
+That regression caught and fixed a startup condition requiring a hover ray to
+render models; a valid render camera now suffices, as before. No fixture
+thresholds or freshness checks were relaxed.
+
+The first two native 90-second checks displayed the actual hotbar/held slab and
+closed normally, but correctly failed full-session acceptance because input never
+armed. The second isolates this to prearm bit512, mouse reason1/no_device and zero
+mouse devices. KCD itself logs "no mouse installed" and fails its system mouse
+creation with 0x80040154 before Minecraft attaches. No eligibility requirement was
+removed. Evidence:
+`runtime/evidence/gameplay-kcd-20261106-152656-d849056044ea4e41a26e85cd79d93742/native-mouse-failure.txt`.
+The first stream published 1,628 frames with maximum gap86.2878ms; the second
+published1,637/max96.8321ms. Neither run verifies input or native scene occlusion.
+
+After the DXIL/register-space correction, the final 35-second native run verified
+actual extraction and source association: 37,169 reflected shaders, 5,593 buffer
+reads/zero map failures, 5,401 accepted views, 4,165 submitted views and 2,803
+compositions with native depth enabled. 643 guest publications/max gap79.2234ms;
+613 uploads/zero drops and 3,174 total compositions, normal client exit. Receipt:
+`runtime/evidence/gameplay-kcd-20261106-153528-6e51e45c7a534d3da26669851edd994d/native-depth-observation.json`.
+The saved scene contained no owned blocks and the same missing mouse device
+prevented input activation. Visible block occlusion remains unverified; the
+original full-session failure receipt is preserved. All temporary renderer
+installations were restored, with both game clients closed. Final restore:
+`runtime/evidence/gameplay-hud-restore-20261106-154102-5c8f3fda52834d8799461c59f58415ce`.
+
 ## Captured-terrain depth
 
 WorldBlocks now writes the current immutable collision heightfield's finite

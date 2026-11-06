@@ -3,6 +3,8 @@
 texture McHud1 : MINECOME_HUD_1;
 texture McHud2 : MINECOME_HUD_2;
 texture McHud3 : MINECOME_HUD_3;
+texture McHostDepth : DEPTH;
+sampler McHostDepthSampler { Texture=McHostDepth; AddressU=CLAMP; AddressV=CLAMP; MinFilter=POINT; MagFilter=POINT; MipFilter=POINT; };
 sampler McHudSampler1 { Texture=McHud1; AddressU=CLAMP; AddressV=CLAMP; MinFilter=POINT; MagFilter=POINT; MipFilter=POINT; };
 sampler McHudSampler2 { Texture=McHud2; AddressU=CLAMP; AddressV=CLAMP; MinFilter=POINT; MagFilter=POINT; MipFilter=POINT; };
 sampler McHudSampler3 { Texture=McHud3; AddressU=CLAMP; AddressV=CLAMP; MinFilter=POINT; MagFilter=POINT; MipFilter=POINT; };
@@ -11,6 +13,20 @@ uniform int McHudFrame = 0;
 uniform float4 McHudRect = float4(0,0,1,1);
 uniform bool McHudCursorVisible = false;
 uniform float4 McHudCursor = float4(0,0,1,0);
+// Format2 is a vertical atlas: overlay, world color, then float depth bytes.
+// Only the world layer participates in scene occlusion; hands/UI stay in front.
+uniform bool McHudLayers = false;
+uniform bool McHostDepthAvailable < source="bufready_depth"; >;
+uniform bool McHostDepthReady = false;
+uniform float4 McHostProjection = float4(0,0,0,0);
+uniform float4 McHostNearest = float4(0,0,0,0);
+uniform float2 McGuestProjection = float2(0.05,512);
+float McGuestDepth(float2 source) {
+    uint4 bytes = (uint4)round(tex2D(McHudSampler1,float2(source.x,(source.y+2.0)/3.0))*255.0);
+    float raw = asfloat(bytes.x | (bytes.y<<8) | (bytes.z<<16) | (bytes.w<<24));
+    return McGuestProjection.x*McGuestProjection.y /
+        (McGuestProjection.y-raw*(McGuestProjection.y-McGuestProjection.x));
+}
 void McHudVS(uint id : SV_VertexID, out float4 position : SV_Position, out float2 uv : TEXCOORD) {
     uv = float2((id << 1) & 2, id & 2);
     position = float4(uv * float2(2,-2) + float2(-1,1),0,1);
@@ -26,7 +42,27 @@ float4 McHudPS(float4 position : SV_Position, float2 uv : TEXCOORD) : SV_Target 
     float2 source = (uv - McHudRect.xy) / McHudRect.zw;
     if (any(source < 0) || any(source >= 1)) return 0;
     float4 color;
-    if (McHudFrame == 0) color = tex2D(McHudSampler1, source);
+    if (McHudLayers) {
+        float4 overlay = tex2D(McHudSampler1,float2(source.x,source.y/3.0));
+        float4 world = tex2D(McHudSampler1,float2(source.x,(source.y+1.0)/3.0));
+        // Camera/projection proof is supplied by the guarded native tracker.
+        if (McHostDepthReady && McHostDepthAvailable && world.a > 0) {
+            float raw = tex2D(McHostDepthSampler,uv).r;
+            // KCD2 tools LinearizeDepthPS, including its separate nearest-camera
+            // projection. Coefficients come from reflected CBPerViewGlobal:b6.
+            float sky = McHostProjection.w > 0.5 ? 0.0 : 1.0;
+            if (raw != sky) {
+                float normalized = McHostProjection.y/(raw-McHostProjection.x);
+                float nearestMax = McHostProjection.y/(McHostNearest.z-McHostProjection.x);
+                if (normalized < nearestMax) normalized = McHostNearest.y/(raw-McHostNearest.x);
+                float metres = normalized*McHostProjection.z;
+                if (metres > 0 && metres < McHostProjection.z && McGuestDepth(source) > metres + 0.03)
+                    world = 0;
+            }
+        }
+        color = overlay + world*(1.0-overlay.a);
+    }
+    else if (McHudFrame == 0) color = tex2D(McHudSampler1, source);
     else if (McHudFrame == 1) color = tex2D(McHudSampler2, source);
     else color = tex2D(McHudSampler3, source);
     if (McHudCursorVisible) {

@@ -247,7 +247,7 @@ add_custom_command(TARGET minecome_hud_gameplay_blocks_compositor POST_BUILD
 # Chat/commands add input v6 on the existing pinned v5 keyboard proxy.
 # Its separate arm/output leaves all previous installed profiles intact.
 add_library(minecome_hud_gameplay_chat_compositor SHARED hud_input_addon.cpp)
-target_link_libraries(minecome_hud_gameplay_chat_compositor PRIVATE minecome_hud_input user32)
+target_link_libraries(minecome_hud_gameplay_chat_compositor PRIVATE minecome_hud_input user32 d3dcompiler)
 target_include_directories(minecome_hud_gameplay_chat_compositor PRIVATE "${MINECOME_RESHADE_ROOT}/include")
 target_compile_definitions(minecome_hud_gameplay_chat_compositor PRIVATE MINECOME_HUD_UI_INPUT=1 MINECOME_HUD_LIVE_MOUSE=1 MINECOME_HUD_SELECTIVE_MOUSE=1 MINECOME_HUD_MOTION_FILTER=1 MINECOME_HUD_RAW_OWNER_FILTER=1 MINECOME_HUD_GAMEPLAY=1 MINECOME_HUD_GAMEPLAY_MOVEMENT=1 MINECOME_HUD_GAMEPLAY_BLOCKS=1 MINECOME_HUD_GAMEPLAY_CHAT=1 MINECOME_HUD_PHYSICAL_MOVEMENT=1)
 set_target_properties(minecome_hud_gameplay_chat_compositor PROPERTIES OUTPUT_NAME "MineComeHudCompositor" PREFIX "" SUFFIX ".addon64"
@@ -263,6 +263,12 @@ add_custom_command(TARGET minecome_hud_gameplay_chat_compositor POST_BUILD
     "$<TARGET_FILE_DIR:minecome_hud_gameplay_chat_compositor>/MineComeHud.fx")
 if(BUILD_TESTING)
     add_executable(minecome_hud_gameplay_chat_tests gameplay_chat_tests.cpp)
+    add_executable(minecome_host_depth_tests host_depth_tests.cpp)
+    target_compile_features(minecome_host_depth_tests PRIVATE cxx_std_20)
+    target_include_directories(minecome_host_depth_tests PRIVATE "${MINECOME_RESHADE_ROOT}/include")
+    target_compile_definitions(minecome_host_depth_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
+    target_link_libraries(minecome_host_depth_tests PRIVATE d3dcompiler)
+    add_test(NAME hud_host_depth COMMAND minecome_host_depth_tests)
     target_link_libraries(minecome_hud_gameplay_chat_tests PRIVATE minecome_hud_input user32)
     if(MSVC)
         set_target_properties(minecome_hud_gameplay_chat_tests PROPERTIES MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")

@@ -1,6 +1,8 @@
 #include "stream_contract.hpp"
 #include <algorithm>
+#include <bit>
 #include <charconv>
+#include <cmath>
 #include <limits>
 #include <map>
 
@@ -31,6 +33,9 @@ std::uint64_t u64(std::span<const std::uint8_t> h, std::size_t at) {
     for (unsigned i = 0; i < 8; ++i) value |= std::uint64_t(h[at+i]) << (i*8);
     return value;
 }
+float f32(std::span<const std::uint8_t> h, std::size_t at) { return std::bit_cast<float>(u32(h,at)); }
+float dot(const std::array<float,3> &a,const std::array<float,3> &b) { return a[0]*b[0]+a[1]*b[1]+a[2]*b[2]; }
+bool finite(const std::array<float,3> &a) { return std::all_of(a.begin(),a.end(),[](float x){return std::isfinite(x);}); }
 }
 bool valid_identity(const Identity &id) noexcept {
     return token(id.run) && id.producer_pid && id.target_pid && id.producer_start &&
@@ -102,17 +107,41 @@ Result Validator::accept(std::span<const std::uint8_t> bytes, std::uint64_t utc,
         u32(bytes,48) != identity_.producer_pid || u32(bytes,52) != identity_.target_pid ||
         u64(bytes,56) != identity_.producer_start || u64(bytes,64) != identity_.target_start ||
         u64(bytes,72) != identity_.expires_utc_ms) return bad("header_identity");
-    if (std::any_of(bytes.begin()+128, bytes.end(), [](auto b) { return b != 0; })) return bad("header_reserved");
     Header h; h.sequence = u64(bytes,80); h.capture_utc_ms = u64(bytes,88);
     h.width = u32(bytes,96); h.height = u32(bytes,100); h.pitch = u32(bytes,104); h.bytes = u32(bytes,108);
-    h.state = u32(bytes,116); h.selected = u32(bytes,120); h.screen = u32(bytes,124);
-    if (u32(bytes,112) != 1 || h.state > 2 || h.selected > 8 || h.screen > 1) return bad("header_format_or_state");
+    h.format = u32(bytes,112); h.state = u32(bytes,116); h.selected = u32(bytes,120); h.screen = u32(bytes,124);
+    if ((h.format != 1 && !(identity_.schema == 3 && h.format == 2)) || h.state > 2 || h.selected > 8 || h.screen > 1)
+        return bad("header_format_or_state");
+    if (format_ && format_ != h.format) return bad("frame_format_changed");
+    const bool camera_present = h.format == 2 && h.state != 0 && h.sequence != 0;
+    if (std::any_of(bytes.begin()+(camera_present?184:128),bytes.end(),[](auto b){return b!=0;})) return bad("header_reserved");
+    if(camera_present) {
+        h.camera_utc_ms=u64(bytes,128);
+        for(unsigned i=0;i<3;++i){h.camera_position[i]=f32(bytes,136+i*4);h.camera_direction[i]=f32(bytes,148+i*4);h.camera_up[i]=f32(bytes,160+i*4);}
+        h.vertical_fov=f32(bytes,172);h.near_plane=f32(bytes,176);h.far_plane=f32(bytes,180);
+        if(!finite(h.camera_position)||!finite(h.camera_direction)||!finite(h.camera_up)||!std::isfinite(h.vertical_fov)||
+            !std::isfinite(h.near_plane)||!std::isfinite(h.far_plane)||h.near_plane<=0.f||h.far_plane<=h.near_plane)
+            return bad("frame_camera");
+        const std::array<float,3> zero{};
+        const bool no_world_camera=!h.camera_utc_ms&&h.camera_position==zero&&h.camera_direction==zero&&h.camera_up==zero&&h.vertical_fov==0.f;
+        if(!no_world_camera&&(h.vertical_fov<=.05f||h.vertical_fov>=3.09159265f||
+            std::abs(dot(h.camera_direction,h.camera_direction)-1.f)>.01f||
+            std::abs(dot(h.camera_up,h.camera_up)-1.f)>.01f||std::abs(dot(h.camera_direction,h.camera_up))>.05f))
+            return bad("frame_camera");
+        if(h.camera_utc_ms && ((h.camera_utc_ms>h.capture_utc_ms && h.camera_utc_ms-h.capture_utc_ms>50) ||
+            (h.camera_utc_ms<=h.capture_utc_ms && h.capture_utc_ms-h.camera_utc_ms>1000))) return bad("frame_camera_age");
+    }
+    const std::uint32_t planes = h.format == 2 ? 3u : 1u;
+    const auto dimensions = [&] {
+        return h.width && h.width <= 1920 && h.height && h.height <= 1080 &&
+            h.pitch == h.width*4 && h.bytes == h.pitch*h.height*planes;
+    };
+    format_ = h.format;
     if (h.state == 2) {
         if (!h.sequence) {
             if (h.capture_utc_ms || h.width || h.height || h.pitch || h.bytes || h.selected || h.screen)
                 return bad("closed_waiting_nonzero");
-        } else if (!h.capture_utc_ms || !h.width || h.width > 1920 || !h.height || h.height > 1080 ||
-                   h.pitch != h.width*4 || h.bytes != h.pitch*h.height) return bad("closed_frame_dimensions");
+        } else if (!h.capture_utc_ms || !dimensions()) return bad("closed_frame_dimensions");
         invalidate("closed"); out = h; return Result::closed;
     }
     if (h.state == 0) {
@@ -121,8 +150,7 @@ Result Validator::accept(std::span<const std::uint8_t> bytes, std::uint64_t utc,
             return bad("waiting_nonzero");
         out = h; return Result::waiting;
     }
-    if (!h.width || h.width > 1920 || !h.height || h.height > 1080 || h.pitch != h.width*4 || h.bytes != h.pitch*h.height)
-        return bad("frame_dimensions");
+    if (!dimensions()) return bad("frame_dimensions");
     if (have_frame_ && (h.width != width_ || h.height != height_)) return bad("frame_size_changed");
     if (!h.sequence || h.sequence < sequence_) return bad("frame_sequence");
     if (have_frame_ && h.sequence == sequence_) { out = h; return Result::unchanged; }

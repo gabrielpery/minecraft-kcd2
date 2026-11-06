@@ -18,7 +18,7 @@ foreach($flag in @('generated_outputs_unchanged','patched_source_unchanged','ins
 foreach($input in $build.original_inputs){if((Get-MineComeGameplayHash $input.path) -ine $input.sha256){throw "Proxy source changed after build: $($input.path)"}}
 $sources=@{}
 foreach($r in $profile.files){
-    $source=if($r.path -ceq 'dxgi.dll'){$build.output}elseif($r.path -ceq 'minecome-hud/addons/MineComeHudCompositor.addon64'){Join-Path $script:mcGameplayRoot $profile.addon_source}else{Join-Path $previous $r.path}
+    $source=if($r.path -ceq 'dxgi.dll'){$build.output}elseif($r.path -ceq 'minecome-hud/addons/MineComeHudCompositor.addon64'){Join-Path $script:mcGameplayRoot $profile.addon_source}elseif($r.path -ceq 'minecome-hud/shaders/MineComeHud.fx' -and $profile.PSObject.Properties['shader_source']){Join-Path $script:mcGameplayRoot $profile.shader_source}else{Join-Path $previous $r.path}
     $null=Resolve-MineComeGameplayPath $source;Assert-MineComeGameplayFile $source $r;$sources[$r.path]=$source
 }
 [IO.Directory]::CreateDirectory($bundle)|Out-Null

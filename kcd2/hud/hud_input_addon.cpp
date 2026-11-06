@@ -75,10 +75,14 @@
 #include "gameplay_keyboard_api.hpp"
 #endif
 #include <reshade.hpp>
+#ifdef MINECOME_HUD_GAMEPLAY_CHAT
+#include "host_depth.hpp"
+#endif
 #include <algorithm>
 #include <array>
 #include <atomic>
 #include <cstring>
+#include <filesystem>
 #include <mutex>
 #include <sstream>
 #include <stdexcept>
@@ -90,6 +94,10 @@ namespace api = reshade::api;
 namespace hud = minecome::hud;
 namespace st = minecome::hud::stream;
 namespace ui = minecome::hud::input;
+#ifdef MINECOME_HUD_GAMEPLAY_CHAT
+namespace depth = minecome::host_depth;
+std::atomic<std::uint64_t> depth_frames{0};
+#endif
 #ifdef MINECOME_HUD_GAMEPLAY
 constexpr std::uint32_t stream_schema = 3;
 namespace gameplay_keyboard=minecome::gameplay_keyboard;
@@ -244,6 +252,9 @@ bool repeat_render_retired();
 struct Service {
     st::Handle stop{CreateEventW(nullptr,TRUE,FALSE,nullptr)};
     std::thread worker;
+#ifdef MINECOME_HUD_GAMEPLAY_CHAT
+    HMODULE renderer_module=nullptr,shader_compiler_module=nullptr;
+#endif
     std::wstring config;
     std::atomic<bool> compatible{false}, terminal{false};
     std::atomic<std::shared_ptr<const Session>> session;
@@ -259,6 +270,15 @@ struct Service {
     std::atomic<api::effect_runtime *> input_owner{nullptr};
     std::atomic<std::uint64_t> uploaded{0}, dropped{0}, submitted{0};
     std::atomic<unsigned> renderer_error{0};
+    // Latest preactivation observation only; worker logs it at the existing
+    // five-second cadence. Independent diagnostic fields may span two adjacent
+    // frames and never authorize capture or refresh any ownership/freshness.
+    std::atomic<std::uint64_t> prearm_samples{0},prearm_observed{0};
+    std::atomic<std::uint32_t> prearm_failures{0},prearm_keys{0},prearm_f8{0},prearm_stage{0};
+#ifdef MINECOME_HUD_LIVE_MOUSE
+    std::atomic<std::uint32_t> prearm_mouse_result{0},prearm_mouse_flags{0},prearm_mouse_reason{0};
+    std::atomic<std::uint32_t> prearm_mouse_buttons{0},prearm_mouse_devices{0},prearm_mouse_eligible{0};
+#endif
 #ifdef MINECOME_HUD_REPEAT_SESSION
     rearm::Policy rearm_policy;
     std::atomic<bool> retiring{false};
@@ -293,6 +313,9 @@ struct Service {
             L"MineComeHudInput.ini";
 #endif
     }
+#ifdef MINECOME_HUD_GAMEPLAY_CHAT
+    ~Service(){depth::instance().set_dxc_factory(nullptr);if(shader_compiler_module)FreeLibrary(shader_compiler_module);}
+#endif
     bool stopping() const { return !stop || WaitForSingleObject(stop.value,0) != WAIT_TIMEOUT; }
 #ifdef MINECOME_HUD_WORLD_CLICKS
     void drain_world_clicks(const Session &accepted,ui::Writer &inputs) {
@@ -366,6 +389,9 @@ struct Service {
         input_signals.load()->input_force_close.store(true,std::memory_order_release);
         terminal.store(true,std::memory_order_release);
         publication.store({},std::memory_order_release);
+#ifdef MINECOME_HUD_GAMEPLAY_CHAT
+        depth::instance().arm(false,{});
+#endif
         receipt("session_end",why,run);
         std::ostringstream counters;
         counters << "[MineComeHudInput] {\"schema\":1,\"event\":\"final_counters\",\"run\":\"" << run
@@ -436,6 +462,25 @@ struct Service {
             const auto pid=GetCurrentProcessId(); const auto start=st::process_start();
             if (!start || config.empty()) { receipt("compatibility","process_identity_failed"); return; }
             compatible.store(true,std::memory_order_release); receipt("compatibility","exact_tools_exe");
+#ifdef MINECOME_HUD_GAMEPLAY_CHAT
+            // Generic Depth metadata is source-specific. Read it only with this
+            // exact deployed v6.8.0.7 selective-r5 binary, not a version guess.
+            const bool depth_compatible=renderer_module && st::read_file(st::module_path(renderer_module),16u*1024u*1024u,stop.value,nullptr,&digest) &&
+                digest=="22a894022a0275f4ed355d97bfc06bc2ea838581f61fc5d0f0b85fde3a81362e";
+            if(depth_compatible){
+                const auto existing=GetModuleHandleW(L"dxcompiler.dll");
+                const auto compiler_path=existing?std::filesystem::path(st::module_path(existing)):
+                    std::filesystem::path(st::module_path()).parent_path().parent_path()/L"Win64Shared"/L"dxcompiler.dll";
+                if(st::read_file(compiler_path.wstring(),64u*1024u*1024u,stop.value,nullptr,&digest) &&
+                    digest=="570a1a7357893615417edf5ab356625b5b6b721a131bc7331bf17289d4928ed7"){
+                    shader_compiler_module=LoadLibraryExW(compiler_path.c_str(),nullptr,LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR|LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
+                    if(shader_compiler_module)depth::instance().set_dxc_factory(reinterpret_cast<DxcCreateInstanceProc>(GetProcAddress(shader_compiler_module,"DxcCreateInstance")));
+                }
+                receipt("host_depth",shader_compiler_module?"exact_dxil_compiler":"dxil_compiler_unavailable");
+            }
+            depth::instance().set_compatible(depth_compatible);
+            receipt("host_depth",depth_compatible?"exact_proxy":"proxy_unavailable");
+#endif
 #ifdef MINECOME_HUD_REPEAT_SESSION
             for(unsigned attempt=0;attempt<rearm::maximum_sessions&&!stopping();++attempt) {
             bool repeat_ready=false;
@@ -603,8 +648,37 @@ struct Service {
                     std::ostringstream line;
                     line << "[MineComeHudInput] {\"schema\":1,\"event\":\"counters\",\"run\":\"" << identity.run
                          << "\",\"uploaded\":" << uploaded.load() << ",\"dropped\":" << dropped.load()
-                         << ",\"submitted\":" << submitted.load() << ",\"visual_verified\":false}";
+                         << ",\"submitted\":" << submitted.load();
+                    if(input_created&&inputs.status().state==0) {
+                        const auto observed=prearm_observed.load(std::memory_order_relaxed);
+                        line << ",\"prearm_samples\":" << prearm_samples.load(std::memory_order_relaxed)
+                             << ",\"prearm_observation_age_ms\":" << (observed&&now>=observed?now-observed:~std::uint64_t{0})
+                             << ",\"prearm_failures\":" << prearm_failures.load(std::memory_order_relaxed)
+                             << ",\"prearm_keys\":" << prearm_keys.load(std::memory_order_relaxed)
+                             << ",\"prearm_f8\":" << prearm_f8.load(std::memory_order_relaxed)
+                             << ",\"prearm_composition_stage\":" << prearm_stage.load(std::memory_order_relaxed);
+#ifdef MINECOME_HUD_LIVE_MOUSE
+                        line << ",\"prearm_mouse_result\":" << prearm_mouse_result.load(std::memory_order_relaxed)
+                             << ",\"prearm_mouse_flags\":" << prearm_mouse_flags.load(std::memory_order_relaxed)
+                             << ",\"prearm_mouse_reason\":" << prearm_mouse_reason.load(std::memory_order_relaxed)
+                             << ",\"prearm_mouse_buttons\":" << prearm_mouse_buttons.load(std::memory_order_relaxed)
+                             << ",\"prearm_mouse_devices\":" << prearm_mouse_devices.load(std::memory_order_relaxed)
+                             << ",\"prearm_mouse_eligible_devices\":" << prearm_mouse_eligible.load(std::memory_order_relaxed);
+#endif
+                    }
+                    line << ",\"visual_verified\":false}";
                     reshade::log::message(reshade::log::level::info,line.str().c_str()); reported=now;
+#ifdef MINECOME_HUD_GAMEPLAY_CHAT
+                    const auto depth_stats=depth::instance().counters();
+                    std::ostringstream depth_line;
+                    depth_line << "[MineComeHudInput] {\"event\":\"host_depth\",\"run\":\"" << identity.run
+                        << "\",\"reflected\":" << depth_stats.shaders_reflected << ",\"reflection_rejected\":" << depth_stats.reflection_rejected
+                        << ",\"mapped\":" << depth_stats.map_attempts << ",\"map_failed\":" << depth_stats.map_failed
+                        << ",\"non_upload\":" << depth_stats.non_upload_rejected << ",\"view_rejected\":" << depth_stats.view_rejected
+                        << ",\"accepted\":" << depth_stats.accepted << ",\"submitted\":" << depth_stats.submitted
+                        << ",\"composited\":" << depth_frames.load() << "}";
+                    reshade::log::message(reshade::log::level::info,depth_line.str().c_str());
+#endif
                 }
                 WaitForSingleObject(stop.value,5);
             }
@@ -638,6 +712,14 @@ struct RuntimeState {
     api::fence fence{};
     std::array<Upload,3> uploads{};
     api::effect_uniform_variable active{},frame{},rect{};
+#ifdef MINECOME_HUD_GAMEPLAY_CHAT
+    api::effect_uniform_variable layers{},depth_ready{},depth_projection{},depth_nearest{},guest_projection{};
+    api::effect_texture_variable host_depth{};
+    st::Header uploaded_header{};
+    bool depth_armed=false;
+    std::uint64_t depth_sequence=0;
+    std::optional<depth::sample> depth_sample;
+#endif
     api::effect_technique technique{};
     bool bound=false, failed=false;
     bool reshade_overlay=false;
@@ -661,7 +743,7 @@ struct RuntimeState {
     ui::MovementGate movement;
 #endif
 #endif
-    std::uint32_t width=0,height=0,pitch=0;
+    std::uint32_t width=0,height=0,pitch=0,texture_height=0,format=1;
     std::uint64_t next_fence=0,uploaded_sequence=0,uploaded_observation=0;
 #ifdef MINECOME_HUD_LIVE_MOUSE
     api::effect_uniform_variable cursor_visible{},cursor{};
@@ -830,6 +912,22 @@ void capture_keyboard(api::effect_runtime *runtime,RuntimeState &state,bool comp
     for(const auto key:std::array<std::uint32_t,7>{'W','A','S','D',VK_SPACE,VK_SHIFT,VK_CONTROL})
         if(runtime->is_key_down(key))gate_controls|=1u<<31;
 #endif
+    if(!state.keyboard.consumed()) {
+        service->prearm_failures.store(failures,std::memory_order_relaxed);
+        service->prearm_keys.store(gate_controls,std::memory_order_relaxed);
+        service->prearm_f8.store(f8?1u:0u,std::memory_order_relaxed);
+        service->prearm_stage.store(composition_stage,std::memory_order_relaxed);
+#ifdef MINECOME_HUD_LIVE_MOUSE
+        service->prearm_mouse_result.store(static_cast<std::uint32_t>(mouse_query),std::memory_order_relaxed);
+        service->prearm_mouse_flags.store(mouse_status.flags,std::memory_order_relaxed);
+        service->prearm_mouse_reason.store(mouse_status.reason,std::memory_order_relaxed);
+        service->prearm_mouse_buttons.store(mouse_buttons,std::memory_order_relaxed);
+        service->prearm_mouse_devices.store(mouse_status.device_count,std::memory_order_relaxed);
+        service->prearm_mouse_eligible.store(mouse_status.eligible_devices,std::memory_order_relaxed);
+#endif
+        service->prearm_observed.store(now,std::memory_order_relaxed);
+        service->prearm_samples.fetch_add(1,std::memory_order_relaxed);
+    }
     const auto step=state.keyboard.update(failures==0,f8,gate_controls,now);
 #ifdef MINECOME_HUD_GAMEPLAY_CHAT
     const auto chat_pulses=state.chat_taps.update(step==ui::KeyboardGate::Step::active&&failures==0&&
@@ -1247,6 +1345,9 @@ void hide(api::effect_runtime *runtime, RuntimeState &state) {
 #endif
 }
 void forget(RuntimeState &state) { state.active={}; state.frame={}; state.rect={}; state.technique={}; state.bound=false;
+#ifdef MINECOME_HUD_GAMEPLAY_CHAT
+    state.layers={};state.depth_ready={};state.depth_projection={};state.depth_nearest={};state.guest_projection={};state.host_depth={};
+#endif
 #ifdef MINECOME_HUD_LIVE_MOUSE
     state.cursor_visible={};state.cursor={};
 #endif
@@ -1257,6 +1358,14 @@ bool handles(api::effect_runtime *runtime, RuntimeState &state) {
         state.frame=runtime->find_uniform_variable(effect_name,"McHudFrame");
         state.rect=runtime->find_uniform_variable(effect_name,"McHudRect");
         state.technique=runtime->find_technique(effect_name,"MineComeHud");
+#ifdef MINECOME_HUD_GAMEPLAY_CHAT
+        state.layers=runtime->find_uniform_variable(effect_name,"McHudLayers");
+        state.depth_ready=runtime->find_uniform_variable(effect_name,"McHostDepthReady");
+        state.depth_projection=runtime->find_uniform_variable(effect_name,"McHostProjection");
+        state.depth_nearest=runtime->find_uniform_variable(effect_name,"McHostNearest");
+        state.guest_projection=runtime->find_uniform_variable(effect_name,"McGuestProjection");
+        state.host_depth=runtime->find_texture_variable(effect_name,"McHostDepth");
+#endif
 #ifdef MINECOME_HUD_LIVE_MOUSE
         state.cursor_visible=runtime->find_uniform_variable(effect_name,"McHudCursorVisible");
         state.cursor=runtime->find_uniform_variable(effect_name,"McHudCursor");
@@ -1295,17 +1404,21 @@ bool fail(RuntimeState &state, unsigned code) {
 }
 bool allocate(api::effect_runtime *runtime, RuntimeState &state, const st::Frame &frame) {
     if (state.failed) return false;
-    if (state.texture != 0) return state.width == frame.header.width && state.height == frame.header.height;
+    if (state.texture != 0) return state.width == frame.header.width && state.height == frame.header.height && state.format == frame.header.format;
+#ifndef MINECOME_HUD_GAMEPLAY_CHAT
+    if (frame.header.format != 1) return fail(state,7);
+#endif
     auto *device=runtime->get_device();
     state.width=frame.header.width; state.height=frame.header.height; state.pitch=(state.width*4+255u)&~255u;
-    if (!device->create_resource(api::resource_desc(state.width,state.height,1,1,api::format::r8g8b8a8_unorm,1,
+    state.format=frame.header.format;state.texture_height=state.height*(state.format==2?3u:1u);
+    if (!device->create_resource(api::resource_desc(state.width,state.texture_height,1,1,api::format::r8g8b8a8_unorm,1,
             api::memory_heap::default_,api::resource_usage::shader_resource|api::resource_usage::copy_dest),
             nullptr,api::resource_usage::shader_resource,&state.texture) ||
         !device->create_resource_view(state.texture,api::resource_usage::shader_resource,
             api::resource_view_desc(api::format::r8g8b8a8_unorm),&state.view) ||
         !device->create_fence(0,api::fence_flags::none,&state.fence)) return fail(state,1);
     for (auto &slot : state.uploads) {
-        if (!device->create_resource(api::resource_desc(std::uint64_t(state.pitch)*state.height,api::memory_heap::upload,
+        if (!device->create_resource(api::resource_desc(std::uint64_t(state.pitch)*state.texture_height,api::memory_heap::upload,
             api::resource_usage::copy_source),nullptr,api::resource_usage::cpu_access,&slot.buffer)) return fail(state,2);
     }
     return true;
@@ -1319,15 +1432,15 @@ bool upload(api::effect_runtime *runtime, api::command_list *commands, RuntimeSt
     const auto slot=std::find_if(state.uploads.begin(),state.uploads.end(),[&](const auto &item) { return item.completion <= completed; });
     if (slot == state.uploads.end()) { ++service->dropped; return false; }
     void *mapped=nullptr;
-    if (!device->map_buffer_region(slot->buffer,0,std::uint64_t(state.pitch)*state.height,api::map_access::write_only,&mapped)) {
+    if (!device->map_buffer_region(slot->buffer,0,std::uint64_t(state.pitch)*state.texture_height,api::map_access::write_only,&mapped)) {
         ++service->dropped; return false;
     }
-    for (std::uint32_t row=0;row<state.height;++row)
+    for (std::uint32_t row=0;row<state.texture_height;++row)
         std::memcpy(static_cast<std::uint8_t *>(mapped)+std::size_t(row)*state.pitch,
             frame.premultiplied.data()+std::size_t(row)*frame.header.pitch,frame.header.pitch);
     device->unmap_buffer_region(slot->buffer);
     commands->barrier(state.texture,api::resource_usage::shader_resource,api::resource_usage::copy_dest);
-    commands->copy_buffer_to_texture(slot->buffer,0,state.pitch/4,state.height,state.texture,0);
+    commands->copy_buffer_to_texture(slot->buffer,0,state.pitch/4,state.texture_height,state.texture,0);
     commands->barrier(state.texture,api::resource_usage::copy_dest,api::resource_usage::shader_resource);
     // Pinned ReShade signal flushes its immediate command list before Signal.
     // This fences staging reads only; later effects and next uploads share the
@@ -1336,11 +1449,60 @@ bool upload(api::effect_runtime *runtime, api::command_list *commands, RuntimeSt
     if (!queue->signal(state.fence,slot->completion)) return fail(state,4);
     state.uploaded_sequence=frame.header.sequence;
     state.uploaded_observation=frame.observation; // Never use latest pub age instead.
+#ifdef MINECOME_HUD_GAMEPLAY_CHAT
+    state.uploaded_header=frame.header;
+#endif
 #ifdef MINECOME_HUD_LIVE_MOUSE
     state.uploaded_screen=frame.header.screen;
 #endif
     ++service->uploaded; return true;
 }
+#ifdef MINECOME_HUD_GAMEPLAY_CHAT
+void update_layers(api::effect_runtime *runtime, RuntimeState &state) {
+    const bool layered=state.format==2;
+    runtime->set_uniform_value_bool(state.layers,layered);
+    runtime->set_uniform_value_bool(state.depth_ready,false);
+    if(!layered)return;
+    if(!depth::instance().metadata_available())return;
+    const auto &h=state.uploaded_header;
+    runtime->set_uniform_value_float(state.guest_projection,h.near_plane,h.far_plane);
+    depth::expected_view expected;
+    expected.width=state.target_width;expected.height=state.target_height;
+    expected.position=h.camera_position;expected.forward=h.camera_direction;expected.up=h.camera_up;
+    expected.vertical_fov=h.vertical_fov;expected.captured_unix_ms=h.camera_utc_ms;
+    expected.position_tolerance=0.03f;expected.direction_cosine=0.99995f;expected.fov_tolerance=0.005f;
+    if(!state.depth_armed){depth::instance().arm(true,expected);state.depth_armed=true;}
+    else if(state.depth_sequence!=state.uploaded_sequence)depth::instance().update_expected(expected);
+    state.depth_sequence=state.uploaded_sequence;
+    if(auto value=depth::instance().take_sample())state.depth_sample=value;
+    if(!state.depth_sample || st::utc_ms()<state.depth_sample->captured_unix_ms ||
+        st::utc_ms()-state.depth_sample->captured_unix_ms>250 ||
+        !depth::validate(*state.depth_sample,expected,st::utc_ms()))return;
+    // DEPTH is maintained by ReShade's public generic-depth addon. Never assume
+    // a semantic name itself is a handle or that a dummy depth texture is valid.
+    api::resource_view view{},srgb{};
+    runtime->get_texture_binding(state.host_depth,&view,&srgb);
+    auto *device=runtime->get_device();
+    if(view==0)return;
+    const auto resource=device->get_resource_from_view(view);
+    if(resource==0)return;
+    const auto desc=device->get_resource_desc(resource);
+    const auto format=device->get_resource_view_desc(view).format;
+    if(desc.type!=api::resource_type::texture_2d || desc.texture.samples!=1 ||
+       (format!=api::format::r32_float && format!=api::format::r24_unorm_x8_uint &&
+        format!=api::format::r32_float_x8_uint && format!=api::format::r16_unorm))return;
+    const auto &s=*state.depth_sample;
+    if(!depth::matches_depth(runtime,view,s))return;
+    if(std::abs(static_cast<float>(desc.texture.width)-s.viewport.width)>1 ||
+       std::abs(static_cast<float>(desc.texture.height)-s.viewport.height)>1)return;
+    // Letterboxing would compare different camera rays. Fallback captured-ground
+    // depth remains active until both renderers cover the same full viewport.
+    if(std::abs(state.rectangle.width-1.0f)>0.001f || std::abs(state.rectangle.height-1.0f)>0.001f)return;
+    runtime->set_uniform_value_float(state.depth_projection,s.ratio[0],s.ratio[1],s.far_metres,s.reversed?1.0f:0.0f);
+    runtime->set_uniform_value_float(state.depth_nearest,s.nearest[0],s.nearest[1],s.nearest[2],s.nearest[3]);
+    runtime->set_uniform_value_bool(state.depth_ready,true);++depth_frames;
+}
+#endif
 #ifdef MINECOME_HUD_REPEAT_SESSION
 bool prepare_repeat_generation() {
     std::lock_guard lock(runtimes_mutex);
@@ -1354,6 +1516,7 @@ bool prepare_repeat_generation() {
         next.window=state.window;next.reshade_overlay=state.reshade_overlay;
         next.texture=state.texture;next.view=state.view;next.fence=state.fence;next.uploads=state.uploads;
         next.width=state.width;next.height=state.height;next.pitch=state.pitch;next.next_fence=state.next_fence;
+        next.texture_height=state.texture_height;next.format=state.format;
         state=std::move(next);
     }
     service->session.store({});service->publication.store({});service->input_status.store({});
@@ -1490,6 +1653,10 @@ void on_begin(api::effect_runtime *runtime, api::command_list *commands, api::re
         if (service->terminal.load(std::memory_order_acquire) || !session->live(st::utc_ms(),now) ||
             !st::uploaded_fresh(state.uploaded_observation,now) || !visible(runtime,state)) return;
         input_frame.composition_stage=10;
+#ifdef MINECOME_HUD_GAMEPLAY_CHAT
+        if(state.layers==0 || state.depth_ready==0 || state.depth_projection==0 || state.depth_nearest==0 || state.guest_projection==0 || state.host_depth==0){fail(state,8);return;}
+        update_layers(runtime,state);
+#endif
         runtime->set_uniform_value_float(state.rect,rectangle.x,rectangle.y,rectangle.width,rectangle.height);
         runtime->set_uniform_value_bool(state.active,true); ++service->submitted;
         input_frame.composition_stage=11;
@@ -1572,8 +1739,14 @@ extern "C" __declspec(dllexport) bool AddonInit(HMODULE addon, HMODULE reshade_m
             throw std::runtime_error("raw_motion_diagnostics_runtime_required");
 #endif
         service=new Service(addon);
+#ifdef MINECOME_HUD_GAMEPLAY_CHAT
+        service->renderer_module=reshade_module;
+#endif
         if (!service->stop || service->config.empty()) throw std::runtime_error("service_init");
         service->worker=std::thread([] { service->run(); });
+#ifdef MINECOME_HUD_GAMEPLAY_CHAT
+        depth::register_callbacks();
+#endif
         reshade::register_event<reshade::addon_event::init_effect_runtime>(on_init);
         reshade::register_event<reshade::addon_event::destroy_effect_runtime>(on_destroy);
         reshade::register_event<reshade::addon_event::reshade_reloaded_effects>(on_reload);
@@ -1586,6 +1759,9 @@ extern "C" __declspec(dllexport) bool AddonInit(HMODULE addon, HMODULE reshade_m
     }
 }
 extern "C" __declspec(dllexport) void AddonUninit(HMODULE addon, HMODULE reshade_module) {
+#ifdef MINECOME_HUD_GAMEPLAY_CHAT
+    depth::unregister_callbacks();
+#endif
     reshade::unregister_event<reshade::addon_event::init_effect_runtime>(on_init);
     reshade::unregister_event<reshade::addon_event::destroy_effect_runtime>(on_destroy);
     reshade::unregister_event<reshade::addon_event::reshade_reloaded_effects>(on_reload);

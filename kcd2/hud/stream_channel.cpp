@@ -3,6 +3,8 @@
 #include <bcrypt.h>
 #include <algorithm>
 #include <array>
+#include <bit>
+#include <cmath>
 #include <cstring>
 
 namespace minecome::hud::stream {
@@ -97,9 +99,10 @@ bool Channel::open(const Identity &id) {
     mapping_.reset(OpenFileMappingW(FILE_MAP_READ,FALSE,(L"Local\\MineComeHud_"+suffix).c_str()));
     mutex_.reset(OpenMutexW(SYNCHRONIZE|MUTEX_MODIFY_STATE,FALSE,(L"Local\\MineComeHudLock_"+suffix).c_str()));
     if (!mapping_ || !mutex_) { validator_.invalidate("channel_missing"); close(); return false; }
-    mapped_ = static_cast<const std::uint8_t *>(MapViewOfFile(mapping_.value,FILE_MAP_READ,0,0,mapping_bytes));
+    const auto size = mapping_for_schema(id.schema);
+    mapped_ = static_cast<const std::uint8_t *>(MapViewOfFile(mapping_.value,FILE_MAP_READ,0,0,size));
     if (!mapped_) { validator_.invalidate("channel_mapping_size"); close(); return false; }
-    snapshot_.resize(mapping_bytes); opened_ = true; return true;
+    snapshot_.resize(size); opened_ = true; return true;
 }
 bool Channel::live() const { return opened_ && validator_.live(utc_ms(),steady_ms()); }
 bool Channel::fresh() const { return opened_ && validator_.fresh(utc_ms(),steady_ms()); }
@@ -114,17 +117,19 @@ Poll Channel::poll(std::shared_ptr<const Frame> &next) {
     if (wait == WAIT_TIMEOUT) return Poll::busy;
     if (wait == WAIT_ABANDONED) { ReleaseMutex(mutex_.value); return fail("mutex_abandoned"); }
     if (wait != WAIT_OBJECT_0) return fail("mutex_failed");
-    // Copy complete bounded publication under the same cross-language mutex.
-    // Parse/process only our private bytes after releasing ownership.
+    // Copy and validate the small private header before trusting its payload
+    // length. The mutex makes all three planes one coherent publication.
+    // Pixel validation/conversion happens after releasing ownership.
     std::memcpy(snapshot_.data(),mapped_,header_bytes);
-    std::uint64_t seq = 0; std::uint32_t count = 0;
-    for (unsigned i=0;i<8;++i) seq |= std::uint64_t(snapshot_[80+i]) << (i*8);
-    for (unsigned i=0;i<4;++i) count |= std::uint32_t(snapshot_[108+i]) << (i*8);
-    if (seq != validator_.sequence() && count <= pixel_capacity)
-        std::memcpy(snapshot_.data()+header_bytes,mapped_+header_bytes,count);
-    if (!ReleaseMutex(mutex_.value)) return fail("mutex_release_failed");
     Header header;
-    switch (validator_.accept(std::span(snapshot_.data(),header_bytes),utc_ms(),steady_ms(),header)) {
+    Result accepted;
+    try {
+        accepted = validator_.accept(std::span(snapshot_.data(),header_bytes),utc_ms(),steady_ms(),header);
+        if (accepted == Result::frame)
+            std::memcpy(snapshot_.data()+header_bytes,mapped_+header_bytes,header.bytes);
+    } catch (...) { ReleaseMutex(mutex_.value); throw; }
+    if (!ReleaseMutex(mutex_.value)) return fail("mutex_release_failed");
+    switch (accepted) {
     case Result::waiting: return Poll::waiting;
     case Result::unchanged: return Poll::unchanged;
     case Result::closed: return Poll::closed;
@@ -133,7 +138,18 @@ Poll Channel::poll(std::shared_ptr<const Frame> &next) {
     }
     auto frame = std::make_shared<Frame>(); frame->header = header; frame->observation = validator_.observed();
     frame->premultiplied.assign(snapshot_.begin()+header_bytes,snapshot_.begin()+header_bytes+header.bytes);
-    if (!minecome::hud::premultiply_rgba(frame->premultiplied,header.width,header.height)) return fail("premultiply_failed");
+    auto payload=std::span(frame->premultiplied);const auto plane=std::size_t(header.pitch)*header.height;
+    if (!minecome::hud::premultiply_rgba(payload.first(plane),header.width,header.height)) return fail("premultiply_failed");
+    if (header.format == 2) {
+        if (!minecome::hud::premultiply_rgba(payload.subspan(plane,plane),header.width,header.height)) return fail("premultiply_failed");
+        // Do not reinterpret depth as RGBA/alpha. Reject malformed depth rather
+        // than letting NaN/Inf or out-of-range samples affect native visibility.
+        for (std::size_t at=plane*2;at<payload.size();at+=4) {
+            std::uint32_t bits=0;for(unsigned i=0;i<4;++i)bits|=std::uint32_t(payload[at+i])<<(i*8);
+            const float depth=std::bit_cast<float>(bits);
+            if(!std::isfinite(depth)||depth<0.f||depth>1.f)return fail("depth_sample_invalid");
+        }
+    }
     // A dead producer cannot gain an extra publication while conversion ran.
     if (WaitForSingleObject(producer_.value,0) != WAIT_TIMEOUT) return fail("producer_exited");
     if (!validator_.live(utc_ms(),steady_ms())) return fail("expired");

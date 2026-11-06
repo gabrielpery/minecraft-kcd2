@@ -24,6 +24,7 @@ public final class HudRenderHooks {
         var frame=GameplaySession.worldBlocksFrame();
         if(GameplaySession.transparentFrame()&&frame!=null)GameplaySession.worldRenderCompleted(
             GameplayWorldRenderer.render(camera,tickDelta,frame.view(),frame.blocks(),frame.hover(),frame.surface()));
+        GameplaySession.preserveWorldLayers(frame);
     }
     public static void handRenderStarted() { if(GameplaySession.handsEnabled())GameplaySession.handRenderStarted(); }
     public static void handRenderCompleted() { if(GameplaySession.handsEnabled())GameplaySession.handRenderCompleted(); }

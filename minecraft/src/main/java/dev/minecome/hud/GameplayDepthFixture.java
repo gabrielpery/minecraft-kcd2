@@ -90,6 +90,16 @@ public final class GameplayDepthFixture {
     public String captureStage(){if(closing||finished||result!=null||begun==0||ticks<12)return null;String name=stage==0?"empty_terrain":stage==3?NAMES.get(index+1):stage==5?"cleared":null;return name==null||queued.contains(name)||images.containsKey(name)?null:name;}
     public void captured(HudReadback.Completed frame){if(closing||finished||result!=null)return;var meta=JsonParser.parseString(frame.metadata()).getAsJsonObject();if(!meta.has("world_blocks_fixture_stage"))return;String name=meta.get("world_blocks_fixture_stage").getAsString();if(!NAMES.contains(name)||!queued.add(name))return;if(!samples.offer(new Sample(name,frame,fixedView,block)))failure.compareAndSet(null,"Depth image queue full");}
     private void validateImages(){for(String name:NAMES){var p=images.get(name);if(p==null)throw new IllegalStateException("Missing depth image "+name);var m=p.getAsJsonObject("metadata");boolean emptyFrame=name.equals("empty_terrain")||name.equals("cleared");boolean depth=Set.of("empty_terrain","hidden","far","partial").contains(name);
+        var layers=p.getAsJsonObject("layers");
+        if(m.get("frame_format").getAsInt()!=2||m.getAsJsonObject("world_camera").get("utc_ms").getAsLong()!=0||
+            !layers.get("depth_finite_unit_range").getAsBoolean()||layers.get("overlay_world_region_samples").getAsLong()!=0||
+            layers.get("overlay_hand_samples").getAsLong()<100||layers.get("overlay_hud_samples").getAsLong()<100||layers.get("world_foreground_samples").getAsLong()!=0)
+            throw new IllegalStateException("World/overlay/depth planes are not independently preserved: "+p);
+        long world=layers.get("world_opaque_pixels").getAsLong(),worldDepth=layers.get("world_with_depth_pixels").getAsLong();
+        if(emptyFrame||name.equals("hidden")){if(world!=0)throw new IllegalStateException("Empty world layer retains pixels: "+p);}
+        else if(world<1000||worldDepth<world*.90)throw new IllegalStateException("World colour lacks same-frame GL depth: "+p);
+        if((depth||!emptyFrame)&&layers.get("nonclear_depth_pixels").getAsLong()<1000)throw new IllegalStateException("World depth plane was cleared by the later hand pass: "+p);
+        if(name.equals("cleared")&&layers.get("nonclear_depth_pixels").getAsLong()!=0)throw new IllegalStateException("World depth survives block cleanup: "+p);
         if(m.get("rendered_world_blocks").getAsInt()!=(emptyFrame?0:1)||m.get("screen").getAsInt()!=0||!m.get("hand_pass_rendered").getAsBoolean()||m.get("world_block_outline").getAsBoolean()==emptyFrame||m.get("terrain_depth_occlusion").getAsBoolean()!=depth||m.get("terrain_depth_boxes").getAsInt()!=(depth?1:0))throw new IllegalStateException("Depth render pass metadata differs: "+name);
         if(p.get("stray_opaque_samples").getAsLong()!=0||p.get("hand_opaque_samples").getAsLong()<100||p.get("hud_opaque_samples").getAsLong()<100)throw new IllegalStateException("Depth leaked colour or hid foreground: "+p);
         long baseline=p.get("baseline_samples").getAsLong(),present=p.get("retained_samples").getAsLong(),hidden=p.get("hidden_samples").getAsLong();
@@ -111,7 +121,32 @@ public final class GameplayDepthFixture {
         for(int y=(int)(f.height()*.78);y<f.height()*.92;y+=2)for(int x=(int)(f.width()*.72);x<f.width()*.93;x+=2)if((rgba[(y*f.width()+x)*4+3]&255)>200)hand++;
         for(int y=(int)(f.height()*.95);y<f.height();y+=2)for(int x=(int)(f.width()*.37);x<f.width()*.63;x+=2)if((rgba[(y*f.width()+x)*4+3]&255)>200)hud++;
         p.addProperty("block_region_opaque_samples",region);p.addProperty("stray_opaque_samples",stray);p.addProperty("baseline_samples",baseline);p.addProperty("retained_samples",retained);p.addProperty("hidden_samples",hidden);p.addProperty("hand_opaque_samples",hand);p.addProperty("hud_opaque_samples",hud);
+        p.add("layers",inspectLayers(f));
         if(sample.name().equals("visible")){visiblePixels=rgba;visibleWidth=f.width();visibleHeight=f.height();}images.put(sample.name(),p);
+    }
+    private static JsonObject inspectLayers(HudReadback.Completed frame){
+        byte[] layers=frame.layersBottomUp();HudLayerPixels.require(layers,frame.width(),frame.height());
+        int plane=HudPixels.byteSize(frame.width(),frame.height()),w=frame.width(),h=frame.height();
+        var raw=java.nio.ByteBuffer.wrap(layers).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+        long world=0,worldDepth=0,depthPixels=0,overlayRegion=0,overlayHand=0,overlayHud=0,worldForeground=0;boolean valid=true;
+        for(int i=0;i<plane;i+=4){float depth=raw.getFloat(plane*2+i);valid&=Float.isFinite(depth)&&depth>=0&&depth<=1;
+            if(depth<1)depthPixels++;if((layers[plane+i+3]&255)>8){world++;if(depth>0&&depth<1)worldDepth++;}
+        }
+        // Same independent regions as the legacy flattened proof, now on each plane.
+        for(int y=(int)(h*.15);y<h*.70;y+=2)for(int x=(int)(w*.15);x<w*.65;x+=2){
+            if(Math.abs(x-w/2)<22&&Math.abs(y-h/2)<22)continue;
+            if((layers[((h-1-y)*w+x)*4+3]&255)>8)overlayRegion++;
+        }
+        for(int y=(int)(h*.78);y<h*.92;y+=2)for(int x=(int)(w*.72);x<w*.93;x+=2){int pixel=((h-1-y)*w+x)*4+3;
+            if((layers[pixel]&255)>200)overlayHand++;if((layers[plane+pixel]&255)>8)worldForeground++;
+        }
+        for(int y=(int)(h*.95);y<h;y+=2)for(int x=(int)(w*.37);x<w*.63;x+=2){int pixel=((h-1-y)*w+x)*4+3;
+            if((layers[pixel]&255)>200)overlayHud++;if((layers[plane+pixel]&255)>8)worldForeground++;
+        }
+        var proof=new JsonObject();proof.addProperty("format",2);proof.addProperty("plane_bytes",plane);proof.addProperty("payload_bytes",layers.length);
+        proof.addProperty("depth_finite_unit_range",valid);proof.addProperty("nonclear_depth_pixels",depthPixels);proof.addProperty("world_opaque_pixels",world);proof.addProperty("world_with_depth_pixels",worldDepth);
+        proof.addProperty("overlay_world_region_samples",overlayRegion);proof.addProperty("overlay_hand_samples",overlayHand);proof.addProperty("overlay_hud_samples",overlayHud);proof.addProperty("world_foreground_samples",worldForeground);
+        return proof;
     }
     private void writeLoop(){long seq=0;try{while(!closing){var sample=samples.poll();if(sample!=null)writeSample(sample);var proof=pendingResult.getAndSet(null);if(proof!=null){Files.writeString(directory.resolve("gameplay-depth-fixture.json"),proof.toString(),StandardCharsets.UTF_8,StandardOpenOption.CREATE_NEW);written=true;}var j=new JsonObject();j.addProperty("schema",1);j.addProperty("source_kind","standalone_hud_physical_view_fixture");j.addProperty("run",identity.run());j.addProperty("patch_run",movement.surface().run());j.addProperty("patch_sha256",movement.surface().sha256());j.addProperty("target_pid",identity.targetPid());j.addProperty("target_start_filetime",Long.toUnsignedString(identity.targetStart()));j.addProperty("seq",++seq);j.addProperty("utc_ms",System.currentTimeMillis());j.add("forward",json(new Vec3d(1,0,0)));j.add("up",json(new Vec3d(0,0,1)));Path temp=directory.resolve("host-view-fixture.tmp");Files.writeString(temp,j.toString(),StandardCharsets.UTF_8,StandardOpenOption.CREATE,StandardOpenOption.TRUNCATE_EXISTING);HudFixtureCameraFiles.replace(temp,directory.resolve("host-view.json"));Thread.sleep(25);}}catch(Exception e){failure.compareAndSet(null,e.toString());}}
     public void close(){if(closing)return;closing=true;var c=MinecraftClient.getInstance();if(c.isOnThread()&&c.player==player){movement.suspend(c);blocks.suspend(c);if(ui!=null)ui.releaseAndClose(c);}}

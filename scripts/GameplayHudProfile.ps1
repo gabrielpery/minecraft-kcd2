@@ -47,6 +47,7 @@ function Get-MineComeGameplayProfile {
     Assert-MineComeGameplayRecords $p.files
     foreach($name in @('build_receipt_sha256','previous_manifest_sha256','previous_receipt_sha256')){if($p.$name -cnotmatch '^[0-9a-f]{64}$'){throw "Unfrozen gameplay pin: $name"}}
     foreach($name in @('build_receipt','addon_source','previous_bundle')){if([IO.Path]::IsPathRooted($p.$name) -or $p.$name -match '(^|[\\/])\.\.([\\/]|$)'){throw 'Profile path must be relative to this workspace.'}}
+    if($p.PSObject.Properties['shader_source'] -and ([IO.Path]::IsPathRooted($p.shader_source) -or $p.shader_source -match '(^|[\\/])\.\.([\\/]|$)')){throw 'Shader source must stay relative to this workspace.'}
     return $p
 }
 function Get-MineComeGameplayToolsBin($Profile){

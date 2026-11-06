@@ -24,6 +24,8 @@ bool read_file(const std::wstring &path, std::uint64_t maximum, HANDLE stop,
 struct Frame {
     Header header;
     std::uint64_t observation = 0;
+    // Format1 has one premultiplied RGBA plane. Format2 keeps the overlay/world
+    // planes premultiplied and leaves the final little-endian float depth intact.
     std::vector<std::uint8_t> premultiplied;
 };
 enum class Poll { busy, waiting, unchanged, frame, closed, failed };

@@ -1,4 +1,4 @@
-# Actual Minecraft pixels: opaque terrain depth, partial occlusion, untouched hands/UI and cleanup.
+# Actual Minecraft pixels: separate same-frame world/depth and hands/UI planes, terrain occlusion and cleanup.
 [CmdletBinding()]
 param([string]$JavaHome='C:/Program Files/Java/jdk-24',[string]$ReceiverPath)
 . (Join-Path $PSScriptRoot 'powershell7.ps1')
@@ -40,6 +40,14 @@ try{
   if($capture.metadata.rendered_world_blocks -ne $(if($empty){0}else{1}) -or $capture.metadata.screen -ne 0 -or -not $capture.metadata.hand_pass_rendered -or
    [bool]$capture.metadata.world_block_outline -eq $empty -or [bool]$capture.metadata.terrain_depth_occlusion -ne $depth -or
    $capture.metadata.terrain_depth_boxes -ne $(if($depth){1}else{0}) -or $capture.stray_opaque_samples -ne 0 -or $capture.hand_opaque_samples -lt 100 -or $capture.hud_opaque_samples -lt 100){throw 'Depth pass or unaffected foreground proof missing.'}
+  $layers=$capture.layers
+  if($capture.metadata.frame_format -ne 2 -or $capture.metadata.world_camera.utc_ms -ne 0 -or $capture.metadata.world_camera.near -ne .05 -or $capture.metadata.world_camera.far -ne 512 -or
+   $layers.format -ne 2 -or $layers.payload_bytes -ne $layers.plane_bytes*3 -or -not $layers.depth_finite_unit_range -or
+   $layers.overlay_world_region_samples -ne 0 -or $layers.overlay_hand_samples -lt 100 -or $layers.overlay_hud_samples -lt 100 -or $layers.world_foreground_samples -ne 0){throw 'Same-frame world/depth and overlay separation missing.'}
+  if($empty -or $capture.stage -ceq 'hidden'){if($layers.world_opaque_pixels -ne 0){throw 'Transparent world layer retained stale colour.'}}
+  elseif($layers.world_opaque_pixels -lt 1000 -or $layers.world_with_depth_pixels -lt $layers.world_opaque_pixels*.90){throw 'World colour does not retain its GL depth.'}
+  if(($depth -or -not $empty) -and $layers.nonclear_depth_pixels -lt 1000){throw 'Later hands erased the captured world depth.'}
+  if($capture.stage -ceq 'cleared' -and $layers.nonclear_depth_pixels -ne 0){throw 'Cleared world retains stale depth.'}
   if($empty -or $capture.stage -ceq 'hidden'){if($capture.block_region_opaque_samples -ne 0){throw 'Terrain/hidden block has visible colour.'}}
   elseif($capture.stage -ceq 'visible'){if($capture.block_region_opaque_samples -lt 1000){throw 'Visible actual block baseline missing.'}}
   elseif($capture.stage -ceq 'partial'){
