@@ -1,81 +1,99 @@
-# Proposed death and respawn integration
+# Death and respawn integration
 
-Status: **design only; not implemented or verified**. Inspected 8 November 2026
-against the installed Minecraft 1.21.1/Yarn build. Death/respawn requires a
-coordinated guest and native movement change; accepting a replacement player
-object alone would leave spawn positioning and host movement unsafe.
+Implemented 8 November 2026 for the owned Overworld gameplay session. Minecraft
+owns death, dropped inventory, survival state and the real Respawn button. KCD2
+follows an explicitly acknowledged relocation; ordinary pose speed and freshness
+checks are unchanged.
 
-## Current blockers
+## Lifecycle
 
-- `GameplayMovement.beforeTick` rejects a replacement client player before the
-  session's end-tick transition handling. Its server ownership check and
-  `GameplayBlocks.observe` also reject the replacement server player.
-- `HudVanillaUiAdapter` rejects `DeathScreen`; respawn's brief
-  `DownloadingTerrainScreen` needs bounded transition handling too.
-- `kcd2/gameplay/movement_session.lua` rejects an ordinary pose displacement
-  exceeding `0.5 + max_speed * elapsed` as `source_velocity_invalid`. Preserve
-  that guard; respawn must use a separate acknowledged relocation.
-- Vanilla's default flat-world spawn is unrelated to captured host terrain.
-  Injected collision leaves terrain block states as air, so ordinary vanilla
-  spawn searches cannot establish a safe KCD2-world respawn position.
+- Fresh server death observations freeze the last valid owned pose and release
+  movement, mining and food actions. DeathScreen uses the normal HUD pointer path;
+  world keys, E, Escape and chat cannot bypass it.
+- Fabric AFTER_RESPAWN queues the exact dead-to-live replacement. On the next
+  server tick, the coordinator verifies the same server, world, UUID and network
+  handler, including the handler's newly assigned player and UUID-manager entry.
+  Teleporting inside the callback would move the old player.
+- The default destination is the captured origin. An explicit Overworld spawn is
+  admitted only with captured support and clear body/head space. Unsupported or
+  blocked destinations stop the session; unrelated flat-world spawn is not used.
+- Native death acknowledgment precedes one relocation for that epoch. Receipts
+  bind run, world, process, patch, epoch, origin and target. Missing, changed,
+  stale or replayed transitions cannot authorize an ordinary teleport.
+- Client/server controllers explicitly rebind, retaining terrain, placed blocks
+  and furnace identities while clearing old actions and observations. Late mouse
+  release edges survive the UI rebind. The temporary terrain screen closes only
+  after the new identities, native acknowledgment, received chunk and client pose
+  agree; its usual renderer-ready condition cannot finish with terrain rendering
+  suppressed by the HUD compositor.
 
-## Proposed implementation
+## Persistence and coverage
 
-1. Observe Fabric `ServerPlayerEvents.AFTER_RESPAWN(oldPlayer, newPlayer, alive)`.
-   Accept only `alive == false`, the exact owned integrated server/Overworld,
-   same UUID/network handler, previously owned dead player and expected live
-   replacement. Publish an immutable transition record; rebind each controller
-   on its own game thread. Keep collision installation, construction ledger and
-   terrain origin unchanged for a same-world respawn.
-2. During death, release movement, mining, food and UI holds. Continue publishing
-   an explicit frozen-pose state while fresh server observations still confirm
-   the owned dead player and the actual death screen owns input. Do not renew
-   stale source timestamps or relax transport leases. Route mouse input through the
-   existing UI state and retain the vanilla Respawn button/packet behavior.
-3. Admit a clear respawn point inside captured terrain, honoring a supported
-   explicit spawn if available. Verify footprint, support height, owned block
-   collision and head clearance. Refuse uncaptured or blocked destinations;
-   never silently fall back to the unrelated flat-world spawn.
-4. Add a one-use native relocation epoch containing old/new target and exact
-   run/world identity, with an explicit acknowledgment. Bound its lifetime and
-   reject replay, unrelated players and arbitrary pose jumps. Ordinary poses
-   retain their existing velocity/freshness checks.
-5. After native relocation and both replacement identities agree, clear old
-   observations, aim and pending actions, rebind UI, and wait for position/ground
-   stability and fresh camera evidence. Resume only released/repressed controls.
-   Bound the terrain-loading transition; unrelated world/dimension changes stay
-   unsupported instead of becoming general identity exceptions.
+Captured collision remains installed through the integrated server's final save.
+The session closes the player connection, performs vanilla disconnect, then
+releases collision at SERVER_STOPPED. Previously, drops could fall through the
+removed terrain during shutdown and reopen far below it. No entity position,
+velocity, inventory or death state is rewritten to repair this.
 
-## Inspected APIs and evidence
+`Start-GameplaySession.ps1 -InitialTerrainRadius 1` enables exploration and
+prefetches the eight neighboring tiles through real capture and durable admission.
+Together with the original tile this provides a 24m-by-24m starting area when all
+captures succeed. Refused terrain remains unknown. The respawn fixture requires
+this ring because ordinary death drops can scatter beyond the original 8m area.
+Items outside captured coverage still lack host collision; the ring is not an
+unlimited-world guarantee.
 
-Local bytecode/source evidence is under ignored
-`runtime/evidence/respawn-source-20261108/`:
+## Automated verification
 
-- `PlayerManager.txt`, `respawnPlayer` (line 953): constructs a replacement
-  `ServerPlayerEntity`, retains game profile/network handler/id, copies vanilla
-  state and publishes the replacement UUID map entry.
-- `ClientPlayNetworkHandler.txt`, `onPlayerRespawn` (line 2398): same-dimension
-  respawn retains `ClientWorld`, creates/replaces `ClientPlayerEntity`, and starts
-  the terrain-loading transition.
-- `ServerPlayNetworkHandler.txt`, `onClientStatus` (line 4592): dead-player
-  respawn calls `respawnPlayer(old, false, KILLED)`.
-- `ServerPlayerEntity.txt`, `getRespawnTarget` (line 1776): default/explicit spawn
-  selection; forced air-spawn checks use block states rather than injected
-  support height.
-- `DeathScreen.txt`, Respawn button callback (line 508): invokes
-  `ClientPlayerEntity.requestRespawn()`.
-- `ServerPlayerEvents.java`: installed Fabric `AFTER_RESPAWN` callback signature
-  and `alive` semantics.
+`Test-GameplayRespawn.ps1` passes two actual Minecraft launches in
+`runtime/evidence/gameplay-respawn-20261108-195728-3e5a1e52c4f743f0974f5adcd5fb77e0/verification.json`.
+It places a crafting table, walks away, uses vanilla Survival death with
+keepInventory disabled, clicks the actual enabled Respawn button, verifies both
+player replacements and continued walking, then saves and reopens. The same
+three-diamond item entity, position and table survive reload. Nine terrain tiles
+are admitted and retained. Standalone acknowledgments are explicitly local;
+this result does not claim a native relocation.
 
-These are inspection references, not proof that any proposed hook or transition
-has been implemented. No guessed native engine offsets or methods are needed.
+`Test-KcdRespawn.ps1` runs the connected counterpart or validates an existing
+receipt with `-VerifyEvidenceDirectory`. It requires genuine host terrain/camera,
+matching native lifecycle acknowledgment, death-screen image bytes, compositor
+progress during the death screen, post-respawn walking and normal cleanup.
+Physical mouse acceptance is separate from scripted guest input.
 
-## Focused verification
+Connected KCD2 PASS:
+`runtime/evidence/gameplay-kcd-20261108-200330-a3cf004de7e04f23b48173bab56547f2/native-respawn-verification.json`.
+Nine genuine terrain tiles, both lifecycle acknowledgements, actual button use,
+health/food restoration, retained construction/drop and subsequent walking pass.
+Native composition and reprojection each advanced 162 frames during the death
+screen dwell; the client saved and closed normally and the native body restored.
+This uses scripted guest input and logged composition, not a new physical-input
+or post-composite screenshot claim.
 
-Reuse the actual damage setup from `Test-GameplayFlight.ps1`, item identity and
-pickup checks from `Test-GameplayDrops.ps1`, and existing two-launch persistence
-fixtures. One integrated sequence should verify death/drop state, genuine button
-respawn, safe native relocation, resumed walking/crafting, item recovery and
-save/reopen. Cover mismatched UUID/server/world, living replacement, replayed
-relocation and blocked spawn with focused rejection tests. Physical input and
-subjective visual acceptance remain distinct from scripted coupled-game proof.
+The connected test exposed native float32 coordinate conversion and an early
+acknowledgement while the follower was still interpolating. Lifecycle receipts
+now require the exact original or float32-rounded target, a completed segment,
+same-thread position readback and `applied_seq == pose_seq == seq`. Fresh frozen
+poses renew their lease without restarting interpolation; ordinary movement
+limits are unchanged. A consumed single-arm gameplay HUD process is rejected
+before another Minecraft launch, with a clear KCD restart instruction.
+
+Focused checks cover 171 strict acknowledgment cases, 42 Lua binding cases,
+13 PowerShell lifecycle groups and 12 terrain-host groups. Existing movement and
+block regressions remain applicable.
+
+## Limits and next work
+
+Cross-dimension respawn, beds/anchors outside admitted coverage, automatic instant
+respawn, and unrelated command teleports are not verified by this milestone.
+Opening a previously dead save is implemented but needs a dedicated restart
+check. Native NPC damage exchange, Elytra and selective KCD health/stamina HUD
+suppression remain required product work.
+
+## Inspected source
+
+Pinned Minecraft 1.21.1/Yarn evidence is under ignored
+`runtime/evidence/respawn-source-20261108/`: PlayerManager, ServerPlayerEntity,
+ServerPlayNetworkHandler, ClientPlayNetworkHandler, DeathScreen, WorldLoadingState
+and MinecraftClient. Installed Fabric AFTER_RESPAWN and SERVER_STOPPED hooks were
+inspected; SERVER_STOPPED runs after vanilla final save/world closure. No new
+native engine offsets or unverified engine methods are used.

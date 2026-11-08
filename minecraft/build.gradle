@@ -19,6 +19,8 @@ loom {
                     vmArgs '-Dminecome.gameplayStandalone=true'
                 if (project.hasProperty('minecomeGameplayFixture'))
                     vmArgs "-Dminecome.gameplayFixture=${project.property('minecomeGameplayFixture')}"
+                if (project.hasProperty('minecomeGameplayRespawnCheck'))
+                    vmArgs '-Dminecome.gameplayRespawnCheck=true'
                 if (project.hasProperty('minecomeGameplayFurnaceCheck'))
                     vmArgs '-Dminecome.gameplayFurnaceCheck=true'
                 if (project.hasProperty('minecomeGameplayCraftingCheck'))
@@ -421,3 +423,11 @@ tasks.register('gameplayTerrainAdmissionTest', JavaExec) {
     mainClass = 'dev.minecome.terrain.GameplayTerrainAdmissionTests'
 }
 tasks.named('check') { dependsOn 'gameplayTerrainTest', 'gameplayTerrainAdmissionTest' }
+
+// Strict death/respawn receipt identity, phase, replay and coordinate admission.
+tasks.register('gameplayRespawnTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'dev.minecome.hud.GameplayRespawnAcknowledgementTests'
+}
+tasks.named('check') { dependsOn 'gameplayRespawnTest' }

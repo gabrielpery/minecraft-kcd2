@@ -9,6 +9,7 @@ import net.minecraft.block.BlockState;
 import net.minecraft.block.ShapeContext;
 import net.minecraft.block.entity.FurnaceBlockEntity;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.component.DataComponentTypes;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.item.Items;
@@ -62,6 +63,7 @@ public final class GameplayBlocks {
     private final AtomicReference<String> failure=new AtomicReference<>();
     private volatile MinecraftServer server;private Object clientWorld,clientPlayer,serverWorld,serverPlayer;
     private volatile UUID playerId;private volatile boolean serverInitialized,closing,serverClosed;private volatile long closeAt;
+    private volatile long serverRespawns,clientRespawns;
     private Aim aim;private Plan pending;private boolean actions,ready,left,right,dispatched,breakCancelled;
     private long ids,serverSequence,revision,confirmed,dispatchedAt,lastDispatch,places,breaks,rejections,cancellations,groundPlaces,survivalBreaks,survivalPreservedTicks,craftingOpens,furnaceOpens;
     private String lastResult="starting";
@@ -84,6 +86,24 @@ public final class GameplayBlocks {
         ledger.surface=next;surface=next;
     }
     public boolean ready(){return ready&&!closing&&failure.get()==null;}
+    /** Explicit same-world replacement, called only from the owned AFTER_RESPAWN coordinator. */
+    public void serverRespawn(ServerPlayerEntity oldPlayer,ServerPlayerEntity newPlayer){
+        if(server==null||!server.isOnThread()||closing||!serverInitialized||oldPlayer!=serverPlayer||oldPlayer==newPlayer||
+                oldPlayer==null||newPlayer==null||oldPlayer.isAlive()||!newPlayer.isAlive()||oldPlayer.getServer()!=server||newPlayer.getServer()!=server||
+                oldPlayer.getWorld()!=serverWorld||newPlayer.getWorld()!=serverWorld||!oldPlayer.getUuid().equals(playerId)||!newPlayer.getUuid().equals(playerId)||
+                oldPlayer.networkHandler!=newPlayer.networkHandler||serverRespawns!=clientRespawns)
+            throw new IllegalStateException("Block respawn ownership changed");
+        intent.set(null);observation.set(null);serverPlayer=newPlayer;serverRespawns++;
+    }
+    /** Does not reload the ledger or reinstall terrain/furnaces. No old action crosses replacement. */
+    public void clientRespawn(MinecraftClient client,ClientPlayerEntity oldPlayer){
+        if(!client.isOnThread()||closing||oldPlayer!=clientPlayer||oldPlayer==client.player||oldPlayer==null||oldPlayer.isAlive()||
+                client.player==null||!client.player.isAlive()||client.world!=clientWorld||client.getServer()!=server||!client.isIntegratedServerRunning()||
+                oldPlayer.getWorld()!=clientWorld||client.player.getWorld()!=clientWorld||!oldPlayer.getUuid().equals(playerId)||!client.player.getUuid().equals(playerId)||
+                serverRespawns!=clientRespawns+1)throw new IllegalStateException("Block client respawn ownership changed");
+        foodUse.suspend(client);actions=false;left=false;right=false;aim=null;pending=null;intent.set(null);dispatched=false;breakCancelled=false;
+        ready=false;clientPlayer=client.player;clientRespawns=serverRespawns;lastResult="respawn_rebound";
+    }
     public Set<BlockPos> ownedBlocks(){var result=new HashSet<BlockPos>();for(var c:owned.get().keySet())result.add(pos(c));return Set.copyOf(result);}
     /** Render-thread snapshot: never invent state from a palette or expose predicted unconfirmed blocks. */
     public Map<BlockPos,BlockState> ownedBlockStates(MinecraftClient client){
@@ -127,7 +147,7 @@ public final class GameplayBlocks {
             clientWorld=client.world;clientPlayer=client.player;playerId=client.player.getUuid();if(server!=null&&server!=client.getServer())throw new IllegalStateException("Block server changed");server=client.getServer();}
         requireClient(client);long now=System.nanoTime();var observed=observation.get();
         ready=serverInitialized&&observed!=null&&now-observed.at()<250_000_000L;
-        actions=ready&&enabled&&client.currentScreen==null&&client.getOverlay()==null&&!client.isPaused();
+        actions=ready&&enabled&&client.player.isAlive()&&client.currentScreen==null&&client.getOverlay()==null&&!client.isPaused();
         if(!actions)suspend(client);
         if(pending!=null){
             if(!dispatched){
@@ -390,6 +410,7 @@ public final class GameplayBlocks {
         j.addProperty("places",places);j.addProperty("breaks",breaks);j.addProperty("ground_places",groundPlaces);j.addProperty("rejections",rejections);j.addProperty("cancellations",cancellations);j.addProperty("last_result",lastResult);
         j.addProperty("survival_breaks",survivalBreaks);j.addProperty("survival_preserved_ticks",survivalPreservedTicks);
         j.addProperty("crafting_opens",craftingOpens);j.addProperty("furnace_opens",furnaceOpens);
+        j.addProperty("server_respawns",serverRespawns);j.addProperty("client_respawns",clientRespawns);
         j.add("food_use",foodUse.evidence(client));
         j.addProperty("world_blocks",worldBlocks);
         j.addProperty("pending",pending!=null);j.addProperty("snapshot_writes",files.writes());j.addProperty("persisted_revision",files.persistedRevision());j.addProperty("cleanup_complete",cleanupComplete());j.addProperty("controls_released",!left&&!right);

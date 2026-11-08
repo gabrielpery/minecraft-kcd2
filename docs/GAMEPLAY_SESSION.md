@@ -913,7 +913,7 @@ Releasing right-click, attacking, changing the slot or mode, opening a menu, or
 losing gameplay authority cancels the held use. Resume with a fresh right-click.
 Holding food does not interact with the block under the crosshair. This increment
 supports main-hand food components; general item use, offhand controls, NPC combat,
-death/respawn remain separate work; crafting and furnaces are described above.
+cross-game combat remains separate work; crafting, furnaces and respawn are described above.
 
 Run the automatic check without KCD2 or manual input:
 
@@ -948,3 +948,41 @@ closed normally and the native standalone receiver confirmed the stream closed.
 This proves the persistent guest, command packet path and saved survival state.
 It does not prove physical command typing in KCD2, actual flight, imported host
 collision or damage exchange with native NPCs. Those remain required product work.
+
+## Death and respawn
+
+WorldBlocks accepts Minecraft's real death screen and Respawn button. Death
+releases walking, mining and food controls; the button sends vanilla's respawn
+packet. The new same-world player retains construction and terrain. Native
+movement waits for an identity-bound relocation acknowledgment before returning
+to ordinary controls. Default respawn uses the captured origin; unsupported or
+blocked explicit spawn points stop safely rather than using flat-world spawn.
+
+Dropped inventory remains vanilla. Collision stays installed until the integrated
+server finishes saving, so items left in captured terrain retain their positions
+across a normal shutdown. Uncaptured terrain still cannot support items.
+
+To request a larger starting capture in an ordinary session, append
+`-InitialTerrainRadius 1` to `Start-GameplaySession.ps1 -WorldBlocks`. It enables
+Explore, samples eight neighboring tiles and retains each only after verified
+admission. The resulting area is 24m square when all tiles succeed. Steep or
+otherwise refused tiles stay unavailable; normal exploration limits still apply.
+
+Automatic checks, without manual key sequences:
+
+```powershell
+& './scripts/Test-GameplayRespawn.ps1'
+# Connected counterpart: installed WorldBlocks bundle and already loaded KCD2 world
+& './scripts/Test-KcdRespawn.ps1' -BundleDirectory $bundle -InstanceDirectory $newTestInstance
+```
+
+The standalone check passed death, drops, actual button input, paired replacement,
+walking, construction and two-launch persistence. The connected check additionally
+passed native relocation and compositor progress through the death screen, with
+all nine terrain tiles captured and acknowledged. These use scripted guest
+inputs; they do not claim new physical mouse acceptance. Full design/evidence and
+unsupported cases are in [respawn integration](RESPAWN_PLAN.md).
+
+The sustained gameplay HUD accepts one session per KCD2 process. Restart KCD2
+normally before another session; the launcher now detects an already consumed
+session before starting Minecraft.

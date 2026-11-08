@@ -121,6 +121,7 @@ local function emit(p,event,result,s,seq)
   ..',"camera_basis_valid":'..tostring(s~=nil and normal(s,p))..',"camera_override_changed":'..tostring(p.camera_attempted==true)..',"camera_restored":'..tostring(p.camera_restored==true)..',"camera_reset_attempts":'..number(p.reset_attempts or 0)..',"timers_cancelled":'..tostring(p.timers_cancelled==true)..',"position_restored":false,"control_state_changed":false}'
  if p.allow_perspective then t=t:sub(1,-2)..',"body_visible_baseline_owned":true,"body_hidden":'..tostring(p.body_hidden==true)..',"body_restore_dispatched":'..tostring(p.body_restore_dispatched==true)..',"body_draw_calls":'..number(p.body_draw_calls or 0)..'}' end
  if p.allow_perspective then local g=p.camera_geometry;t=t:sub(1,-2)..',"camera_collision_generation":'..number(g and g.generation or 0)..',"camera_collision_required":'..number(p.latest and p.latest.camera_generation or 0)..',"camera_collision_complete":'..tostring(g~=nil and g.complete==true)..',"camera_collision_boxes":'..number(g and #g.boxes or 0)..',"camera_collision_distance":'..number(p.camera_owned_distance or 0)..'}' end
+ if event=='lifecycle' and p.lifecycle then local life=p.lifecycle;t=t:sub(1,-2)..',"lifecycle":'..quote(life.phase)..',"respawn_epoch":'..number(life.epoch)..',"from":'..vec(life.from)..',"target":'..vec(life.target)..'}' end
  local ok,v=pcall(System.LogAlways,'[MineComeGameplayMovement] '..t)
  if ok and v~=false and event=='view' then
   -- A deferred camera readback can emit after the console request's marker.
@@ -370,19 +371,44 @@ function MineCome.GameplayMovementBegin(run,duration_ms,minx,maxx,miny,maxy,minz
  if not emit(p,'begin','ready',s) then finish(p,'log_failed');return false,'log_failed' end
  return true,'ready'
 end
-function MineCome.GameplayMovementPose(run,seq,source_ms,x,y,z,requested_mode,camera_generation)
+function MineCome.GameplayMovementPose(run,seq,source_ms,x,y,z,requested_mode,camera_generation,lifecycle,epoch,from_x,from_y,from_z)
  local p=state.active;if not token(run) or not p or p.run~=run then return false,'inactive' end
  local target={x=x,y=y,z=z};local t=clock();local reason
+ local life=p.lifecycle;local from={x=from_x,y=from_y,z=from_z};local relocate=false;local new_death=false
  if p.stopping then return false,'stopping' end
+ -- An explicit dead epoch must be applied/acknowledged before its single
+ -- relocation. Ordinary poses retain their original speed/lease guards.
+ if lifecycle~=nil then
+  if not p.allow_perspective or (lifecycle~='dead' and lifecycle~='respawn') or not finite(epoch) or epoch<1 or epoch>10000000 or epoch~=math.floor(epoch) then reason='lifecycle_invalid'
+  elseif lifecycle=='dead' then
+   new_death=not life or (life.phase=='respawn' and life.acked and epoch>life.epoch)
+   if from_x~=nil or from_y~=nil or from_z~=nil then reason='lifecycle_invalid'
+   elseif not new_death and (life.phase~='dead' or life.epoch~=epoch or distance(target,life.target)~=0) then reason='death_epoch_changed'
+   elseif new_death and epoch<=(p.respawn_epoch or 0) then reason='respawn_epoch_replayed' end
+  elseif not life or life.epoch~=epoch or not vector(from) or distance(from,life.from)~=0 then reason='respawn_identity_changed'
+  elseif life.phase=='dead' then
+   if not life.acked then reason='death_unacknowledged' else relocate=true end
+  elseif life.phase~='respawn' or distance(target,life.target)~=0 then reason='respawn_target_changed' end
+ elseif epoch~=nil or from_x~=nil or from_y~=nil or from_z~=nil then reason='lifecycle_invalid'
+ elseif life and (life.phase~='respawn' or not life.acked) then reason='respawn_unacknowledged' end
+ if reason then finish(p,reason);return false,reason end
  if (p.allow_perspective and (not finite(requested_mode) or requested_mode<0 or requested_mode>2 or requested_mode~=math.floor(requested_mode))) or (not p.allow_perspective and requested_mode~=nil) then reason='perspective_request_invalid'
  elseif (p.allow_perspective and (not finite(camera_generation) or camera_generation<1 or camera_generation>10000000 or camera_generation~=math.floor(camera_generation) or p.latest and camera_generation<p.latest.camera_generation)) or (not p.allow_perspective and camera_generation~=nil) then reason='camera_geometry_generation_invalid'
  elseif not finite(seq) or seq<1 or seq>10000000 or seq~=math.floor(seq) or seq<=p.sequence then reason='sequence_replayed_or_invalid'
  elseif not finite(source_ms) or source_ms<0 or source_ms>86400000 or (p.latest and source_ms<=p.latest.source_ms) then reason='source_time_invalid'
  elseif not inside(p,target,0) then reason='target_outside_capture'
  elseif not t or t<p.last_clock or t>=p.deadline or (p.latest and t-p.latest.received>LEASE) then reason='source_lease_expired'
- elseif p.latest and distance(target,p.latest.target)>0.5+p.max_speed*(source_ms-p.latest.source_ms)/1000 then reason='source_velocity_invalid' end
+ elseif not relocate and p.latest and distance(target,p.latest.target)>0.5+p.max_speed*(source_ms-p.latest.source_ms)/1000 then reason='source_velocity_invalid' end
  if reason then finish(p,reason);return false,reason end
- p.segment={from=copy(p.last_owned),started=t};p.latest={seq=seq,source_ms=source_ms,target=copy(target),received=t,first=p.sequence==0,camera_generation=camera_generation};p.sequence=seq
+ local continuing=lifecycle~=nil and life~=nil and life.phase==lifecycle and life.epoch==epoch
+ local first=p.sequence==0 or relocate or (continuing and p.latest and p.latest.first)
+ if new_death then p.respawn_epoch=epoch;p.lifecycle={phase='dead',epoch=epoch,from=copy(target),target=copy(target),created=t,acked=false}
+ elseif relocate then p.lifecycle={phase='respawn',epoch=epoch,from=copy(from),target=copy(target),created=t,acked=false}
+ elseif lifecycle==nil then p.lifecycle=nil end
+ -- Fresh frozen poses renew only their lease/sequence. Restarting this segment
+ -- on every50ms heartbeat would prevent its100ms interpolation completing.
+ if not continuing then p.segment={from=copy(p.last_owned),started=t} end
+ p.latest={seq=seq,source_ms=source_ms,target=copy(target),received=t,first=first,camera_generation=camera_generation};p.sequence=seq
  if p.allow_perspective then p.requested_mode=requested_mode end
  return true,'queued'
 end
@@ -404,6 +430,7 @@ function MineCome_GameplayMovementTick(data)
  if not t or t<p.last_clock then reason='clock_regressed'
  elseif t>=p.deadline then reason='session_expired'
  elseif p.latest and t-p.latest.received>LEASE then reason='source_lease_expired'
+ elseif p.lifecycle and p.lifecycle.phase=='respawn' and not p.lifecycle.acked and t-p.lifecycle.created>2 then reason='respawn_ack_expired'
  elseif not p.latest and t-p.created>12 then reason='first_pose_timeout' end
  if reason then return finish(p,reason) end
  p.last_clock=t
@@ -411,13 +438,20 @@ function MineCome_GameplayMovementTick(data)
  elseif p.allow_perspective then admit_view(p,s) end
  if p.latest then
   local f=p.latest.first and 1 or math.max(0,math.min(1,(t-p.segment.started)/SMOOTH))
-  local a,b=p.segment.from,p.latest.target;local target={x=a.x+(b.x-a.x)*f,y=a.y+(b.y-a.y)*f,z=a.z+(b.z-a.z)*f}
-  if distance(s.position,target)>0.0001 then
+  local a,b=p.segment.from,p.latest.target;local target=f==1 and copy(b) or {x=a.x+(b.x-a.x)*f,y=a.y+(b.y-a.y)*f,z=a.z+(b.z-a.z)*f}
+  local exact_lifecycle=f==1 and p.lifecycle and not p.lifecycle.acked
+  if distance(s.position,target)>(exact_lifecycle and 0 or 0.0001) then
    local ok,v=pcall(p.entity.SetWorldPos,p.entity,copy(target));local observed=snapshot()
    if not ok or v==false or observed.entity~=p.entity or observed.id~=p.id or distance(observed.position,target)>0.05 then return finish(p,'position_write_failed') end
    p.writes=p.writes+1;p.last_owned=copy(observed.position)
   end
   if f==1 then p.applied=p.latest.seq end
+  -- Publish only a completed segment and exact native readback, never a
+  -- nearby interpolated position. Native numbers are already float32 here.
+  if f==1 and p.lifecycle and not p.lifecycle.acked and distance(snapshot().position,p.lifecycle.target)==0 then
+   if not emit(p,'lifecycle','applied',snapshot(),p.latest.seq) then return finish(p,'log_failed') end
+   p.lifecycle.acked=true
+  end
  end
  local ok,why=update_camera(p,snapshot(),t);if not ok then return finish(p,why) end
  if not arm(p,'tick','MineCome_GameplayMovementTick',1) then return finish(p,'tick_timer_failed') end

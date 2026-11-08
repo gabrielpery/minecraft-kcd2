@@ -28,6 +28,16 @@ try{
  $t=New-Tile 1 0;Refuses {ConvertTo-GameplayTerrainTile 2 0 $t.Json $t.Sha256 $base};Refuses {ConvertTo-GameplayTerrainTile 1 0 $t.Json ('f'*64) $base}
  $bad=$t.Data;$bad.points[0].nz=.1;$raw=$bad|ConvertTo-Json -Depth 8 -Compress;Refuses {ConvertTo-GameplayTerrainTile 1 0 $raw (Get-GameplayTerrainHash $raw) $base}
  Refuses {ConvertFrom-GameplayTerrainJson '{"schema":1,"schema":2}'};$passed++
+ # Actual KCD ray positions cross float32 precision boundaries. Match only
+ # the exact float representation; the neighboring float is still refused.
+ $rounded=New-Tile 1 -1;$rounded.Data.center.y=2048.6510009765625
+ foreach($point in $rounded.Data.points){$row=[Math]::Floor(($point.index-1)/9);$point.y=[double][single]($rounded.Data.center.y+$row-4)}
+ $roundedBase=New-Tile 0 0;$roundedBase.Data.center.y=2040.6510009765625
+ $raw=$rounded.Data|ConvertTo-Json -Depth 8 -Compress
+ [void](ConvertTo-GameplayTerrainTile 1 -1 $raw (Get-GameplayTerrainHash $raw) $roundedBase)
+ $point=$rounded.Data.points[36];$point.y=[double][BitConverter]::Int32BitsToSingle([BitConverter]::SingleToInt32Bits([single]$point.y)+1)
+ $raw=$rounded.Data|ConvertTo-Json -Depth 8 -Compress;Refuses {ConvertTo-GameplayTerrainTile 1 -1 $raw (Get-GameplayTerrainHash $raw) $roundedBase}
+ Require (-not(Test-GameplayTerrainCoordinate 2048.65085 2048.6510009765625)) 'Off-grid near-float hit accepted.';$passed++
  Require (Test-GameplayTerrainCell $s -4 3) 'Base corner rejected.';Require (-not(Test-GameplayTerrainCell $s 4 0)) 'Unknown cell accepted.'
  Require (Test-GameplayTerrainPose $s (Pose 1 3.68 0)) 'Covered footprint rejected.';Require (-not(Test-GameplayTerrainPose $s (Pose 1 3.70 0))) 'Uncovered footprint accepted.';$passed++
  Require ($null -eq (Find-GameplayTerrainFrontier $s (Pose 1 0 0))) 'Initial idle capture.'
@@ -66,6 +76,40 @@ try{
  Require ($s.Refused.Contains('-1,0') -and $null -eq $s.Pending -and -not $s.Failure) 'Unknown terrain stopped valid session.'
  [void](Get-GameplayTerrainStopCommand $s);Accept-GameplayTerrainReceipt $s ([pscustomobject]@{schema=1;run=$id.Run;event='terminal';result='explicit_stop';active=$false;timers_cancelled=$true}) ($now+101)
  Require ((Get-GameplayTerrainHostState $s).CleanupComplete) 'Cleanup unconfirmed.';$passed++
+ # Optional initial ring uses the SAME capture chunks, admission and durable
+ # acknowledgement path while the player remains still. No fabricated tiles.
+ foreach($file in @('ack.json','admission.json')){[IO.File]::Delete((Join-Path $directory $file))}
+ $s=New-State;$s|Add-Member -NotePropertyName InitialTerrainRadius -NotePropertyValue 1
+ [void](Get-GameplayTerrainCommands $s $now)
+ Accept-GameplayTerrainReceipt $s ([pscustomobject]@{schema=1;run=$id.Run;event='begin';result='ready';active=$true}) $now
+ Require ((Get-GameplayTerrainHostState $s).InitialCaptureMissing.Count -eq 8) 'Initial ring hid unknown tiles.'
+ for($round=1;$round -le 8;$round++){
+  $at=$now+500*$round;$command=Get-GameplayTerrainCommands $s $at (Pose $round 0 0)
+  Require ($command -like '*GameplayTerrainCapture*' -and $s.Pending.Request -eq $round) 'Idle ring did not capture serially.'
+  $p=$s.Pending;$t=New-Tile $p.Tx $p.Tz
+  Require (Test-GameplayTerrainConnection $s.Known $t) 'Initial request disconnected from acknowledged coverage.'
+  for($i=0;$i -lt 81;$i+=9){
+   Accept-GameplayTerrainReceipt $s ([pscustomobject]@{schema=1;run=$id.Run;event='samples';result='sampling';active=$true;request=$p.Request;tx=$p.Tx;tz=$p.Tz;ray_count=$i+9;mask=256;first=$i+1;count=9;points=@($t.Data.points[$i..($i+8)])}) ($at+50)
+  }
+  Accept-GameplayTerrainReceipt $s ([pscustomobject]@{schema=1;run=$id.Run;event='captured';result='sampled';active=$true;request=$p.Request;tx=$p.Tx;tz=$p.Tz;ray_count=81;mask=256;anchor=$base.Data.center}) ($at+100)
+  [void](Get-GameplayTerrainCommands $s ($at+110) (Pose ($round+20) 0 0))
+  Require ($s.Known.Count -eq $round -and $s.Sequence -eq $round -and $null -ne $s.Pending) 'Initial capture skipped durable admission.'
+  $next=@($s.Tiles.ToArray())+@($p.Tile)
+  $ack=[ordered]@{schema=1;kind='minecome_gameplay_terrain_ack_v1';run=$id.Run;world_id=$id.WorldId;patch_run=$id.PatchRun;patch_sha256=$id.PatchHash;target_pid=$id.Pid;target_start_filetime=$id.Start;generation=$round;tx=$p.Tx;tz=$p.Tz;tile_sha256=$p.Tile.Sha256;status='admitted';coverage_digest=(Get-GameplayTerrainDigest $id.PatchHash $next)}
+  Write-Json $s.AckFile $ack;Read-GameplayTerrainAck $s
+ }
+ $status=Get-GameplayTerrainHostState $s
+ Require ($status.InitialCaptureComplete -and $status.TileCount -eq 9 -and $status.Generation -eq 8 -and $status.InitialCaptureMissing.Count -eq 0) 'Initial ring did not finish with nine acknowledged tiles.'
+ Require ($null -eq (Find-GameplayTerrainInitialFrontier $s)) 'Completed ring requested duplicates.'
+ Require (Test-GameplayTerrainPose $s (Pose 30 8 8)) 'Captured ring corner remains blocked.'
+ $s.LastPose=Pose 31 8.70 0;$frontier=Find-GameplayTerrainFrontier $s (Pose 32 8.80 0)
+ Require ($frontier.Tx -eq 2 -and $frontier.Tz -eq 0) 'Ordinary exploration did not continue after initial ring.'
+ $cache=[ordered]@{schema=1;kind='minecome_gameplay_coverage_v1';world_id=$id.WorldId;patch_run=$id.PatchRun;patch_sha256=$id.PatchHash;generation=$s.Generation;digest=$s.Digest;tiles=@($s.Tiles|Select-Object -Skip 1|ForEach-Object {@{tx=$_.Tx;tz=$_.Tz;sha256=$_.Sha256;json=$_.Json}})}
+ Write-Json $s.CacheFile $cache;$reopen=Read-GameplayTerrainCoverage $s.CacheFile $id $base
+ Require ($reopen.Known.Count -eq 9 -and $reopen.Generation -eq 8 -and $reopen.Digest -ceq $s.Digest) 'Initial coverage cache did not reopen.';$passed++
+ $s=New-State;$s|Add-Member -NotePropertyName InitialTerrainRadius -NotePropertyValue 1
+ [void]$s.Refused.Add('1,0');$frontier=Find-GameplayTerrainInitialFrontier $s;$status=Get-GameplayTerrainHostState $s
+ Require ($frontier.Tx -eq -1 -and $frontier.Tz -eq 0 -and -not $status.InitialCaptureComplete -and $status.InitialCaptureRefused -eq 1 -and $s.Known.Count -eq 1) 'Refused initial terrain retried or became known.';$passed++
  Write-Output "PASS $passed gameplay terrain host checks (no game/network)"
 }finally{
  $resolved=[IO.Path]::GetFullPath($directory);$tempRoot=[IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\')+'\'

@@ -68,6 +68,7 @@ public final class GroundPatchTests {
         reject((json+" {}").getBytes(StandardCharsets.UTF_8),"trailing JSON value");
         reject(json.replaceFirst("\"z\":10","\"z\":1e999").getBytes(StandardCharsets.UTF_8),"overflowing numeric exponent");
         reject(new byte[]{(byte)0xc3,(byte)0x28},"malformed UTF8");reject(new byte[GroundPatch.MAX_BYTES+1],"oversize file");
+        floatCoordinates();
         sequence(patch);
         wideSequence(GroundPatch.parse(bytes(fixture(9)),true));
         checks+=MovementTraceSinkTests.run();
@@ -76,6 +77,27 @@ public final class GroundPatchTests {
         checks+=GroundCorridorSequenceTests.run();
         checks+=GroundCorridorSyncTests.run();
         System.out.println("GroundPatchTests: "+checks+" checks passed (no Minecraft/game bootstrap)");
+    }
+    private static void floatCoordinates()throws Exception {
+        double center=2044.6510009765625,expected=center+4,rounded=(double)(float)expected;
+        check(expected==2048.6510009765625&&rounded==2048.65087890625&&Math.abs(expected-rounded)>0.0001,"reproduce captured float boundary beyond ordinary tolerance");
+        for(int grid:new int[]{5,9})for(int sign:new int[]{-1,1}){
+            var value=fixture(grid);double cx=sign*(grid==9?center:center+2),cy=-cx;int half=(grid-1)/2;
+            value.getAsJsonObject("center").addProperty("x",cx);value.getAsJsonObject("center").addProperty("y",cy);
+            for(int row=0;row<grid;row++)for(int col=0;col<grid;col++){
+                point(value,row*grid+col).addProperty("x",(double)(float)(cx+col-half));
+                point(value,row*grid+col).addProperty("y",(double)(float)(cy+row-half));
+            }
+            var parsed=GroundPatch.parse(bytes(value),grid==9);
+            check(parsed.points().size()==grid*grid&&parsed.centerX()==cx&&parsed.centerY()==cy,"exact float-rounded x/y accepted for both grid widths and signs");
+        }
+        var value=fixture();double cx=center+2;value.getAsJsonObject("center").addProperty("x",cx);
+        for(int i=0;i<25;i++)point(value,i).addProperty("x",cx+i%5-2);
+        check(GroundPatch.parse(bytes(value)).points().get(4).x()==expected,"unrounded double geometry remains accepted");
+        point(value,4).addProperty("x",rounded);
+        check(GroundPatch.parse(bytes(value)).points().get(4).x()==rounded,"exact float fallback retained without normalizing source coordinate");
+        point(value,4).addProperty("x",Math.nextUp(rounded));reject(value,"double neighbor of rounded value outside existing tolerance");
+        point(value,4).addProperty("x",(double)Math.nextDown((float)rounded));reject(value,"wrong neighboring float grid value");
     }
     private static GroundMovementSequence.Motion ground(double x){return new GroundMovementSequence.Motion(x,64,0.5,0,0,0,true,true);}
     private static void wideSequence(GroundPatch patch){

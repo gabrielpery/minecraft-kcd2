@@ -5,6 +5,8 @@ import dev.minecome.hud.mixin.HudHandledScreenAccessor;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.screen.ChatScreen;
+import net.minecraft.client.gui.screen.DeathScreen;
+import net.minecraft.client.gui.screen.DownloadingTerrainScreen;
 import net.minecraft.client.gui.screen.ingame.*;
 import java.util.*;
 
@@ -22,9 +24,22 @@ final class HudVanillaUiAdapter {
     private boolean pointerKnown;
     HudVanillaUiAdapter(MinecraftClient client,boolean mouseAllowed){this(client,mouseAllowed,false);}
     HudVanillaUiAdapter(MinecraftClient client,boolean mouseAllowed,boolean commandsAllowed){world=client.world;player=client.player;server=client.getServer();this.mouseAllowed=mouseAllowed;this.commandsAllowed=commandsAllowed;}
+    HudVanillaUiAdapter respawned(MinecraftClient client){
+        if(!client.isOnThread()||client.world!=world||client.getServer()!=server||client.player==player||
+                !(player instanceof net.minecraft.client.network.ClientPlayerEntity old)||old.isAlive()||client.player==null||
+                !client.player.isAlive()||!old.getUuid().equals(client.player.getUuid()))throw new IllegalStateException("Unowned UI respawn replacement");
+        releasePointerScreen();var next=new HudVanillaUiAdapter(client,mouseAllowed,commandsAllowed);
+        // The real mouse-up may arrive after its Respawn mouse-down replaced the
+        // player. Carry only canceled release edges, never a held input action.
+        for(int button=0;button<2;button++)if(pointer.awaitingRelease(button))next.pointer.press(button);
+        next.pointer.releaseScreen();pointer.clear();keys.clear();editKeys.clear();ownedChat=null;return next;
+    }
     static boolean inventory(Screen screen){return screen instanceof InventoryScreen || screen instanceof CreativeInventoryScreen || screen instanceof CraftingScreen || screen instanceof FurnaceScreen;}
     static boolean chat(Screen screen){return screen instanceof ChatScreen;}
-    static int screenKind(Screen screen){return screen==null?0:chat(screen)?2:inventory(screen)?1:-1;}
+    static boolean death(Screen screen){return screen instanceof DeathScreen;}
+    static boolean transition(Screen screen){return screen instanceof DownloadingTerrainScreen;}
+    private static boolean pointerScreen(Screen screen){return inventory(screen)||death(screen);}
+    static int screenKind(Screen screen){return screen==null?0:chat(screen)?2:pointerScreen(screen)||transition(screen)?1:-1;}
     // Inspected Yarn 1.21.1 ChatScreen: constructor seeds chatField; vanilla
     // keyPressed submits through sendMessage/sendChatCommand and owns history.
     // This subclass only exposes field text to the actual-Minecraft fixture.
@@ -36,7 +51,11 @@ final class HudVanillaUiAdapter {
     private void requireOwned(MinecraftClient client){if(!client.isOnThread() || client.world!=world || client.player!=player || client.getServer()!=server || !client.isIntegratedServerRunning())throw new IllegalStateException("Vanilla UI owner/thread changed");}
     void apply(MinecraftClient client,HudInputProtocol.Event event){
         synchronizeScreen(client);Screen screen=client.currentScreen;
-        if(screen!=null && !inventory(screen) && screen!=ownedChat)throw new IllegalStateException("Unowned screen during HUD input");
+        if(screen!=null && !pointerScreen(screen) && !transition(screen) && screen!=ownedChat)throw new IllegalStateException("Unowned screen during HUD input");
+        // Keep vanilla's enabled Respawn button authoritative. World keys, chat,
+        // E and Escape must not close or bypass death/terrain loading screens.
+        if(event.kind()==5 && pointer.awaitingRelease(event.code())){pointer.release(event.code());lateReleasesConsumed++;return;}
+        if(transition(screen)||(death(screen)&&(event.kind()<=2||event.kind()>=7)))return;
         if(event.kind()>=9){
             if(!commandsAllowed)throw new IllegalStateException("Live chat forwarding is disabled");
             // A submit/cancel closes ChatScreen synchronously. Remaining input
@@ -92,10 +111,10 @@ final class HudVanillaUiAdapter {
         if(current instanceof FurnaceScreen furnace && (furnace.getScreenHandler()!=client.player.currentScreenHandler || furnace.getScreenHandler().syncId<=0))
             throw new IllegalStateException("Furnace screen handler ownership changed");
         if(ownedChat!=null&&current!=ownedChat){releaseChatKeys();ownedChat=null;}
-        if(commandsAllowed&&current!=null&&!inventory(current)&&current!=ownedChat)throw new IllegalStateException("Unowned screen during gameplay chat");
+        if(commandsAllowed&&current!=null&&!pointerScreen(current)&&!transition(current)&&current!=ownedChat)throw new IllegalStateException("Unowned screen during gameplay chat");
         if(current==pointerScreen)return;
         releasePointerScreen();pointerKnown=false;
-        pointerScreen=inventory(current)?current:null;
+        pointerScreen=pointerScreen(current)?current:null;
         if(pointerScreen!=null)screenGeneration++;
     }
     private void releasePointerScreen(){
@@ -132,8 +151,8 @@ final class HudVanillaUiAdapter {
         proof.addProperty("edit_down_calls",chatEditDownCalls);proof.addProperty("edit_up_calls",chatEditUpCalls);proof.addProperty("submit_key_calls",chatSubmitCalls);proof.addProperty("cancel_key_calls",chatCancelCalls);
         proof.addProperty("closed_screen_tail_events",chatTailEvents);proof.addProperty("held_edit_keys",editKeys.size());return proof;
     }
-    Double windowX(MinecraftClient client){return pointerKnown && inventory(client.currentScreen)?Math.min(client.getWindow().getWidth()-0.001,x*client.getWindow().getWidth()):null;}
-    Double windowY(MinecraftClient client){return pointerKnown && inventory(client.currentScreen)?Math.min(client.getWindow().getHeight()-0.001,y*client.getWindow().getHeight()):null;}
+    Double windowX(MinecraftClient client){return pointerKnown && pointerScreen(client.currentScreen)?Math.min(client.getWindow().getWidth()-0.001,x*client.getWindow().getWidth()):null;}
+    Double windowY(MinecraftClient client){return pointerKnown && pointerScreen(client.currentScreen)?Math.min(client.getWindow().getHeight()-0.001,y*client.getWindow().getHeight()):null;}
     JsonArray fixtureTargets(MinecraftClient client){
         requireOwned(client);if(!(client.currentScreen instanceof HandledScreen<?> screen) || !inventory(screen))throw new IllegalStateException("No actual inventory handler for fixture targets");
         var origin=(HudHandledScreenAccessor)screen;var result=new JsonArray();

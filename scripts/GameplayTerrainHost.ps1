@@ -8,6 +8,12 @@
 
 function Test-GameplayTerrainNumber($Value){return $Value -is [ValueType] -and $Value -isnot [bool] -and [double]::IsFinite([double]$Value)}
 function Test-GameplayTerrainInteger($Value,[long]$Min,[long]$Max){return (Test-GameplayTerrainNumber $Value) -and $Value -ge $Min -and $Value -le $Max -and $Value -eq [Math]::Floor([double]$Value)}
+function Test-GameplayTerrainCoordinate([double]$Observed,[double]$Expected){
+    # CryEngine ray vectors/hit positions are float32. Crossing y=2048 can
+    # round an otherwise exact Lua grid coordinate by0.0001220703125m.
+    # Admit that exact representation, not an increased arbitrary tolerance.
+    return [Math]::Abs($Observed-$Expected) -le .0001 -or $Observed -eq [double][single]$Expected
+}
 function Assert-GameplayTerrainFields($Value,[string[]]$Names){
     if($Value -isnot [pscustomobject] -or (($Value.PSObject.Properties.Name|Sort-Object -CaseSensitive)-join ',') -cne (($Names|Sort-Object -CaseSensitive)-join ',')){throw 'Terrain record fields differ.'}
 }
@@ -56,7 +62,7 @@ function ConvertTo-GameplayTerrainTile([int]$Tx,[int]$Tz,[string]$Json,[string]$
         if(($p.PSObject.Properties['valid'] -and ($p.valid -isnot [bool] -or -not $p.valid)) -or ($p.PSObject.Properties['result'] -and $p.result -cne 'hit')){throw 'Terrain point is not a valid hit.'}
         if(-not(Test-GameplayTerrainInteger $p.index ($i+1) ($i+1))){throw 'Terrain point index differs.'}
         foreach($field in @('x','y','z','nx','ny','nz')){if(-not(Test-GameplayTerrainNumber $p.$field)){throw 'Terrain point is not finite.'}}
-        if([Math]::Abs($p.x-($tile.center.x+$col-4)) -gt .0001 -or [Math]::Abs($p.y-($tile.center.y+$row-4)) -gt .0001 -or
+        if(-not(Test-GameplayTerrainCoordinate $p.x ($tile.center.x+$col-4)) -or -not(Test-GameplayTerrainCoordinate $p.y ($tile.center.y+$row-4)) -or
             [Math]::Abs($p.z-$tile.center.z) -gt 8 -or [Math]::Abs($p.nx*$p.nx+$p.ny*$p.ny+$p.nz*$p.nz-1) -gt .05 -or $p.nz -lt .5){throw 'Terrain point geometry differs.'}
         if(($col -gt 0 -and [Math]::Abs($p.z-$tile.points[$i-1].z) -gt .5) -or ($row -gt 0 -and [Math]::Abs($p.z-$tile.points[$i-9].z) -gt .5)){throw 'Terrain height step exceeds0.5m.'}
     }
@@ -98,7 +104,7 @@ function Read-GameplayTerrainCoverage([string]$Path,$Identity,$Base){
     [pscustomobject]@{Tiles=$tiles;Known=$known;Generation=$tiles.Count-1;Digest=(Get-GameplayTerrainDigest $Identity.PatchHash $tiles)}
 }
 function New-GameplayTerrainHost {
-    param($Context,[string]$Run,[string]$WorldId,$Patch,[string]$CacheFile,[string]$AdmissionFile,[string]$AckFile,[long]$ExpiresUtcMs)
+    param($Context,[string]$Run,[string]$WorldId,$Patch,[string]$CacheFile,[string]$AdmissionFile,[string]$AckFile,[long]$ExpiresUtcMs,[ValidateRange(0,1)][int]$InitialTerrainRadius=0)
     if($Run -cnotmatch '^[a-f0-9]{32}$' -or $WorldId -cnotmatch '^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$' -or $Patch.Run -cnotmatch '^[a-f0-9]{32}$' -or $Patch.Hash -cnotmatch '^[a-f0-9]{64}$'){throw 'Gameplay terrain identity differs.'}
     Assert-MineComeProbeContext $Context
     $AdmissionFile=Resolve-HudMovementEvidencePath $AdmissionFile $Context.ProjectRoot;$AckFile=Resolve-HudMovementEvidencePath $AckFile $Context.ProjectRoot
@@ -114,7 +120,30 @@ function New-GameplayTerrainHost {
     $probe=New-MineComeProbeRun $Context 'gameplay-terrain' (Join-Path $Context.ProjectRoot 'kcd2/gameplay/terrain_session.lua') 'GameplayTerrainBegin'
     [pscustomobject]@{Identity=$identity;Context=$Context;Base=$base;Tiles=$coverage.Tiles;Known=$coverage.Known;Generation=$coverage.Generation;Digest=$coverage.Digest;
         CacheFile=$CacheFile;AdmissionFile=$AdmissionFile;AckFile=$AckFile;ExpiresUtcMs=$ExpiresUtcMs;Probe=$probe;BeginSent=$false;Begin=$null;Terminal=$null;Stopping=$false;Failure=$null;
-        LastSendUtcMs=0L;Sequence=0L;Pending=$null;LastPose=$null;Refused=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal);LastRefusal=$null;CapacityReached=$false;Captures=0L;Admissions=0L}
+        LastSendUtcMs=0L;Sequence=0L;Pending=$null;LastPose=$null;Refused=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal);LastRefusal=$null;CapacityReached=$false;Captures=0L;Admissions=0L;InitialTerrainRadius=$InitialTerrainRadius}
+}
+function Get-GameplayTerrainInitialCoverage($State){
+    $radius=if($State.PSObject.Properties['InitialTerrainRadius']){[int]$State.InitialTerrainRadius}else{0}
+    $missing=[Collections.Generic.List[string]]::new();$refused=0
+    for($z=-$radius;$z -le $radius;$z++){for($x=-$radius;$x -le $radius;$x++){
+        $key="$x,$z";if(-not $State.Known.ContainsKey($key)){$missing.Add($key);if($State.Refused.Contains($key)){$refused++}}
+    }}
+    [pscustomobject]@{Radius=$radius;RequiredTileCount=(2*$radius+1)*(2*$radius+1);Missing=$missing.ToArray();RefusedCount=$refused;Complete=($missing.Count -eq 0)}
+}
+function Find-GameplayTerrainInitialFrontier($State){
+    $coverage=Get-GameplayTerrainInitialCoverage $State
+    if($coverage.Complete -or $coverage.Radius -eq 0){return $null}
+    # Request real cardinal captures first, then corners. No tile becomes
+    # available here: the existing native receipts and durable guest ACK are
+    # still the only path into Known. Failed terrain remains unknown.
+    foreach($pair in @(@(1,0),@(-1,0),@(0,1),@(0,-1),@(1,1),@(1,-1),@(-1,1),@(-1,-1))){
+        $x=$pair[0];$z=$pair[1];$key="$x,$z"
+        if($State.Known.ContainsKey($key) -or $State.Refused.Contains($key)){continue}
+        foreach($neighbor in @("$($x-1),$z","$($x+1),$z","$x,$($z-1)","$x,$($z+1)")){
+            if($State.Known.ContainsKey($neighbor)){return [pscustomobject]@{Tx=$x;Tz=$z}}
+        }
+    }
+    return $null
 }
 function Find-GameplayTerrainFrontier($State,$Pose){
     if(-not $Pose){return $null};$old=$State.LastPose;$State.LastPose=$Pose
@@ -179,6 +208,7 @@ function Get-GameplayTerrainCommands($State,[long]$Now,$Pose=$null){
     if(-not $State.Begin){if($Now-$State.LastSendUtcMs -gt 1500){throw 'Terrain begin acknowledgement expired.'};return ''}
     if($State.Pending -and $State.Pending.Tile){Read-GameplayTerrainAck $State}
     $frontier=Find-GameplayTerrainFrontier $State $Pose
+    $initial=Find-GameplayTerrainInitialFrontier $State;if($initial){$frontier=$initial}
     if($State.Pending){
         if($Now-$State.Pending.RequestedUtcMs -gt 5000){throw 'Terrain capture/admission acknowledgement expired.'}
     }elseif($frontier -and $State.Known.Count -lt 64 -and -not $State.CapacityReached){
@@ -238,7 +268,9 @@ function Accept-GameplayTerrainReceipt($State,$Receipt,[long]$Now){
 }
 function Get-GameplayTerrainStopCommand($State){$State.Stopping=$true;return "MineCome.GameplayTerrainEnd('$($State.Identity.Run)')"}
 function Get-GameplayTerrainHostState($State){
+    $initial=Get-GameplayTerrainInitialCoverage $State
     [pscustomobject]@{Run=$State.Identity.Run;Failure=$State.Failure;Generation=$State.Generation;CoverageDigest=$State.Digest;TileCount=$State.Known.Count;Captures=$State.Captures;Admissions=$State.Admissions;
+        InitialTerrainRadius=$initial.Radius;InitialCaptureComplete=$initial.Complete;InitialCaptureMissing=$initial.Missing;InitialCaptureRefused=$initial.RefusedCount;
         RefusedCount=$State.Refused.Count;LastRefusal=$State.LastRefusal;CapacityReached=$State.CapacityReached;Pending=($null -ne $State.Pending);Begin=$State.Begin;Terminal=$State.Terminal;
         CleanupComplete=(-not $State.BeginSent -or ($State.Terminal -and $State.Terminal.result -ceq 'explicit_stop' -and -not $State.Terminal.active -and $State.Terminal.timers_cancelled))}
 }

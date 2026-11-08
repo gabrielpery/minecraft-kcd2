@@ -403,4 +403,89 @@ test('derived eye preserves head baseline bounds and native velocity guards',fun
  f=perspective_fixture();f:beginPerspective();f:pose(1,0,1,2,3,1);f:fire('tick',.01);f:fire('tick',.01)
  f.velocity.x=.21;f:fire('tick',.01);f:fire('cleanup',.05);f:lastReason('native_input_or_velocity')
 end)
+local function life_pose(seq,source,x,phase,epoch,from,mode)
+ return MineCome.GameplayMovementPose(A,seq,source,x,2,3,mode or 0,1,phase,epoch,from,from and 2 or nil,from and 3 or nil)
+end
+local function lifecycle_count(f)
+ local n=0;for _,line in ipairs(f.logs)do if line:find('"event":"lifecycle"',1,true)then n=n+1 end end;return n
+end
+test('fresh death freezes target and acknowledged epoch relocates once on native timer',function()
+ for _,mode in ipairs({0,1,2})do
+  local f=perspective_fixture();f:beginPerspective();f:pose(1,0,1,2,3,mode);f:fire('tick',.01);f:fire('tick',.01)
+  -- A final alive publication can have been skipped by the file reader. The
+  -- first dead target still passes the ordinary speed admission before freeze.
+  eq(life_pose(2,100,1.1,'dead',1,nil,mode),true);f:fire('tick',.11);eq(lifecycle_count(f),1)
+  eq(life_pose(3,200,1.1,'dead',1,nil,mode),true);f:fire('tick',.01);eq(lifecycle_count(f),1)
+  local writes=f.writes;eq(life_pose(4,300,8,'respawn',1,1.1,mode),true);eq(f.writes,writes)
+  f:fire('tick',.01);eq(f.position.x,8);eq(lifecycle_count(f),2)
+  assert(f.logs[#f.logs]:find('"respawn_epoch":1',1,true));assert(f.logs[#f.logs]:find('"lifecycle":"respawn"',1,true))
+  eq(life_pose(5,400,8,'respawn',1,1.1,mode),true);f:fire('tick',.01);eq(lifecycle_count(f),2)
+  eq(f:pose(6,500,8.2,2,3,mode),true);f:fire('tick',.11);eq(f.position.x,8.2)
+  f:finishPerspective()
+ end
+end)
+test('death and respawn reject replay changed targets and missing acknowledgements',function()
+ for _,scenario in ipairs({'skip_death','before_ack','changed_dead','changed_origin','outside','replayed_epoch','changed_respawn','resume_dead','speed_before_death','speed_after_respawn'})do
+  local f=perspective_fixture();f:beginPerspective();f:pose(1,0,1,2,3,0);f:fire('tick',.01)
+  local good
+  if scenario=='skip_death' then good=life_pose(2,100,8,'respawn',1,1)
+  elseif scenario=='speed_before_death' then good=life_pose(2,10,8,'dead',1)
+  else
+   eq(life_pose(2,100,1,'dead',1),true)
+   if scenario~='before_ack' then f:fire('tick',.11)end
+   if scenario=='before_ack' then good=life_pose(3,200,8,'respawn',1,1)
+   elseif scenario=='changed_dead' then good=life_pose(3,200,1.1,'dead',1)
+   elseif scenario=='changed_origin' then good=life_pose(3,200,8,'respawn',1,1.1)
+   elseif scenario=='outside' then good=life_pose(3,200,11,'respawn',1,1)
+   elseif scenario=='resume_dead' then good=f:pose(3,200,1,2,3,0)
+   else
+    eq(life_pose(3,200,8,'respawn',1,1),true);f:fire('tick',.01)
+    if scenario=='changed_respawn' then good=life_pose(4,300,8.1,'respawn',1,1)
+    elseif scenario=='speed_after_respawn' then good=f:pose(4,210,1,2,3,0)
+    else eq(f:pose(4,300,8,2,3,0),true);good=life_pose(5,400,8,'dead',1)end
+   end
+  end
+  eq(good,false);assert(MineCome._gameplay_movement.active==nil or MineCome._gameplay_movement.active.stopping)
+ end
+end)
+test('fresh death permits waiting but stale death cannot renew native lease',function()
+ local f=perspective_fixture();f:beginPerspective();f:pose(1,0,1,2,3,0);f:fire('tick',.01)
+ eq(life_pose(2,100,1,'dead',1),true);f:fire('tick',.01)
+ for i=3,15 do eq(life_pose(i,i*100,1,'dead',1),true);f:fire('tick',.1)end
+ eq(lifecycle_count(f),1);eq(f.writes,0);f:fire('tick',.401);f:lastReason('source_lease_expired')
+end)
+test('failed native relocation produces no respawn acknowledgement',function()
+ local f=perspective_fixture();f:beginPerspective();f:pose(1,0,1,2,3,0);f:fire('tick',.01)
+ eq(life_pose(2,100,1,'dead',1),true);f:fire('tick',.11)
+ eq(life_pose(3,200,8,'respawn',1,1),true);f.write_error=true;f:fire('tick',.01)
+ eq(lifecycle_count(f),1);f:lastReason('position_write_failed')
+end)
+test('new death after acknowledged respawn survives a skipped ordinary publication',function()
+ local f=perspective_fixture();f:beginPerspective();f:pose(1,0,1,2,3,0);f:fire('tick',.01)
+ eq(life_pose(2,100,1,'dead',1),true);f:fire('tick',.11)
+ eq(life_pose(3,200,8,'respawn',1,1),true);f:fire('tick',.01)
+ eq(life_pose(4,300,8,'dead',2),true);f:fire('tick',.11);eq(lifecycle_count(f),3)
+ eq(life_pose(5,400,1,'respawn',2,8),true);f:fire('tick',.01);eq(f.position.x,1);eq(lifecycle_count(f),4)
+ f:finishPerspective()
+end)
+test('death heartbeats preserve interpolation until exact independently applied receipt',function()
+ local f=perspective_fixture();f:beginPerspective();f:pose(1,0,1,2,3,0);f:fire('tick',.01)
+ eq(life_pose(2,100,1.04,'dead',1),true);f:fire('tick',.02)
+ eq(lifecycle_count(f),0);assert(f.position.x>1 and f.position.x<1.04)
+ eq(life_pose(3,140,1.04,'dead',1),true);f:fire('tick',.04);eq(lifecycle_count(f),0)
+ eq(life_pose(4,180,1.04,'dead',1),true);f:fire('tick',.05)
+ eq(f.position.x,1.04);eq(lifecycle_count(f),1)
+ assert(f.logs[#f.logs]:find('"seq":4',1,true));assert(f.logs[#f.logs]:find('"applied_seq":4',1,true))
+ eq(life_pose(5,220,8,'respawn',1,1.04),true)
+ -- Even another fresh respawn publication before its native tick must retain
+ -- the one-use immediate relocation rather than becoming a new interpolation.
+ eq(life_pose(6,260,8,'respawn',1,1.04),true);f:fire('tick',.01)
+ eq(f.position.x,8);eq(lifecycle_count(f),2);f:finishPerspective()
+end)
+test('nearby setter readback cannot acknowledge a lifecycle target',function()
+ local f=perspective_fixture();f:beginPerspective();f:pose(1,0,1,2,3,0);f:fire('tick',.01)
+ local setter=player.SetWorldPos;player.SetWorldPos=function(self,v)setter(self,v);f.position.x=f.position.x+.00002 end
+ eq(life_pose(2,100,1.04,'dead',1),true);f:fire('tick',.11)
+ eq(lifecycle_count(f),0);assert(f.position.x~=1.04);f:finishPerspective()
+end)
 print('PASS '..passed..' gameplay movement tests (simulated bindings)')

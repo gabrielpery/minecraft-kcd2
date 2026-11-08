@@ -6,6 +6,7 @@ import dev.minecome.gameplay.GameplayBlocks;
 import dev.minecome.hud.HudInputProtocol;
 import dev.minecome.hud.HudMovementViewReader;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.entity.Entity;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.network.ServerPlayerEntity;
@@ -18,7 +19,8 @@ import java.util.concurrent.atomic.*;
 
 /** Ongoing vanilla movement on ephemeral host collision; inventory/mode/player state stay vanilla. */
 public final class GameplayMovement {
-    private record Observation(Object world,Object player,long seq,long at,long utc,GameplayBoundary.Motion motion,float yaw,float pitch,boolean grounded,boolean flying,boolean falling,float fallDistance){}
+    private record Observation(Object world,Object player,long seq,long at,long utc,GameplayBoundary.Motion motion,float yaw,float pitch,boolean grounded,boolean flying,boolean falling,float fallDistance,boolean alive){}
+    private record RespawnStep(long epoch,GameplayBoundary.Motion from,GameplayBoundary.Motion target,long at){}
     private final GameplayWorld save;private volatile GroundSurface surface,serverSurface;
     private final GameplayTerrainBinding binding;private final GameplayTerrainBinding.Position resume;
     private final HudInputProtocol.Identity identity;private final HudMovementViewReader views;
@@ -44,6 +46,10 @@ public final class GameplayMovement {
     private volatile float resumeFallDistanceMax,resumeFallLandingHealth;
     private volatile int resumeFallLandingAge;
     private GameplayBoundary.Motion anchor;private String paused="starting";
+    private Observation lastAlive;private volatile Observation deathAnchor;
+    private volatile RespawnStep respawnStep;
+    private volatile long lifecycleEpoch,serverRespawns,clientRespawns;
+    private final AtomicLong deathAcknowledged=new AtomicLong(),respawnAcknowledged=new AtomicLong();
     private GameplayBlocks blocks;
     public void blockController(GameplayBlocks controller){if(clientWorld!=null||serverInstalled.get())throw new IllegalStateException("Block controller must precede world load");blocks=controller;}
     public GameplayMovement(Path root,GameplayWorld save,Path groundFile,boolean fixture,HudInputProtocol.Identity identity,Path evidenceDirectory)throws IOException{
@@ -54,10 +60,53 @@ public final class GameplayMovement {
     }
     public GroundSurface surface(){return surface;}
     public boolean ready(){return ready&&!closing;}
+    public long respawnEpoch(){return lifecycleEpoch;}
+    public boolean deathPending(){return deathAnchor!=null&&respawnStep==null;}
+    public boolean respawnPending(){return respawnStep!=null;}
+    public boolean nativeRespawnRequired(){return !fixture;}
+    public Vec3d respawnFromHost(){var step=respawnStep;var dead=deathAnchor;return step!=null?nativeVector(step.from()):dead==null?null:nativeVector(dead.motion());}
+    public Vec3d respawnTargetHost(){var step=respawnStep;return step==null?null:nativeVector(step.target());}
+    /** Acknowledgments are admitted by the coordinator's exact run/world/epoch/from/target checks. */
+    public void acknowledgeDeath(long epoch){
+        if(epoch<=0||epoch!=lifecycleEpoch||deathAnchor==null)throw new IllegalStateException("Unexpected death acknowledgment");
+        deathAcknowledged.set(epoch);
+    }
+    public void acknowledgeRespawn(long epoch){
+        var step=respawnStep;
+        if(step==null||epoch!=step.epoch()||deathAcknowledged.get()!=epoch||clientRespawns!=serverRespawns)
+            throw new IllegalStateException("Unexpected respawn acknowledgment");
+        respawnAcknowledged.set(epoch);
+    }
+    /** Trusted AFTER_RESPAWN admission, after the coordinator selects a safe captured destination.
+     * Does not move the player, change survival state or reinstall collision. */
+    public void serverRespawn(ServerPlayerEntity oldPlayer,ServerPlayerEntity newPlayer,long epoch){
+        if(server==null||!server.isOnThread()||closing||!ready||oldPlayer!=serverPlayer||oldPlayer==newPlayer||oldPlayer==null||newPlayer==null||
+                oldPlayer.isAlive()||!newPlayer.isAlive()||oldPlayer.getServer()!=server||newPlayer.getServer()!=server||
+                oldPlayer.getWorld()!=serverWorld||newPlayer.getWorld()!=serverWorld||!oldPlayer.getUuid().equals(playerId)||!newPlayer.getUuid().equals(playerId)||
+                oldPlayer.networkHandler!=newPlayer.networkHandler||deathAnchor==null||deathAnchor.player()!=oldPlayer||epoch!=lifecycleEpoch||epoch<=0||
+                respawnStep!=null||serverRespawns!=clientRespawns||serverAdmission!=null||admission!=null||
+                !GroundCollision.matches((BlockView)serverWorld,serverSurface,true))throw new IllegalStateException("Gameplay server respawn ownership changed");
+        var target=motion(newPlayer);
+        double floor=blocks==null?serverSurface.groundForFeet(target.x(),target.z(),.3):blocks.groundForFeet((BlockView)serverWorld,target.x(),target.y(),target.z(),.3);
+        if(!serverSurface.containsFeet(target.x(),target.z(),.31)||!Double.isFinite(floor)||target.y()<floor-.00001||target.y()>floor+.2||
+                !newPlayer.getServerWorld().isSpaceEmpty(newPlayer,newPlayer.getBoundingBox()))throw new IllegalStateException("Respawn destination is outside clear captured ground");
+        respawnStep=new RespawnStep(epoch,deathAnchor.motion(),target,System.nanoTime());
+        observation.set(null);lastGrounded.set(null);lastAlive=null;serverPlayer=newPlayer;serverRespawns++;
+    }
+    /** Called before ordinary client ticks, paired with the explicit server replacement. */
+    public void clientRespawn(MinecraftClient client,ClientPlayerEntity oldPlayer,long epoch){
+        var step=respawnStep;
+        if(!client.isOnThread()||closing||!ready||oldPlayer!=clientPlayer||oldPlayer==client.player||oldPlayer==null||oldPlayer.isAlive()||
+                client.player==null||!client.player.isAlive()||client.world!=clientWorld||client.getServer()!=server||!client.isIntegratedServerRunning()||
+                oldPlayer.getWorld()!=clientWorld||client.player.getWorld()!=clientWorld||!oldPlayer.getUuid().equals(playerId)||!client.player.getUuid().equals(playerId)||
+                step==null||epoch!=step.epoch()||serverRespawns!=clientRespawns+1||!GroundCollision.matches(client.world,surface,false))
+            throw new IllegalStateException("Gameplay client respawn ownership changed");
+        suspend(client);clientPlayer=client.player;clientRespawns=serverRespawns;paused="respawn_pending";
+    }
     private void check(){if(views.failure()!=null)failure.compareAndSet(null,views.failure());if(files.failure()!=null)failure.compareAndSet(null,files.failure());if(growth!=null&&growth.failure()!=null)failure.compareAndSet(null,growth.failure());if(failure.get()!=null)throw new IllegalStateException(failure.get());}
     public boolean terrainTransition(){return admission!=null;}
     public void authority(MinecraftClient client,long now,boolean fresh){
-        authority=fresh&&ready()&&client.currentScreen==null&&client.getOverlay()==null&&!client.isPaused();keys.authority(now,authority);if(!authority){release(client);stopFlightDrift(client);}
+        authority=fresh&&ready()&&client.player!=null&&client.player.isAlive()&&deathAnchor==null&&respawnStep==null&&client.currentScreen==null&&client.getOverlay()==null&&!client.isPaused();keys.authority(now,authority);if(!authority){release(client);stopFlightDrift(client);}
     }
     public void event(MinecraftClient client,HudInputProtocol.Event event,long now){
         if(!flight&&(event.code()==0x10||event.code()==0x11))return;
@@ -66,6 +115,7 @@ public final class GameplayMovement {
     public void suspend(MinecraftClient client){authority=false;keys.suspend();release(client);stopFlightDrift(client);}
     public void beforeTick(MinecraftClient client,long now){
         if(closing)return;check();if(clientWorld==null)return;requireClient(client);
+        if(!client.player.isAlive()||deathAnchor!=null||respawnStep!=null){paused=respawnStep!=null?"respawn_pending":"dead";suspend(client);if(blocks!=null)blocks.suspend(client);return;}
         if(admission!=null){paused="terrain_admission";suspend(client);if(blocks!=null)blocks.suspend(client);return;}
         if(!ready()||!authority||client.currentScreen!=null||client.getOverlay()!=null||client.isPaused()){suspend(client);return;}
         var view=views.current(System.currentTimeMillis(),now);var reading=readObservation();var observed=fresh(reading);
@@ -117,7 +167,8 @@ public final class GameplayMovement {
         var o=fresh(readObservation());var current=motion(client.player);
         if(!ready){
             boolean aerial=resume!=null&&resume.flying();
-            boolean stable=teleported.get()&&o!=null&&(aerial?creativeFlight(client.player)&&o.flying()&&Math.abs(current.vy())<.01&&Math.abs(current.vx())<.01&&Math.abs(current.vz())<.01:grounded(current,(BlockView)clientWorld)&&o.grounded())&&distance(current,o.motion())<.01&&views.current(System.currentTimeMillis(),now)!=null;
+            boolean deadAttached=!client.player.isAlive()&&o!=null&&!o.alive()&&surface.containsFeet(current.x(),current.z(),.31)&&client.world.isSpaceEmpty(client.player,client.player.getBoundingBox());
+            boolean stable=teleported.get()&&o!=null&&(deadAttached||(aerial?creativeFlight(client.player)&&o.flying()&&Math.abs(current.vy())<.01&&Math.abs(current.vx())<.01&&Math.abs(current.vz())<.01:grounded(current,(BlockView)clientWorld)&&o.grounded()))&&distance(current,o.motion())<.01&&views.current(System.currentTimeMillis(),now)!=null;
             if(!stable)stableAt=0;else if(stableAt==0)stableAt=now;else if(now-stableAt>=250_000_000L){
                 // Publish the anchor before the volatile ready flag exposes it to
                 // the integrated server's flight observations and pose writer.
@@ -126,6 +177,7 @@ public final class GameplayMovement {
             if(now-setupAt>12_000_000_000L)throw new IllegalStateException("Gameplay attachment did not settle");return;
         }
         if(!GroundCollision.matches(client.world,surface,false)||!allAir(client.world))throw new IllegalStateException("Gameplay terrain ownership changed");
+        if(!client.player.isAlive()||deathAnchor!=null||respawnStep!=null){suspend(client);return;}
         if(growth!=null)admitTerrain(client,now);
         if(flight&&creativeFlight(client.player)){clientFlightTicks++;maxClientAltitude=Math.max(maxClientAltitude,current.y()-anchor.y());}
         if(o!=null){clientWalk=Math.max(clientWalk,Math.hypot(current.x()-anchor.x(),current.z()-anchor.z()));serverWalk=Math.max(serverWalk,Math.hypot(o.motion().x()-anchor.x(),o.motion().z()-anchor.z()));}
@@ -142,13 +194,25 @@ public final class GameplayMovement {
             }
             if(playerId==null)return;var p=source.getPlayerManager().getPlayer(playerId);requireServer(source,p);
             if(!teleported.get())return;
-            var m=motion(p);var o=new Observation(p.getWorld(),p,++sequence,System.nanoTime(),System.currentTimeMillis(),m,p.getYaw(),p.getPitch(),grounded(m,(BlockView)serverWorld),flight&&creativeFlight(p),flight&&falling(p),p.fallDistance);observation.set(o);
+            var m=motion(p);var o=new Observation(p.getWorld(),p,++sequence,System.nanoTime(),System.currentTimeMillis(),m,p.getYaw(),p.getPitch(),grounded(m,(BlockView)serverWorld),flight&&creativeFlight(p),flight&&falling(p),p.fallDistance,p.isAlive());observation.set(o);
+            if(!o.alive()&&deathAnchor==null){
+                if(respawnStep!=null)throw new IllegalStateException("Player died during respawn relocation");
+                var previous=lastAlive;
+                if(previous==null){if(ready||!serverSurface.containsFeet(m.x(),m.z(),.31))throw new IllegalStateException("Death has no owned pose");previous=o;}
+                if(++lifecycleEpoch>10_000_000)throw new IllegalStateException("Respawn epoch exhausted");deathAnchor=previous;
+            }
+            var transition=respawnStep;
+            if(transition!=null){
+                if(!o.alive()||System.nanoTime()-transition.at()>10_000_000_000L)throw new IllegalStateException("Respawn acknowledgment deadline");
+                if(respawnAcknowledged.get()==transition.epoch()&&clientRespawns==serverRespawns){respawnStep=null;deathAnchor=null;lastAlive=o;}
+            }
+            if(o.alive()&&deathAnchor==null&&respawnStep==null)lastAlive=o;
             if(resumeFallRestored&&!resumeFallLanded){
                 resumeFallDistanceMax=Math.max(resumeFallDistanceMax,p.fallDistance);
                 if(o.grounded()){resumeFallLandingHealth=p.getHealth();resumeFallLandingAge=p.age;resumeFallLanded=true;}
             }
             if(ready&&o.flying()){serverFlightTicks++;maxServerAltitude=Math.max(maxServerAltitude,m.y()-anchor.y());}
-            if(o.grounded()&&serverSurface.containsFeet(m.x(),m.z(),.31))lastGrounded.set(o);
+            if(o.alive()&&o.grounded()&&serverSurface.containsFeet(m.x(),m.z(),.31))lastGrounded.set(o);
             if(ready&&!closing)publish(o);
         }catch(Exception e){failure.compareAndSet(null,"Gameplay server observation: "+e);}
     }
@@ -156,13 +220,19 @@ public final class GameplayMovement {
         var j=new JsonObject();j.addProperty("schema",1);j.addProperty("kind","minecome_gameplay_pose_v1");j.addProperty("run",identity.run());j.addProperty("world_id",save.id().toString());
         j.addProperty("target_pid",identity.targetPid());j.addProperty("target_start_filetime",Long.toUnsignedString(identity.targetStart()));j.addProperty("patch_run",surface.run());j.addProperty("patch_sha256",surface.sha256());
         j.addProperty("seq",o.seq());j.addProperty("utc_ms",o.utc());j.addProperty("source_ms",(o.at()-born)/1_000_000);
+        GameplayBoundary.Motion published=o.motion();var transition=respawnStep;var dead=deathAnchor;
+        if(transition!=null&&deathAcknowledged.get()==transition.epoch()){
+            j.addProperty("lifecycle","respawn");j.addProperty("respawn_epoch",transition.epoch());j.add("respawn_from",nativePosition(transition.from()));published=transition.target();
+        }else if(dead!=null){j.addProperty("lifecycle","dead");j.addProperty("respawn_epoch",lifecycleEpoch);published=dead.motion();}
         if(Boolean.getBoolean("minecome.gameplayWorldBlocks")){
             j.addProperty("perspective_request",dev.minecome.hud.GameplaySession.requestedPerspective());
             if(blocks==null)throw new IllegalStateException("WorldBlocks camera collision owner missing");
             j.add("camera_collision",blocks.cameraCollision(server,(ServerPlayerEntity)serverPlayer).json(serverSurface));
         }
-        var p=new JsonObject();p.addProperty("x",surface.centerX()+o.motion().x());p.addProperty("y",surface.centerY()-o.motion().z());p.addProperty("z",surface.centerZ()+o.motion().y()-GroundPatch.ANCHOR_Y);j.add("position",p);files.pose(j);
+        j.add("position",nativePosition(published));files.pose(j);
     }
+    private Vec3d nativeVector(GameplayBoundary.Motion motion){return new Vec3d(surface.centerX()+motion.x(),surface.centerY()-motion.z(),surface.centerZ()+motion.y()-GroundPatch.ANCHOR_Y);}
+    private JsonObject nativePosition(GameplayBoundary.Motion motion){var v=nativeVector(motion);var p=new JsonObject();p.addProperty("x",v.x);p.addProperty("y",v.y);p.addProperty("z",v.z);return p;}
     private GameplayObservationLease.Reading<Observation> readObservation(){return GameplayObservationLease.read(observation::get,Observation::at,System::nanoTime);}
     private Observation fresh(GameplayObservationLease.Reading<Observation> reading){var o=reading.observation();return reading.fresh()&&o.world()==serverWorld&&o.player()==serverPlayer?o:null;}
     private void recordSourcePause(long tickAt,boolean viewRejected,boolean serverRejected,GameplayObservationLease.Reading<Observation> reading){
@@ -227,9 +297,9 @@ public final class GameplayMovement {
             try{
                 // Capture final abilities on their owning thread. A mode-change
                 // packet can precede the next periodic observation by one tick.
-                if(ready&&failure.get()==null){
+                if(ready&&failure.get()==null&&deathAnchor==null&&respawnStep==null){
                     var p=server.getPlayerManager().getPlayer(playerId);requireServer(server,p);var m=motion(p);
-                    var current=new Observation(p.getWorld(),p,++sequence,System.nanoTime(),System.currentTimeMillis(),m,p.getYaw(),p.getPitch(),grounded(m,(BlockView)serverWorld),flight&&creativeFlight(p),flight&&falling(p),p.fallDistance);observation.set(current);
+                    var current=new Observation(p.getWorld(),p,++sequence,System.nanoTime(),System.currentTimeMillis(),m,p.getYaw(),p.getPitch(),grounded(m,(BlockView)serverWorld),flight&&creativeFlight(p),flight&&falling(p),p.fallDistance,p.isAlive());observation.set(current);
                     var stable=lastGrounded.get();
                     if(current.grounded())stable=current;
                     else if(flight&&(current.flying()||current.falling())&&serverSurface.containsFeet(m.x(),m.z(),.31)&&m.y()>=serverSurface.groundForFeet(m.x(),m.z(),.3)&&m.y()<=GameplayBoundary.FLIGHT_MAX_Y)stable=current;
@@ -238,18 +308,31 @@ public final class GameplayMovement {
             }catch(Exception e){failure.compareAndSet(null,"Gameplay final checkpoint: "+e);}
             finally{
                 serverQueries.accumulateAndGet(GroundCollision.queries(true),Math::max);
-                if(!GroundCollision.clear((BlockView)serverWorld,serverSurface.run(),serverSurface.sha256(),true))failure.compareAndSet(null,"Gameplay server collision cleanup mismatch");else serverReleased.set(true);
+                // Keep the captured floor until vanilla saves and closes the world.
+                // Clearing here lets players and drops fall during writer shutdown.
                 files.close(failure.get()==null?position:null);
             }
         });
     }
+    /** Fabric SERVER_STOPPED runs at MinecraftServer.shutdown TAIL, after final save/world close. */
+    public void serverStopped(MinecraftServer source){
+        if(source!=server||!serverInstalled.get())return;
+        if(!source.isOnThread())throw new IllegalStateException("Gameplay collision disposal requires its server thread");
+        if(serverReleased.get())return;
+        serverQueries.accumulateAndGet(GroundCollision.queries(true),Math::max);
+        if(!GroundCollision.clear((BlockView)serverWorld,serverSurface.run(),serverSurface.sha256(),true))failure.compareAndSet(null,"Gameplay server collision cleanup mismatch");
+        else serverReleased.set(true);
+    }
     /** Session failures must not replace the last good persistent checkpoint. */
     public void abort(MinecraftClient client,String reason){failure.compareAndSet(null,reason);close(client);}
-    public boolean cleanupComplete(){return closing&&clientReleased&&serverReleased.get()&&files.finished()&&files.failure()==null&&(growth==null||growth.finished()&&growth.failure()==null);}
+    /** Writers and controls have drained; vanilla disconnect can now save the supported world. */
+    public boolean shutdownPrepared(){return closing&&!controlsOwned&&clientReleased&&files.finished()&&files.failure()==null&&(growth==null||growth.finished()&&growth.failure()==null);}
+    public boolean cleanupComplete(){return shutdownPrepared()&&serverReleased.get();}
     public JsonObject evidence(MinecraftClient client){
         var j=new JsonObject();j.addProperty("schema",1);j.addProperty("kind","minecome_gameplay_movement_v1");j.addProperty("run",identity.run());j.addProperty("world_id",save.id().toString());
         j.addProperty("patch_run",surface.run());j.addProperty("patch_sha256",surface.sha256());j.addProperty("fixture",fixture);j.addProperty("ready",ready);j.addProperty("first_attachment",resume==null);j.addProperty("resume_position_restored",resume!=null&&teleported.get());
         j.addProperty("movement_events",events);j.addProperty("held_ticks",heldTicks);j.addProperty("client_walk",clientWalk);j.addProperty("server_walk",serverWalk);j.addProperty("boundary_pauses",boundaryPauses);j.addProperty("paused",paused);
+        j.addProperty("respawn_epoch",lifecycleEpoch);j.addProperty("death_pending",deathPending());j.addProperty("respawn_pending",respawnPending());j.addProperty("server_respawns",serverRespawns);j.addProperty("client_respawns",clientRespawns);j.addProperty("death_acknowledged",deathAcknowledged.get());j.addProperty("respawn_acknowledged",respawnAcknowledged.get());
         j.addProperty("source_pauses",sourcePauses);j.addProperty("held_source_pauses",heldSourcePauses);if(lastSourcePause!=null)j.add("last_source_pause",lastSourcePause.deepCopy());if(lastHeldSourcePause!=null)j.add("last_held_source_pause",lastHeldSourcePause.deepCopy());
         j.addProperty("flight_enabled",flight);j.addProperty("client_flying",client.player!=null&&client.player==clientPlayer&&creativeFlight(client.player));j.addProperty("server_flying",observation.get()!=null&&observation.get().flying());j.addProperty("client_flight_ticks",clientFlightTicks);j.addProperty("server_flight_ticks",serverFlightTicks);j.addProperty("max_client_altitude",maxClientAltitude);j.addProperty("max_server_altitude",maxServerAltitude);
         if(resume!=null&&resume.falling()){j.addProperty("resume_fall_restored",resumeFallRestored);j.addProperty("resume_fall_distance_max",resumeFallDistanceMax);j.addProperty("resume_fall_landed",resumeFallLanded);j.addProperty("resume_fall_landing_health",resumeFallLandingHealth);j.addProperty("resume_fall_landing_age",resumeFallLandingAge);}
@@ -259,7 +342,7 @@ public final class GameplayMovement {
         var observed=observation.get();if(observed!=null)j.add("server_position",positionJson(observed.motion()));
         var checkpoint=binding.resume();j.addProperty("resume_checkpoint_present",checkpoint!=null);
         if(checkpoint!=null){var p=new JsonObject();p.addProperty("x",checkpoint.x());p.addProperty("y",checkpoint.y());p.addProperty("z",checkpoint.z());p.addProperty("flying",checkpoint.flying());p.addProperty("falling",checkpoint.falling());p.addProperty("fall_distance",checkpoint.fallDistance());j.add("resume_checkpoint",p);}
-        j.addProperty("controls_released",!controlsOwned);j.addProperty("client_collision_released",clientReleased);j.addProperty("server_collision_released",serverReleased.get());j.addProperty("cleanup_complete",cleanupComplete());
+        j.addProperty("controls_released",!controlsOwned);j.addProperty("client_collision_released",clientReleased);j.addProperty("server_collision_released",serverReleased.get());j.addProperty("shutdown_prepared",shutdownPrepared());j.addProperty("cleanup_complete",cleanupComplete());
         j.addProperty("failure",failure.get()!=null?failure.get():files.failure());j.addProperty("blocks_written",0);
         if(surface instanceof GameplayTerrain terrain){j.addProperty("terrain_generation",terrain.generation());j.addProperty("terrain_tiles",terrain.tileCount());j.addProperty("terrain_digest",terrain.digest());j.addProperty("terrain_client_generation",terrain.generation());j.addProperty("terrain_server_generation",((GameplayTerrain)serverSurface).generation());j.addProperty("terrain_admissions",admissions);j.addProperty("terrain_failure",growth.failure());j.addProperty("terrain_transition",admission!=null);}
         j.addProperty("terrain_cells_valid",clientWorld!=null&&allAir((BlockView)clientWorld));

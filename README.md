@@ -97,6 +97,14 @@ A connected KCD2 check also passes both smelts, screen close/reopen and collecti
 with native composition using scripted guest clicks.
 See [furnace controls and automation](docs/GAMEPLAY_SESSION.md#furnace-smelting).
 
+Minecraft death and the real Respawn button now have an explicit player/host
+handoff. Automated Minecraft checks pass death drops, safe captured respawn,
+continued walking, retained construction, and save/reopen with the same dropped
+item entity. Terrain collision now stays active through the final world save.
+A connected KCD2 check also passes the death screen, acknowledged relocation and
+walking afterward, with native composition and scripted guest button input.
+See [death and respawn](docs/GAMEPLAY_SESSION.md#death-and-respawn) for scope and checks.
+
 KCD2's health/stamina bars still need session-scoped suppression so Minecraft's
 HUD is the gameplay display. The existing whole-HUD toggle needs further work to
 preserve dialogue/subtitles and restore the original state on exit; this is

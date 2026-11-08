@@ -1,6 +1,68 @@
 # Resume checkpoint — 8 November 2026
 
-## Latest gameplay milestone: furnace smelting
+## Latest gameplay milestone: death, respawn and preserved drops
+
+Death/respawn is now implemented, superseding the earlier design-only status
+below. The real DeathScreen and its enabled Respawn button use the existing HUD
+pointer path. Same-UUID replacement players rebind movement, block ownership and
+UI on their owning threads. Captured-ground spawn selection and separate native
+death/relocation acknowledgements preserve ordinary pose speed/freshness guards.
+The owned same-world loading screen closes only after acknowledged replacement,
+received full chunk and matching destination; it cannot bypass a foreign world.
+
+Actual-Minecraft two-launch PASS:
+`runtime/evidence/gameplay-respawn-20261108-195728-3e5a1e52c4f743f0974f5adcd5fb77e0/verification.json`.
+The fixture places a table, walks away, uses vanilla `kill @s`, observes health
+zero and three dropped diamonds, clicks the actual Respawn button, verifies new
+client/server players with health/food 20, and walks again. Reopen retains the
+table, death statistic, player checkpoint and the same diamond UUID, count and
+position. Actual death/HUD images and normal save/cleanup passed; inputs are
+scripted, with no physical native-input claim.
+The final rerun includes the corrected respawn world-render branch and requires
+captured `world_camera` metadata, so UI-only frames cannot establish this pass.
+
+Preserve the shutdown fix: server terrain collision remains installed through
+world save and is released at SERVER_STOPPED. The session disconnects the owned
+player/world before collecting final cleanup evidence. Earlier premature removal
+let dropped items fall before saving. Also preserve the nine-tile prefetch:
+vanilla death scatter can travel beyond the original 4m patch. Standalone admits
+eight translated flat fixture tiles through the production admission/ack path;
+native requires eight genuine neighbouring captures. Resume reuses saved tiles.
+
+Final assemble passed. Focused checks passed: GroundPatch 3,726; acknowledgement
+parser 171; Lua movement 42; PowerShell respawn host 13; terrain host 12.
+Repeat `scripts/Test-GameplayRespawn.ps1` for
+create/reload and `scripts/Test-KcdRespawn.ps1` for the connected check.
+The early single-arm retry guard rejects a consumed tools process before the
+60-second activation wait or launching Minecraft; use a fresh tools session.
+
+Connected KCD2 automated PASS:
+`runtime/evidence/gameplay-kcd-20261108-200330-a3cf004de7e04f23b48173bab56547f2/native-respawn-verification.json`.
+Both lifecycle acknowledgements and client replacement reached epoch 1 with no
+pending transition. Nine actual captured tiles reached generation 8 without
+refusals. Native composition/reprojection advanced 162 frames during the 11s
+death-screen dwell. Actual Respawn button, health/food 20, later walking, retained
+table/drop, normal guest exit and host body restoration passed. Inputs were
+scripted; no physical-input or post-composition screenshot acceptance is claimed.
+
+Preserve native point matching: exact requested coordinates or their exact
+float32 representation, not a distance tolerance. A lifecycle receipt waits for
+completed interpolation (`f == 1`), exact SetWorldPos/readback and
+`applied_seq == pose_seq == seq`. Fresh dead-state heartbeats renew freshness
+without restarting interpolation.
+
+KCD2 closed normally; the temporary HUD installation was restored and is unarmed:
+`runtime/evidence/gameplay-hud-restore-20261108-200522-bde3690e29a64d6993e50835c2c9ac99`.
+Existing furnace create/save/reopen regression also passed after the shared
+shutdown change:
+`runtime/evidence/gameplay-furnace-20261108-200547-d8d32b0078754b07816a9776763f4230/verification.json`.
+Next concrete milestone: native NPC combat with Minecraft-authoritative damage.
+Elytra and selective KCD health/stamina suppression remain required, alongside
+preserving working crafting/smelting/food/mining/camera controls. Dedicated
+already-dead startup, immediate autorespawn and cross-dimension travel remain
+unverified. No manual microtest is needed now.
+
+## Previous milestone: furnace smelting
 
 WorldBlocks now supports actual furnaces, including facing/lit model states,
 aimed right-click, FurnaceScreen input and vanilla fuel/recipes/output. Closing

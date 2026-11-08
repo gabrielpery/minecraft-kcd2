@@ -109,7 +109,7 @@ public final class GroundPatch implements GroundSurface {
                 if(index<1 || index>count || points[index-1]!=null)throw new IllegalArgumentException("Invalid/duplicate point index");
                 double x=coordinate(p,"x"),y=coordinate(p,"y"),z=coordinate(p,"z");
                 int row=(index-1)/grid,col=(index-1)%grid;
-                if(Math.abs(x-(cx+col-half))>0.0001 || Math.abs(y-(cy+row-half))>0.0001 || Math.abs(z-cz)>8)
+                if(!sampleCoordinate(x,cx+col-half) || !sampleCoordinate(y,cy+row-half) || Math.abs(z-cz)>8)
                     throw new IllegalArgumentException("Point outside exact sampled grid/height bounds");
                 double nx=number(p,"nx"),ny=number(p,"ny"),nz=number(p,"nz");
                 double length=nx*nx+ny*ny+nz*nz;
@@ -153,6 +153,11 @@ public final class GroundPatch implements GroundSurface {
     }
     private static JsonObject object(JsonElement e,String name) {
         if(e==null || !e.isJsonObject())throw new IllegalArgumentException(name+" must be an object");return e.getAsJsonObject();
+    }
+    private static boolean sampleCoordinate(double actual,double expected) {
+        // CryEngine's float Vec3 can round across a power-of-two boundary by more
+        // than the existing tolerance. Admit only that exact representable value.
+        return Math.abs(actual-expected)<=0.0001 || actual==(double)(float)expected;
     }
     private static double number(JsonObject o,String key) {
         JsonElement e=o.get(key);

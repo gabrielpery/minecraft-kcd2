@@ -82,6 +82,7 @@ function Read-GameplayMovementPose([string]$Path,$Identity,$Bounds,[long]$LastSe
             if($document.RootElement.ValueKind -ne [Text.Json.JsonValueKind]::Object){throw 'Gameplay pose must be an object.'}
             $objects=@($document.RootElement,$document.RootElement.GetProperty('position'))
             if($WorldBlocks){$objects+=@($document.RootElement.GetProperty('camera_collision'),$document.RootElement.GetProperty('camera_collision').GetProperty('origin'))}
+            $from=[Text.Json.JsonElement]::new();if($document.RootElement.TryGetProperty('respawn_from',[ref]$from)){$objects+=@($from)}
             foreach($element in $objects){
                 if($element.ValueKind -ne [Text.Json.JsonValueKind]::Object){throw 'Gameplay pose position must be an object.'}
                 $names=@($element.EnumerateObject()|ForEach-Object {$_.Name})
@@ -93,6 +94,15 @@ function Read-GameplayMovementPose([string]$Path,$Identity,$Bounds,[long]$LastSe
     finally{if($file){$file.Dispose()}}
     $keys=@('schema','kind','run','world_id','target_pid','target_start_filetime','patch_run','patch_sha256','seq','utc_ms','source_ms','position')
     if($WorldBlocks){$keys+=@('perspective_request','camera_collision')}
+    if($WorldBlocks -and $p.PSObject.Properties['lifecycle']){
+        $keys+=@('lifecycle','respawn_epoch')
+        if($p.lifecycle -cnotin @('dead','respawn') -or -not(Test-GameplayHostNumber $p.respawn_epoch) -or $p.respawn_epoch -lt 1 -or $p.respawn_epoch -gt 10000000 -or $p.respawn_epoch -ne [Math]::Floor($p.respawn_epoch)){throw 'Invalid gameplay lifecycle epoch.'}
+        if($p.lifecycle -ceq 'respawn'){
+            $keys+=@('respawn_from')
+            if($p.respawn_from -isnot [pscustomobject] -or (($p.respawn_from.PSObject.Properties.Name|Sort-Object)-join ',') -cne 'x,y,z'){throw 'Invalid respawn previous target.'}
+            foreach($axis in @('x','y','z')){if(-not(Test-GameplayHostNumber $p.respawn_from.$axis) -or [Math]::Abs($p.respawn_from.$axis) -ge 10000000){throw 'Invalid respawn previous target.'}}
+        }
+    }
     if($p -isnot [pscustomobject] -or (($p.PSObject.Properties.Name|Sort-Object)-join ',') -cne (($keys|Sort-Object)-join ',') -or
         $p.schema -ne 1 -or $p.kind -cne 'minecome_gameplay_pose_v1' -or $p.run -cne $Identity.Run -or $p.world_id -cne $Identity.WorldId -or
         $p.target_pid -ne $Identity.Pid -or $p.target_start_filetime -cne $Identity.Start -or $p.patch_run -cne $Identity.PatchRun -or $p.patch_sha256 -cne $Identity.PatchHash){throw 'Gameplay pose identity differs.'}
@@ -121,6 +131,82 @@ function Read-GameplayMovementPose([string]$Path,$Identity,$Bounds,[long]$LastSe
     if($p.seq -eq $LastSequence -or $Now-$p.utc_ms -gt 250){return $null}
     return $p
 }
+function New-GameplayRespawnHostState {
+    return [pscustomobject]@{Epoch=0L;Phase='alive';From=$null;Target=$null;FirstSequence=0L;LastSequence=0L;StartedUtc=0L;Acked=$false}
+}
+function Test-GameplayRespawnPoint($A,$B){
+    foreach($axis in @('x','y','z')){if($null -eq $A -or $null -eq $B -or -not(Test-GameplayHostNumber $A.$axis) -or -not(Test-GameplayHostNumber $B.$axis) -or $A.$axis -ne $B.$axis){return $false}}
+    return $true
+}
+function Test-GameplayRespawnNativePoint($Observed,$Requested){
+    # KCD's Lua/native vector handoff rounds to float32. Accept only the exact
+    # requested number or its exact float representation, never a distance
+    # tolerance that could acknowledge another requested target.
+    foreach($axis in @('x','y','z')){
+        if($null -eq $Observed -or $null -eq $Requested -or -not(Test-GameplayHostNumber $Observed.$axis) -or -not(Test-GameplayHostNumber $Requested.$axis) -or
+           ($Observed.$axis -ne $Requested.$axis -and $Observed.$axis -ne [double][single]$Requested.$axis)){return $false}
+    }
+    return $true
+}
+function Get-GameplayRespawnCoverage($Patch){
+    $data=Get-Content -LiteralPath $Patch.Path -Raw|ConvertFrom-Json -Depth 16
+    $tiles=if($data.PSObject.Properties['tiles']){@($data.tiles|ForEach-Object {$_.json|ConvertFrom-Json -Depth 12})}else{@($data)}
+    foreach($tile in $tiles){
+        $n=[int]$tile.grid_size;$step=[double]$tile.spacing
+        if($n -lt 2 -or $n -gt 129 -or $step -le 0 -or $step -gt 4 -or @($tile.points).Count -ne $n*$n){throw 'Respawn capture grid differs.'}
+        $valid=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal);$x=[double]$tile.points[0].x;$y=[double]$tile.points[0].y
+        for($row=0;$row -lt $n-1;$row++){for($col=0;$col -lt $n-1;$col++){
+            $complete=$true
+            foreach($dy in @(0,1)){foreach($dx in @(0,1)){
+                $p=$tile.points[($row+$dy)*$n+$col+$dx]
+                if($p.valid -isnot [bool] -or -not $p.valid -or -not(Test-GameplayHostNumber $p.x) -or -not(Test-GameplayHostNumber $p.y) -or -not(Test-GameplayHostNumber $p.z) -or -not(Test-GameplayTerrainCoordinate $p.x ($x+($col+$dx)*$step)) -or -not(Test-GameplayTerrainCoordinate $p.y ($y+($row+$dy)*$step))){$complete=$false}
+            }}
+            if($complete){[void]$valid.Add("$col,$row")}
+        }}
+        [pscustomobject]@{X=$x;Y=$y;Step=$step;Size=$n-1;Valid=$valid}
+    }
+}
+function Test-GameplayRespawnCoverage($Coverage,$Position){
+    # Conservative non-streaming path: the complete player footprint must fit
+    # one captured grid and every touched cell must have four captured corners.
+    # Explore uses its durable acknowledged tile coverage check instead.
+    foreach($tile in $Coverage){
+        $x0=($Position.x-.31-$tile.X)/$tile.Step;$x1=($Position.x+.31-$tile.X)/$tile.Step
+        $y0=($Position.y-.31-$tile.Y)/$tile.Step;$y1=($Position.y+.31-$tile.Y)/$tile.Step
+        if($x0 -lt 0 -or $y0 -lt 0 -or $x1 -gt $tile.Size -or $y1 -gt $tile.Size){continue}
+        $covered=$true
+        for($row=[int][Math]::Floor($y0);$row -lt [Math]::Ceiling($y1);$row++){for($col=[int][Math]::Floor($x0);$col -lt [Math]::Ceiling($x1);$col++){if(-not $tile.Valid.Contains("$col,$row")){$covered=$false}}}
+        if($covered){return $true}
+    }
+    return $false
+}
+function Update-GameplayRespawnHostPose($State,$Pose,[long]$Now){
+    $phase=if($Pose.PSObject.Properties['lifecycle']){[string]$Pose.lifecycle}else{'alive'}
+    if($phase -ceq 'alive'){
+        if($State.Phase -cne 'alive' -and ($State.Phase -cne 'respawn' -or -not $State.Acked)){throw 'Gameplay resumed before acknowledged respawn.'}
+        $State.Phase='alive';return
+    }
+    $epoch=[long]$Pose.respawn_epoch
+    if($phase -ceq 'dead' -and ($State.Phase -ceq 'alive' -or ($State.Phase -ceq 'respawn' -and $State.Acked))){
+        if($epoch -le $State.Epoch){throw 'Gameplay death epoch replayed.'}
+        $State.Epoch=$epoch;$State.Phase='dead';$State.From=$Pose.position;$State.Target=$Pose.position;$State.FirstSequence=[long]$Pose.seq;$State.StartedUtc=$Now;$State.Acked=$false
+    }elseif($epoch -ne $State.Epoch){throw 'Gameplay respawn epoch differs.'}
+    elseif($phase -ceq 'respawn' -and $State.Phase -ceq 'dead'){
+        if(-not $State.Acked -or -not(Test-GameplayRespawnPoint $Pose.respawn_from $State.From)){throw 'Gameplay respawn lacks an acknowledged frozen origin.'}
+        $State.Phase='respawn';$State.Target=$Pose.position;$State.FirstSequence=[long]$Pose.seq;$State.StartedUtc=$Now;$State.Acked=$false
+    }elseif($phase -cne $State.Phase -or -not(Test-GameplayRespawnPoint $Pose.position $State.Target) -or ($phase -ceq 'respawn' -and -not(Test-GameplayRespawnPoint $Pose.respawn_from $State.From))){throw 'Gameplay lifecycle target changed or replayed.'}
+    $State.LastSequence=[long]$Pose.seq
+    if($State.Phase -ceq 'respawn' -and -not $State.Acked -and $Now-$State.StartedUtc -gt 2000){throw 'Gameplay respawn acknowledgement expired.'}
+}
+function Accept-GameplayRespawnReceipt($State,$Receipt,$Identity,[long]$Now){
+    if($State.Phase -ceq 'alive' -or $State.Acked -or -not(Test-GameplayHostNumber $Receipt.schema) -or $Receipt.schema -ne 1 -or $Receipt.run -cne $Identity.Run -or $Receipt.event -cne 'lifecycle' -or $Receipt.result -cne 'applied' -or $Receipt.active -isnot [bool] -or -not $Receipt.active -or
+       $Receipt.lifecycle -cne $State.Phase -or -not(Test-GameplayHostNumber $Receipt.respawn_epoch) -or $Receipt.respawn_epoch -ne $State.Epoch -or -not(Test-GameplayHostNumber $Receipt.seq) -or $Receipt.seq -lt $State.FirstSequence -or $Receipt.seq -gt $State.LastSequence -or $Receipt.seq -ne [Math]::Floor($Receipt.seq) -or
+       -not(Test-GameplayHostNumber $Receipt.applied_seq) -or $Receipt.applied_seq -ne $Receipt.seq -or -not(Test-GameplayHostNumber $Receipt.pose_seq) -or $Receipt.pose_seq -ne $Receipt.seq -or
+       -not(Test-GameplayRespawnNativePoint $Receipt.from $State.From) -or -not(Test-GameplayRespawnNativePoint $Receipt.target $State.Target) -or ($State.Phase -ceq 'respawn' -and $Now-$State.StartedUtc -gt 2000)){throw 'Native gameplay lifecycle acknowledgement differs or replayed.'}
+    if(-not(Test-GameplayRespawnNativePoint $Receipt.player $State.Target)){throw 'Native respawn position was not verified.'}
+    $State.Acked=$true
+    return [ordered]@{schema=1;kind='minecome_gameplay_respawn_ack_v1';run=$Identity.Run;world_id=$Identity.WorldId;target_pid=$Identity.Pid;target_start_filetime=$Identity.Start;patch_run=$Identity.PatchRun;patch_sha256=$Identity.PatchHash;lifecycle=$State.Phase;respawn_epoch=$State.Epoch;from=$State.From;target=$State.Target;utc_ms=$Now}
+}
 function Get-GameplayMovementWorker {
     return {
         param($Context,$Identity,$Bounds,[string]$PoseFile,[string]$ViewFile,[long]$ExpiresUtcMs,[long]$LogOffset,$Shared,$Token,[string]$ProjectRoot,$BlocksState,$TerrainState,[bool]$Flight=$false,[bool]$WorldBlocks=$false)
@@ -135,6 +221,7 @@ function Get-GameplayMovementWorker {
         $cameraGeometry=$null;$cameraGeometryText=$null;$cameraGeometryNext=1;$cameraGeometryChunks=0
         $temp=$ViewFile+'.'+$run+'.tmp'
         $aimFile=Join-Path (Split-Path -Parent $ViewFile) 'gameplay-aim.json';$aimTemp=$aimFile+'.'+$run+'.tmp'
+        $respawnFile=Join-Path (Split-Path -Parent $PoseFile) 'respawn-ack.json';$respawnTemp=$respawnFile+'.'+$run+'.tmp';$respawnState=New-GameplayRespawnHostState
         function Publish([bool]$Stopped=$false){$Shared['Snapshot']=[pscustomobject]@{Stopped=$Stopped;Failure=$failure;Stage=$stage;PoseCount=$poses;ViewCount=$views;LastPoseSequence=$sequence;LastPoseUtcMs=$lastPoseUtc;RequestCount=$requestCount;MaxRequestPathLength=$maxRequestPathLength;LastDispatch=$lastDispatch;ViewTiming=$viewTiming;Begin=$begin;Terminal=$terminal;LastView=$latestView;Blocks=$(if($BlocksState){Get-GameplayBlocksHostState $BlocksState}else{$null});Terrain=$(if($TerrainState){Get-GameplayTerrainHostState $TerrainState}else{$null})}}
         function Numeric($v){([double]$v).ToString('R',[Globalization.CultureInfo]::InvariantCulture)}
         function New-ViewTiming {return [ordered]@{FirstLogBytesUtcMs=0L;ViewReceiptParsedUtcMs=0L;ReceiptReadCalls=0L;ReceiptReadBytes=0L;ReceiptReadMs=0.0;ReceiptParseCount=0L;ReceiptParseMs=0.0}}
@@ -247,8 +334,18 @@ function Get-GameplayMovementWorker {
                 # pose or block snapshot that uses newly installed collision.
                 if($TerrainState){$command=Get-GameplayTerrainCommands $TerrainState $utc $pose;if($command){$parts.Add((RejectWrapper $command))}}
                 if($pose -and $TerrainState -and -not(Test-GameplayTerrainPose $TerrainState $pose)){throw 'Gameplay pose leaves acknowledged terrain.'}
+                if($pose -and $pose.PSObject.Properties['lifecycle'] -and $pose.lifecycle -ceq 'respawn' -and -not $TerrainState -and
+                   (-not $Identity.PSObject.Properties['RespawnCoverage'] -or -not(Test-GameplayRespawnCoverage $Identity.RespawnCoverage $pose.position))){throw 'Gameplay respawn leaves captured cells.'}
+                if($pose){Update-GameplayRespawnHostPose $respawnState $pose $utc}
                 if($BlocksState){$command=Get-GameplayBlocksCommands $BlocksState $utc;if($command){$parts.Add((RejectWrapper $command))}}
-                if($pose){$perspectiveArgument=if($WorldBlocks){','+[string]$pose.perspective_request+','+[string]$pose.camera_collision.generation}else{''};$parts.Add((RejectWrapper "MineCome.GameplayMovementPose('$run',$($pose.seq),$(Numeric $pose.source_ms),$(Numeric $pose.position.x),$(Numeric $pose.position.y),$(Numeric $pose.position.z)$perspectiveArgument)"))}
+                if($pose){
+                    $perspectiveArgument=if($WorldBlocks){','+[string]$pose.perspective_request+','+[string]$pose.camera_collision.generation}else{''}
+                    if($pose.PSObject.Properties['lifecycle']){
+                        $perspectiveArgument+=",'$($pose.lifecycle)',$($pose.respawn_epoch)"
+                        if($pose.lifecycle -ceq 'respawn'){$perspectiveArgument+=",$(Numeric $pose.respawn_from.x),$(Numeric $pose.respawn_from.y),$(Numeric $pose.respawn_from.z)"}
+                    }
+                    $parts.Add((RejectWrapper "MineCome.GameplayMovementPose('$run',$($pose.seq),$(Numeric $pose.source_ms),$(Numeric $pose.position.x),$(Numeric $pose.position.y),$(Numeric $pose.position.z)$perspectiveArgument)"))
+                }
                 $startView=$null -eq $pendingViewRequest -and $elapsed-$lastViewAt -ge 40
                 $viewCall=''
                 if($startView){
@@ -271,6 +368,10 @@ function Get-GameplayMovementWorker {
                     foreach($r in @(Receipts)){
                         if($r.event -ceq 'terminal'){$terminal=$r;throw "Native gameplay stopped: $($r.result)"}
                         if($r.event -ceq 'rejected'){throw "Native gameplay request rejected: $($r.result)"}
+                        if($r.event -ceq 'lifecycle'){
+                            $ack=Accept-GameplayRespawnReceipt $respawnState $r $Identity ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())
+                            [IO.File]::WriteAllText($respawnTemp,($ack|ConvertTo-Json -Depth 5 -Compress),[Text.UTF8Encoding]::new($false));Publish-GameplayMovementView $respawnTemp $respawnFile
+                        }
                         if($r.event -ceq 'view'){
                             if(-not $requestView -or $r.seq -ne $pendingViewRequest.Sequence -or $r.result -cne 'sampled' -or -not $r.active -or -not $r.camera_basis_valid){throw 'Native gameplay view acknowledgement differs.'}
                             if($stopwatch.Elapsed.TotalMilliseconds -ge $pendingViewRequest.DeadlineAt){throw 'Native gameplay camera acknowledgement expired.'}
@@ -389,18 +490,22 @@ function Get-GameplayMovementWorker {
             if($log){$log.Dispose()}
             if([IO.File]::Exists($temp)){[IO.File]::Delete($temp)}
             if([IO.File]::Exists($aimTemp)){[IO.File]::Delete($aimTemp)}
+            if([IO.File]::Exists($respawnTemp)){[IO.File]::Delete($respawnTemp)}
             $stage='stopped';Publish $true
         }
     }
 }
 function Start-GameplayMovementHost {
-    param($Context,[string]$Run,[string]$WorldId,$Patch,[string]$PoseFile,[string]$ViewFile,[long]$ExpiresUtcMs,$Bounds,[switch]$Blocks,[switch]$Explore,[string]$TerrainCacheFile,[switch]$Flight,[switch]$WorldBlocks)
+    param($Context,[string]$Run,[string]$WorldId,$Patch,[string]$PoseFile,[string]$ViewFile,[long]$ExpiresUtcMs,$Bounds,[switch]$Blocks,[switch]$Explore,[string]$TerrainCacheFile,[switch]$Flight,[switch]$WorldBlocks,[ValidateRange(0,1)][int]$InitialTerrainRadius=0)
     if($Flight -or $WorldBlocks){$Blocks=$true}
+    if($InitialTerrainRadius -gt 0 -and -not $Explore){throw 'Initial terrain capture requires Explore and its owned terrain cache.'}
     if($Explore){$Blocks=$true;if(-not $TerrainCacheFile){throw 'Explore requires the owned terrain cache path.'}}
     $root=$Context.ProjectRoot
     if($Run -cnotmatch '^[0-9a-f]{32}$' -or $WorldId -cnotmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' -or $Patch.Run -cnotmatch '^[0-9a-f]{32}$' -or $Patch.Hash -cnotmatch '^[0-9a-f]{64}$'){throw 'Invalid gameplay host identity.'}
     $now=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds();if($ExpiresUtcMs-$now -lt 1000 -or $ExpiresUtcMs-$now -gt 86400000){throw 'Gameplay host expiry differs.'}
     $PoseFile=Resolve-HudMovementEvidencePath $PoseFile $root;$ViewFile=Resolve-HudMovementEvidencePath $ViewFile $root
+    $respawnFile=Join-Path (Split-Path -Parent $PoseFile) 'respawn-ack.json'
+    if([IO.File]::Exists($respawnFile) -or [IO.File]::Exists($respawnFile+'.'+$Run+'.tmp')){throw 'Gameplay host respawn path already exists.'}
     if([IO.File]::Exists($ViewFile) -or [IO.File]::Exists($ViewFile+'.'+$Run+'.tmp')){throw 'Gameplay host view path already exists.'}
     $aimFile=Join-Path (Split-Path -Parent $ViewFile) 'gameplay-aim.json'
     if($Blocks -and ([IO.File]::Exists($aimFile) -or [IO.File]::Exists($aimFile+'.'+$Run+'.tmp'))){throw 'Gameplay host aim path already exists.'}
@@ -411,10 +516,11 @@ function Start-GameplayMovementHost {
     foreach($name in @('MinX','MaxX','MinY','MaxY','MinZ','MaxZ')){if(-not(Test-GameplayHostNumber $Bounds.$name)){throw 'Invalid gameplay coverage bounds.'}}
     $probe=New-MineComeProbeRun $Context 'gameplay-movement' (Join-Path $root 'kcd2/gameplay/movement_session.lua') 'GameplayMovementBegin'
     $evidenceDirectory=Split-Path -Parent $PoseFile
-    $terrainState=if($Explore){New-GameplayTerrainHost -Context $Context -Run $Run -WorldId $WorldId -Patch $Patch -CacheFile $TerrainCacheFile -AdmissionFile (Join-Path $evidenceDirectory 'terrain-admission.json') -AckFile (Join-Path $evidenceDirectory 'terrain-ack.json') -ExpiresUtcMs $ExpiresUtcMs}else{$null}
+    $terrainState=if($Explore){New-GameplayTerrainHost -Context $Context -Run $Run -WorldId $WorldId -Patch $Patch -CacheFile $TerrainCacheFile -AdmissionFile (Join-Path $evidenceDirectory 'terrain-admission.json') -AckFile (Join-Path $evidenceDirectory 'terrain-ack.json') -ExpiresUtcMs $ExpiresUtcMs -InitialTerrainRadius $InitialTerrainRadius}else{$null}
     $blocksState=if($Blocks -and -not $WorldBlocks){New-GameplayBlocksHost -Context $Context -Run $Run -WorldId $WorldId -Patch $Patch -SnapshotFile (Join-Path $evidenceDirectory 'gameplay-blocks.json') -ExpiresUtcMs $ExpiresUtcMs -TerrainState $terrainState}else{$null}
     $identity=[pscustomobject]@{Run=$Run;WorldId=$WorldId;Pid=$Context.GamePid;Start=$Context.GameStartedUtc.ToFileTimeUtc().ToString();PatchRun=$Patch.Run;PatchHash=$Patch.Hash}
     if($WorldBlocks){$identity|Add-Member -NotePropertyName CameraOrigin -NotePropertyValue ([pscustomobject]@{x=[double]$Patch.Data.center.x;y=[double]$Patch.Data.center.y;z=[double]$Patch.Data.center.z-64.0})}
+    if($WorldBlocks -and -not $Explore){$identity|Add-Member -NotePropertyName RespawnCoverage -NotePropertyValue @(Get-GameplayRespawnCoverage $Patch)}
     $shared=[Collections.Concurrent.ConcurrentDictionary[string,object]]::new([StringComparer]::Ordinal)
     $shared['Snapshot']=[pscustomobject]@{Stopped=$false;Failure=$null;Stage='starting';PoseCount=0L;ViewCount=0L;LastPoseSequence=0L;LastPoseUtcMs=0L;RequestCount=0L;MaxRequestPathLength=0;LastDispatch=$null;ViewTiming=$null;Begin=$null;Terminal=$null;LastView=$null;Blocks=$null;Terrain=$null}
     $cancellation=[Threading.CancellationTokenSource]::new();$runspace=[RunspaceFactory]::CreateRunspace();$pipeline=[PowerShell]::Create()

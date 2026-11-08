@@ -1,5 +1,75 @@
 # MineCome progress — 2026-11-08
 
+## Death/respawn lifecycle and saved dropped items
+
+Existing furnace create/save/reopen regression passed after the shared shutdown
+change: `runtime/evidence/gameplay-furnace-20261108-200547-d8d32b0078754b07816a9776763f4230/verification.json`.
+
+Implemented actual DeathScreen pointer routing and vanilla Respawn-button use,
+same-UUID client/server replacement reconciliation, preserved block ownership,
+captured-ground spawn selection and independent native death/relocation
+acknowledgements. Ordinary pose speed/freshness limits remain unchanged. The
+same-world loading-screen handoff requires the admitted replacement, matching
+destination, actual received full chunk and required acknowledgements.
+
+Actual-Minecraft create/reload PASS:
+`runtime/evidence/gameplay-respawn-20261108-195728-3e5a1e52c4f743f0974f5adcd5fb77e0/verification.json`.
+Production placement creates a table; real walking separates the player from
+spawn; vanilla `kill @s` produces health zero, one death and an actual stack of
+three diamonds. A mouse click on the enabled vanilla Respawn button creates new
+client/server player objects with the same UUID, health/food 20 and empty
+inventory. Construction survives and subsequent walking works. Reload retains
+the table, death statistic, checkpoint and identical diamond entity UUID/count/
+position. Death/HUD pixel captures, normal exit and cleanup pass. Setup uses
+ordinary commands; the fixture does not write health, inventory, positions or
+item velocity directly, and does not call requestRespawn directly.
+The final rerun fixes a missing `else` in the respawn world-render branch and
+requires captured `world_camera` metadata, verifying that the actual world view
+is present alongside the UI.
+
+The automated run exposed a real save bug: removing ephemeral server collision
+before the final save allowed remaining items to fall. Server collision now
+remains installed until SERVER_STOPPED, and the session disconnects the owned
+player/world before final cleanup evidence. The successful reload preserves the
+diamond position exactly. Vanilla death scatter also exceeds the original 4m
+capture; the fixture now requires nine admitted tiles. Standalone publishes eight
+explicitly synthetic flat neighbours through production terrain admissions and
+checks all durable acknowledgements. Native mode requires genuine host captures;
+saved coverage needs no new admissions on reopen.
+
+Final assemble passes. Focused checks pass: GroundPatch 3,726; strict acknowledgement
+parser 171; Lua movement 42; PowerShell respawn host 13; terrain host 12.
+Receipt parsing rejects malformed,
+duplicate, stale, foreign or out-of-order receipts and changed current-epoch
+origins/targets; already consumed receipts cannot authorize another transition.
+`Test-GameplayRespawn.ps1` repeats create/reload; `Test-KcdRespawn.ps1` provides
+the connected check.
+An early single-arm retry guard now rejects a consumed tools process before the
+60-second activation wait or Minecraft launch, avoiding a doomed repeat run.
+
+Connected KCD2 automated PASS:
+`runtime/evidence/gameplay-kcd-20261108-200330-a3cf004de7e04f23b48173bab56547f2/native-respawn-verification.json`.
+Both lifecycle acknowledgements and client replacement reached epoch 1 with no
+pending transition. Nine genuine captured terrain tiles reached generation 8
+without refusals. Native composition and reprojection each advanced 162 frames
+during the 11-second death-screen dwell. The actual Respawn button, health/food
+20, later walking, preserved table/drop, normal guest exit and host body restore
+all passed. These were scripted guest inputs; no new physical-input or
+post-composition screenshot acceptance is claimed.
+
+Native point validation now accepts only exact requested coordinates or their
+exact float32 representation. Lifecycle receipts wait for completed interpolation
+(`f == 1`), exact SetWorldPos/readback and `applied_seq == pose_seq == seq`.
+Fresh dead-state heartbeats preserve the interpolation segment while renewing
+freshness, avoiding perpetual restarts before the acknowledgement point.
+KCD2 closed normally; the temporary HUD installation was restored and is unarmed:
+`runtime/evidence/gameplay-hud-restore-20261108-200522-bde3690e29a64d6993e50835c2c9ac99`.
+
+Next required milestones are native NPC combat, Elytra and selective KCD
+health/stamina suppression. Dedicated already-dead startup, immediate autorespawn
+and cross-dimension travel remain unverified. Earlier furnace/crafting/mining
+evidence below is unchanged.
+
 ## Furnace smelting and saved contents
 
 WorldBlocks now admits the eight vanilla furnace facing/lit states. Aimed
