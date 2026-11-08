@@ -31,27 +31,46 @@ Accepted copy propagation has unit coverage, not live acceptance.
 
 ## Latest completed native evidence
 
-runtime/evidence/gameplay-kcd-20261108-151825-4f3bbaf2222645ac9fd7366f5e11a058
+runtime/evidence/gameplay-kcd-20261108-174025-18808e2f96c445fd9ddfc31282ec97fa
 
 - Walking PASS: six strides each view, 4.013m/3.915m, max excursion 0.808m,
   inventory suppression, first-person return and normal save/cleanup.
-- Camera collision PASS: 238 back/100 front samples, zero penetration.
-- Stationary depth/reprojection PASS: 186/186 over 5008ms inside 12049ms dwell.
-- Walking-sequence reprojection: 354/356 (99.44%), 0 camera-age rejections;
+- Camera collision PASS: 297 back/99 front samples, zero penetration.
+- Stationary depth/reprojection PASS: 165/165 over 5001ms inside 12041ms dwell.
+- Walking-sequence reprojection: 370/372 (99.46%), 0 camera-age rejections;
   the two remaining rejections were perspective-basis transitions. The interval
   includes releases/inventory pauses; do not label all frames continuous motion.
 - Actual guest key events through vanilla client/server and native bridge;
   no new physical-input latency or subjective foliage appearance proof.
-- Previous run 13fcbb... reached 345/360 before capture/presentation lease separation.
+- Existing renderer alignment acceptance is preserved; no repeat manual check needed.
 
-Final build 502c21063fce305c21665a9fd9af6e2c6749ec8f84ef1e03e9ad483734d5858b,
-489472 bytes, passed the final automated regression including ambiguous-binding
-and reused-command guards. Bundle: runtime/hud-world-reproject-20261108-f.
+Final build fa6093837f47869b4dabd22d36d2dfe6eb75ed7faa0a422e8aae6f59b1f6f13e,
+495616 bytes, includes an allocation-free single-descriptor copy and opt-in CPU
+profiling. Bundle: runtime/hud-depth-profile-20261108-c.
 KCD2 exited normally; the temporary installation was restored, nothing is armed.
-Restore receipt: runtime/evidence/gameplay-hud-restore-20261108-152153-2c264f7825c9463dbe4722f88817fc7b.
+Restore receipt: runtime/evidence/gameplay-hud-restore-20261108-174230-a9de473677c4493488f30f63b9126240.
 Raw logs and all four verification receipts are saved with the live evidence.
 
 ## Validation and next work
+
+Native profiling is complete for this increment. Baseline 7fab3a... to optimized
+7095d2... reduced sampled descriptor-copy hold time 2.879→2.286 microseconds
+(20.6%); all observed copies were single-entry. Default profiling is disabled;
+enable MINECOME_DEPTH_PROFILE=1 only in the diagnostic game environment. Counter
+summaries and hashes are saved as depth-profile-summary.json in each live run.
+
+GameplayMovementHost now skips the outer 10ms idle sleep only with a pending
+prefetched view. No-query idle, 40ms query floor, 5ms receipt polls, outer pose/
+cancellation pass and original deadlines remain intact. All 44 host worker
+checks pass, with new behavioral sleep assertions; native lock/copy tests pass.
+Receipts: runtime/evidence/depth-profile-native-checks-20261108/.
+
+Final live comparison reduced HTTP→first-observed-log mean 46.66→37.38ms, but
+request→aim mean stayed essentially unchanged (74.56→74.28ms, last 64 samples).
+HTTP/dispatch/publication variation offset the local gain. Do not claim reduced
+overall physical-input latency. Keep both bounded optimizations; do not restart
+an open-ended micro-timing loop. Batch wider-turn/flight/build visual acceptance
+with the next integrated gameplay milestone and continue PRODUCT.md scope.
 
 Chat build and focused host-depth/copy tests pass. Actual compiled FX GPU suite
 passes 440 checks (WARP pixel readback plus hardware timing); exact copy shaders
@@ -61,10 +80,10 @@ medians 1.60/2.18ms, peak 2.20ms. These exclude upload/compile and are not nativ
 whole-frame timings. Evidence: world-reprojection-gpu-20261108 and
 native-reprojection-checks-20261108-1507 under runtime/evidence.
 
-Renderer tracking currently serializes native recording callbacks and measured
-native frame cadence is around 35Hz in these coupled runs. Profile that cost
-before another timing rewrite; host request→aim publication remained ~71ms and
-is not physical-input latency. Large turns, projection changes/disocclusions,
+Renderer tracking retains complete serialized callbacks; native cadence remains
+around 35Hz. Sampled draw/binding work dominates the measured tracker CPU cost;
+changing its synchronization needs a separate justified design. Large turns,
+projection changes/disocclusions,
 foliage transparency/TAA and general scenes need broader visual acceptance.
 Batch any human check with the next visible gameplay milestone.
 

@@ -126,6 +126,12 @@ try{
     $helper=(Join-Path $PSScriptRoot 'GameplayMovementHost.ps1').Replace("'","''")
     $mock=@'
 . '__HELPER__'
+function Start-Sleep([int]$Milliseconds){
+    if($WorldBlocks -and $Context.FixtureFault -in @('pipeline','sample_cadence','buffered_view') -and $stage -eq 'running'){
+        $Shared['FixtureSleeps'].Enqueue([pscustomobject]@{Milliseconds=$Milliseconds;PendingView=($null -ne $pendingViewRequest)})
+    }
+    Microsoft.PowerShell.Utility\Start-Sleep -Milliseconds $Milliseconds
+}
 function Assert-MineComeProbeContext($Context){
     if($WorldBlocks -and $Context.FixtureFault -eq 'dispatch_delay' -and $request.Command -match "GameplayMovementSample\('[a-f0-9]+',(\d+)(,true)?\)"){
         $script:fixtureGateStarted=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
@@ -263,6 +269,7 @@ function Invoke-MineComeToolsRequest([string]$PathAndQuery,[int]$TimeoutMillisec
         $shared['FixtureFlushes']=[Collections.Concurrent.ConcurrentDictionary[string,object]]::new()
         $shared['FixturePublications']=[Collections.Concurrent.ConcurrentQueue[object]]::new()
         $shared['FixtureAimPublications']=[Collections.Concurrent.ConcurrentQueue[object]]::new()
+        $shared['FixtureSleeps']=[Collections.Concurrent.ConcurrentQueue[object]]::new()
         $cancel=[Threading.CancellationTokenSource]::new();$runspace=[RunspaceFactory]::CreateRunspace();$runspace.Open()
         $shared['FixtureCancel']=$cancel
         $pipeline=[PowerShell]::Create();$pipeline.Runspace=$runspace
@@ -337,12 +344,14 @@ function Invoke-MineComeToolsRequest([string]$PathAndQuery,[int]$TimeoutMillisec
             Require ($aim.camera_origin.y -eq -1 -and $aim.camera_direction.y -eq -1 -and $aim.camera_up.z -eq 1 -and $aim.vertical_fov -eq 1.2) 'Third-person render camera basis differs.'
             Require ($view.forward.y -eq 1 -and $view.up.z -eq 1 -and $aim.range -eq 4.5 -and $aim.known -and $aim.distance -eq 2.5 -and $aim.terrain_hit) 'Movement direction or native occlusion was lost.'
             if($case.Fault -eq 'buffered_view'){
+                Require (@($shared['FixtureSleeps'].ToArray()|Where-Object {$_.Milliseconds -eq 5 -and $_.PendingView}).Count -ge 1) 'Pending receipt polling no longer yields for5ms.'
                 Require (@($commands|Where-Object {$_ -match 'MineComeGameplayViewFlush'}).Count -ge 1) 'Pending timer view fallback was never exercised.'
                 $flushDelays=@(foreach($key in $shared['FixtureFlushes'].Keys){[long]$shared['FixtureFlushes'][$key]-[long]$shared['FixtureSamples'][$key].ExecutedUtc})
                 $bufferedAverage=($flushDelays|Measure-Object -Average).Average
                 Require ($flushDelays.Count -ge 3 -and $bufferedAverage -lt 45) "Buffered camera ACKs still waited for the old50ms fallback: average=$bufferedAverage ms."
             }
             if($case.Fault -eq 'sample_cadence'){
+                Require (@($shared['FixtureSleeps'].ToArray()|Where-Object {$_.Milliseconds -eq 10 -and -not $_.PendingView}).Count -ge 1) 'No-query worker loop lost its idle wait.'
                 $samples=@($shared['FixtureSamples'].Values|Sort-Object ExecutedUtc)
                 # Skip two warm-up dispatches, then distinguish the new live
                 # cadence from the former90ms floor without timing one frame.
@@ -350,6 +359,7 @@ function Invoke-MineComeToolsRequest([string]$PathAndQuery,[int]$TimeoutMillisec
                 Require ($samples.Count -ge 12 -and $cadenceAverage -lt 85) "Native camera samples retain the old cadence: average=$cadenceAverage ms."
             }
             if($case.Fault -eq 'pipeline'){
+                Require (@($shared['FixtureSleeps'].ToArray()|Where-Object {$_.Milliseconds -eq 10 -and $_.PendingView}).Count -eq 0) 'Prefetched camera query was delayed by the outer idle wait.'
                 $publications=@($shared['FixturePublications'].ToArray());$aimPublications=@($shared['FixtureAimPublications'].ToArray());$overlaps=0;$shortIntervals=0;$poseGaps=0
                 foreach($publication in $publications){
                     $sample=$shared['FixtureSamples'][[string]$publication.Sequence]

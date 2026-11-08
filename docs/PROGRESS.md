@@ -1,5 +1,45 @@
 # MineCome progress — 2026-11-08
 
+## Camera scheduling and measured renderer overhead
+
+Single-entry native descriptor copies now snapshot their source on the stack,
+avoiding a temporary vector allocation while preserving overlap and overwrite
+invalidation. Larger copies keep their full snapshot. Opt-in CPU profiling
+(`MINECOME_DEPTH_PROFILE=1` before launching the test game) samples one in 256
+callbacks per category/thread; ordinary gameplay does not run the profiling
+clocks. Raw timing includes mutex wait/hold costs, not whole-frame GPU time.
+
+Live baseline `gameplay-kcd-20261108-173023-7fab3a60a3ee483fb041b49f97281e74`
+recorded 571,048 single-entry copies in its measured 15-second window, with no
+larger copies. The optimized comparison
+`gameplay-kcd-20261108-173541-7095d2de88a1409092026ce3d289e308` reduced sampled
+mean descriptor-copy lock-held time from 2.879 to 2.286 microseconds per callback
+(20.6%). Native presentation rates were 32.94 and 36.74/s respectively; this
+single comparison does not establish a general frame-rate gain. The optimized
+run passed walking/inventory/cleanup and camera collision (229 back/99 front),
+with 155/155 stationary and 386/388 walking-sequence reprojected frames.
+
+Camera publication also avoids the extra 10ms idle sleep when a prefetched
+request already exists. It still returns through the outer pose/cancellation
+pass, keeps the 40ms query floor and 5ms receipt poll, and preserves timestamps
+and deadlines. The measured HTTP-to-log-observation gap includes our own delayed
+polling; it must not be attributed entirely to the engine. The 44 host worker
+contract checks pass, including pending/no-query sleep behavior, stale receipts,
+pose fairness and cancellation. Focused native lock/copy tests also pass.
+Saved standalone receipts: `runtime/evidence/depth-profile-native-checks-20261108/`.
+
+Final combined run `gameplay-kcd-20261108-174025-18808e2f96c445fd9ddfc31282ec97fa`
+passed six walking strides in each view, inventory suppression, first-person
+return, normal save/cleanup and collision (297 back/99 front samples). It retained
+165/165 stationary and 370/372 walking-sequence reprojected frames (99.46%), with
+only two perspective-basis rejections and no camera-age rejection in those
+intervals. Against the native-only comparison, HTTP completion to first observed
+log bytes fell from 46.66 to 37.38ms, while total request-to-aim publication stayed
+essentially unchanged at 74.56→74.28ms (last 64 saved samples). HTTP, dispatch and
+publication variation offset the local scheduling gain. This is not evidence of
+reduced overall physical-input latency. KCD2 exited normally and the temporary
+installation was restored; no manual test was required.
+
 ## World colour and depth reprojection
 
 Implemented a separate WorldBlocks rendering path that projects each captured

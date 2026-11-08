@@ -768,6 +768,24 @@ struct Service {
                     if(warp_rejection)warp_rejection_reported=true;
                     depth_count_lock.unlock();
                     reshade::log::message(reshade::log::level::info,depth_line.str().c_str());
+                    const auto profile=depth::instance().profile_counters();
+                    if(profile.enabled){
+                        std::ostringstream timing;
+                        timing << "[MineComeHudInput] {\"event\":\"native_depth_profile\",\"run\":\"" << identity.run
+                            << "\",\"sample_interval\":" << profile.sample_interval << ",\"categories\":{";
+                        for(std::size_t i=0;i<profile.categories.size();++i){
+                            if(i)timing << ',';
+                            const auto &p=profile.categories[i];
+                            timing << '"' << depth::profile_category_names[i] << "\":{\"calls\":" << p.calls
+                                << ",\"samples\":" << p.samples << ",\"wait_ns\":" << p.wait_ns
+                                << ",\"hold_ns\":" << p.hold_ns << ",\"max_wait_ns\":" << p.max_wait_ns
+                                << ",\"max_hold_ns\":" << p.max_hold_ns << '}';
+                        }
+                        timing << "},\"descriptor_copy_counts\":[";
+                        for(std::size_t i=0;i<profile.descriptor_copy_counts.size();++i){if(i)timing << ',';timing << profile.descriptor_copy_counts[i];}
+                        timing << "]}";
+                        reshade::log::message(reshade::log::level::info,timing.str().c_str());
+                    }
                     if(warp_rejection){
                         const auto &r=*warp_rejection;
                         std::ostringstream detail;

@@ -338,7 +338,12 @@ function Get-GameplayMovementWorker {
                     Start-Sleep -Milliseconds 5
                 }while($stopwatch.Elapsed.TotalMilliseconds -lt $until -and -not $Token.IsCancellationRequested)
                 if($requestView -and -not $Token.IsCancellationRequested){throw 'Native gameplay camera acknowledgement expired.'}
-                Publish;Start-Sleep -Milliseconds 10
+                Publish
+                # A prefetched camera query already has its original deadline.
+                # Return through the outer pose/cancellation pass immediately;
+                # its pending-receipt loop retains the bounded 5ms polling wait.
+                # Keep the idle wait when no query is outstanding.
+                if($null -eq $pendingViewRequest){Start-Sleep -Milliseconds 10}
             }
         }catch{$failure=$_.Exception.Message}
         finally{

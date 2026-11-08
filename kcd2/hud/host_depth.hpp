@@ -20,6 +20,7 @@
 #include <mutex>
 #include <optional>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 #include "native_depth_copy.hpp"
 
@@ -373,6 +374,16 @@ public:
     }
     void copy(api::descriptor_heap source,std::uint32_t source_offset,api::descriptor_heap destination,std::uint32_t destination_offset,std::uint32_t count){
         if(count>4096 || count>UINT32_MAX-source_offset || count>UINT32_MAX-destination_offset){erase_heap(destination);return;}
+        if(count==1){
+            // KCD2's observed descriptor copies are single-slot entries. Keep
+            // both source kinds alive before an overlapping destination write,
+            // without allocating a vector for each entry under the tracker lock.
+            const auto buffer=find(source,source_offset);
+            const auto view=find_view(source,source_offset);
+            if(view)update_view(destination,destination_offset,view);
+            else update(destination,destination_offset,buffer);
+            return;
+        }
         struct saved {std::optional<api::buffer_range> buffer;std::optional<texture_view> view;};
         std::vector<saved> snapshot;snapshot.reserve(count);
         for(std::uint32_t i=0;i<count;++i)snapshot.push_back({find(source,source_offset+i),find_view(source,source_offset+i)});
@@ -504,6 +515,54 @@ inline std::unique_lock<std::mutex> lock_recording(std::mutex &mutex,bool comple
     return lock;
 }
 
+// Opt-in sampled CPU timing only. Counts share the existing tracker mutex;
+// normal gameplay adds no clocks or contended profiling atomics.
+enum class profile_category : std::size_t { draw,binding,descriptor_update,descriptor_copy,submit,reset,transfer,present,expected,read,count };
+inline constexpr std::array<const char *,static_cast<std::size_t>(profile_category::count)> profile_category_names{
+    "draw","binding","descriptor_update","descriptor_copy","submit","reset","transfer","present","expected","read"};
+struct profile_row { std::uint64_t calls{},samples{},wait_ns{},hold_ns{},max_wait_ns{},max_hold_ns{}; };
+struct profile_snapshot {
+    bool enabled{};
+    static constexpr std::uint32_t sample_interval=256;
+    std::array<profile_row,static_cast<std::size_t>(profile_category::count)> categories{};
+    std::array<std::uint64_t,4> descriptor_copy_counts{}; // 1, 2-8, 9-64, >64; zero excluded
+};
+inline bool profile_environment_enabled(){
+    wchar_t value[2]{};return GetEnvironmentVariableW(L"MINECOME_DEPTH_PROFILE",value,2)==1&&value[0]==L'1';
+}
+using profile_clock=std::chrono::steady_clock;
+inline profile_clock::time_point profile_started(const profile_snapshot &profile,profile_category category){
+    if(!profile.enabled)return {};
+    thread_local std::array<std::uint32_t,static_cast<std::size_t>(profile_category::count)> calls{};
+    return ((calls[static_cast<std::size_t>(category)]++&(profile_snapshot::sample_interval-1))==0)?profile_clock::now():profile_clock::time_point{};
+}
+class profiled_lock {
+    std::unique_lock<std::mutex> lock_;
+    profile_row *row_{};
+    profile_clock::time_point started_{},acquired_{};
+public:
+    profiled_lock(std::unique_lock<std::mutex> lock,profile_snapshot &profile,profile_category category,profile_clock::time_point started)
+        :lock_(std::move(lock)),started_(started){
+        if(profile.enabled&&lock_.owns_lock()){
+            if(started_!=profile_clock::time_point{})acquired_=profile_clock::now();
+            row_=&profile.categories[static_cast<std::size_t>(category)];++row_->calls;
+        }
+    }
+    profiled_lock(profiled_lock &&other)noexcept:lock_(std::move(other.lock_)),row_(std::exchange(other.row_,nullptr)),started_(other.started_),acquired_(other.acquired_){}
+    profiled_lock(const profiled_lock &)=delete;
+    ~profiled_lock(){
+        // Update before unique_lock releases the existing mutex. Unsampled
+        // callbacks perform only the count increment above.
+        if(!row_||acquired_==profile_clock::time_point{})return;
+        const auto completed=profile_clock::now();
+        const auto wait=static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(acquired_-started_).count());
+        const auto held=static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(completed-acquired_).count());
+        ++row_->samples;row_->wait_ns+=wait;row_->hold_ns+=held;
+        row_->max_wait_ns=std::max(row_->max_wait_ns,wait);row_->max_hold_ns=std::max(row_->max_hold_ns,held);
+    }
+    bool owns_lock()const noexcept{return lock_.owns_lock();}
+};
+
 class tracker {
     struct device_state {
         std::unordered_map<std::uint64_t, reflected_layout> pipelines;
@@ -565,16 +624,22 @@ class tracker {
         if(!copy_diagnostic_ || (copy_diagnostic_->stage==6&&value.stage!=6))copy_diagnostic_=value;
     }
     diagnostics diagnostics_{};
+    profile_snapshot profile_{profile_environment_enabled()};
     std::atomic<std::uint64_t> invalidation_{0}, contention_{0};
     std::uint64_t observed_invalidation_{};
 
-    std::unique_lock<std::mutex> recording_lock(bool invalidate_on_failure=true) {
+    profiled_lock metadata_lock(profile_category category){
+        const auto started=profile_started(profile_,category);
+        return {std::unique_lock<std::mutex>{mutex_},profile_,category,started};
+    }
+    profiled_lock recording_lock(bool invalidate_on_failure=true,profile_category category=profile_category::binding) {
         // Complete per-presentation proof must observe concurrent recording,
         // not discard it. Pinned D3D12 getters/maps below do not acquire a queue
         // lock or wait on the GPU; resource registry locks are released before
         // our callbacks (d3d12_device.cpp:2313-2318). No queue API under mutex_.
         // Keep the original opportunistic path for legacy strict-only sampling.
-        auto lock=lock_recording(mutex_,presented_sampling_.load(std::memory_order_relaxed),contention_,&diagnostics_.recording_waits);
+        const auto started=profile_started(profile_,category);
+        profiled_lock lock{lock_recording(mutex_,presented_sampling_.load(std::memory_order_relaxed),contention_,&diagnostics_.recording_waits),profile_,category,started};
         if (!lock.owns_lock()) {
             if (invalidate_on_failure) invalidation_.fetch_add(1,std::memory_order_release);
             return lock;
@@ -735,13 +800,13 @@ public:
     }
     void present(api::swapchain *swapchain){
         if(!armed_.load() || !swapchain)return;
-        auto lock=recording_lock();if(!lock.owns_lock() || !presented_sampling_)return;
+        auto lock=recording_lock(true,profile_category::present);if(!lock.owns_lock() || !presented_sampling_)return;
         if(native_epoch_incomplete_)++diagnostics_.native_incomplete_epochs;
         presentations_.seal(swapchain->get_device(),swapchain->get_hwnd(),swapchain->get_current_back_buffer(),unix_milliseconds(),!native_epoch_incomplete_);
         ++native_epoch_;native_attempts_=0;native_epoch_incomplete_=false;++diagnostics_.presentation_seals;
     }
     std::optional<presentation_sample> take_current_presentation(api::device *device,void *window,api::resource back_buffer,api::resource depth,std::uint64_t now){
-        auto lock=recording_lock(false);if(!lock.owns_lock() || !armed_.load() || !presented_sampling_)return {};
+        auto lock=recording_lock(false,profile_category::read);if(!lock.owns_lock() || !armed_.load() || !presented_sampling_)return {};
         presentation_failure failure;auto result=presentations_.take(device,window,back_buffer,depth,now,&failure);
         switch(failure){
         case presentation_failure::none:++diagnostics_.presentation_accepted;break;
@@ -768,15 +833,16 @@ public:
     }
     // Call with each new guest frame, preserving last published sample until read.
     void update_expected(const expected_view &view) {
-        auto lock=recording_lock(); if (!lock.owns_lock()) return;
+        auto lock=recording_lock(true,profile_category::expected); if (!lock.owns_lock()) return;
         expected_=view; ++generation_; frame_attempts_=0;
     }
     diagnostics counters() {
         std::scoped_lock lock(mutex_); auto result=diagnostics_;
         result.recording_contention=contention_.load(std::memory_order_relaxed); return result;
     }
+    profile_snapshot profile_counters(){std::scoped_lock lock(mutex_);return profile_;}
     std::optional<sample> take_sample(api::device *device,api::resource selected_depth) {
-        auto lock=recording_lock(false); if (!lock.owns_lock()) return {};
+        auto lock=recording_lock(false,profile_category::read); if (!lock.owns_lock()) return {};
         auto result=submitted_.take(device,selected_depth);
         const auto now=unix_milliseconds();
         if (result && (!armed_.load() || now<result->captured_unix_ms ||
@@ -878,7 +944,7 @@ public:
     }
     void reset_command_list(api::command_list *cmd) {
         if (!armed_.load()) return;
-        auto lock=recording_lock(); if (!lock.owns_lock()) return;
+        auto lock=recording_lock(true,profile_category::reset); if (!lock.owns_lock()) return;
         commands_.erase(cmd);
     }
     void bind_pipeline(api::command_list *cmd, api::pipeline_stage stages, api::pipeline pipeline) {
@@ -902,7 +968,7 @@ public:
     }
     void resource_transfer(api::command_list *cmd,api::resource destination){
         if(!armed_.load()||!presented_sampling_.load()||!destination.handle)return;
-        auto lock=recording_lock();if(!lock.owns_lock())return;
+        auto lock=recording_lock(true,profile_category::transfer);if(!lock.owns_lock())return;
         const auto desc=cmd->get_device()->get_resource_desc(destination);
         if(desc.type!=api::resource_type::texture_2d || (desc.usage&api::resource_usage::depth_stencil)==api::resource_usage{} ||
             !viewport_matches({0,0,float(desc.texture.width),float(desc.texture.height),0,1},expected_))return;
@@ -952,7 +1018,7 @@ public:
         if(!compatible_.load() || !updates)return;
         // D3D12Device::CreateConstantBufferView emits this after creating the
         // real CBV; non-CBV overwrites must erase previously tracked CBVs too.
-        std::scoped_lock lock(mutex_);auto &descriptors=devices_[device].descriptors;
+        auto lock=metadata_lock(profile_category::descriptor_update);auto &descriptors=devices_[device].descriptors;
         if(count>4096){descriptors.clear();return;}
         for(std::uint32_t u=0;u<count;++u){const auto &update=updates[u];if(!update.table.handle)continue;
             api::descriptor_heap heap{};std::uint32_t offset{};
@@ -976,9 +1042,10 @@ public:
     }
     void copy_descriptor_tables(api::device *device,std::uint32_t count,const api::descriptor_table_copy *copies){
         if(!compatible_.load() || !copies)return;
-        std::scoped_lock lock(mutex_);auto &descriptors=devices_[device].descriptors;
+        auto lock=metadata_lock(profile_category::descriptor_copy);auto &descriptors=devices_[device].descriptors;
         if(count>4096){descriptors.clear();return;}
         for(std::uint32_t i=0;i<count;++i){const auto &copy=copies[i];if(!copy.dest_table.handle)continue;
+            if(profile_.enabled&&copy.count)++profile_.descriptor_copy_counts[copy.count==1?0:copy.count<=8?1:copy.count<=64?2:3];
             api::descriptor_heap source{},destination{};std::uint32_t source_offset{},destination_offset{};
             device->get_descriptor_heap_offset(copy.dest_table,copy.dest_binding,0,&destination,&destination_offset);
             if(!copy.source_table.handle || copy.source_array_offset || copy.dest_array_offset){descriptors.erase_heap(destination);continue;}
@@ -988,7 +1055,7 @@ public:
     }
     void draw(api::command_list *cmd,bool direct_copy_shape=false) {
         if (!armed_.load()) return;
-        auto lock=recording_lock(presented_sampling_.load(std::memory_order_relaxed)); if (!lock.owns_lock()) return;
+        auto lock=recording_lock(presented_sampling_.load(std::memory_order_relaxed),profile_category::draw); if (!lock.owns_lock()) return;
         auto &state=commands_[cmd];
         auto *device=cmd->get_device();
         auto &data=devices_[device];
@@ -1042,7 +1109,7 @@ public:
     // Publication happens only when the command list containing that draw is submitted.
     void execute_command_list(api::command_queue *,api::command_list *cmd) {
         if (!armed_.load()) return;
-        auto lock=recording_lock(); if (!lock.owns_lock()) return;
+        auto lock=recording_lock(true,profile_category::submit); if (!lock.owns_lock()) return;
         const auto entry=commands_.find(cmd);
         if (entry==commands_.end()) return;
         auto &state=entry->second;

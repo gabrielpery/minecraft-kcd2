@@ -656,6 +656,12 @@ Its immutable receipt requires nonzero native reprojection execution and reports
 stationary and walking-sequence coverage separately. PASS does not itself claim
 complete coverage, reduced physical-input latency, or perfect foliage appearance.
 
+For developer CPU profiling, launch the test game with `MINECOME_DEPTH_PROFILE=1`
+in that process's environment. Its run-filtered ReShade log then contains
+`native_depth_profile` records with sampled callback mutex wait/hold times and
+descriptor-copy sizes. Profiling is disabled by default. These samples measure
+renderer tracking overhead, not end-to-end input latency or GPU frame time.
+
 Input, pose, camera admission and cleanup also have automated contract/lifecycle
 coverage. F5 applies only to WorldBlocks; legacy `-Hands` and flat-stream profiles
 keep their first-person behavior.

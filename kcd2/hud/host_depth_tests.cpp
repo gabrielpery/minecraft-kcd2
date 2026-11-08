@@ -27,6 +27,25 @@ int wmain(int argc,wchar_t **argv) {
             check(result.get(),"complete recording acquires original state after contention");recorder.join();
             check(waits==1&&contention.load()==2,"contention counted once without invalidating a completed observation");
         }
+        {
+            std::mutex mutex;profile_snapshot disabled;
+            check(profile_started(disabled,profile_category::draw)==profile_clock::time_point{},"disabled profile does not request timestamps");
+            {profiled_lock guard{std::unique_lock<std::mutex>{mutex},disabled,profile_category::draw,{}};check(guard.owns_lock(),"disabled profiling retains the lock");}
+            check(disabled.categories[0].calls==0&&disabled.categories[0].samples==0,"disabled profiling leaves counters untouched");
+            profile_snapshot enabled{true};
+            for(std::uint32_t i=0;i<257;++i){
+                const auto started=profile_started(enabled,profile_category::draw);
+                profiled_lock original{std::unique_lock<std::mutex>{mutex},enabled,profile_category::draw,started};
+                profiled_lock moved{std::move(original)};
+                check(moved.owns_lock()&&!original.owns_lock(),"moving sampled guard preserves sole lock ownership");
+            }
+            const auto &row=enabled.categories[0];
+            check(row.calls==257&&row.samples==2,"all acquired callbacks counted with first/every256 timing and no move duplication");
+            check(row.max_wait_ns<=row.wait_ns&&row.max_hold_ns<=row.hold_ns,"sample maxima cannot exceed total elapsed times");
+            check(mutex.try_lock(),"profiling guard releases original mutex after recording");mutex.unlock();
+            {profiled_lock failed{std::unique_lock<std::mutex>{mutex,std::defer_lock},enabled,profile_category::draw,profile_clock::now()};}
+            check(row.calls==257&&row.samples==2,"unacquired callback does not write mutex-protected profiling counters");
+        }
         // This is an original synthetic shader deliberately using a different
         // declaration order/padding from the game. Reflection must supply offsets.
         const std::string source=R"(
@@ -187,7 +206,14 @@ float4 main(float4 position:SV_Position):SV_Target {
             descriptors.update_view(cpu,20,depth_view);descriptors.copy(cpu,20,gpu,32,1);
             check(descriptors.find_view(gpu,32)->resource==depth_view.resource&&!descriptors.find(gpu,32),
                 "copied SRV preserves actual depth resource without masquerading as CBV");
+            descriptors.copy(cpu,20,cpu,20,1);
+            check(descriptors.find_view(cpu,20)->resource==depth_view.resource,"single-slot SRV self-copy retains source before overwrite");
+            descriptors.copy(cpu,99,gpu,32,1);
+            check(!descriptors.find_view(gpu,32)&&!descriptors.find(gpu,32),"single-slot unknown source clears old SRV and CBV proof");
+            descriptors.copy(cpu,20,gpu,32,1);
             descriptors.update(cpu,20,a_range);
+            descriptors.copy(cpu,20,cpu,20,1);
+            check(descriptors.find(cpu,20)->buffer==a_range.buffer&&!descriptors.find_view(cpu,20),"single-slot CBV self-copy retains source before overwrite");
             check(!descriptors.find_view(cpu,20)&&descriptors.find_view(gpu,32).has_value(),"CPU descriptor reuse does not rewrite captured GPU SRV copy");
             descriptors.erase_resource(depth_view.resource);
             check(!descriptors.find_view(gpu,32),"destroyed depth resource invalidates copied SRV proof");
