@@ -19,6 +19,10 @@ loom {
                     vmArgs '-Dminecome.gameplayStandalone=true'
                 if (project.hasProperty('minecomeGameplayFixture'))
                     vmArgs "-Dminecome.gameplayFixture=${project.property('minecomeGameplayFixture')}"
+                if (project.hasProperty('minecomeGameplayCombat'))
+                    vmArgs '-Dminecome.gameplayCombat=true'
+                if (project.hasProperty('minecomeGameplayCombatCheck'))
+                    vmArgs '-Dminecome.gameplayCombatCheck=true'
                 if (project.hasProperty('minecomeGameplayRespawnCheck'))
                     vmArgs '-Dminecome.gameplayRespawnCheck=true'
                 if (project.hasProperty('minecomeGameplayFurnaceCheck'))
@@ -431,3 +435,11 @@ tasks.register('gameplayRespawnTest', JavaExec) {
     mainClass = 'dev.minecome.hud.GameplayRespawnAcknowledgementTests'
 }
 tasks.named('check') { dependsOn 'gameplayRespawnTest' }
+
+
+tasks.register('gameplayCombatTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'dev.minecome.gameplay.GameplayCombatProtocolTests'
+}
+tasks.named('check') { dependsOn 'gameplayCombatTest' }

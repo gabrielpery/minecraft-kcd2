@@ -412,6 +412,14 @@ function MineCome.GameplayMovementPose(run,seq,source_ms,x,y,z,requested_mode,ca
  if p.allow_perspective then p.requested_mode=requested_mode end
  return true,'queued'
 end
+-- Read-only combat view from the same owned player/eye model as block aiming.
+-- Never expose the rendered third-person camera as the melee reach origin.
+function MineCome.GameplayMovementCombatView(run)
+ local p=state.active;if not token(run) or not p or p.run~=run or p.stopping or not p.allow_perspective then return nil end
+ local s=snapshot();if safe(s,p) then return nil end
+ local direction=unit(s.head_direction);if not direction then return nil end
+ return {origin=copy(camera_eye(s,p)),direction=copy(direction),entity=s.entity,id=s.id}
+end
 function MineCome.GameplayMovementSample(run,seq,with_aim)
  local p=state.active;if not token(run) or not p or p.run~=run then return false,'inactive' end
  if p.stopping then return false,'stopping' end

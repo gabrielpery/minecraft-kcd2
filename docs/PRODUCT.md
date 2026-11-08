@@ -28,6 +28,10 @@ environment, NPCs, AI, dialogue and quests wherever the integration permits.
 Commands use Minecraft's parser and server permission checks, not arbitrary KCD2
 console execution. Command-driven teleportation, death, world changes and mode
 changes need the same movement/session reconciliation as ordinary gameplay.
+Combat must remain free-moving and free-aiming, as in Minecraft. KCD2 target lock,
+forced camera alignment and combat movement restrictions must not take ownership
+of the player during MineCome gameplay. NPCs retain their native movement and
+attacks; session cleanup restores any host control settings it changes.
 Flights must use Minecraft's actual ability and Elytra mechanics; increasing a
 ground-test position limit alone is not a flight implementation.
 

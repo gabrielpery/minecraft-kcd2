@@ -20,6 +20,15 @@ commands such as `/gamemode survival`, Creative flight and Elytra flight. These 
 required goals. Several core systems now work in the prototype; NPC combat,
 Elytra, complete host collision and the wider Minecraft systems remain unfinished.
 
+The experimental [`-Combat` profile](docs/GAMEPLAY_SESSION.md#npc-melee-bridge)
+adds a primary-melee bridge: Minecraft calculates weapon damage, cooldown and
+durability for attacks against native NPC proxies. A connected automated KCD2
+check passes a real sword hit on a native NPC, inventory suppression, subsequent
+walking, continued HUD composition and cleanup. Standalone Minecraft checks also
+cover weapons, armor, cooldowns and block occlusion. Native
+retaliation, hostile target-lock suppression, ranged attacks and secondary
+combat effects remain unfinished; this is not yet complete two-way combat.
+
 **Status: experimental development prototype.** Several bounded two-game tests
 work, but this is not yet a complete playable mod or a ready-to-install release.
 The public repository contains source, build scripts and development procedures.

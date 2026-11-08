@@ -16,12 +16,12 @@ import java.nio.file.*;
 final class GameplayRespawn implements AutoCloseable {
     private record Transition(java.util.UUID playerId,Vec3d target,long epoch,long at){}
     private record Callback(ServerPlayerEntity oldPlayer,ServerPlayerEntity next,boolean alive){}
-    private final GameplayMovement movement; private final GameplayBlocks blocks;
+    private final GameplayMovement movement; private final GameplayBlocks blocks; private final dev.minecome.gameplay.GameplayCombat combat;
     private final GameplayWorld save; private final HudInputProtocol.Identity identity; private final Path ackFile;
     private volatile Transition transition; private volatile Callback callback; private volatile String failure,ackText; private volatile boolean closed;
     private long reboundEpoch,deathAckEpoch,respawnAckEpoch,callbackWaitAt; private volatile Object ownedClient,ownedWorld,ownedServer;
-    GameplayRespawn(GameplayMovement movement,GameplayBlocks blocks,GameplayWorld save,HudInputProtocol.Identity identity,Path directory){
-        this.movement=movement;this.blocks=blocks;this.save=save;this.identity=identity;ackFile=directory.resolve("respawn-ack.json");
+    GameplayRespawn(GameplayMovement movement,GameplayBlocks blocks,dev.minecome.gameplay.GameplayCombat combat,GameplayWorld save,HudInputProtocol.Identity identity,Path directory){
+        this.movement=movement;this.blocks=blocks;this.combat=combat;this.save=save;this.identity=identity;ackFile=directory.resolve("respawn-ack.json");
         if(movement.nativeRespawnRequired()){var worker=new Thread(this::readLoop,"MineComeRespawnAck");worker.setDaemon(true);worker.start();}
     }
     // Fabric AFTER_RESPAWN is invoked on the integrated server thread after vanilla
@@ -59,7 +59,7 @@ final class GameplayRespawn implements AutoCloseable {
             if(!next.getServerWorld().isSpaceEmpty(next,box))throw new IllegalStateException("Respawn point has blocked headroom");
             next.teleport(next.getServerWorld(),destination.x,destination.y,destination.z,spawn==null?oldPlayer.getYaw():oldPlayer.getSpawnAngle(),0);
             long epoch=movement.respawnEpoch();
-            movement.serverRespawn(oldPlayer,next,epoch);blocks.serverRespawn(oldPlayer,next);
+            movement.serverRespawn(oldPlayer,next,epoch);blocks.serverRespawn(oldPlayer,next);if(combat!=null)combat.serverRespawn(oldPlayer,next);
             transition=new Transition(next.getUuid(),destination,epoch,System.nanoTime());
         }catch(Exception e){failure=e.toString();}
     }
@@ -82,7 +82,7 @@ final class GameplayRespawn implements AutoCloseable {
                     !client.player.getUuid().equals(step.playerId())||reboundEpoch>=step.epoch())
                 throw new IllegalStateException("Unacknowledged gameplay player replacement");
             var old=(ClientPlayerEntity)ownedClient;
-            movement.clientRespawn(client,old,step.epoch());blocks.clientRespawn(client,old);
+            movement.clientRespawn(client,old,step.epoch());blocks.clientRespawn(client,old);if(combat!=null)combat.clientRespawn(client,old);
             ownedClient=client.player;reboundEpoch=step.epoch();replaced=true;
         }
         acknowledge();

@@ -1,7 +1,7 @@
 # Sustained HUD/inventory, with an explicit Minecraft walking profile.
 [CmdletBinding()]
 param([string]$BundleDirectory,[string]$InstanceDirectory,[string]$JavaHome='C:/Program Files/Java/jdk-24',
- [ValidateRange(0,300)][int]$SmokeSeconds=0,[switch]$PreflightOnly,[switch]$Movement,[switch]$Blocks,[switch]$Explore,[switch]$Chat,[switch]$Flight,[switch]$Hands,[switch]$WorldBlocks,[string]$GroundPatchFile,[switch]$ThirdPersonWalkingCheck,[switch]$DropsCheck,[switch]$CraftingCheck,[switch]$FurnaceCheck,[switch]$RespawnCheck,[ValidateRange(0,1)][int]$InitialTerrainRadius=0)
+ [ValidateRange(0,300)][int]$SmokeSeconds=0,[switch]$PreflightOnly,[switch]$Movement,[switch]$Blocks,[switch]$Explore,[switch]$Chat,[switch]$Flight,[switch]$Hands,[switch]$WorldBlocks,[switch]$Combat,[switch]$CombatCheck,[string]$CombatFixtureRun,[string]$GroundPatchFile,[switch]$ThirdPersonWalkingCheck,[switch]$DropsCheck,[switch]$CraftingCheck,[switch]$FurnaceCheck,[switch]$RespawnCheck,[ValidateRange(0,1)][int]$InitialTerrainRadius=0)
 . (Join-Path $PSScriptRoot 'powershell7.ps1')
 if($PSVersionTable.PSVersion.Major -lt 7){
  $code=Invoke-MineComePowerShell7 -ScriptPath $PSCommandPath -BoundParameters $PSBoundParameters
@@ -15,8 +15,11 @@ $root=[IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
 . (Join-Path $PSScriptRoot 'GameplayHudSessionGuard.ps1')
 if($RespawnCheck){$InitialTerrainRadius=1}
 if($InitialTerrainRadius -eq 1){$Explore=$true}
-if($WorldBlocks){$Hands=$true};if($Hands){$Flight=$true};if($Flight){$Chat=$true}
+if($CombatCheck){if($CombatFixtureRun -cnotmatch '^[0-9a-f]{32}$'){throw 'Use Test-KcdCombat.ps1 to own the isolated NPC lifecycle.'};$Combat=$true}
+elseif($CombatFixtureRun){throw 'CombatFixtureRun requires the owned automated combat check.'}
+if($Combat){$WorldBlocks=$true};if($WorldBlocks){$Hands=$true};if($Hands){$Flight=$true};if($Flight){$Chat=$true}
 if($Explore -or $Chat){$Blocks=$true};if($Blocks){$Movement=$true}
+if($CombatCheck -and ($SmokeSeconds -ne 0 -or $ThirdPersonWalkingCheck -or $DropsCheck -or $CraftingCheck -or $FurnaceCheck -or $RespawnCheck)){throw 'CombatCheck owns its bounded session; omit other checks/SmokeSeconds.'}
 if($RespawnCheck -and (-not $WorldBlocks -or $SmokeSeconds -ne 0 -or $ThirdPersonWalkingCheck -or $DropsCheck -or $CraftingCheck -or $FurnaceCheck)){throw 'RespawnCheck requires WorldBlocks and owns its bounded duration; omit other checks/SmokeSeconds.'}
 if($FurnaceCheck -and (-not $WorldBlocks -or $SmokeSeconds -ne 0 -or $ThirdPersonWalkingCheck -or $DropsCheck -or $CraftingCheck)){throw "FurnaceCheck requires WorldBlocks and owns its bounded duration; omit other checks/SmokeSeconds."}
 if($CraftingCheck -and (-not $WorldBlocks -or $SmokeSeconds -ne 0 -or $ThirdPersonWalkingCheck -or $DropsCheck)){throw "CraftingCheck requires WorldBlocks and owns its bounded duration; omit other checks/SmokeSeconds."}
@@ -77,7 +80,8 @@ try{
  if($Explore){$arguments+='-Explore'}
  if($Chat){$arguments+='-Chat'}
  if($Flight){$arguments+='-Flight'}
- if($Hands){$arguments+='-Hands'};if($WorldBlocks){$arguments+='-WorldBlocks'}
+ if($Hands){$arguments+='-Hands'};if($WorldBlocks){$arguments+='-WorldBlocks'};if($Combat){$arguments+='-Combat'}
+ if($CombatCheck){$arguments+='-CombatCheck'}
  if($RespawnCheck){$arguments+='-RespawnCheck'}
  if($FurnaceCheck){$arguments+='-FurnaceCheck'}
  if($CraftingCheck){$arguments+='-CraftingCheck'}
@@ -101,7 +105,21 @@ try{
  Assert-MineComeProbeContext $context
  if($Movement){
   $guest=Read-MineComeGameplayJson (Join-Path $directory 'gameplay-ready.json')
-  $hostFollower=Start-GameplayMovementHost -Context $context -Run $run -WorldId $guest.world_id -Patch $patch -PoseFile (Join-Path $directory 'gameplay-pose.json') -ViewFile (Join-Path $directory 'host-view.json') -ExpiresUtcMs $expires -Blocks:$Blocks -Explore:$Explore -TerrainCacheFile (Join-Path $bindingDirectory 'coverage.json') -Flight:$Flight -WorldBlocks:$WorldBlocks -InitialTerrainRadius $InitialTerrainRadius
+  if($CombatCheck){
+   # The official test NPC's behaviour eventually despawns it. Create it only
+   # after Minecraft has loaded, keeping the real attack inside its lifetime.
+   $fixtureOffset=(Get-Item -LiteralPath $context.GameLog).Length
+   Invoke-MineComeProbeConsole $context ("#local p=player:GetWorldPos();local h=player.actor:GetHeadPos();local d=player.actor:GetHeadDir();local ok,why=MineCome.GameplayCombatFixtureBegin('$CombatFixtureRun',120000,h.x+d.x*1.5,h.y+d.y*1.5,p.z);System.LogAlways('[MineComeCombatFixtureCall] $CombatFixtureRun '..tostring(ok)..' '..tostring(why))")
+   $fixtureUntil=[DateTime]::UtcNow.AddSeconds(2);$fixtureSpawned=$false
+   do{
+    Invoke-MineComeProbeConsole $context ("#System.LogAlways('[MineComeCombatFixtureFlush] $CombatFixtureRun')")
+    $fixtureReceipts=@(Get-MineComeProbeReceipts (Read-MineComeProbeLog $context $fixtureOffset) 'MineComeCombatFixture' $CombatFixtureRun)
+    $fixtureSpawned=@($fixtureReceipts|Where-Object {$_.event -ceq 'begin' -and $_.result -ceq 'spawned'}).Count -eq 1
+    if($fixtureSpawned){break};Start-Sleep -Milliseconds 25
+   }while([DateTime]::UtcNow -lt $fixtureUntil)
+   if(-not $fixtureSpawned){throw 'The isolated NPC was not confirmed; combat was not armed.'}
+  }
+  $hostFollower=Start-GameplayMovementHost -Context $context -Run $run -WorldId $guest.world_id -Patch $patch -PoseFile (Join-Path $directory 'gameplay-pose.json') -ViewFile (Join-Path $directory 'host-view.json') -ExpiresUtcMs $expires -Blocks:$Blocks -Explore:$Explore -TerrainCacheFile (Join-Path $bindingDirectory 'coverage.json') -Flight:$Flight -WorldBlocks:$WorldBlocks -InitialTerrainRadius $InitialTerrainRadius -Combat:$Combat
   $movementPath=Join-Path $directory 'gameplay-movement-ready.json';$until=[DateTime]::UtcNow.AddSeconds(12)
   while(-not (Test-Path -LiteralPath $movementPath)){
    $state=Get-GameplayMovementHostState $hostFollower
@@ -117,6 +135,7 @@ try{
  try{$bytes=[Text.Encoding]::UTF8.GetBytes($armText);$file.Write($bytes,0,$bytes.Length);$file.Flush($true);$armWritten=$true}finally{$file.Dispose()}
  [IO.File]::WriteAllText((Join-Path $directory 'arm.ini'),$armText)
  Write-Output "GAMEPLAY_READY run=$run stop_file=$(Join-Path $directory 'session.stop')"
+ if($CombatCheck){Write-Output 'AUTOMATED_COMBAT_CHECK: production native NPC snapshots and vanilla primary melee; no physical input or reciprocal native damage claim.'}
  if($RespawnCheck){Write-Output 'AUTOMATED_RESPAWN_CHECK: keep KCD2 focused; scripted guest walking, death and a real Respawn-button click verify native relocation and continued play. Physical input is not claimed.'}
  if($FurnaceCheck){Write-Output 'AUTOMATED_FURNACE_CHECK: keep KCD2 focused; actual guest UI clicks load fuel/input, smelt and collect output, then save. Physical input is not claimed.'}
  if($CraftingCheck){Write-Output 'AUTOMATED_CRAFTING_CHECK: keep KCD2 focused; real guest UI clicks craft ingredients/table/tool, verify unused-input return, then save. Physical input is not claimed.'}
@@ -155,6 +174,7 @@ try{
   -not $session.input_connected -or -not $session.input_armed_seen){throw 'Gameplay native input/save/shutdown proof failed.'}
  if($Movement -and (-not $session.movement.ready -or $session.movement.failure -or -not $session.movement.cleanup_complete)){throw 'Gameplay movement/save/cleanup proof failed.'}
  if($Blocks -and (-not $session.blocks.ready -or $session.blocks.failure -or -not $session.blocks.cleanup_complete)){throw 'Gameplay block ledger/save proof failed.'}
+ if($Combat -and (-not $session.combat.cleanup_complete -or $session.combat.pending -or ($session.combat.PSObject.Properties['failure'] -and $session.combat.failure))){throw 'Gameplay combat cleanup/acknowledgment proof incomplete.'}
  if($ThirdPersonWalkingCheck){
   $f=$session.fixture
   if($f.kind -cne 'minecome_native_third_person_walking_v1' -or $f.result -cne 'passed' -or $f.failure -or -not $f.actual_minecraft -or -not $f.scripted_guest_input -or $f.physical_native_keys_verified -or $f.position_writes_used -or $f.velocity_writes_used -or $f.camera_writes_used -or
@@ -206,6 +226,7 @@ finally{
    $hostProof|ConvertTo-Json -Depth 10|Set-Content -LiteralPath (Join-Path $directory 'host-movement.json') -Encoding utf8NoBOM
    if(-not $hostProof.ResourcesClosed -or -not $hostProof.Terminal -or $hostProof.PoseCount -lt 1 -or $hostProof.Failure){$passed=$false;$failure='Gameplay host cleanup/pose proof incomplete: '+$hostProof.Failure}
    if($Blocks -and -not $WorldBlocks -and (-not $hostProof.Blocks -or -not $hostProof.Blocks.CleanupComplete -or $hostProof.Blocks.Failure)){$passed=$false;$failure='Gameplay native block cleanup proof incomplete.'}
+   if($Combat -and (-not $hostProof.Combat -or -not $hostProof.Combat.CleanupComplete -or $hostProof.Combat.Failure)){$passed=$false;$failure='Gameplay native combat cleanup proof incomplete.'}
    if($Explore -and (-not $hostProof.Terrain -or -not $hostProof.Terrain.CleanupComplete -or $hostProof.Terrain.Failure)){$passed=$false;$failure='Gameplay native terrain cleanup proof incomplete.'}
   }catch{$passed=$false;$failure='Gameplay host cleanup: '+$_.Exception.Message}
  }
@@ -222,7 +243,7 @@ finally{
  }
  [ordered]@{schema=1;kind='minecome_gameplay_kcd_session_v1';run=$run;result=$(if($passed){'passed'}else{'failed'});failure=$failure;
   target_pid=$context.GamePid;target_start_filetime=$targetStart;instance=$InstanceDirectory;smoke_seconds=$SmokeSeconds;
-  minecraft_movement_connected=[bool]($Movement -and $passed);movement_profile=[bool]$Movement;blocks_profile=[bool]$Blocks;explore_profile=[bool]$Explore;chat_profile=[bool]$Chat;flight_profile=[bool]$Flight;hands_profile=[bool]$Hands;world_blocks_profile=[bool]$WorldBlocks;drops_check=[bool]$DropsCheck;crafting_check=[bool]$CraftingCheck;furnace_check=[bool]$FurnaceCheck;respawn_check=[bool]$RespawnCheck;host_command_typing_verified=$false;normal_client_exit=($helper -and $helper.HasExited -and $helper.ExitCode -eq 0)}|
+  minecraft_movement_connected=[bool]($Movement -and $passed);movement_profile=[bool]$Movement;blocks_profile=[bool]$Blocks;explore_profile=[bool]$Explore;chat_profile=[bool]$Chat;flight_profile=[bool]$Flight;hands_profile=[bool]$Hands;world_blocks_profile=[bool]$WorldBlocks;drops_check=[bool]$DropsCheck;crafting_check=[bool]$CraftingCheck;furnace_check=[bool]$FurnaceCheck;respawn_check=[bool]$RespawnCheck;combat_profile=[bool]$Combat;combat_check=[bool]$CombatCheck;host_command_typing_verified=$false;normal_client_exit=($helper -and $helper.HasExited -and $helper.ExitCode -eq 0)}|
   ConvertTo-Json|Set-Content -LiteralPath (Join-Path $directory 'verification.json') -Encoding utf8NoBOM
 }
 if(-not $passed){throw $failure}

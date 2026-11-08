@@ -1,5 +1,57 @@
 # MineCome progress — 2026-11-08
 
+## NPC primary melee bridge
+
+Added the opt-in `-Combat` gameplay profile. Invisible, unsaved Minecraft actor
+proxies follow fresh native NPC snapshots. Actual vanilla attack packets own
+primary weapon damage, cooldowns, critical modifiers and durability; native code
+revalidates the exact actor generation, eye, reach, real AABB and scenery ray
+before applying attributed damage normalized to the NPC's maximum health.
+Inventory/chat suspend attacks, and block targeting retains its existing path.
+Native NPC movement/AI is not replaced.
+
+Connected KCD2 automated PASS:
+`runtime/evidence/gameplay-kcd-20261108-215647-d4359c30548545cbb27c6f5ccca282ba/native-combat-verification.json`.
+An actual vanilla diamond-sword attack produced 7 damage and reduced the owned
+native NPC from 100 to 65 HP, with one acknowledgement and zero rejected/replayed
+hits. Sword durability, inventory movement suppression in both games, 0.641m of
+subsequent walking and normal save/cleanup passed. Native composition and
+reprojection each advanced another 321 frames during the post-walk observation.
+The temporary NPC and path wrapper were removed/restored. Inputs were scripted;
+this passive-NPC check does not establish hostile retaliation or lock suppression.
+KCD2 was closed normally and the previous renderer installation restored unarmed:
+`runtime/evidence/gameplay-hud-restore-20261108-215807-3123a19ae7e44eb7a393c45889eaebe5`.
+
+Actual-Minecraft automated PASS:
+`runtime/evidence/gameplay-combat-20261108-215206-2b9cb32bbcb94397a6b018e13b73083c/verification.json`.
+Fists/wooden sword/diamond sword delivered 1/4/7 damage; the immediate second
+sword attack delivered reduced damage. Sword and armor durability, incoming
+8-damage vs reduced armored damage, inventory suppression, Minecraft-block
+occlusion, HUD pixels and cleanup passed. Host events in this test are synthetic.
+Build and 214 protocol/coordinate/file checks pass, including 500 actual concurrent
+atomic replacements and an exclusive Windows handle reproducing the generic
+sharing exception. Windows sharing conflicts preserve the last accepted source
+timestamp; no freshness deadline is extended. Actual attack packets now dispatch
+immediately after selection, eliminating two redundant tick waits while retaining
+the complete server authority/raycast gate. Rejected attacks report their exact
+reason and sample ages instead of waiting for an ambiguous timeout.
+Existing host worker 44,
+Lua movement 42 and new combat transport/lifecycle/owned-NPC tests also pass.
+
+Scope remains **primary outgoing melee**, not complete combat. Native incoming
+attacks need a proven pre-damage hook before they can safely use Minecraft health
+without killing the underlying KCD player. Player target-lock suppression under
+hostile attacks, ranged/sweep attacks, native knockback and secondary enchantment
+effects remain open. Free aiming and unrestricted movement are explicit product
+requirements. Binding evidence and concrete blockers are in
+[research/KCD-COMBAT.md](research/KCD-COMBAT.md).
+
+The connected automatic fixture uses the official path-follower dummy, which
+self-despawns after its short AI routine. It must spawn after Minecraft readiness,
+not before Minecraft startup. Native deletion is deferred; the fixture requests
+removal once and checks actual disappearance with bounded callbacks. Snapshot
+publication retries Windows sharing conflicts without replaying native damage.
+
 ## Death/respawn lifecycle and saved dropped items
 
 Existing furnace create/save/reopen regression passed after the shared shutdown

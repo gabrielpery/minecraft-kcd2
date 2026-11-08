@@ -38,6 +38,7 @@ public final class MineComeClient implements ClientModInitializer {
     @Override public void onInitializeClient() {
         if(dev.minecome.gameplay.GameplayMode.enabled()){
             dev.minecome.gameplay.GameplayMode.requireExclusive(System.getProperties());
+            dev.minecome.gameplay.GameplayActorEntity.register();
             dev.minecome.hud.GameplaySession.initialize();return;
         }
         if(Boolean.getBoolean("minecome.hudAimedBridgeLab")) {

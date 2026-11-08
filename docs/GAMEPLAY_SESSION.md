@@ -986,3 +986,43 @@ unsupported cases are in [respawn integration](RESPAWN_PLAN.md).
 The sustained gameplay HUD accepts one session per KCD2 process. Restart KCD2
 normally before another session; the launcher now detects an already consumed
 session before starting Minecraft.
+
+## NPC melee bridge
+
+`-Combat` adds the experimental NPC adapter to WorldBlocks. Aim and left-click
+an NPC to send an actual Minecraft primary melee attack. Minecraft calculates
+weapon damage, attack cooldown, critical damage and durability; the bridge maps
+the resulting damage fraction onto the native NPC's maximum health. Native
+NPCs keep their identity, movement and AI. Block mining keeps its existing path
+when the crosshair does not select an NPC. Inventory and chat suppress attacks.
+
+This is an outgoing primary-melee increment, not complete combat. Native NPC
+attacks are not yet routed into Minecraft health. Ranged attacks, sweep damage,
+knockback and secondary enchantment effects are not transferred. Minecraft's
+incoming armor/hurt logic is implemented and tested with synthetic host events;
+a native pre-damage hook and safe ownership of the underlying player's health
+are still required. See [native binding evidence](research/KCD-COMBAT.md).
+
+The required combat model is free aiming and unrestricted movement. The adapter
+does not request native targeting or combat mode. Disabling native target lock
+under hostile NPC attacks still needs a verified policy; the current work does
+not claim that hostile combat is ready.
+
+Automated checks use isolated saves and require no manual attack sequence:
+
+```powershell
+& './scripts/Test-GameplayCombat.ps1'
+# Installed WorldBlocks bundle and a fresh, loaded KCD2 tools world:
+& './scripts/Test-KcdCombat.ps1' -BundleDirectory $bundle
+```
+
+The standalone check uses real Minecraft attack packets, cooldowns, durability,
+armor, inventory and HUD pixels, with explicitly synthetic native actors. The
+connected check creates one temporary NPC using the official debug template,
+strikes it through the same production bridge, then checks inventory and walking.
+It also requires native composition/reprojection to keep advancing after walking,
+and verifies the native camera stays horizontally still in inventory. The coupled
+check passes on the supported tools build; see [progress evidence](PROGRESS.md).
+Its NPC expires automatically within two minutes and is removed on normal or
+failed cleanup. This fixture does not establish hostile NPC retaliation or
+physical mouse acceptance.

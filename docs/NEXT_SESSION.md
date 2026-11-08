@@ -1,5 +1,69 @@
 # Resume checkpoint — 8 November 2026
 
+## Current work: NPC combat
+
+The opt-in `-Combat` profile now sends actual Minecraft primary melee to native
+KCD2 NPCs. Preserve the existing HUD, walking, blocks, crafting and respawn paths.
+Minecraft owns damage/cooldown/durability; native code validates exact NPC identity,
+current aim, reach, the real AABB and a scenery ray before applying normalized HP
+loss. Inventory/chat suppress attacks. Native NPC movement/AI remains native.
+
+Latest verified evidence:
+- Actual Minecraft standalone combat/armor/inventory/occlusion/cleanup:
+  `runtime/evidence/gameplay-combat-20261108-215206-2b9cb32bbcb94397a6b018e13b73083c/verification.json`.
+- Connected KCD2 automated PASS:
+  `runtime/evidence/gameplay-kcd-20261108-215647-d4359c30548545cbb27c6f5ccca282ba/native-combat-verification.json`.
+  Actual Minecraft sword damage 7, native HP 100→65, one ACK, zero rejected hits,
+  sword durability, inventory suppression in both games, 0.641m walking, continued
+  HUD composition/reprojection (+321 frames after walking), normal save and exact
+  native NPC/path-wrapper cleanup all passed. No human keys were needed.
+- Native-only damage/deduplication/cleanup:
+  `runtime/evidence/combat-native-20261108-204151-78f062aac0ca47669d56ed2a803c6f0f/result.json`.
+
+Preserve these fixes:
+- Dispatch the actual vanilla attack packet immediately from the validated click;
+  the synchronous server damage gate owns full revalidation. Two extra tick waits
+  used up the original camera sample's lifetime. Do not extend the freshness TTL.
+- Publish the exact NPC snapshot sequence/contact revalidated by the server,
+  rather than the earlier client-click snapshot. Reject once, never replay an
+  ambiguous native setter. Bounded rejection evidence records source ages/rays.
+- Atomic snapshot replacement on Windows can report missing/access-denied or a
+  generic sharing FileSystemException. Treat unavailable reads as unavailable,
+  without refreshing old source timestamps; reject invalid file content/types.
+- Spawn the official debug NPC AFTER Minecraft readiness. Its official AI waits,
+  moves, then self-despawns. The fixture-only FindDataTable wrapper directs only
+  that exact owned actor to its own spawn; cleanup restores the original function.
+  Other NPCs and global path data are untouched. Removal is deferred: request once
+  and confirm exact ID/name disappearance with bounded callbacks.
+- Connected acceptance now checks native horizontal stillness in inventory and
+  advancing native composition/reprojection counters during an 11-second post-walk
+  interval; pre-hit frame counters alone cannot pass.
+
+Final assemble and 214 focused checks passed, including the real generic Windows
+sharing violation, unchanged stale-source rejection and 500 concurrent replacements.
+KCD2 is closed. Temporary bundle `runtime/hud-combat-20261108-a` was restored to
+its previous installation, unarmed; restoration evidence:
+`runtime/evidence/gameplay-hud-restore-20261108-215807-3123a19ae7e44eb7a393c45889eaebe5`.
+Prepare a fresh owned bundle/install before another coupled check (do not assume
+that the previously restored bundle is still installed).
+
+For a relevant combat change, run `scripts/Test-KcdCombat.ps1 -BundleDirectory $bundle`
+with the newly prepared/installed bundle in a fresh loaded tools world.
+It captures terrain, starts an isolated guest, owns/spawns/removes the test NPC,
+attacks, checks inventory/walking/HUD, and saves normally. No human keys or F8
+countdown. One sustained HUD session per KCD process: restart normally after a
+consumed session. Avoid UI screenshots during strict leases. Check live process
+and installation receipts instead of assuming a PID or installed bundle.
+
+Remaining combat work: reciprocal native attacks into Minecraft health, hostile
+NPC target-lock suppression, ranged/sweep/native knockback/secondary effects.
+The user explicitly requires free aiming and walking, with native enemy AI active.
+Passive dummy lock=false observations do not prove hostile free-camera behavior.
+No invulnerability or guessed lock CVars were changed. A source-supported next
+protection experiment is the official nonpersistent immortality buff, with an
+absent baseline and owned returned instance ID; verify damage/hit notifications
+and exact removal before using it. See `docs/research/KCD-COMBAT.md`.
+
 ## Latest gameplay milestone: death, respawn and preserved drops
 
 Death/respawn is now implemented, superseding the earlier design-only status
