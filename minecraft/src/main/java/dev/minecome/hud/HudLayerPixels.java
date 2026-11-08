@@ -13,7 +13,10 @@ final class HudLayerPixels {
         for(int p=0;p<2;p++)for(int y=0;y<height;y++)for(int x=0;x<row;x+=4){
             int source=p*plane+(height-1-y)*row+x,destination=p*plane+y*row+x,alpha=bottomUp[source+3]&255;
             result[destination+3]=(byte)alpha;
-            if(alpha!=0)for(int c=0;c<3;c++)result[destination+c]=(byte)Math.min(255,((bottomUp[source+c]&255)*255+alpha/2)/alpha);
+            // Opaque world/HUD pixels are already straight alpha. Avoid three
+            // integer divisions per pixel on the latency-sensitive publisher.
+            if(alpha==255){result[destination]=bottomUp[source];result[destination+1]=bottomUp[source+1];result[destination+2]=bottomUp[source+2];}
+            else if(alpha!=0)for(int c=0;c<3;c++)result[destination+c]=(byte)Math.min(255,((bottomUp[source+c]&255)*255+alpha/2)/alpha);
         }
         // Depth is not colour. Preserve all IEEE754 bits, changing row order only.
         for(int y=0;y<height;y++)System.arraycopy(bottomUp,2*plane+(height-1-y)*row,result,2*plane+y*row,row);

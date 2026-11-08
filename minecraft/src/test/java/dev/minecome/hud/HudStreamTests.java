@@ -26,6 +26,7 @@ public final class HudStreamTests {
         rejects(()->new HudStreamLayout(1280,720,0),"automatic GUI scale refused");
         var id=new HudStreamProducer.Identity("0123456789abcdef0123456789abcdef",123,0x0102030405060708L,1_800_000_000_000L);
         layeredFrames(id);
+        exhaustiveLayerConversion();
         byte[] bytes=HudStreamProducer.header(id,456,0x1122334455667788L,9,1_700_000_000_000L,2,1,3,1,1);
         var b=ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
         check(bytes.length==256,"header size");check(new String(bytes,0,8,java.nio.charset.StandardCharsets.US_ASCII).equals("MCHUDS01"),"magic");
@@ -106,6 +107,27 @@ public final class HudStreamTests {
         check(Arrays.equals(frame.bottomUp(),flat),"Layered frame retains lazy legacy fixture pixels");
         rejects(()->new HudStreamProducer.Frame(1,2,null,1235,0,0,"{}",new byte[23]),"Truncated depth plane rejected");
         check(HudStreamProducer.GAMEPLAY_MAPPING_BYTES==256+1920*1080*12&&HudStreamProducer.MAPPING_BYTES==256+1920*1080*4,"Schema3 mapping reserves all planes while schema1 remains unchanged");
+    }
+    private static void exhaustiveLayerConversion(){
+        int width=256,height=256,row=width*4,plane=row*height;byte[] input=new byte[plane*3];
+        new Random(173).nextBytes(input); // Includes arbitrary raw depth bits.
+        for(int layer=0;layer<2;layer++)for(int alpha=0;alpha<256;alpha++)for(int colour=0;colour<256;colour++){
+            int p=layer*plane+alpha*row+colour*4;
+            input[p]=(byte)colour;input[p+1]=(byte)(colour+85);input[p+2]=(byte)(colour+170);input[p+3]=(byte)alpha;
+        }
+        byte[] output=HudLayerPixels.straightTopLeft(input,width,height);
+        for(int layer=0;layer<2;layer++)for(int alpha=0;alpha<256;alpha++)for(int colour=0;colour<256;colour++){
+            int source=layer*plane+alpha*row+colour*4,destination=layer*plane+(255-alpha)*row+colour*4;
+            if((output[destination+3]&255)!=alpha)throw new AssertionError("Layer alpha changed");
+            for(int component=0;component<3;component++){
+                int expected=alpha==0?0:Math.min(255,((input[source+component]&255)*255+alpha/2)/alpha);
+                if((output[destination+component]&255)!=expected)throw new AssertionError("Layer byte differs at alpha="+alpha+" colour="+colour);
+            }
+        }
+        check(true,"All 65536 colour/alpha pairs in both planes retain exact straight-alpha bytes and flipped rows");
+        for(int y=0;y<height;y++)for(int x=0;x<row;x++)
+            if(output[2*plane+y*row+x]!=input[2*plane+(height-1-y)*row+x])throw new AssertionError("Raw depth bits changed");
+        check(true,"Opaque fast path never changes raw depth bits");
     }
     private static void mouseModeReceipts(Path root,Path parent)throws Exception {
         String previous=System.getProperty("minecome.hudStreamLiveMouse");

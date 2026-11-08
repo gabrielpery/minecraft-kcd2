@@ -3,6 +3,14 @@
 # Standalone pose-file and worker transport fixture; no game or network calls.
 $ErrorActionPreference='Stop';Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'GameplayMovementHost.ps1')
+if(-not ('MineCome.Tests.DelayedGameplayLog' -as [type])){Add-Type -TypeDefinition @'
+using System;using System.IO;using System.Threading.Tasks;using System.Collections.Concurrent;
+namespace MineCome.Tests { public static class DelayedGameplayLog {
+ static readonly ConcurrentBag<Task> jobs=new ConcurrentBag<Task>();
+ public static void Append(string path,string text,int delay){jobs.Add(Task.Run(async()=>{await Task.Delay(delay);File.AppendAllText(path,text);}));}
+ public static void Drain(){Task job;while(jobs.TryTake(out job))job.GetAwaiter().GetResult();}
+}}
+'@}
 $directory=Join-Path ([IO.Path]::GetTempPath()) ('minecome-gameplay-host-test-'+[guid]::NewGuid().ToString('N'))
 $null=New-Item -ItemType Directory -Path (Join-Path $directory 'scripts')
 $poseFile=Join-Path $directory 'pose.json';$viewFile=Join-Path $directory 'view.json';$gameLog=Join-Path $directory 'game.log'
@@ -10,7 +18,7 @@ $identity=[pscustomobject]@{Run='a'*32;WorldId='11111111-1111-4111-8111-11111111
 $bounds=[pscustomobject]@{MinX=-10.;MaxX=10.;MinY=-10.;MaxY=10.;MinZ=-10.;MaxZ=10.}
 $now=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
 $valid=[ordered]@{schema=1;kind='minecome_gameplay_pose_v1';run=$identity.Run;world_id=$identity.WorldId;target_pid=$identity.Pid;target_start_filetime=$identity.Start;patch_run=$identity.PatchRun;patch_sha256=$identity.PatchHash;seq=1;utc_ms=$now;source_ms=0;position=@{x=1.;y=2.;z=3.}}
-$passed=0;$pipeline=$null;$runspace=$null;$cancel=$null
+$passed=0;$pipeline=$null;$runspace=$null;$cancel=$null;$cadenceAverage=$null;$bufferedAverage=$null
 function Require([bool]$Condition,[string]$Message){if(-not $Condition){throw $Message}}
 function Write-Pose($Value){$Value|ConvertTo-Json -Depth 6 -Compress|Set-Content -LiteralPath $poseFile -Encoding utf8NoBOM}
 function Copy-Pose{$copy=@{};foreach($key in $valid.Keys){$copy[$key]=$valid[$key]};return $copy}
@@ -118,15 +126,40 @@ try{
     $helper=(Join-Path $PSScriptRoot 'GameplayMovementHost.ps1').Replace("'","''")
     $mock=@'
 . '__HELPER__'
-function Assert-MineComeProbeContext($Context){}
+function Assert-MineComeProbeContext($Context){
+    if($WorldBlocks -and $Context.FixtureFault -eq 'dispatch_delay' -and $request.Command -match "GameplayMovementSample\('[a-f0-9]+',(\d+)(,true)?\)"){
+        $script:fixtureGateStarted=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+        Start-Sleep -Milliseconds 80
+        $script:fixtureGateFinished=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+    }
+    if($WorldBlocks -and $Context.FixtureFault -eq 'prefetch_slow' -and $request.Command -match "GameplayMovementSample\('[a-f0-9]+',(\d+)(,true)?\)" -and [long]$Matches[1] -ge 2){Start-Sleep -Milliseconds 220}
+}
+$script:originalPublish=${function:Publish-GameplayMovementView}
+function Publish-GameplayMovementView([string]$Temporary,[string]$Destination,[int]$RetryMilliseconds=100){
+    $capture=$null;$started=0L
+    if($WorldBlocks -and $Context.FixtureFault -eq 'pipeline' -and $Destination -in @($ViewFile,$aimFile)){
+        $capture=[IO.File]::ReadAllText($Temporary)|ConvertFrom-Json;$started=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+        if($Destination -ceq $ViewFile){
+            if($capture.seq -ge 6){$Shared['FixtureCancellationWasPending']=$Shared['FixtureSamples'].ContainsKey([string]($capture.seq+1));$Shared['FixtureCancel'].Cancel()}
+            Start-Sleep -Milliseconds 70
+        }
+    }
+    & $script:originalPublish $Temporary $Destination $RetryMilliseconds
+    if($capture){$queueKey=if($Destination -ceq $ViewFile){'FixturePublications'}else{'FixtureAimPublications'};$Shared[$queueKey].Enqueue([pscustomobject]@{Sequence=[long]$capture.seq;UtcMs=[long]$capture.utc_ms;StartedUtc=$started;CompletedUtc=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()})}
+}
 $script:fixtureSequence=0L
 $script:fixtureUnterminated=$false
+$script:fixtureBufferedSequence=0L
+$script:fixtureGateStarted=0L;$script:fixtureGateFinished=0L
 function Invoke-MineComeToolsRequest([string]$PathAndQuery,[int]$TimeoutMilliseconds){
     $body=[Uri]::UnescapeDataString($PathAndQuery.Substring($PathAndQuery.IndexOf('command=')+8))
     if($WorldBlocks){$Shared['FixtureCommands'].Enqueue($body)}
     # A native timer can emit its camera ACK after the request's flush. KCD's
     # latest log line then becomes readable only on a subsequent console flush.
-    if($script:fixtureUnterminated){[IO.File]::AppendAllText($Context.GameLog,"`n");$script:fixtureUnterminated=$false}
+    if($script:fixtureUnterminated){
+        [IO.File]::AppendAllText($Context.GameLog,"`n");$script:fixtureUnterminated=$false
+        if($WorldBlocks){$Shared['FixtureFlushes'][[string]$script:fixtureBufferedSequence]=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()}
+    }
     $r=[ordered]@{schema=1;run=$Identity.Run;event='';result='';seq=0;active=$true;camera_basis_valid=$true;forward=@{x=0.;y=1.;z=0.};up=@{x=0.;y=0.;z=1.}}
     if($body.Contains('GameplayMovementBegin')){$r.event='begin';$r.result='ready'}
     elseif($body.Contains('GameplayMovementEnd')){
@@ -149,6 +182,10 @@ function Invoke-MineComeToolsRequest([string]$PathAndQuery,[int]$TimeoutMillisec
     elseif($body -match "GameplayMovementSample\('[a-f0-9]+',(\d+)(,true)?\)"){
         $r.event='view';$r.result='sampled';$r.seq=[long]$Matches[1]
         if($WorldBlocks){
+            $Shared['FixtureSamples'][[string]$r.seq]=[pscustomobject]@{GateStarted=$script:fixtureGateStarted;GateFinished=$script:fixtureGateFinished;RequestedUtc=$requestedUtc;ExecutedUtc=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()}
+            # Simulate a late receipt after one good sample. The worker must
+            # retain sample1's UTC, even when the transport returns sample2.
+            if($Context.FixtureFault -eq 'receipt_delay' -and $r.seq -ge 2){Start-Sleep -Milliseconds 270}
             $r.eye=@{x=1.;y=2.;z=4.62};$r.aim_direction=@{x=1.;y=0.;z=0.}
             $r.camera=@{x=1.;y=-1.;z=4.62};$r.camera_forward=@{x=0.;y=-1.;z=0.};$r.camera_up=@{x=0.;y=0.;z=1.}
             $r.perspective=$Context.FixturePerspective;$r.fov=1.2
@@ -163,8 +200,10 @@ function Invoke-MineComeToolsRequest([string]$PathAndQuery,[int]$TimeoutMillisec
     }
     if($r.event){
         $script:fixtureUnterminated=$WorldBlocks -and $Context.FixtureFault -eq 'buffered_view' -and $r.event -eq 'view'
+        if($script:fixtureUnterminated){$script:fixtureBufferedSequence=$r.seq}
         $ending=if($script:fixtureUnterminated){''}else{"`n"}
-        [IO.File]::AppendAllText($Context.GameLog,('[MineComeGameplayMovement] '+($r|ConvertTo-Json -Depth 5 -Compress)+$ending))
+        $line='[MineComeGameplayMovement] '+($r|ConvertTo-Json -Depth 5 -Compress)+$ending
+        if($WorldBlocks -and $Context.FixtureFault -in @('pipeline','prefetch_slow') -and $r.event -eq 'view'){[MineCome.Tests.DelayedGameplayLog]::Append($Context.GameLog,$line,60)}else{[IO.File]::AppendAllText($Context.GameLog,$line)}
     }
     $script:fixtureSequence++
     $p=[ordered]@{schema=1;kind='minecome_gameplay_pose_v1';run=$Identity.Run;world_id=$Identity.WorldId;target_pid=$Identity.Pid;target_start_filetime=$Identity.Start;patch_run=$Identity.PatchRun;patch_sha256=$Identity.PatchHash;seq=$script:fixtureSequence;utc_ms=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds();source_ms=$script:fixtureSequence*10;position=@{x=1.;y=2.;z=3.}}
@@ -213,27 +252,35 @@ function Invoke-MineComeToolsRequest([string]$PathAndQuery,[int]$TimeoutMillisec
         @{Perspective=1;Fault='cleanup_result'},@{Perspective=1;Fault='cleanup_active'},@{Perspective=1;Fault='cleanup_camera'},
         @{Perspective=1;Fault='cleanup_body'},@{Perspective=1;Fault='cleanup_hidden'},@{Perspective=1;Fault='cleanup_missing'},
         @{Perspective=1;Fault='cleanup_type'},@{Perspective=1;Fault='perspective_cleanup'},@{Perspective=0;Fault='buffered_view'},
+        @{Perspective=1;Fault='dispatch_delay'},@{Perspective=1;Fault='receipt_delay'},@{Perspective=1;Fault='sample_cadence'},@{Perspective=1;Fault='pipeline'},@{Perspective=1;Fault='prefetch_slow'},
         @{Perspective=1;Fault='';Boxes=512},@{Perspective=1;Fault='';CameraFault='incomplete'},
         @{Perspective=1;Fault='';CameraFault='mutate'},@{Perspective=1;Fault='';CameraFault='regress'},@{Perspective=1;Fault='';CameraFault='fresh'})){
         [IO.File]::WriteAllText($gameLog,'');[IO.File]::Delete($poseFile);[IO.File]::Delete($viewFile)
         $aimFile=Join-Path $directory 'gameplay-aim.json';[IO.File]::Delete($aimFile)
         $shared=[Collections.Concurrent.ConcurrentDictionary[string,object]]::new()
         $shared['FixtureCommands']=[Collections.Concurrent.ConcurrentQueue[string]]::new()
+        $shared['FixtureSamples']=[Collections.Concurrent.ConcurrentDictionary[string,object]]::new()
+        $shared['FixtureFlushes']=[Collections.Concurrent.ConcurrentDictionary[string,object]]::new()
+        $shared['FixturePublications']=[Collections.Concurrent.ConcurrentQueue[object]]::new()
+        $shared['FixtureAimPublications']=[Collections.Concurrent.ConcurrentQueue[object]]::new()
         $cancel=[Threading.CancellationTokenSource]::new();$runspace=[RunspaceFactory]::CreateRunspace();$runspace.Open()
+        $shared['FixtureCancel']=$cancel
         $pipeline=[PowerShell]::Create();$pipeline.Runspace=$runspace
         $boxCount=if($case.ContainsKey('Boxes')){[int]$case['Boxes']}else{1}
         $cameraFault=if($case.ContainsKey('CameraFault')){[string]$case['CameraFault']}else{''}
         $minimumPoses=if($boxCount -gt 32){[int][Math]::Ceiling($boxCount/32.0)+3}elseif($cameraFault){6}else{3}
+        $minimumViews=if($case.Fault -eq 'sample_cadence'){12}elseif($case.Fault -eq 'pipeline'){6}else{3}
         $context=[pscustomobject]@{GameLog=$gameLog;FixturePerspective=$case.Perspective;FixtureFault=$case.Fault;FixtureBoxCount=$boxCount;FixtureCameraFault=$cameraFault}
         $expires=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()+5000
         $null=$pipeline.AddScript((Get-GameplayMovementWorker).ToString()).AddArgument($context).AddArgument($identity).AddArgument($bounds).AddArgument($poseFile).AddArgument($viewFile).AddArgument($expires).AddArgument(0L).AddArgument($shared).AddArgument($cancel.Token).AddArgument($directory).AddArgument($null).AddArgument($null).AddArgument($false).AddArgument($true)
         $async=$pipeline.BeginInvoke();$watch=[Diagnostics.Stopwatch]::StartNew()
         do{
-            if($shared.ContainsKey('Snapshot')){$s=$shared['Snapshot'];if($s.Stopped -or ($s.ViewCount -ge 3 -and $s.PoseCount -ge $minimumPoses)){break}}
+            if($shared.ContainsKey('Snapshot')){$s=$shared['Snapshot'];if($s.Stopped -or ($s.ViewCount -ge $minimumViews -and $s.PoseCount -ge $minimumPoses) -or ($case.Fault -eq 'receipt_delay' -and $s.LastView -and $s.LastView.seq -ge 2) -or ($case.Fault -eq 'prefetch_slow' -and $s.LastView)){break}}
             Start-Sleep -Milliseconds 10
         }while($watch.ElapsedMilliseconds -lt 3000 -and -not $async.IsCompleted)
         $cancel.Cancel();Require ($async.AsyncWaitHandle.WaitOne(2000)) 'WorldBlocks worker cleanup timed out.'
         $null=$pipeline.EndInvoke($async);Require (-not $pipeline.HadErrors) ('WorldBlocks worker errors: '+[string]$pipeline.Streams.Error)
+        [MineCome.Tests.DelayedGameplayLog]::Drain()
         $s=$shared['Snapshot'];Require ($s.Stopped -and $null -ne $s.Terminal) 'WorldBlocks did not return native cleanup acknowledgement.'
         $commands=@($shared['FixtureCommands'].ToArray())
         Require (@($commands|Where-Object {$_ -match "GameplayMovementBegin\('[a-f0-9]+',[^)]*,true,true\)"}).Count -eq 1) 'WorldBlocks begin did not enable flight and camera authority.'
@@ -259,7 +306,17 @@ function Invoke-MineComeToolsRequest([string]$PathAndQuery,[int]$TimeoutMillisec
                 'cleanup_type' {'Native gameplay camera/body cleanup proof missing.'}
             }
             Require ($s.Failure -ceq $expected -and $s.ViewCount -ge 3 -and $s.PoseCount -ge 3) "Native cleanup fault $($case.Fault) was accepted: $($s.Failure)"
-        }elseif($case.Fault -and $case.Fault -ne 'buffered_view'){
+        }elseif($case.Fault -eq 'receipt_delay'){
+            Require (-not $s.Failure -and $s.ViewCount -eq 1 -and $s.LastView.seq -ge 2) 'Late receipt did not exercise the original250ms publication limit.'
+            $aim=Get-Content -LiteralPath $aimFile -Raw|ConvertFrom-Json;$view=Get-Content -LiteralPath $viewFile -Raw|ConvertFrom-Json
+            $first=$shared['FixtureSamples']['1']
+            Require ($view.seq -eq 1 -and $aim.seq -eq 1 -and $view.utc_ms -eq $aim.utc_ms -and $view.utc_ms -le $first.ExecutedUtc) 'Late receipt renewed or replaced the previous camera sample.'
+        }elseif($case.Fault -eq 'prefetch_slow'){
+            Require (-not $s.Failure -and $s.ViewCount -eq 0 -and $s.LastView.seq -ge 1 -and $shared['FixtureSamples'].Count -ge 2) 'Slow prefetch did not complete/cancel its pending native query normally.'
+            Require (-not [IO.File]::Exists($viewFile) -and [IO.File]::Exists($aimFile)) 'Slow prefetch did not retain the earlier fresh aim while rejecting the expired legacy view.'
+            $aim=Get-Content -LiteralPath $aimFile -Raw|ConvertFrom-Json;$first=$shared['FixtureSamples']['1'];$firstTiming=@($s.ViewTiming.Samples|Where-Object Sequence -eq 1)[0]
+            Require ($aim.seq -eq 1 -and $aim.utc_ms -eq $first.RequestedUtc -and $firstTiming.AimPublished -and $firstTiming.AimPublicationUtcMs-$aim.utc_ms -le 250 -and -not $firstTiming.Published) 'Early aim publication renewed its original timestamp or exceeded expiry.'
+        }elseif($case.Fault -and $case.Fault -notin @('buffered_view','dispatch_delay','sample_cadence','pipeline')){
             $expected=switch($case.Fault){'perspective' {'Native gameplay perspective missing.'};'perspective_cleanup' {'Native gameplay perspective missing.'};'fov' {'World block camera FOV unavailable.'};'sequence' {'Native gameplay view acknowledgement differs.'}}
             Require ($s.Failure -ceq $expected -and -not [IO.File]::Exists($aimFile)) "Malformed native $($case.Fault) was published: $($s.Failure)"
         }else{
@@ -271,11 +328,51 @@ function Invoke-MineComeToolsRequest([string]$PathAndQuery,[int]$TimeoutMillisec
                 Require ($aim.$field -ceq $valid[$field]) "WorldBlocks aim identity differs: $field"
             }
             Require ($aim.seq -eq $view.seq -and $aim.utc_ms -eq $view.utc_ms -and $aim.utc_ms -le [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()) 'WorldBlocks aim renewed or mismatched camera capture.'
+            $sampleTiming=$shared['FixtureSamples'][[string]$view.seq]
+            Require ($view.utc_ms -le $sampleTiming.ExecutedUtc) 'View capture UTC was restamped after the actual sample executed.'
+            if($case.Fault -eq 'dispatch_delay'){
+                Require ($sampleTiming.GateFinished-$sampleTiming.GateStarted -ge 70 -and $view.utc_ms -ge $sampleTiming.GateFinished) 'View UTC includes pre-dispatch identity-gate delay.'
+            }
             Require ($aim.origin.x -eq 1 -and $aim.origin.y -eq 2 -and $aim.origin.z -eq 4.62 -and $aim.direction.x -eq 1 -and $aim.direction.y -eq 0) 'Interaction ray did not retain the player eye.'
             Require ($aim.camera_origin.y -eq -1 -and $aim.camera_direction.y -eq -1 -and $aim.camera_up.z -eq 1 -and $aim.vertical_fov -eq 1.2) 'Third-person render camera basis differs.'
             Require ($view.forward.y -eq 1 -and $view.up.z -eq 1 -and $aim.range -eq 4.5 -and $aim.known -and $aim.distance -eq 2.5 -and $aim.terrain_hit) 'Movement direction or native occlusion was lost.'
             if($case.Fault -eq 'buffered_view'){
-                Require (@($commands|Where-Object {$_ -match 'MineComeGameplayViewFlush'}).Count -ge 3) 'Pending timer views were not flushed within their original acknowledgement deadline.'
+                Require (@($commands|Where-Object {$_ -match 'MineComeGameplayViewFlush'}).Count -ge 1) 'Pending timer view fallback was never exercised.'
+                $flushDelays=@(foreach($key in $shared['FixtureFlushes'].Keys){[long]$shared['FixtureFlushes'][$key]-[long]$shared['FixtureSamples'][$key].ExecutedUtc})
+                $bufferedAverage=($flushDelays|Measure-Object -Average).Average
+                Require ($flushDelays.Count -ge 3 -and $bufferedAverage -lt 45) "Buffered camera ACKs still waited for the old50ms fallback: average=$bufferedAverage ms."
+            }
+            if($case.Fault -eq 'sample_cadence'){
+                $samples=@($shared['FixtureSamples'].Values|Sort-Object ExecutedUtc)
+                # Skip two warm-up dispatches, then distinguish the new live
+                # cadence from the former90ms floor without timing one frame.
+                $cadenceAverage=($samples[-1].ExecutedUtc-$samples[2].ExecutedUtc)/[double]($samples.Count-3)
+                Require ($samples.Count -ge 12 -and $cadenceAverage -lt 85) "Native camera samples retain the old cadence: average=$cadenceAverage ms."
+            }
+            if($case.Fault -eq 'pipeline'){
+                $publications=@($shared['FixturePublications'].ToArray());$aimPublications=@($shared['FixtureAimPublications'].ToArray());$overlaps=0;$shortIntervals=0;$poseGaps=0
+                foreach($publication in $publications){
+                    $sample=$shared['FixtureSamples'][[string]$publication.Sequence]
+                    Require ($publication.UtcMs -eq $sample.RequestedUtc -and $publication.UtcMs -le $sample.ExecutedUtc) 'Pipelined publication mixed its sequence or original capture UTC.'
+                    $earlyAim=@($aimPublications|Where-Object Sequence -eq $publication.Sequence)
+                    Require ($earlyAim.Count -eq 1 -and $earlyAim[0].UtcMs -eq $publication.UtcMs -and $earlyAim[0].CompletedUtc -le $publication.StartedUtc) 'Renderer camera was not published before legacy view work.'
+                    $nextKey=[string]($publication.Sequence+1)
+                    if($shared['FixtureSamples'].ContainsKey($nextKey)){
+                        $next=$shared['FixtureSamples'][$nextKey]
+                        Require ($earlyAim[0].CompletedUtc -le $next.ExecutedUtc) 'Next camera dispatch delayed publication of the current renderer camera.'
+                        if($next.ExecutedUtc -le $publication.StartedUtc -and $next.ExecutedUtc+60 -gt $publication.StartedUtc -and $next.ExecutedUtc -lt $publication.CompletedUtc){$overlaps++}
+                        if($next.ExecutedUtc-$sample.ExecutedUtc -lt 125){$shortIntervals++}
+                    }
+                }
+                for($n=2;$n -lt $s.ViewCount;$n++){
+                    $previous=-1;$next=-1
+                    for($i=0;$i -lt $commands.Count;$i++){if($commands[$i].Contains("GameplayMovementSample('$($identity.Run)',$n,true)")){$previous=$i};if($commands[$i].Contains("GameplayMovementSample('$($identity.Run)',$($n+1),true)")){$next=$i}}
+                    if($previous -ge 0 -and $next -gt $previous+1 -and @($commands[($previous+1)..($next-1)]|Where-Object {$_ -match 'GameplayMovementPose'}).Count){$poseGaps++}
+                }
+                Require ($overlaps -ge 2 -and $shortIntervals -ge 2) "Camera pipeline did not overlap60ms native ACK waits with70ms publication: overlaps=$overlaps short_intervals=$shortIntervals."
+                Require ($poseGaps -ge 2 -and $s.PoseCount -ge $s.ViewCount) 'Pipelined ACKs starved the outer pose loop.'
+                Require ($shared['FixtureCancellationWasPending'] -and $shared['FixtureSamples'].Count -gt $s.ViewCount -and $s.Terminal.result -ceq 'explicit_stop') 'Cancellation did not exercise cleanup with a prefetched view outstanding.'
+                Write-Output "HOST_PIPELINE overlaps=$overlaps shortened_intervals=$shortIntervals pose_gaps=$poseGaps"
             }
         }
         if(-not $case.Fault -and $cameraFault -notin @('mutate','regress')){
@@ -294,7 +391,9 @@ function Invoke-MineComeToolsRequest([string]$PathAndQuery,[int]$TimeoutMillisec
         $pipeline.Dispose();$pipeline=$null;$runspace.Dispose();$runspace=$null;$cancel.Dispose();$cancel=$null;$passed++
     }
     Write-Output "PASS $passed gameplay host contract/worker checks (simulated transport; no game/network)"
+    Write-Output ("HOST_TIMING sample_interval_average_ms={0:F1} buffered_ack_average_ms={1:F1}" -f $cadenceAverage,$bufferedAverage)
 }finally{
+    [MineCome.Tests.DelayedGameplayLog]::Drain()
     if($cancel){$cancel.Cancel()};if($pipeline){$pipeline.Dispose()};if($runspace){$runspace.Dispose()};if($cancel){$cancel.Dispose()}
     $resolved=[IO.Path]::GetFullPath($directory);$temp=[IO.Path]::GetFullPath([IO.Path]::GetTempPath())
     if($resolved.StartsWith($temp,[StringComparison]::OrdinalIgnoreCase) -and [IO.Path]::GetFileName($resolved).StartsWith('minecome-gameplay-host-test-')){Remove-Item -LiteralPath $resolved -Recurse -Force}

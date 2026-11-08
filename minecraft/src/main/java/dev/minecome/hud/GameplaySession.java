@@ -47,6 +47,7 @@ public final class GameplaySession {
     private final boolean movementMode=blocksMode||Boolean.getBoolean("minecome.gameplayMovement");
     private final HudStreamLayout layout=HudStreamLayout.configured();
     private final HudReadback readback=new HudReadback();
+    private final GameplayCaptureCadence captureCadence=new GameplayCaptureCadence();
     private final GameplayWorldLayers worldLayers=new GameplayWorldLayers();
     private JsonObject frameWorldCamera;
     private final HudInputGate gate=new HudInputGate(movementMode,blocksMode,chatMode);
@@ -77,7 +78,7 @@ public final class GameplaySession {
     private long handRenderStarts,handRenderPasses,handCapturedFrames;
     private Object world,player,server;
     private boolean opening,ready,stopping,writerFinished,shutdownRequested,frameTransparent,sessionReportWritten;
-    private long readyAt,stopAt,writerAt,lastCaptureAt,inputEvents;
+    private long readyAt,stopAt,writerAt,inputEvents;
     private long uiWarmupAt; private int uiWarmupFrames; private boolean uiWarmupComplete;
     private int captureId,lastReadbackId;
     private String stopReason="not_stopped",failure;
@@ -505,7 +506,11 @@ public final class GameplaySession {
             if(playerFixture!=null)playerFixture.captured(frame);if(handsFixture!=null)handsFixture.captured(frame);if(worldBlocksFixture!=null)worldBlocksFixture.captured(frame);if(shapesFixture!=null)shapesFixture.captured(frame);if(depthFixture!=null)depthFixture.captured(frame);if(connectedFixture!=null)connectedFixture.captured(frame);
             output.offer(new HudStreamProducer.Frame(frame.width(),frame.height(),frame.layersBottomUp()==null?frame.bottomUp():null,meta.get("captured_utc_ms").getAsLong(),meta.get("selected_slot").getAsInt(),meta.get("screen").getAsInt(),frame.metadata(),frame.layersBottomUp()));
         });
-        long now=System.nanoTime();if(output==null||!output.isReady()||client.getOverlay()!=null||now-lastCaptureAt<50_000_000L)return;
+        long now=System.nanoTime();
+        // Only the exact verified native view rendered into this world layer
+        // may shorten the ordinary 50 ms HUD cadence. No timestamp is renewed.
+        long cameraUtc=worldBlocksMode&&!standalone&&frameWorldCamera!=null?frameWorldCamera.get("utc_ms").getAsLong():0;
+        if(output==null||!output.isReady()||client.getOverlay()!=null||!captureCadence.ready(now,cameraUtc))return;
         boolean inventory=HudVanillaUiAdapter.inventory(client.currentScreen);
         var meta=new JsonObject();meta.addProperty("state",inventory?"inventory":HudVanillaUiAdapter.chat(client.currentScreen)?"chat":client.currentScreen==null?"hotbar":"screen");
         meta.addProperty("selected_slot",client.player.getInventory().selectedSlot);meta.addProperty("screen",client.currentScreen==null?0:1);
@@ -528,7 +533,7 @@ public final class GameplaySession {
         if(nativeWalkingFixture!=null){var stage=nativeWalkingFixture.captureStage();if(stage!=null){meta.addProperty("native_walking_stage",stage);meta.add("native_walking_motion",nativeWalkingFixture.captureState(client));}}
         if(handsFixture!=null){var stage=handsFixture.captureStage();if(stage!=null)meta.addProperty("hands_fixture_stage",stage);}
         meta.addProperty("health_client",client.player.getHealth());meta.addProperty("food_client",client.player.getHungerManager().getFoodLevel());
-        if(readback.capture(client.getFramebuffer(),worldBlocksMode?worldLayers.framebuffer():null,++captureId,meta.toString())){lastCaptureAt=now;if(handFrameRendered)handCapturedFrames++;}
+        if(readback.capture(client.getFramebuffer(),worldBlocksMode?worldLayers.framebuffer():null,++captureId,meta.toString())){captureCadence.captured(now,cameraUtc);if(handFrameRendered)handCapturedFrames++;}
     }
 
     private JsonObject evidence(MinecraftClient client){

@@ -121,7 +121,16 @@ local function emit(p,event,result,s,seq)
   ..',"camera_basis_valid":'..tostring(s~=nil and normal(s,p))..',"camera_override_changed":'..tostring(p.camera_attempted==true)..',"camera_restored":'..tostring(p.camera_restored==true)..',"camera_reset_attempts":'..number(p.reset_attempts or 0)..',"timers_cancelled":'..tostring(p.timers_cancelled==true)..',"position_restored":false,"control_state_changed":false}'
  if p.allow_perspective then t=t:sub(1,-2)..',"body_visible_baseline_owned":true,"body_hidden":'..tostring(p.body_hidden==true)..',"body_restore_dispatched":'..tostring(p.body_restore_dispatched==true)..',"body_draw_calls":'..number(p.body_draw_calls or 0)..'}' end
  if p.allow_perspective then local g=p.camera_geometry;t=t:sub(1,-2)..',"camera_collision_generation":'..number(g and g.generation or 0)..',"camera_collision_required":'..number(p.latest and p.latest.camera_generation or 0)..',"camera_collision_complete":'..tostring(g~=nil and g.complete==true)..',"camera_collision_boxes":'..number(g and #g.boxes or 0)..',"camera_collision_distance":'..number(p.camera_owned_distance or 0)..'}' end
- local ok,v=pcall(System.LogAlways,'[MineComeGameplayMovement] '..t);return ok and v~=false
+ local ok,v=pcall(System.LogAlways,'[MineComeGameplayMovement] '..t)
+ if ok and v~=false and event=='view' then
+  -- A deferred camera readback can emit after the console request's marker.
+  -- KCD's log reader otherwise sees this receipt only when a later log call
+  -- delimits the tail. Emit that delimiter here on the same game callback;
+  -- never resample the camera or change its identity/timestamp to flush it.
+  -- The host retains its bounded fallback if this best-effort marker fails.
+  pcall(System.LogAlways,'[MineComeGameplayViewFlush] '..p.run)
+ end
+ return ok and v~=false
 end
 local function cancel(p)
  local good=true

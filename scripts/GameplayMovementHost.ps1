@@ -130,26 +130,65 @@ function Get-GameplayMovementWorker {
         $log=$null;$position=$LogOffset;$lastLength=$LogOffset;$begin=$null;$terminal=$null;$latestView=$null
         $sequence=0L;$source=-1.0;$viewSequence=0L;$views=0L;$poses=0L;$lastPoseUtc=0L;$lastPoseAt=0.0;$lastViewAt=-1000.0;$failure=$null;$started=$false;$stage='starting'
         $requestCount=0L;$maxRequestPathLength=0;$lastDispatch=$null
+        $viewTiming=[ordered]@{Count=0L;MaxDispatchMs=0.0;MaxAckAgeMs=0L;MaxPublicationMs=0L;Samples=[Collections.Generic.Queue[object]]::new()}
+        $pendingViewTiming=$null;$pendingViewRequest=$null;$viewHttpCompletedUtc=0L;$viewHttpElapsedMs=0.0
         $cameraGeometry=$null;$cameraGeometryText=$null;$cameraGeometryNext=1;$cameraGeometryChunks=0
         $temp=$ViewFile+'.'+$run+'.tmp'
         $aimFile=Join-Path (Split-Path -Parent $ViewFile) 'gameplay-aim.json';$aimTemp=$aimFile+'.'+$run+'.tmp'
-        function Publish([bool]$Stopped=$false){$Shared['Snapshot']=[pscustomobject]@{Stopped=$Stopped;Failure=$failure;Stage=$stage;PoseCount=$poses;ViewCount=$views;LastPoseSequence=$sequence;LastPoseUtcMs=$lastPoseUtc;RequestCount=$requestCount;MaxRequestPathLength=$maxRequestPathLength;LastDispatch=$lastDispatch;Begin=$begin;Terminal=$terminal;LastView=$latestView;Blocks=$(if($BlocksState){Get-GameplayBlocksHostState $BlocksState}else{$null});Terrain=$(if($TerrainState){Get-GameplayTerrainHostState $TerrainState}else{$null})}}
+        function Publish([bool]$Stopped=$false){$Shared['Snapshot']=[pscustomobject]@{Stopped=$Stopped;Failure=$failure;Stage=$stage;PoseCount=$poses;ViewCount=$views;LastPoseSequence=$sequence;LastPoseUtcMs=$lastPoseUtc;RequestCount=$requestCount;MaxRequestPathLength=$maxRequestPathLength;LastDispatch=$lastDispatch;ViewTiming=$viewTiming;Begin=$begin;Terminal=$terminal;LastView=$latestView;Blocks=$(if($BlocksState){Get-GameplayBlocksHostState $BlocksState}else{$null});Terrain=$(if($TerrainState){Get-GameplayTerrainHostState $TerrainState}else{$null})}}
         function Numeric($v){([double]$v).ToString('R',[Globalization.CultureInfo]::InvariantCulture)}
-        function Send([string[]]$Bodies){
+        function New-ViewTiming {return [ordered]@{FirstLogBytesUtcMs=0L;ViewReceiptParsedUtcMs=0L;ReceiptReadCalls=0L;ReceiptReadBytes=0L;ReceiptReadMs=0.0;ReceiptParseCount=0L;ReceiptParseMs=0.0}}
+        function Capture-ViewRequest([long]$LoopUtc,[double]$DispatchMs){
+            if($null -eq $requestedUtc){throw 'Native gameplay sample was not dispatched.'}
+            $at=$stopwatch.Elapsed.TotalMilliseconds
+            return [pscustomobject]@{Sequence=$viewSequence;LoopStartedUtcMs=$LoopUtc;RequestedUtcMs=$requestedUtc;DispatchMs=$DispatchMs;ViewHttpCompletedUtcMs=$viewHttpCompletedUtc;ViewHttpElapsedMs=$viewHttpElapsedMs;Timing=$pendingViewTiming;DeadlineAt=$at+300;LastFlushAt=$at}
+        }
+        function Publish-Aim($Receipt,$Request){
+            if([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()-$Request.RequestedUtcMs -gt 250){return 0L}
+            $aim=[ordered]@{schema=1;kind='minecome_gameplay_aim_v1';run=$run;world_id=$Identity.WorldId;patch_run=$Identity.PatchRun;patch_sha256=$Identity.PatchHash;target_pid=$Identity.Pid;target_start_filetime=$Identity.Start;seq=$Request.Sequence;utc_ms=$Request.RequestedUtcMs;origin=$Receipt.camera;direction=$Receipt.forward;range=$Receipt.aim.range;known=$Receipt.aim.known;distance=$Receipt.aim.distance;terrain_hit=$Receipt.aim.terrain_hit}
+            if($WorldBlocks){
+                $aim.schema=3;$aim.kind='minecome_gameplay_aim_v3';$aim.origin=$Receipt.eye;$aim.direction=$Receipt.aim_direction
+                $aim.camera_origin=$Receipt.camera;$aim.camera_direction=$Receipt.camera_forward;$aim.camera_up=$Receipt.camera_up;$aim.vertical_fov=$Receipt.fov;$aim.perspective=$Receipt.perspective
+            }
+            [IO.File]::WriteAllText($aimTemp,($aim|ConvertTo-Json -Depth 5 -Compress),[Text.UTF8Encoding]::new($false))
+            if([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()-$Request.RequestedUtcMs -gt 250){[IO.File]::Delete($aimTemp);return 0L}
+            Publish-GameplayMovementView $aimTemp $aimFile
+            return [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+        }
+        function Send([string[]]$Bodies,[string]$ViewCall=''){
             $requests=@(ConvertTo-GameplayMovementRequests $run $Bodies)
             foreach($request in $requests){
                 Assert-MineComeProbeContext $Context
                 Set-Variable -Name requestCount -Value ($requestCount+1) -Scope 1
                 Set-Variable -Name maxRequestPathLength -Value ([Math]::Max($maxRequestPathLength,$request.PathAndQuery.Length)) -Scope 1
                 if($stage -ne 'stopping'){Set-Variable -Name lastDispatch -Value ([pscustomobject]@{UtcMs=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds();EncodedPathLength=$request.PathAndQuery.Length;Command=$request.Command}) -Scope 1}
+                # Timestamp this new sample at its actual dispatch boundary, not
+                # before file parsing, identity checks or earlier split batches.
+                # Lua has not executed it yet, so this remains a conservative
+                # lower bound. Flushes/old ACKs never renew the timestamp.
+                if($ViewCall -and $request.Command.Contains($ViewCall)){
+                    Set-Variable -Name requestedUtc -Value ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()) -Scope 1
+                }
+                $httpStartedAt=$stopwatch.Elapsed.TotalMilliseconds
                 Invoke-MineComeToolsRequest -PathAndQuery $request.PathAndQuery -TimeoutMilliseconds 150|Out-Null
+                if($ViewCall -and $request.Command.Contains($ViewCall)){
+                    Set-Variable -Name viewHttpCompletedUtc -Value ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()) -Scope 1
+                    Set-Variable -Name viewHttpElapsedMs -Value ($stopwatch.Elapsed.TotalMilliseconds-$httpStartedAt) -Scope 1
+                }
             }
         }
         function Receipts {
+            $readAt=$stopwatch.Elapsed.TotalMilliseconds
             $length=$log.Length
             if($length -lt $lastLength -or $length-$position -gt 2MB){throw 'Gameplay game-log identity/unread bound changed.'}
+            if($pendingViewTiming){
+                $pendingViewTiming.ReceiptReadCalls++
+                if($length -gt $position -and $pendingViewTiming.FirstLogBytesUtcMs -eq 0){$pendingViewTiming.FirstLogBytesUtcMs=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()}
+            }
             $log.Position=$position;$bytes=[byte[]]::new([int]($length-$position));$offset=0
             while($offset -lt $bytes.Length){$n=$log.Read($bytes,$offset,$bytes.Length-$offset);if($n -eq 0){throw 'Gameplay log shrank.'};$offset+=$n}
+            $parseAt=$stopwatch.Elapsed.TotalMilliseconds
+            if($pendingViewTiming){$pendingViewTiming.ReceiptReadMs+=$parseAt-$readAt;$pendingViewTiming.ReceiptReadBytes+=$bytes.Length}
             $lf=[Array]::LastIndexOf($bytes,[byte]10)
             $result=[Collections.Generic.List[object]]::new()
             if($lf -ge 0){
@@ -157,6 +196,10 @@ function Get-GameplayMovementWorker {
                 foreach($m in [regex]::Matches($text,'\[MineComeGameplay(Movement|Blocks|Terrain)\] (\{[^\r\n]*\})\r?\n')){
                     if($m.Groups[2].Length -gt 4096){throw 'Gameplay native receipt exceeded bound.'}
                     $r=$m.Groups[2].Value|ConvertFrom-Json -Depth 6
+                    if($pendingViewTiming){
+                        $pendingViewTiming.ReceiptParseCount++
+                        if($m.Groups[1].Value -ceq 'Movement' -and $r.run -ceq $run -and $r.event -ceq 'view' -and $r.seq -eq $viewSequence){$pendingViewTiming.ViewReceiptParsedUtcMs=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()}
+                    }
                     if($r.schema -ne 1 -or $r.run -cne $run){continue}
                     if($m.Groups[1].Value -ceq 'Blocks'){if($BlocksState){Accept-GameplayBlocksReceipt $BlocksState $r};continue}
                     if($m.Groups[1].Value -ceq 'Terrain'){if($TerrainState){Accept-GameplayTerrainReceipt $TerrainState $r ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())};continue}
@@ -165,6 +208,7 @@ function Get-GameplayMovementWorker {
                 Set-Variable -Name position -Value ($position+$lf+1) -Scope 1
             }
             Set-Variable -Name lastLength -Value $length -Scope 1
+            if($pendingViewTiming){$pendingViewTiming.ReceiptParseMs+=$stopwatch.Elapsed.TotalMilliseconds-$parseAt}
             return $result.ToArray()
         }
         function RejectWrapper([string]$Call){
@@ -205,39 +249,81 @@ function Get-GameplayMovementWorker {
                 if($pose -and $TerrainState -and -not(Test-GameplayTerrainPose $TerrainState $pose)){throw 'Gameplay pose leaves acknowledged terrain.'}
                 if($BlocksState){$command=Get-GameplayBlocksCommands $BlocksState $utc;if($command){$parts.Add((RejectWrapper $command))}}
                 if($pose){$perspectiveArgument=if($WorldBlocks){','+[string]$pose.perspective_request+','+[string]$pose.camera_collision.generation}else{''};$parts.Add((RejectWrapper "MineCome.GameplayMovementPose('$run',$($pose.seq),$(Numeric $pose.source_ms),$(Numeric $pose.position.x),$(Numeric $pose.position.y),$(Numeric $pose.position.z)$perspectiveArgument)"))}
-                $requestView=$elapsed-$lastViewAt -ge 90
-                if($requestView){$viewSequence++;$requestedUtc=$utc;$aimArgument=if($BlocksState -or $WorldBlocks){',true'}else{''};$parts.Add((RejectWrapper "MineCome.GameplayMovementSample('$run',$viewSequence$aimArgument)"));$lastViewAt=$elapsed}
-                if($parts.Count){Send $parts.ToArray();if($pose){$sequence=[long]$pose.seq;$source=[double]$pose.source_ms;$poses++;$lastPoseUtc=[long]$pose.utc_ms;$lastPoseAt=$elapsed}}
+                $startView=$null -eq $pendingViewRequest -and $elapsed-$lastViewAt -ge 40
+                $viewCall=''
+                if($startView){
+                    $viewSequence++;$requestedUtc=$null;$viewHttpCompletedUtc=0L;$viewHttpElapsedMs=0.0
+                    # Timing observations never participate in expiry/authority.
+                    # FirstLogBytes can precede this ACK (for example pose logs);
+                    # ViewReceiptParsed identifies the matching sequence exactly.
+                    $pendingViewTiming=New-ViewTiming
+                    $aimArgument=if($BlocksState -or $WorldBlocks){',true'}else{''};$viewCall="MineCome.GameplayMovementSample('$run',$viewSequence$aimArgument)";$parts.Add((RejectWrapper $viewCall));$lastViewAt=$elapsed
+                }
+                $dispatchAt=$stopwatch.Elapsed.TotalMilliseconds
+                if($parts.Count){Send $parts.ToArray() $viewCall;if($pose){$sequence=[long]$pose.seq;$source=[double]$pose.source_ms;$poses++;$lastPoseUtc=[long]$pose.utc_ms;$lastPoseAt=$elapsed}}
+                $dispatchMs=$stopwatch.Elapsed.TotalMilliseconds-$dispatchAt
+                if($startView){$pendingViewRequest=Capture-ViewRequest $utc $dispatchMs}
                 if($poses -gt 0 -and $elapsed-$lastPoseAt -gt 350){throw 'Gameplay guest pose expired.'}
-                $until=$stopwatch.Elapsed.TotalMilliseconds+$(if($requestView){300}else{0})
-                $lastViewFlush=$stopwatch.Elapsed.TotalMilliseconds
+                $requestView=$null -ne $pendingViewRequest
+                $until=if($requestView){$pendingViewRequest.DeadlineAt}else{$stopwatch.Elapsed.TotalMilliseconds}
                 do{
+                    if($requestView -and -not $Token.IsCancellationRequested -and $stopwatch.Elapsed.TotalMilliseconds -ge $until){throw 'Native gameplay camera acknowledgement expired.'}
                     foreach($r in @(Receipts)){
                         if($r.event -ceq 'terminal'){$terminal=$r;throw "Native gameplay stopped: $($r.result)"}
                         if($r.event -ceq 'rejected'){throw "Native gameplay request rejected: $($r.result)"}
                         if($r.event -ceq 'view'){
-                            if(-not $requestView -or $r.seq -ne $viewSequence -or $r.result -cne 'sampled' -or -not $r.active -or -not $r.camera_basis_valid){throw 'Native gameplay view acknowledgement differs.'}
+                            if(-not $requestView -or $r.seq -ne $pendingViewRequest.Sequence -or $r.result -cne 'sampled' -or -not $r.active -or -not $r.camera_basis_valid){throw 'Native gameplay view acknowledgement differs.'}
+                            if($stopwatch.Elapsed.TotalMilliseconds -ge $pendingViewRequest.DeadlineAt){throw 'Native gameplay camera acknowledgement expired.'}
+                            if($WorldBlocks){
+                                if(-not(Test-GameplayHostNumber $r.fov) -or $r.fov -le .05 -or $r.fov -ge ([Math]::PI-.05)){throw 'World block camera FOV unavailable.'}
+                                if($r.perspective -notin @(0,1,2)){throw 'Native gameplay perspective missing.'}
+                            }
                             $latestView=$r
-                            $now=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
-                            if($now-$requestedUtc -le 250){
-                                $value=[ordered]@{schema=1;source_kind='live_kcd_hud_view_v1';run=$run;patch_run=$Identity.PatchRun;patch_sha256=$Identity.PatchHash;target_pid=$Identity.Pid;target_start_filetime=$Identity.Start;seq=$viewSequence;utc_ms=$requestedUtc;forward=$r.forward;up=$r.up}
+                            $accepted=$pendingViewRequest;$ackUtc=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+                            $pendingViewRequest=$null;$pendingViewTiming=$null;$requestView=$false
+                            # Renderer/depth freshness is the critical path:
+                            # expose the validated native camera before either
+                            # another HTTP dispatch or legacy movement-view I/O.
+                            $aimPublicationUtc=0L;$viewPublicationUtc=0L
+                            if($WorldBlocks){$aimPublicationUtc=Publish-Aim $r $accepted}
+                            # Only one native query may be outstanding. Once its
+                            # real ACK is validated, overlap the next query's
+                            # native/log wait with publication of this old ACK.
+                            # Process the next ACK only after the outer pose and
+                            # cancellation pass; never create an inner view chain.
+                            $prefetchAt=$stopwatch.Elapsed.TotalMilliseconds;$prefetchUtc=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+                            if($WorldBlocks -and -not $Token.IsCancellationRequested -and $prefetchUtc -lt $ExpiresUtcMs -and $prefetchAt -lt $limit -and $prefetchAt-$lastViewAt -ge 40){
+                                $viewSequence++;$requestedUtc=$null;$viewHttpCompletedUtc=0L;$viewHttpElapsedMs=0.0;$pendingViewTiming=New-ViewTiming
+                                $nextCall="MineCome.GameplayMovementSample('$run',$viewSequence,true)";$lastViewAt=$prefetchAt
+                                Send (RejectWrapper $nextCall) $nextCall
+                                $pendingViewRequest=Capture-ViewRequest $prefetchUtc ($stopwatch.Elapsed.TotalMilliseconds-$prefetchAt)
+                            }
+                            # Prefetch dispatch may be slow: recheck the saved
+                            # original timestamp instead of renewing its lease.
+                            $now=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds();$published=$now-$accepted.RequestedUtcMs -le 250
+                            if($published){
+                                $value=[ordered]@{schema=1;source_kind='live_kcd_hud_view_v1';run=$run;patch_run=$Identity.PatchRun;patch_sha256=$Identity.PatchHash;target_pid=$Identity.Pid;target_start_filetime=$Identity.Start;seq=$accepted.Sequence;utc_ms=$accepted.RequestedUtcMs;forward=$r.forward;up=$r.up}
                                 $bytes=[Text.UTF8Encoding]::new($false).GetBytes(($value|ConvertTo-Json -Depth 5 -Compress))
                                 $f=[IO.FileStream]::new($temp,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None)
                                 try{$f.Write($bytes);$f.Flush($false)}finally{$f.Dispose()}
-                                Publish-GameplayMovementView $temp $ViewFile
-                                if($BlocksState -or $WorldBlocks){
-                                    $aim=[ordered]@{schema=1;kind='minecome_gameplay_aim_v1';run=$run;world_id=$Identity.WorldId;patch_run=$Identity.PatchRun;patch_sha256=$Identity.PatchHash;target_pid=$Identity.Pid;target_start_filetime=$Identity.Start;seq=$viewSequence;utc_ms=$requestedUtc;origin=$r.camera;direction=$r.forward;range=$r.aim.range;known=$r.aim.known;distance=$r.aim.distance;terrain_hit=$r.aim.terrain_hit}
-                                    if($WorldBlocks){
-                                        if(-not(Test-GameplayHostNumber $r.fov) -or $r.fov -le .05 -or $r.fov -ge ([Math]::PI-.05)){throw 'World block camera FOV unavailable.'}
-                                        if($r.perspective -notin @(0,1,2)){throw 'Native gameplay perspective missing.'}
-                                        $aim.schema=3;$aim.kind='minecome_gameplay_aim_v3';$aim.origin=$r.eye;$aim.direction=$r.aim_direction
-                                        $aim.camera_origin=$r.camera;$aim.camera_direction=$r.camera_forward;$aim.camera_up=$r.camera_up;$aim.vertical_fov=$r.fov;$aim.perspective=$r.perspective
-                                    }
-                                    [IO.File]::WriteAllText($aimTemp,($aim|ConvertTo-Json -Depth 5 -Compress),[Text.UTF8Encoding]::new($false));Publish-GameplayMovementView $aimTemp $aimFile
+                                $published=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()-$accepted.RequestedUtcMs -le 250
+                                if($published){
+                                    Publish-GameplayMovementView $temp $ViewFile;$viewPublicationUtc=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+                                    if($BlocksState -and -not $WorldBlocks){$aimPublicationUtc=Publish-Aim $r $accepted}
+                                    $views++
+                                }else{
+                                    [IO.File]::Delete($temp)
                                 }
-                                $views++
                             }
-                            $requestView=$false
+                            $publishedUtc=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+                            $viewTiming.Count++;$viewTiming.MaxDispatchMs=[Math]::Max($viewTiming.MaxDispatchMs,$accepted.DispatchMs)
+                            $viewTiming.MaxAckAgeMs=[Math]::Max($viewTiming.MaxAckAgeMs,$ackUtc-$accepted.RequestedUtcMs)
+                            $viewTiming.MaxPublicationMs=[Math]::Max($viewTiming.MaxPublicationMs,$publishedUtc-$ackUtc)
+                            if($viewTiming.Samples.Count -ge 64){$null=$viewTiming.Samples.Dequeue()}
+                            $timing=$accepted.Timing
+                            $viewTiming.Samples.Enqueue([pscustomobject]@{Sequence=$accepted.Sequence;LoopStartedUtcMs=$accepted.LoopStartedUtcMs;RequestedUtcMs=$accepted.RequestedUtcMs;DispatchMs=$accepted.DispatchMs;ViewHttpCompletedUtcMs=$accepted.ViewHttpCompletedUtcMs;ViewHttpElapsedMs=$accepted.ViewHttpElapsedMs;
+                                FirstLogBytesUtcMs=$timing.FirstLogBytesUtcMs;ViewReceiptParsedUtcMs=$timing.ViewReceiptParsedUtcMs;ReceiptReadCalls=$timing.ReceiptReadCalls;ReceiptReadBytes=$timing.ReceiptReadBytes;ReceiptReadMs=$timing.ReceiptReadMs;ReceiptParseCount=$timing.ReceiptParseCount;ReceiptParseMs=$timing.ReceiptParseMs;
+                                AckUtcMs=$ackUtc;AimPublicationUtcMs=$aimPublicationUtc;AimPublished=($aimPublicationUtc -gt 0);ViewPublicationUtcMs=$viewPublicationUtc;PublicationUtcMs=$publishedUtc;Published=$published})
                         }
                     }
                     if(-not $requestView){break}
@@ -245,9 +331,9 @@ function Get-GameplayMovementWorker {
                     # engine timer, after the original console flush. Delimit
                     # that buffered line without resampling, renewing its UTC
                     # or extending the existing acknowledgement deadline.
-                    if(-not $Token.IsCancellationRequested -and $stopwatch.Elapsed.TotalMilliseconds-$lastViewFlush -ge 50){
+                    if(-not $Token.IsCancellationRequested -and $stopwatch.Elapsed.TotalMilliseconds-$pendingViewRequest.LastFlushAt -ge 15){
                         Send "System.LogAlways('[MineComeGameplayViewFlush] $run')"
-                        $lastViewFlush=$stopwatch.Elapsed.TotalMilliseconds
+                        $pendingViewRequest.LastFlushAt=$stopwatch.Elapsed.TotalMilliseconds
                     }
                     Start-Sleep -Milliseconds 5
                 }while($stopwatch.Elapsed.TotalMilliseconds -lt $until -and -not $Token.IsCancellationRequested)
@@ -325,7 +411,7 @@ function Start-GameplayMovementHost {
     $identity=[pscustomobject]@{Run=$Run;WorldId=$WorldId;Pid=$Context.GamePid;Start=$Context.GameStartedUtc.ToFileTimeUtc().ToString();PatchRun=$Patch.Run;PatchHash=$Patch.Hash}
     if($WorldBlocks){$identity|Add-Member -NotePropertyName CameraOrigin -NotePropertyValue ([pscustomobject]@{x=[double]$Patch.Data.center.x;y=[double]$Patch.Data.center.y;z=[double]$Patch.Data.center.z-64.0})}
     $shared=[Collections.Concurrent.ConcurrentDictionary[string,object]]::new([StringComparer]::Ordinal)
-    $shared['Snapshot']=[pscustomobject]@{Stopped=$false;Failure=$null;Stage='starting';PoseCount=0L;ViewCount=0L;LastPoseSequence=0L;LastPoseUtcMs=0L;RequestCount=0L;MaxRequestPathLength=0;LastDispatch=$null;Begin=$null;Terminal=$null;LastView=$null;Blocks=$null;Terrain=$null}
+    $shared['Snapshot']=[pscustomobject]@{Stopped=$false;Failure=$null;Stage='starting';PoseCount=0L;ViewCount=0L;LastPoseSequence=0L;LastPoseUtcMs=0L;RequestCount=0L;MaxRequestPathLength=0;LastDispatch=$null;ViewTiming=$null;Begin=$null;Terminal=$null;LastView=$null;Blocks=$null;Terrain=$null}
     $cancellation=[Threading.CancellationTokenSource]::new();$runspace=[RunspaceFactory]::CreateRunspace();$pipeline=[PowerShell]::Create()
     try{
         $runspace.Open();$pipeline.Runspace=$runspace
@@ -345,7 +431,7 @@ function Stop-GameplayMovementHost($Session){
     if(-not $Session.Async.AsyncWaitHandle.WaitOne(4000)){throw 'Gameplay host worker did not finish bounded cleanup.'}
     $errorText=$null;try{$null=$Session.PowerShell.EndInvoke($Session.Async)}catch{$errorText=$_.Exception.Message}
     $s=$Session.Shared['Snapshot'];if(-not $errorText -and $Session.PowerShell.Streams.Error.Count -gt 0){$errorText=[string]$Session.PowerShell.Streams.Error[0]}
-    $Session.Final=[pscustomobject]@{Stopped=$s.Stopped;Failure=$(if($s.Failure){$s.Failure}else{$errorText});Stage=$s.Stage;PoseCount=$s.PoseCount;ViewCount=$s.ViewCount;LastPoseSequence=$s.LastPoseSequence;LastPoseUtcMs=$s.LastPoseUtcMs;RequestCount=$s.RequestCount;MaxRequestPathLength=$s.MaxRequestPathLength;LastDispatch=$s.LastDispatch;Begin=$s.Begin;Terminal=$s.Terminal;LastView=$s.LastView;Blocks=$s.Blocks;Terrain=$s.Terrain;ResourcesClosed=$true}
+    $Session.Final=[pscustomobject]@{Stopped=$s.Stopped;Failure=$(if($s.Failure){$s.Failure}else{$errorText});Stage=$s.Stage;PoseCount=$s.PoseCount;ViewCount=$s.ViewCount;LastPoseSequence=$s.LastPoseSequence;LastPoseUtcMs=$s.LastPoseUtcMs;RequestCount=$s.RequestCount;MaxRequestPathLength=$s.MaxRequestPathLength;LastDispatch=$s.LastDispatch;ViewTiming=$s.ViewTiming;Begin=$s.Begin;Terminal=$s.Terminal;LastView=$s.LastView;Blocks=$s.Blocks;Terrain=$s.Terrain;ResourcesClosed=$true}
     $Session.PowerShell.Dispose();$Session.Runspace.Dispose();$Session.Cancellation.Dispose();$Session.Disposed=$true
     $Session.Final|ConvertTo-Json -Depth 8|Set-Content -LiteralPath (Join-Path $Session.Probe.Directory 'verification.json') -Encoding utf8NoBOM
     return $Session.Final

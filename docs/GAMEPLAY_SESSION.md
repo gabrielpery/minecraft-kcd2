@@ -423,7 +423,10 @@ position, velocity or block-state writes are used. This is automated Minecraft
 acceptance with the world/HUD layer active, not native KCD walking acceptance.
 Evidence: `runtime/evidence/gameplay-shape-walking-20261106-163317-1ae31f8068074029892b6de9bb052720/verification.json`.
 
-World blocks use the existing 20 FPS capture and aspect-fit compositor. The
+World blocks use the aspect-fit compositor and a normal 20 FPS capture cadence.
+A newly verified native camera can trigger capture after 25ms; repeated camera
+samples retain the 50ms interval. Capture always preserves the camera's original
+timestamp and exact rendered view. The
 WorldBlocks profile now sends separate world colour, raw depth and foreground
 hands/UI planes in schema3 format2; install the newly pinned Chat compositor and
 shader together with the updated client. Older flat profiles remain format1.
@@ -624,6 +627,15 @@ native movement log and validate its saved geometry/readbacks with
 That verifier rejects changing geometry because a final snapshot alone cannot
 prove earlier camera clearance. The receipts are `native-walking-verification.json`
 and `camera-collision-verification.json` inside the run directory.
+
+For foliage stability, also preserve the run's native addon log as
+`native-depth-addon.log` and run
+`Test-KcdFoliageDepthEvidence.ps1 -EvidenceDirectory <saved-evidence-directory>`.
+It checks cumulative depth counters over intervals wholly inside the stationary
+phase, requires at least four seconds and 120 frames, and fails on any missing
+occlusion or readiness transition. Its immutable `foliage-depth-verification.json`
+records failures as well as passes. This checks whole-frame depth stability;
+it does not establish every foliage material's temporal appearance.
 
 Input, pose, camera admission and cleanup also have automated contract/lifecycle
 coverage. F5 applies only to WorldBlocks; legacy `-Hands` and flat-stream profiles

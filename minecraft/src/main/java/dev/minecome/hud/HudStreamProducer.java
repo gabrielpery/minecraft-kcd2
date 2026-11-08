@@ -10,6 +10,7 @@ import java.nio.file.*;
 import java.security.MessageDigest;
 import java.util.*;
 import java.util.concurrent.atomic.*;
+import java.util.concurrent.locks.LockSupport;
 
 /** Protocol/HUD_STREAM.md. Native operations and pixel conversion are confined to one worker. */
 public final class HudStreamProducer implements AutoCloseable {
@@ -62,7 +63,7 @@ public final class HudStreamProducer implements AutoCloseable {
     private final AtomicReference<JsonObject> pointerStageReceipt=new AtomicReference<>();
     private final AtomicBoolean ready=new AtomicBoolean(),finished=new AtomicBoolean();
     private final AtomicLong replaced=new AtomicLong(),published=new AtomicLong();
-    private Thread worker;
+    private volatile Thread worker;
     private volatile int producerPid;
     private volatile long producerStart,lastPublishedAt;
     private volatile PublicationStage publicationStage=new PublicationStage("not_started",System.nanoTime());
@@ -139,11 +140,13 @@ public final class HudStreamProducer implements AutoCloseable {
     public void offer(Frame frame) {
         if(!isReady() || terminal.get()!=null)return;
         if(latest.getAndSet(frame)!=null)replaced.incrementAndGet();
+        LockSupport.unpark(worker);
     }
     public void finish(String result,JsonObject evidence) {
         if(!Set.of("passed","failed","stopped","fixture","input_passed","input_completed","input_cancelled").contains(result))throw new IllegalArgumentException("Invalid stream result");
         if(evidence!=null)finalEvidence.compareAndSet(null,evidence.deepCopy());
         terminal.compareAndSet(null,result);
+        LockSupport.unpark(worker);
     }
     @Override public void close(){finish("stopped",null);}
     /** Fixtures only; never invoked by the game/render thread. */
@@ -262,7 +265,14 @@ public final class HudStreamProducer implements AutoCloseable {
                 var pointer=pointerStageReceipt.getAndSet(null);
                 if(pointer!=null){var receipt=identityReceipt(pid,start);receipt.add("pointer_fixture",pointer);evidenceWriter.submit(target.resolve("pointer-fixture-"+pointer.get("stage").getAsString()+".json"),receipt);}
                 Frame frame=latest.getAndSet(null);
-                if(frame==null){publicationStage("awaiting_frame");Thread.sleep(5);continue;}
+                if(frame==null){
+                    publicationStage("awaiting_frame");
+                    // offer/finish retain a wake permit even when they race this
+                    // park, so a ready readback never waits out a polling sleep.
+                    LockSupport.parkNanos(this,5_000_000L);
+                    if(Thread.interrupted())throw new InterruptedException("HUD publisher interrupted");
+                    continue;
+                }
                 long now=System.currentTimeMillis();
                 if(frame.capturedUtcMs()>now+250 || frame.capturedUtcMs()<now-1000){staleDrops++;continue;}
                 if(width!=0 && (frame.width()!=width || frame.height()!=height))throw new IOException("Stream dimensions changed");

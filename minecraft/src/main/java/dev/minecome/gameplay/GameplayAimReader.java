@@ -10,6 +10,7 @@ import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 
 /** Latest exact native camera/ray sample. File work never runs on a game tick. */
 public final class GameplayAimReader implements AutoCloseable {
@@ -19,6 +20,7 @@ public final class GameplayAimReader implements AutoCloseable {
         keys=new java.util.HashSet<>(KEYS);keys.addAll(Set.of("camera_origin","camera_direction","camera_up","vertical_fov","perspective"));PERSPECTIVE_KEYS=Set.copyOf(keys);}
     private final Path file;private final HudInputProtocol.Identity identity;private final GroundSurface surface;private final String worldId;
     private volatile GameplayBlocks.Aim latest;private volatile String failure;private volatile boolean closing;
+    private volatile WatchService changeWatch;
     public record RenderSample(GameplayBlocks.Aim aim,GameplayWorldRenderer.View view,int perspective,int schema){
         public boolean fresh(){return aim.fresh(System.currentTimeMillis(),System.nanoTime());}
     }
@@ -35,7 +37,9 @@ public final class GameplayAimReader implements AutoCloseable {
     public String failure(){return failure;}
     /** One publication supplies both projection and target; never mix adjacent native samples. */
     public RenderSample worldSample(){var sample=renderSample;return !closing&&failure==null&&sample!=null&&sample.fresh()?sample:null;}
-    private void readLoop(){long sequence=0,utc=0,failedAt=0;String previous=null;try{
+    private void readLoop(){long sequence=0,utc=0,failedAt=0;String previous=null;try(var changes=file.getFileSystem().newWatchService()){
+        changeWatch=changes;
+        file.getParent().register(changes,StandardWatchEventKinds.ENTRY_CREATE,StandardWatchEventKinds.ENTRY_MODIFY);
         while(!closing){
             String text=null;
             try{
@@ -68,9 +72,21 @@ public final class GameplayAimReader implements AutoCloseable {
                     }else latest=aim;
                 }
             }
-            Thread.sleep(10);
+            // Atomic host replacement normally wakes this worker immediately.
+            // Notifications only schedule a read: the original bounded parser,
+            // identity checks and UTC remain authoritative. Keep the previous
+            // 10 ms poll as a fallback for coalesced/lost filesystem events.
+            long until=System.nanoTime()+10_000_000L;
+            while(!closing){
+                long remaining=until-System.nanoTime();if(remaining<=0)break;
+                var key=changes.poll(remaining,TimeUnit.NANOSECONDS);if(key==null)break;
+                boolean changed=false;
+                for(var event:key.pollEvents())if(event.kind()==StandardWatchEventKinds.OVERFLOW||file.getFileName().equals(event.context()))changed=true;
+                if(!key.reset())throw new IOException("Aim directory notification ownership ended");
+                if(changed)break;
+            }
         }
-    }catch(Exception e){if(!closing)failure=e.toString();}}
+    }catch(Exception e){if(!closing)failure=e.toString();}finally{changeWatch=null;}}
     public static JsonObject parse(String text,HudInputProtocol.Identity id,String world,GroundSurface surface,long now)throws IOException{
         if(text.length()>4096)throw new IOException("Aim snapshot oversized");
         try(var r=new JsonReader(new StringReader(text))){
@@ -115,5 +131,5 @@ public final class GameplayAimReader implements AutoCloseable {
     private static Vec3d vector(JsonObject j)throws IOException{if(!j.keySet().equals(Set.of("x","y","z")))throw new IOException("Aim vector fields");return new Vec3d(number(j,"x"),number(j,"y"),number(j,"z"));}
     private Vec3d position(Vec3d p){return new Vec3d(p.x-surface.centerX(),64+p.z-surface.centerZ(),surface.centerY()-p.y);}
     private static Vec3d direction(Vec3d d){return new Vec3d(d.x,d.z,-d.y);}
-    @Override public void close(){closing=true;latest=null;renderSample=null;}
+    @Override public void close(){closing=true;latest=null;renderSample=null;var changes=changeWatch;if(changes!=null)try{changes.close();}catch(IOException ignored){}}
 }

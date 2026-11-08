@@ -84,8 +84,10 @@ and an owned-block visibility check rejects hidden targets. The camera now clips
 against both native scenery and actual owned Minecraft camera shapes; an
 eight-block fixture passes native back/front clearance checks. Henry's body is
 hidden while Steve is shown.
-Foliage can still flash against Steve when native depth alignment expires; this
-rendering issue is being tracked separately from the verified walking/collision.
+Camera publication now prioritizes the renderer and overlaps the next query with
+movement-file writes. An automated stationary foliage check kept native depth
+active for all 392 measured frames, with no readiness transitions. Moving-camera
+alignment can still drop out and cause foliage flashing; this remains unfinished.
 See [player rendering and perspective](docs/GAMEPLAY_SESSION.md#player-rendering-and-perspective).
 
 The [`-WorldBlocks` profile](docs/GAMEPLAY_SESSION.md#minecraft-world-blocks) adds

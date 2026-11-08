@@ -1,5 +1,57 @@
 # MineCome progress — 2026-11-08
 
+## Faster camera publication and stationary foliage stability
+
+Implemented and live verified a shorter camera handoff. Each WorldBlocks camera
+snapshot is published immediately after its native acknowledgement, before the
+next HTTP query. The next query overlaps the legacy movement-view publication;
+the worker still processes poses and cancellation between acknowledgements.
+Each file keeps the original sequence/UTC and its independent 250ms age check.
+The request timestamp now brackets the actual sample dispatch, after identity
+validation and earlier split requests. Native Lua emits an immediate receipt
+delimiter, with a 15ms host fallback for buffered replies.
+
+Minecraft wakes its camera reader on file changes and its image publisher on
+new frames. A new verified camera may capture after 25ms; duplicate views retain
+50ms. Opaque-pixel conversion avoids redundant divisions, with exhaustive
+colour/alpha equivalence coverage and unchanged raw depth bits. None of these
+changes renew a stale sample or widen camera alignment tolerances.
+
+Automated two-game evidence:
+`runtime/evidence/gameplay-kcd-20261108-135115-2a216a227e374c5e9b779bb43700dadc`.
+The strict saved-evidence foliage verifier passes **392/392 stationary frames**
+over 4,996ms inside a 12,030ms dwell: zero readiness transitions and zero
+camera-age, sample-age, source, position, basis or projection failures. The
+earlier recorded stationary baseline was 325/441 with 79 readiness transitions.
+Intermediate failed comparisons remain preserved; they were not relabelled.
+
+The final 64 camera samples average 74.63ms between requests and 73.30ms from
+request to renderer-file publication, including 14.36ms from ACK to publication.
+These are transport measurements, not physical key-to-screen latency. The same
+run passes six strides in each third-person view, inventory suppression,
+first-person return and normal save/cleanup. Independent collision verification
+checks 235 back / 100 front native samples with zero penetration. No user input
+was needed. GPU capture completed all 621 enqueued frames with no busy skips or
+fence-timeout polls.
+
+**Remaining:** moving-view foliage flashing is not fully fixed. Two complete
+walking/inventory intervals retained depth on 249/341 and 439/459 frames. The
+latter had 18 position mismatches, one basis mismatch and one camera-age failure.
+The current same-UV compositor cannot correctly combine two different cameras.
+The next rendering change needs world-colour/depth reprojection to the current
+proven native view, including disocclusion handling; hands/UI stay separate.
+Do not replace this with a wider tolerance, renewed UTC, or stale matching proof.
+The stationary pass also does not prove all foliage alpha/jitter behaviour.
+
+Validation: Java assemble, 230 wire checks, 458 stream checks including actual
+Win32 transport, 323 block checks; 35 Lua movement cases; 44 host-worker groups;
+six combined block/terrain worker cases. A premature fixture-cancellation race
+in the latter now waits for both required expanded dispatches within its original
+deadline; final terrain ordering assertions remain strict. The new
+`Test-KcdFoliageDepthEvidence.ps1` checks saved native counters and refuses to
+overwrite evidence. Native addon/shader binaries did not change in this batch.
+Current deployment and next implementation are in `docs/NEXT_SESSION.md`.
+
 ## Owned-block camera collision and integrated third-person walking
 
 Implemented, compiled and live verified camera clipping against server-confirmed

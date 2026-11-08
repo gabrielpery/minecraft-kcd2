@@ -6,7 +6,7 @@ local function eq(a,b)assert(a==b,'got '..tostring(a)..', expected '..tostring(b
 local function test(name,fn)local ok,err=pcall(fn);if not ok then error(name..': '..tostring(err),0)end;passed=passed+1;print('PASS '..name)end
 local function copy(v)return{x=v.x,y=v.y,z=v.z}end
 local function fixture()
- local f={time=10,position={x=1,y=2,z=3},velocity={x=0,y=0,z=0},timers={},logs={},writes=0,serial=0,callback=false}
+ local f={time=10,position={x=1,y=2,z=3},velocity={x=0,y=0,z=0},timers={},logs={},raw_logs={},writes=0,serial=0,callback=false}
  Physics=nil;CryAction=nil;ent_all=15;ent_terrain=1
  local retained={marker='untouched'};MineCome={_movement_probe=retained}
  player={id=17,actor={IsDead=function()return false end,IsUnconscious=function()return false end,GetLinkedEntity=function()return nil end},
@@ -15,7 +15,7 @@ local function fixture()
   SetWorldPos=function(_,v)eq(f.callback,true);f.position=copy(v);f.writes=f.writes+1;if f.write_error then error('write failed')end end}
  System={GetCurrTime=function()return f.time end,GetViewCameraPos=function()local v=copy(f.position);v.z=v.z+1.6;return v end,
   GetViewCameraDir=function()return{x=0,y=1,z=0}end,GetViewCameraUpDir=function()return{x=0,y=0,z=1}end,GetViewCameraFov=function()return 1 end,
-  LogAlways=function(v)f.logs[#f.logs+1]=v end}
+  LogAlways=function(v)f.raw_logs[#f.raw_logs+1]=v;if v:find('[MineComeGameplayMovement] ',1,true)==1 then f.logs[#f.logs+1]=v end end}
  Script={SetTimerForFunction=function(ms,name,data,pause)eq(pause,true);f.serial=f.serial+1;if f.fail_timer==f.serial then return nil end
    f.timers[f.serial]={name=name,data=data,ms=ms,alive=true};return f.serial end,
   KillTimer=function(id)assert(f.timers[id] and f.timers[id].alive,'unowned timer');f.timers[id].alive=false end}
@@ -200,6 +200,39 @@ test('third back acknowledges only actual deferred camera and keeps eye aiming',
  f:fire('tick',.01);assert(f.logs[#f.logs]:find('"perspective":1',1,true),f.logs[#f.logs]);eq(f.camera.position.y,-.5)
  eq(f.last_aim.origin.y,2);eq(f.last_aim.origin.z,4.6);eq(f.last_aim.direction.y,4.5)
  f:finishPerspective();f:lastReason('explicit_stop');assert(f.logs[#f.logs]:find('"camera_restored":true',1,true))
+end)
+
+test('timer camera receipt is immediately delimited without a second host request',function()
+ local f=perspective_fixture();f:beginPerspective();f:pose(1,0,1,2,3,1);f:fire('tick',.01)
+ local logger=System.LogAlways;local pending,visible=nil,{}
+ -- Model the actual line reader: the last LogAlways record remains an
+ -- unterminated tail until another record arrives, even from a later timer.
+ System.LogAlways=function(line)
+  if pending then visible[#visible+1]=pending end;pending=line;logger(line)
+ end
+ local count=#f.logs;local ok,why=MineCome.GameplayMovementSample(A,7,true)
+ eq(ok,true);eq(why,'camera_pending');eq(#visible,0);eq(#f.logs,count)
+ f:fire('tick',.01)
+ eq(#visible,1);eq(#f.logs,count+1);eq(visible[1],f.logs[#f.logs])
+ assert(visible[1]:find('"run":"'..A..'"',1,true));assert(visible[1]:find('"event":"view"',1,true))
+ assert(visible[1]:find('"seq":7,',1,true));assert(visible[1]:find('"sampled_engine_seconds":'..string.format('%.17g',f.time),1,true))
+ eq(pending,'[MineComeGameplayViewFlush] '..A);eq(MineCome._gameplay_movement.active.pending_view,nil)
+ eq(MineCome._gameplay_movement.active.view_sequence,7);eq(f.writes,0)
+ f:fire('tick',.01);eq(#f.logs,count+1);f:finishPerspective()
+end)
+
+test('failed camera delimiter does not duplicate or renew an emitted receipt',function()
+ local f=perspective_fixture();f:beginPerspective();f:pose(1,0,1,2,3,1);f:fire('tick',.01)
+ local logger=System.LogAlways;local attempts=0
+ System.LogAlways=function(line)
+  if line:find('[MineComeGameplayViewFlush]',1,true) then attempts=attempts+1;error('marker unavailable')end
+  logger(line)
+ end
+ eq(MineCome.GameplayMovementSample(A,9,true),true);local count=#f.logs
+ f:fire('tick',.01);eq(attempts,1);eq(#f.logs,count+1)
+ local receipt=f.logs[#f.logs];eq(MineCome._gameplay_movement.active.pending_view,nil)
+ f:fire('tick',.01);eq(attempts,1);eq(f.logs[#f.logs],receipt)
+ f:finishPerspective()
 end)
 test('independent native yaw pitch drives camera while front retains natural movement forward',function()
  local f=perspective_fixture();f:beginPerspective();f:pose(1,0,1,2,3,1);f:fire('tick',.01);f:fire('tick',.01)

@@ -48,7 +48,28 @@ public final class GameplayWireTests {
         worldButtons(id);
         chat(id);
         nativeViewAdmission();
+        cameraCaptureCadence();
         System.out.println("GameplayWireTests: "+checks+" checks passed; no games");
+    }
+    private static void cameraCaptureCadence(){
+        var cadence=new GameplayCaptureCadence();long start=1_000_000_000L;
+        check(cadence.ready(start,0));cadence.captured(start,1000);
+        check(!cadence.ready(start+24_999_999L,1020));
+        check(cadence.ready(start+25_000_000L,1020)); // Fresh view wins before the next ordinary HUD capture.
+        check(!cadence.ready(start+25_000_000L,1000));
+        check(!cadence.ready(start+25_000_000L,999)); // Regressed camera cannot request the faster cadence.
+        check(!cadence.ready(start+25_000_000L,0)); // UI-only/missing camera keeps the existing cadence.
+        check(cadence.ready(start+50_000_000L,0));
+        // Simulate a busy readback: checking readiness consumes neither the
+        // camera identity nor the interval; the following frame can retry.
+        check(cadence.ready(start+26_000_000L,1020));cadence.captured(start+26_000_000L,1020);
+        check(!cadence.ready(start+50_000_000L,1030));
+        check(cadence.ready(start+51_000_000L,1030));
+        check(!cadence.ready(start+75_999_999L,1020));
+        check(cadence.ready(start+76_000_000L,1020));cadence.captured(start+76_000_000L,0);
+        check(!cadence.ready(start+101_000_000L,1020)); // Missing-camera capture cannot make the old view new again.
+        check(cadence.ready(start+101_000_000L,1030));
+        check(!cadence.ready(start+75_000_000L,1030)); // Monotonic clock regression never bypasses the gate.
     }
     private static void nativeViewAdmission(){
         var origin=net.minecraft.util.math.Vec3d.ZERO;

@@ -123,7 +123,14 @@ try{
    $null=$pipeline.AddScript((Get-GameplayMovementWorker).ToString()).AddArgument([pscustomobject]$case).AddArgument($identity).AddArgument($bounds).AddArgument($poseFile).AddArgument($viewFile).AddArgument($now+10000).AddArgument(0L).AddArgument($shared).AddArgument($cancel.Token).AddArgument($directory).AddArgument($blocks).AddArgument($terrain)
    $async=$pipeline.BeginInvoke();$watch=[Diagnostics.Stopwatch]::StartNew()
    do{
-    if($shared.ContainsKey('Snapshot')){$s=$shared['Snapshot'];if($s.Stopped -or ($s.ViewCount -ge 3 -and $s.PoseCount -ge 3 -and $s.Blocks.Applications -ge $(if($case.Explore){2}else{1}))){break}}
+    if($shared.ContainsKey('Snapshot')){
+     $s=$shared['Snapshot']
+     # The ack-race case can admit the expanded block after this loop already
+     # read its old pose. Wait for the next loop's required expanded pose too;
+     # generic pose/view counts do not prove that particular dispatch occurred.
+     $expandedReady=-not $case.Explore -or ($shared['ExpandedPoseSent'] -and $shared['ExpandedBlockSent'])
+     if($s.Stopped -or ($expandedReady -and $s.ViewCount -ge 3 -and $s.PoseCount -ge 3 -and $s.Blocks.Applications -ge $(if($case.Explore){2}else{1}))){break}
+    }
     Start-Sleep -Milliseconds 10
    }while($watch.ElapsedMilliseconds -lt 3000 -and -not $async.IsCompleted)
    $cancel.Cancel();Require ($async.AsyncWaitHandle.WaitOne(4000)) 'Combined worker cleanup timed out.'
@@ -134,7 +141,7 @@ try{
    else{Require (($case.FailTerrainStop -or -not $s.Failure) -and $s.Blocks.CleanupComplete -and $s.Blocks.Removed -eq 1) ('Block cleanup failed: '+$s.Failure)}
    if($case.Explore){
     Require ($shared['TerrainReceiptBytes'] -gt 0 -and $shared['TerrainReceiptBytes'] -lt 4095 -and $shared['TerrainBatchCount'] -eq 9) 'Bounded terrain batches were not exercised.'
-    Require ($s.Terrain.Generation -eq 1 -and $s.Terrain.Admissions -eq 1 -and $s.Terrain.TileCount -eq 2 -and $shared['AckWrittenBeforeExpandedSnapshots'] -and $shared['ExpandedPoseSent'] -and $shared['ExpandedBlockSent']) 'Terrain acknowledgement did not precede expanded poses and blocks.'
+    Require ($s.Terrain.Generation -eq 1 -and $s.Terrain.Admissions -eq 1 -and $s.Terrain.TileCount -eq 2 -and $shared['AckWrittenBeforeExpandedSnapshots'] -and $shared['ExpandedPoseSent'] -and $shared['ExpandedBlockSent']) ("Terrain acknowledgement did not precede expanded poses and blocks. case=$passed generation=$($s.Terrain.Generation) admissions=$($s.Terrain.Admissions) tiles=$($s.Terrain.TileCount) ack_before_snapshots=$($shared['AckWrittenBeforeExpandedSnapshots']) expanded_pose=$($shared['ExpandedPoseSent']) expanded_block=$($shared['ExpandedBlockSent']) views=$($s.ViewCount) poses=$($s.PoseCount)")
     Require ($shared['TerrainStopAttempted']) 'Block failure skipped terrain cleanup.'
     if($case.FailTerrainStop){Require ($s.Failure -ceq 'simulated terrain stop dispatch failure' -and -not $s.Terrain.CleanupComplete) 'Failed terrain stop was hidden.'}
     else{Require ($s.Terrain.CleanupComplete) 'Terrain cleanup not confirmed.'}

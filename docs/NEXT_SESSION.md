@@ -1,106 +1,121 @@
 # Resume checkpoint — 8 November 2026
 
-## Completed milestone
+## Working capability and latest change
 
-Deliver docs/PRODUCT.md in integrated batches with minimal manual testing.
-Preserve HUD/inventory, walking, commands, Creative flight, Steve/hands,
-block shapes/outlines, placement on captured ground and native depth composition.
-Full block coverage, broader host collision, Survival/NPC combat and Elytra remain
-required. Do not restart completed small-control acceptance sequences.
+Follow docs/PRODUCT.md. Preserve the integrated persistent gameplay path: HUD,
+inventory/chat, walking/Creative flight, Steve/hands, native F5/mouse look,
+owned block shapes/outlines/building and camera collision. Survival/NPC combat,
+Elytra, general block coverage and broader host collision are still required.
+Do not restart completed manual control tests.
 
-F5 native first/back/front perspective, mouse yaw/pitch, eye-based aiming,
-placement/mining and camera/body restoration already passed native acceptance.
-The latest work adds owned Minecraft block camera collision and fixes native
-third-person eye following during walking.
+The latest batch reduces camera handoff delay and eliminates measured stationary
+native-depth dropouts. WorldBlocks publishes gameplay-aim.json immediately after
+its validated native ACK, then prefetches the next query while publishing the
+legacy host-view.json. Every file retains original accepted seq/UTC; each gets
+its own 250ms age check. One query remains outstanding at most; pose/cancellation
+work runs between ACKs. Absolute ACK deadlines remain300ms.
+The sample UTC is taken immediately before the actual HTTP sample dispatch,
+after identity checks/earlier split commands. Target cadence is40ms, fallback
+log flush15ms. Lua appends an immediate best-effort view delimiter, including
+asynchronous receipts. No resampling or timestamp renewal from flushes.
 
-Server-confirmed getCameraCollisionShape boxes are packed on a sixteenth grid,
-bounded to 64 owned blocks / 512 boxes, installed atomically in chunks and bound
-to each pose by generation. Native camera sweep uses 0.12m clearance plus 0.03m
-margin and combines with KCD scenery raycasts. Unavailable geometry collapses
-the orbit to the eye; it never truncates obstacles. Reach remains 4.5m from eye.
+Java wakes the camera reader on file changes (10ms fallback) and image publisher
+on frames (5ms fallback). A new verified camera may capture after25ms; duplicates
+retain50ms. Only a successful GPU enqueue consumes the opportunity. Opaque RGB
+conversion avoids divisions; raw depth bits and transparent alpha stay exact.
+Native addon/shader binaries were unchanged in this batch.
 
-KCD GetHeadPos froze under the camera override while native feet moved. The
-camera now derives its eye from the bounded initial local head offset, actual
-native feet and live yaw. A separate Java race falsely rejected a concurrently
-published observation as future data and could clear W; observation is now read
-before its monotonic clock check, retaining the 250ms expiry.
+## Latest live evidence — no manual inputs required
 
-## Live automated acceptance
+runtime/evidence/gameplay-kcd-20261108-135115-2a216a227e374c5e9b779bb43700dadc
 
-PASS: runtime/evidence/gameplay-kcd-20261108-124939-1ae7d0c08c614ae8b364b11f68b71051.
-- Six strides each in back/front view: 4.013m / 3.915m cumulative, max excursion
-  0.808m. Inventory suppression, first-person return, save and cleanup pass.
-- 12 movement presses / 36 held ticks, no source pause interrupted held input.
-- Eight capture stages / 16 PNGs. Input is scripted through the guest key
-  adapter and vanilla client/server, not physical Windows key delivery.
-- Independent camera verifier: 69 back / 66 front native readbacks, 45 / 66
-  clipped, zero penetration into the eight expanded fixture cubes.
-- Fixture writes no position/velocity/camera; the ordinary production bridge
-  still performs its owned native pose writes. Wall seeding is not placement proof.
+- PASS native walking: six strides in back and front views, travel4.013m/3.915m,
+  max excursion0.808m, inventory suppression, first-person return, save/cleanup.
+- PASS camera collision:235 back/100 front native samples, zero penetration.
+- PASS strict stationary foliage depth:392/392 frames over4996ms inside12030ms
+  dwell, zero readiness transitions or rejection reasons. Baseline was325/441,
+  79 transitions. No claim that every foliage material is visually perfect.
+- Request cadence74.63ms; request→renderer-file publication73.30ms, including
+  ACK→publication14.36ms (last64 samples). These are NOT physical-input latency.
+- Capture completed621/621 frames with no busy skips/fence timeouts.
+- Scripts use guest key events through actual vanilla client/server and native
+  bridge. They do not claim physical Windows input or new block placement proof.
+- Preserve native-depth-addon.log, native-movement.log, host-depth-analysis.json,
+  native-walking-verification.json, camera-collision-verification.json and
+  foliage-depth-verification.json. The latter is immutable and checks identity,
+  run clocks, cumulative counters and wholly contained stationary intervals.
 
-Scripts: Test-KcdThirdPersonWalking.ps1 and Test-KcdCameraCollisionEvidence.ps1.
-The walking fixture now includes a 12-second stationary back-view interval with
-UTC start/end evidence for depth diagnosis, then the unchanged 12-stride check.
-Keep KCD2 in front; no manual keys or countdown required. The camera verifier
-needs the matching run lines preserved as native-movement.log and the exact
-8-wall fixture; it rejects changing geometry without historical snapshots.
+Intermediate stationary failures are preserved in runs0fb461...,64e397...,17801...
+under runtime/evidence/gameplay-kcd-20261108-*. Do not overwrite/relabel them.
 
-Failed live attempts remain preserved: 33f9667359a04903968ddb5f69a64d06 exposed the
-frozen eye, 31f1499086f54a3ba18e3b39386108bc exposed early walking-image timing and
-the freshness race. Do not relabel them as passes.
+## Remaining blocker and next renderer implementation
 
-## Foliage flashing investigation
+Moving-view foliage flashing is NOT fully fixed. Latest complete moving phases
+had249/341 and439/459 ready frames. The latter had18 position,1 basis and1
+camera-age failures; therefore timing alone cannot guarantee alignment.
+MineComeMouseHud.fx currently compares guest/native depth at the same UV. The
+next feature must reproject WORLD COLOUR AND DEPTH to the current native camera;
+HUD/hands stay unchanged. Changing only depth UV or widening the3cm tolerance
+would be incorrect. Do not renew source UTC or blindly replace it with capture UTC.
 
-The user's leaf/grass flashing against Steve is not yet fully resolved. Fixed a
-real metadata bug: auxiliary depth targets could overwrite the selected depth
-resource's proof. The addon now retains bounded per-resource samples.
-The first moving run still had only 629/1248 eligible depth-ready frames:
-37 no_sample, 582 bad_view, zero bad_source. Therefore do not claim the source
-fix alone cured foliage flicker. Exact diagnostics now separate sample age,
-camera age, position, basis and projection rejection without loosening thresholds.
-Frame-time admission is implemented and compiled: the same client-thread helper
-updates perspective/aim before clicks and at render-frame start, pins the sample
-through the whole frame, and preserves its UTC. Ten focused regressions pass
-(215 wire checks total). This removes up to 50ms of tick waiting.
+Concrete integration prerequisites established from pinned upstream:
+1. Seal submitted native proofs at public addon_event::present, consume only the
+   current presentation epoch, require a uniquely sampled selected source DSV.
+   Current state.depth_sample fallback can retain proof250ms and draw sampling is
+   tied to guest generations. Resource identity alone does not prove frame content.
+2. Initially require GenericDepth DepthCopyBeforeClears=0 (current installed
+   default, no DEPTH override). Pinned GenericDepth then copies the selected DSV
+   at begin-effects. Modes1/2 need explicit preserved-copy provenance; their
+   internal API copies do not emit add-on copy callbacks. Do not silently change
+   the user's mode or borrow a previous epoch's matching camera.
+3. Preserve reflected matrix row/column packing and full native projection/jitter;
+   build transforms from actual guest/native camera bases. Keep original
+   freshness; bounded camera deltas apply only when reprojection is active.
+4. Forward-project colour+depth into an owned target with nearest-depth arbitration.
+   Leave disoccluded holes transparent; reject bridges across depth discontinuities.
+   Point scatter alone leaves pinholes and is only groundwork, not a finished fix.
+5. Compare warped eye-depth with native depth, overlay unchanged HUD/hands. Test
+   identity, translation, rotation, overlaps, silhouette holes, native foreground,
+   invalid epoch/source and actual GPU budget before native deployment.
 
-Final live run also PASSES walking/collision:
-runtime/evidence/gameplay-kcd-20261108-130101-5e1f8cec43244b5199caeffe9976f712.
-It lasted 31.469s, included 12.046s still in back view, repeated all 12 strides and
-checked 177 back / 65 front camera readbacks with zero penetration; cleanup passed.
-The stationary five-second interval had 325/441 depth-ready frames, 116 failures
-solely camera_age, 79 ready changes and zero source/position/basis/projection
-mismatches. host-depth-analysis.json and native-depth-addon.log preserve this.
+This is a separate renderer increment. Avoid another loop of small timing tweaks
+or repeated human walking checks. Existing automation can verify the integration.
 
-Next rendering fix: reduce actual native ACK-to-guest-frame age; do not merely
-renew timestamps or loosen the 250ms/3cm limits. Sample acquisition, log-flush
-delay, guest readback and upload remain in the path. Stationary evidence isolates
-expiry rather than geometric z-fighting. Temporal alpha/jitter artifacts may
-still need assessment after fixing expiry. Do not claim foliage fixed yet.
+## Validation / deployment / resume
 
-## Validation and deployment
+PASS Java assemble, wire230, stream458 (real Win32 included), blocks323;
+Lua movement35; host-worker44; combined terrain/block worker6.
+The combined fixture had a premature-cancel race: it now waits for expanded
+pose AND block dispatch, within original3s bound, before strict ordering checks.
+A source review found no blockers in the aim-first host pipeline.
 
-Java assemble passes; wire tests 215, block tests 323, movement 42. Lua movement 33 cases and
-host-worker 39 groups pass. Native depth reflection/projection regressions pass.
-WorldBlocks/chat allows one accepted arm per KCD process; restart for another
-session. Use fresh bundles after an addon/profile hash change, and restore the
-installed old bundle before repinning its profile. Never modify a loaded addon.
+Use Test-KcdThirdPersonWalking.ps1, Test-KcdCameraCollisionEvidence.ps1 and
+Test-KcdFoliageDepthEvidence.ps1. Keep KCD2 focused; no F8/user countdown needed.
+The walking fixture seeds eight magenta wall cells, has a12-second still interval,
+then six strides each view, inventory and first-person return. A fresh process is
+required after each WorldBlocks/chat arm (one accepted arm per KCD process).
 
-Current diagnostic bundle: runtime/hud-camera-depth-20261108. Addon 415744 bytes,
-SHA256 012033848440ff090d22faa840c4221ad12e80c494f3df507fae54d8412ea0bc.
-Proxy unchanged: f0552e7cc1ea8f1490e2953d562639843e13c478502ab40eb2c315beb1ecfeab.
-Only exact official tools 1.5.5 is supported; retail is not.
-JDK C:/Program Files/Java/jdk-24; Gradle cache minecraft/.gradle-user-home.
-Bundled PowerShell 7 is installed; no admin setup is needed.
-Branch codex/initial-import; public github.com/gabrielpery/minecraft-kcd2.
+Both games closed; no active test. Renderer baseline restored:
+runtime/evidence/gameplay-hud-restore-20261108-135839-8844accf852f4ad28990997d3f50b865
+Prepared bundle:runtime/hud-foliage-latency-20261108 (restored).
+Addon415744bytes, SHA256012033848440ff090d22faa840c4221ad12e80c494f3df507fae54d8412ea0bc.
+Proxy:f0552e7cc1ea8f1490e2953d562639843e13c478502ab40eb2c315beb1ecfeab.
+After native/profile edits build a FRESH bundle; never replace loaded renderer files.
+Only exact official tools1.5.5 is supported; retail is not.
+Latest used fixture:runtime/gameplay/foliage-latency-20261108-d/instance.
+Fresh fixture source:runtime/gameplay/world-blocks-native-20261106/instance.
+Use Prepare-NativeDepthFixture.ps1 with x{-1,0},y{65,66},z{2,-3},magenta_concrete.
+
+JDK:C:/Program Files/Java/jdk-24; Gradle cache:minecraft/.gradle-user-home.
+Bundled PowerShell7 is installed; no admin setup needed.
+Branch:codex/initial-import; public github.com/gabrielpery/minecraft-kcd2.
 Assets, runtimes and saves stay out of Git.
 
-Both games closed; no active test remains. Renderer baseline restored:
-runtime/evidence/gameplay-hud-restore-20261108-130327-0461c330d7f344349c5a0792b2abafa0.
-The latest disposable 8-wall instance is runtime/gameplay/camera-collision-20261108-d/instance.
-Use its source runtime/gameplay/world-blocks-native-20261106/instance for another
-fresh fixture if needed. Preserve original save/evidence rather than overwriting.
+Do not replace File.Replace with File.Move(overwrite): the latter failed under
+actual Windows reader contention despite a faster isolated benchmark.
+A temporary native60FPS comparison did not improve camera-log visibility; the
+original sys_MaxFPS=-1 was restored and verified (hud-gpu-budget-20261108-132508-*).
 
-Known separate lifecycle follow-up: after collision detaches during shutdown,
-the client can fall while transport/save drains. Server/resume checkpoint remains
-correct. Fix later with a focused stop/reopen fixture; do not misdiagnose terminal
-client-only Y drift as failed third-person walking.
+Separate later lifecycle follow-up: client may fall after collision detaches while
+save/transport drains; server/resume checkpoint remains correct. Do not classify
+terminal client-only Y drift as failed third-person walking.
