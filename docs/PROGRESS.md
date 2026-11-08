@@ -1,5 +1,58 @@
 # MineCome progress — 2026-11-08
 
+## Dropped items, timed mining and walking pickup
+
+WorldBlocks now submits tracked vanilla ItemEntity models to the existing world
+colour/depth layer, preserving stack models, bob/spin and count-dependent copies.
+Collection is bounded to 256 eligible entities within 64m and captured coverage;
+it sorts that bounded set by distance. Metadata reports the full count and up to
+32 entity identities to stay within the frame protocol limit. Drop-only frames
+are no longer classified as empty world frames. No replacement item entities or
+inventory grants are used.
+
+Actual-Minecraft two-launch verification PASS:
+`runtime/evidence/gameplay-drops-20261108-183802-bed59b1055f749559106d8404ce27d3f/verification.json`.
+Production controls placed and mined stone in Survival, consumed one stone,
+added one pickaxe damage, rendered the server's cobblestone UUID (5,006 colour
+pixels with matching finite depth), and collected it through two walking pulses.
+Reopening preserved cobblestone count one, pickup statistic one, tool wear and
+position; no mined block or collected entity reappeared. Both launches closed
+normally. Earlier flat-terrain mining/pickup/reload also passed at
+`runtime/evidence/gameplay-drops-20261108-182557-ed3adcf6a2e04411bb2a8cc86a83cef9/verification.json`.
+
+The first coupled KCD run exposed a fractional-height terrain bug: vanilla drops
+can spawn inside the placed block below captured ground. A server-only item tick
+hook now resolves bounded terrain overlap through Entity.move, retaining the
+actual stack, gravity and pickup. Only the installed terrain's injected shapes
+are excluded during that single upward recovery; real block obstructions remain
+checked. Unknown footprints, unrelated worlds and unbounded lifts are refused.
+The fractional standalone test forces this case and verifies one actual recovery.
+It uses setup command packets and scripted aiming/keys, not physical-input proof.
+
+Coupled KCD2 verification PASS:
+`runtime/evidence/gameplay-kcd-20261108-183922-1660051bed414aacb5545059f86757a1/native-drops-verification.json`.
+The fresh tools world used its actual captured terrain and native camera. Mining
+produced the same server UUID rendered into 2,122 colour/depth pixels; one terrain
+recovery and one walking pulse collected it. Native composition and reprojection
+both advanced 147 frames over 4,994ms inside the 11-second drop dwell. Native pose
+application, normal save, body restoration and resource cleanup passed. No camera
+override was used, so resetting one was unnecessary; the first receipt validator
+incorrectly required a reset, and was corrected/replayed against these saved
+receipts without repeating the game. This verifies the connected render/pickup
+pipeline, not physical mouse input or a new screenshot-level native occlusion
+acceptance. Temporary pre-walk source pauses held no movement keys.
+
+`Test-GameplayDrops.ps1` repeats the fractional mining/pickup/reload check;
+`Test-KcdDrops.ps1` runs the coupled check, or verifies its saved evidence with
+`-VerifyEvidenceDirectory`. Assemble and all 37 collision ownership/geometry
+checks pass. KCD2 closed normally; the temporary renderer installation was restored:
+`runtime/evidence/gameplay-hud-restore-20261108-184144-3bf33b9ba0184d81911c225bcdb3c1e5`.
+Nothing remains armed. Native binaries are unchanged by this feature.
+
+The native health/stamina bars remain an explicit UI task. The verified whole-HUD
+toggle is not enabled by default: sustained lease/restoration and dialogue,
+subtitle and compass behavior need integration, or verified selective widget IDs.
+
 ## Survival food through the gameplay mouse controller
 
 Held right-click with a main-hand FOOD component now calls vanilla interactItem.

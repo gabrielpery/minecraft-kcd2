@@ -3,6 +3,7 @@ package dev.minecome.terrain;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.Box;
 import net.minecraft.util.shape.VoxelShapes;
 import net.minecraft.world.BlockView;
 
@@ -17,14 +18,15 @@ public final class GroundCollisionOwnershipTests {
         return (BlockView)Proxy.newProxyInstance(BlockView.class.getClassLoader(),new Class<?>[]{BlockView.class},
                 (proxy,method,args)->{throw new AssertionError("Unexpected game-world API call: "+method.getName());});
     }
-    private static GroundPatch patch() throws Exception {
+    private static GroundPatch patch() throws Exception {return patch(0);}
+    private static GroundPatch patch(double height) throws Exception {
         var p=new JsonObject();p.addProperty("schema",1);p.addProperty("run","owned-fixture");p.addProperty("grid_size",5);p.addProperty("spacing",1);
         var center=new JsonObject();center.addProperty("x",0);center.addProperty("y",0);center.addProperty("z",0);p.add("center",center);
         var provenance=new JsonObject();provenance.addProperty("kind","standalone_fixture");p.add("provenance",provenance);
         var points=new JsonArray();
         for(int row=0;row<5;row++)for(int col=0;col<5;col++){
             var point=new JsonObject();point.addProperty("index",row*5+col+1);point.addProperty("x",col-2);point.addProperty("y",row-2);
-            point.addProperty("z",0);point.addProperty("nx",0);point.addProperty("ny",0);point.addProperty("nz",1);points.add(point);
+            point.addProperty("z",height);point.addProperty("nx",0);point.addProperty("ny",0);point.addProperty("nz",1);points.add(point);
         }
         p.add("points",points);return GroundPatch.parse(p.toString().getBytes(StandardCharsets.UTF_8));
     }
@@ -61,6 +63,21 @@ public final class GroundCollisionOwnershipTests {
         check(GroundCollision.clear(client,corridor.run(),corridor.sha256(),false),"Exact composite client owner released");
         check(GroundCollision.installed(server,true),"Client release preserves composite server");
         check(GroundCollision.clear(server,corridor.run(),corridor.sha256(),true),"Exact composite server owner released");
+        var fractional=patch(.875);GroundCollision.install(server,fractional,true);
+        var buried=new Box(.375,64.5,.375,.625,64.75,.625);
+        check(Math.abs(GroundCollision.itemLift(server,buried,false)-.37501)<.000001,"Fractional slab overlap has bounded upward recovery");
+        var below=new Box(.375,64.125,.375,.625,64.375,.625);
+        check(Math.abs(GroundCollision.itemLift(server,below,true)-.75001)<.000001,"Fresh vanilla drop beneath thin slab recovers inside its placement cell");
+        check(GroundCollision.itemLift(server,below,false)==0,"Old nonoverlapping below-ground item is not lifted");
+        check(GroundCollision.itemLift(stranger,buried,true)==0,"Foreign world cannot recover an item");
+        check(GroundCollision.itemLift(client,buried,true)==0,"Server recovery does not run in client world");
+        check(GroundCollision.itemLift(server,buried.offset(0,.375,0),true)==0,"Item on the terrain top remains untouched");
+        check(GroundCollision.itemLift(server,buried.offset(0,1,0),true)==0,"Airborne item remains untouched");
+        check(GroundCollision.itemLift(server,buried.offset(1.5,0,0),true)==0,"Unknown footprint edge is refused");
+        check(GroundCollision.itemLift(server,buried.offset(0,-2,0),true)==0,"Unbounded recovery is refused");
+        check(GroundCollision.itemLift(server,new Box(0,64,0,1,65,1),true)==0,"Player-size body is outside item recovery");
+        check(GroundCollision.clear(server,fractional.run(),true),"Fractional test owner releases");
+        check(GroundCollision.itemLift(server,buried,true)==0,"Cleared world cannot recover an item");
         System.out.println("GROUND_COLLISION_OWNERSHIP_TESTS_PASS checks="+checks);
     }
 }

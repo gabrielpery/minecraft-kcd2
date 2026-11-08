@@ -1,34 +1,51 @@
 # Resume checkpoint — 8 November 2026
 
-## Latest gameplay milestone: Survival food
+## Latest gameplay milestone: dropped items and Survival pickup
 
-Continue feature delivery, not camera microtuning. Main-hand food now works through
-held right-click in the existing Blocks/Chat/Flight/Hands/WorldBlocks gameplay
-profiles. Vanilla interactItem and a narrow input-cancellation redirect preserve
-real eating duration, nutrition, consumption and healing. No use-key synthesis or
-direct player-stat writes. Release, attack, menus, slot/item/mode or authority
-changes cancel; a fresh press is needed afterward.
+WorldBlocks now renders actual tracked ItemEntity models with vanilla bob/spin
+and stack copies into the shared world colour/depth layer. Collection is bounded
+at 256 items within 64m/captured coverage; diagnostic metadata lists at most 32.
+Production Survival mining creates the real drop; ordinary walking collects it.
+No replacement entities or direct inventory grants. Preserve working food use.
 
-Automated actual-Minecraft food + food-resume PASS, no manual input:
-`runtime/evidence/gameplay-food-20261108-175737-4ef70f7c300e42af90de52e819c84c7c/verification.json`.
-Five interruptions passed; two bread raised hunger 11→16→20, regeneration raised
-health 12→13, exact health/food/saturation/exhaustion/count survived reload. Scripted
-guest/Hands-profile evidence only; native KCD eating acceptance can wait for the
-next larger combined milestone. Repeat with scripts/Test-GameplayFood.ps1.
-Survival mining regression also passed:
-`runtime/evidence/gameplay-blocks-survival-20261108-175905-ffeeff34593640869c1ffec4abea5362/verification.json`.
-All test games closed normally; KCD2 and its renderer installation were untouched.
+Automated fractional-terrain mining/pickup/reload PASS:
+`runtime/evidence/gameplay-drops-20261108-183802-bed59b1055f749559106d8404ce27d3f/verification.json`.
+Server cobblestone UUID matched 5,006 colour/depth pixels. Two walking pulses
+collected it; stack count 1, pickup statistic 1, pickaxe damage 1 and position all
+survived reopen. Real server item recovery count 1 proves the fractional case.
 
-Implementation: gameplay/GameplayFoodUse.java, GameplayBlocks food integration,
-hud/GameplaySession authority hook and GameplayBlockBreakingMixin redirect.
-New GameplayFoodFixture feeds a synthetic view lease before movement readiness;
-do not omit this when extending standalone movement fixtures. No native rebuild
-or installation is needed for this guest-side feature.
+Coupled KCD2 automated PASS:
+`runtime/evidence/gameplay-kcd-20261108-183922-1660051bed414aacb5545059f86757a1/native-drops-verification.json`.
+Actual native terrain/camera; 2,122 guest item colour/depth pixels; native world
+composition/reprojection advanced 147 frames over 4,994ms within an 11s drop dwell;
+one walking pulse picked up cobblestone. Pose acknowledgement, normal save,
+body restoration and cleanup pass. First-person camera override was never used,
+so camera_restored=false is correct when camera_override_changed=false.
+Scripted guest aiming/keys, no physical native-input or new screenshot-level
+post-occlusion acceptance claim. Avoid UI capture during active strict leases.
 
-Next useful Survival work: render real dropped ItemEntity stacks in the world
-layer and verify timed mining → drops → walking pickup → saved inventory, then
-crafting. Preserve existing vanilla durability/mining; don't replace server drops
-with direct inventory grants. NPC combat, death/respawn and Elytra remain required.
+The first native attempt exposed initial drop embedding in fractional terrain.
+GroundItemCollisionMixin now runs a server-only bounded recovery via Entity.move,
+with exact installed-world/known-footprint and real-block obstruction checks.
+It excludes only the injected slab during that move, restores collision state,
+and retains the real item/stack/gravity/pickup. Older nonintersecting buried items
+are not recovered. All 37 focused ownership/geometry checks and assemble pass.
+Fixture gives first spawned observations at most 2 server ticks to settle.
+
+Repeat scripts/Test-GameplayDrops.ps1; use scripts/Test-KcdDrops.ps1 for a new
+native test, or -VerifyEvidenceDirectory to validate existing receipts. Native
+checks require a new owned instance and one fresh WorldBlocks tools process.
+All test games closed normally. Temporary bundle runtime/hud-drops-20261108-a
+restored; nothing armed. Restore receipt:
+`runtime/evidence/gameplay-hud-restore-20261108-184144-3bf33b9ba0184d81911c225bcdb3c1e5`.
+Native binaries/pins unchanged. Source details and evidence are in PROGRESS.md.
+
+Next integrated Survival feature: crafting, retaining actual vanilla inventory
+and recipes; NPC combat, death/respawn and Elytra remain required. User explicitly
+reminded us that KCD health/stamina widgets still overlap Minecraft's HUD. Track
+session-scoped hiding/restoration. wh_ui_ShowHud only verifies a whole-HUD toggle;
+selective widget IDs or sustained leases/dialogue/subtitle/compass behavior need
+verification before enabling. Do not restart manual control microtests.
 
 ## Working capability
 
@@ -59,7 +76,7 @@ bounded source/SRV/sampler/draw checks; real auxiliary copies rescale 1707×960 
 2560×1440 and are deliberately rejected without blocking the selected DSV.
 Accepted copy propagation has unit coverage, not live acceptance.
 
-## Latest completed native evidence
+## Previous renderer/walking native evidence
 
 runtime/evidence/gameplay-kcd-20261108-174025-18808e2f96c445fd9ddfc31282ec97fa
 

@@ -26,8 +26,9 @@ import org.joml.Quaternionf;
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL14;
 import java.util.Map;
+import java.util.List;
 
-/** Draws server-owned blocks and the local player with Minecraft's actual models.
+/** Draws server-owned blocks, tracked dropped items and the local player with Minecraft's actual models.
  * Inspected Yarn1.21.1+build.3: BlockRenderManager.renderBlock delegates to the
  * world BlockModelRenderer with the state's position-dependent rendering seed;
  * WorldRenderer.render prepares client light updates before rendering layers.
@@ -38,8 +39,11 @@ import java.util.Map;
  */
 public final class GameplayWorldRenderer {
     private GameplayWorldRenderer(){}
-    /** Outline/player results name submitted geometry; depth can hide its pixels. */
-    public record Result(int blocks,BlockPos outlined,int terrainOccluders,boolean playerRendered){}
+    /** Results name submitted geometry; depth can hide its pixels. */
+    public record Result(int blocks,BlockPos outlined,int terrainOccluders,boolean playerRendered,
+                         int droppedItems,List<GameplayDroppedItemRenderer.Item> droppedItemDetails){
+        public Result{droppedItemDetails=List.copyOf(droppedItemDetails);}
+    }
     public record View(Vec3d origin,Vec3d forward,Vec3d up,double verticalFovRadians) {
         public View {
             if(!finite(origin)||!finite(forward)||!finite(up)||
@@ -53,11 +57,11 @@ public final class GameplayWorldRenderer {
 
     static Result render(Camera camera,float tickDelta,View view,Map<BlockPos,BlockState> blocks,BlockHitResult hover,GroundSurface surface){
         RenderSystem.assertOnRenderThread();
-        if(view==null)return new Result(0,null,0,false);
+        if(view==null)return new Result(0,null,0,false,0,List.of());
         var client=MinecraftClient.getInstance();
-        if(client.world==null||client.player==null||client.getOverlay()!=null)return new Result(0,null,0,false);
+        if(client.world==null||client.player==null||client.getOverlay()!=null)return new Result(0,null,0,false,0,List.of());
         var framebuffer=client.getFramebuffer();
-        if(framebuffer.textureWidth<=0||framebuffer.textureHeight<=0)return new Result(0,null,0,false);
+        if(framebuffer.textureWidth<=0||framebuffer.textureHeight<=0)return new Result(0,null,0,false,0,List.of());
         var projection=new Matrix4f(RenderSystem.getProjectionMatrix());
         var sorting=RenderSystem.getVertexSorting();
         float lineWidth=RenderSystem.getShaderLineWidth();
@@ -90,6 +94,7 @@ public final class GameplayWorldRenderer {
                     vertices.getBuffer(RenderLayers.getBlockLayer(state)),true,random);
                 matrices.pop();rendered++;
             }
+            var droppedItems=GameplayDroppedItemRenderer.render(tickDelta,view.origin(),surface,matrices,vertices);
             boolean playerRendered=GameplayPlayerRenderer.render(tickDelta,view.origin(),matrices,vertices);
             vertices.draw();
             BlockPos outlined=null;
@@ -110,7 +115,7 @@ public final class GameplayWorldRenderer {
                     }
                 }
             }
-            return new Result(rendered,outlined,terrainOccluders,playerRendered);
+            return new Result(rendered,outlined,terrainOccluders,playerRendered,droppedItems.size(),droppedItems);
         } finally {
             modelView.popMatrix();RenderSystem.applyModelViewMatrix();
             RenderSystem.setProjectionMatrix(projection,sorting);

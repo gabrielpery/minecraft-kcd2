@@ -1,7 +1,7 @@
 # Sustained HUD/inventory, with an explicit Minecraft walking profile.
 [CmdletBinding()]
 param([string]$BundleDirectory,[string]$InstanceDirectory,[string]$JavaHome='C:/Program Files/Java/jdk-24',
- [ValidateRange(0,300)][int]$SmokeSeconds=0,[switch]$PreflightOnly,[switch]$Movement,[switch]$Blocks,[switch]$Explore,[switch]$Chat,[switch]$Flight,[switch]$Hands,[switch]$WorldBlocks,[string]$GroundPatchFile,[switch]$ThirdPersonWalkingCheck)
+ [ValidateRange(0,300)][int]$SmokeSeconds=0,[switch]$PreflightOnly,[switch]$Movement,[switch]$Blocks,[switch]$Explore,[switch]$Chat,[switch]$Flight,[switch]$Hands,[switch]$WorldBlocks,[string]$GroundPatchFile,[switch]$ThirdPersonWalkingCheck,[switch]$DropsCheck)
 . (Join-Path $PSScriptRoot 'powershell7.ps1')
 if($PSVersionTable.PSVersion.Major -lt 7){
  $code=Invoke-MineComePowerShell7 -ScriptPath $PSCommandPath -BoundParameters $PSBoundParameters
@@ -14,6 +14,7 @@ $root=[IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
 . (Join-Path $PSScriptRoot 'GameplayMovementHost.ps1')
 if($WorldBlocks){$Hands=$true};if($Hands){$Flight=$true};if($Flight){$Chat=$true}
 if($Explore -or $Chat){$Blocks=$true};if($Blocks){$Movement=$true}
+if($DropsCheck -and (-not $WorldBlocks -or $SmokeSeconds -ne 0 -or $ThirdPersonWalkingCheck)){throw "DropsCheck requires WorldBlocks and owns its bounded duration; omit other checks/SmokeSeconds."}
 if($ThirdPersonWalkingCheck -and (-not $WorldBlocks -or $SmokeSeconds -ne 0)){throw 'ThirdPersonWalkingCheck requires WorldBlocks and owns its bounded duration; omit SmokeSeconds.'}
 if(-not $Movement -and $GroundPatchFile){throw 'GroundPatchFile requires Movement.'}
 if(-not $BundleDirectory){$BundleDirectory=Join-Path $root $(if($Chat){'runtime/hud-compositor-gameplay-chat'}elseif($Blocks){'runtime/hud-compositor-gameplay-blocks'}elseif($Movement){'runtime/hud-compositor-gameplay-movement'}else{'runtime/hud-compositor-gameplay'})}
@@ -70,6 +71,7 @@ try{
  if($Chat){$arguments+='-Chat'}
  if($Flight){$arguments+='-Flight'}
  if($Hands){$arguments+='-Hands'};if($WorldBlocks){$arguments+='-WorldBlocks'}
+ if($DropsCheck){$arguments+='-DropsCheck'}
  if($ThirdPersonWalkingCheck){$arguments+='-ThirdPersonWalkingCheck'}
  $quoted=@($arguments|ForEach-Object {ConvertTo-MineComeWindowsArgument $_})
  $helper=Start-Process -FilePath (Get-MineComePowerShell7) -ArgumentList ([string]::Join(' ',$quoted)) -WorkingDirectory $root -WindowStyle Hidden -PassThru -RedirectStandardOutput (Join-Path $directory 'client.log') -RedirectStandardError (Join-Path $directory 'client-errors.log')
@@ -105,6 +107,7 @@ try{
  try{$bytes=[Text.Encoding]::UTF8.GetBytes($armText);$file.Write($bytes,0,$bytes.Length);$file.Flush($true);$armWritten=$true}finally{$file.Dispose()}
  [IO.File]::WriteAllText((Join-Path $directory 'arm.ini'),$armText)
  Write-Output "GAMEPLAY_READY run=$run stop_file=$(Join-Path $directory 'session.stop')"
+ if($DropsCheck){Write-Output 'AUTOMATED_DROPS_CHECK: keep KCD2 focused and controls released; scripted guest actions mine, render and walk to collect a drop, then save. Physical mouse/keys are not claimed.'}
  if($ThirdPersonWalkingCheck){Write-Output 'AUTOMATED_THIRD_PERSON_WALKING_CHECK: keep KCD2 focused and controls released; the guest will test back/front walking, inventory suppression and first-person return, then save and close. Physical keyboard input is not claimed by this check.'}
  if($Explore){Write-Output 'Terrain grows automatically toward your movement, up to 64 captured tiles. Saved terrain and construction keep their original coordinates.'}
  if($Chat){Write-Output 'T opens Minecraft chat; / opens commands. Type a command and press Enter; Escape cancels. Walking and mining pause while chat is open.'}
@@ -144,6 +147,14 @@ try{
   if($f.kind -cne 'minecome_native_third_person_walking_v1' -or $f.result -cne 'passed' -or $f.failure -or -not $f.actual_minecraft -or -not $f.scripted_guest_input -or $f.physical_native_keys_verified -or $f.position_writes_used -or $f.velocity_writes_used -or $f.camera_writes_used -or
    -not $f.back_walking_verified -or -not $f.front_walking_verified -or -not $f.inventory_suppression_verified -or -not $f.first_person_return_verified -or @($f.images).Count -ne 8 -or $session.movement.movement_events -lt 2 -or $session.movement.held_ticks -lt 8 -or -not $session.native_perspective_connected -or $session.native_perspective_last_acknowledged -ne 0){throw 'Native third-person walking acceptance proof incomplete.'}
  }
+ if($DropsCheck){
+  $f=$session.fixture
+  if($f.kind -cne 'minecome_gameplay_drops_fixture_v1' -or $f.mode -cne 'drops-native' -or $f.result -cne 'passed' -or $f.failure -or
+   -not $f.actual_minecraft -or $f.standalone_scripted -or $f.native_input_verified -or $f.position_writes_used){throw 'Native drop fixture identity/scope differs.'}
+  foreach($flag in @('survival_placement_verified','survival_mining_verified','real_drop_verified','drop_ground_collision_verified','render_pixels_verified','walking_pickup_verified','durability_verified')){
+   if($f.$flag -ne $true){throw "Native drop capability missing: $flag"}
+  }
+ }
  if($SmokeSeconds -gt 0 -and (-not $smokeStop -or $session.active_ms -lt $SmokeSeconds*1000)){throw 'Gameplay smoke ended before the requested sustained duration.'}
  $passed=$true
 }catch{$failure=$_.Exception.Message;throw}
@@ -171,7 +182,7 @@ finally{
  }
  [ordered]@{schema=1;kind='minecome_gameplay_kcd_session_v1';run=$run;result=$(if($passed){'passed'}else{'failed'});failure=$failure;
   target_pid=$context.GamePid;target_start_filetime=$targetStart;instance=$InstanceDirectory;smoke_seconds=$SmokeSeconds;
-  minecraft_movement_connected=[bool]($Movement -and $passed);movement_profile=[bool]$Movement;blocks_profile=[bool]$Blocks;explore_profile=[bool]$Explore;chat_profile=[bool]$Chat;flight_profile=[bool]$Flight;hands_profile=[bool]$Hands;world_blocks_profile=[bool]$WorldBlocks;host_command_typing_verified=$false;normal_client_exit=($helper -and $helper.HasExited -and $helper.ExitCode -eq 0)}|
+  minecraft_movement_connected=[bool]($Movement -and $passed);movement_profile=[bool]$Movement;blocks_profile=[bool]$Blocks;explore_profile=[bool]$Explore;chat_profile=[bool]$Chat;flight_profile=[bool]$Flight;hands_profile=[bool]$Hands;world_blocks_profile=[bool]$WorldBlocks;drops_check=[bool]$DropsCheck;host_command_typing_verified=$false;normal_client_exit=($helper -and $helper.HasExited -and $helper.ExitCode -eq 0)}|
   ConvertTo-Json|Set-Content -LiteralPath (Join-Path $directory 'verification.json') -Encoding utf8NoBOM
 }
 if(-not $passed){throw $failure}

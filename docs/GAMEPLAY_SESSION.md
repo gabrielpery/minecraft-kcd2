@@ -792,6 +792,58 @@ Its hotbar was visible in KCD and cleanup passed. No native input events were
 recorded, so this does not prove physical walking in the new sustained profile.
 The previous renderer installation was restored after the check.
 
+## Dropped items and Survival pickup
+
+WorldBlocks now draws real tracked Minecraft item entities in the same world
+colour/depth layer as blocks and Steve. Minecraft supplies the stack model,
+bobbing, rotation, count-dependent copies and lighting. Drops inherit captured
+terrain occlusion and the native scene-depth comparison. Rendering is bounded to
+256 entities within 64 metres and the captured terrain footprint; this does not
+delete or modify entities beyond that rendering scope.
+
+In Survival, mine a placed stone with a suitable pickaxe, then walk over its
+cobblestone drop. Vanilla owns loot generation, item physics, pickup delay,
+inventory insertion, tool durability and saving. Collection removes the rendered
+entity through Minecraft's normal entity tracking. No inventory grant substitutes
+for pickup. Drop-only frames carry their own world pixels even with no owned
+blocks or third-person Steve visible.
+
+Automatic isolated mining/render/pickup/reload verification:
+
+```powershell
+& './scripts/Test-GameplayDrops.ps1'
+```
+
+The check matches the server drop UUID to rendered colour/depth pixels, waits for
+the item to rest on captured collision, walks using released key pulses, verifies
+pickup statistics and one point of pickaxe wear, then reopens the same save.
+Its fractional-height test surface also forces a mined drop to start inside
+captured ground. A server-side ItemEntity hook resolves that overlap with a
+bounded vanilla movement call before normal item physics resumes. It preserves
+the real entity and stack, refuses actual-block obstructions, and applies only
+inside the installed terrain coverage; it does not grant items or teleport the
+player. Recovery counts are included in the test evidence.
+Scripted aiming and walking are explicit; physical mouse input is not claimed.
+`Test-KcdDrops.ps1` runs the corresponding bounded check in an already-loaded,
+exactly supported KCD2 tools world with a prepared WorldBlocks bundle and a new
+isolated instance. Its native-only dwell verifies world composition advances
+while the mined item exists, then releases native state and saves normally.
+Use `-VerifyEvidenceDirectory '<saved evidence directory>'` to recheck receipts
+without launching a game. This checks actual guest pixels, entity identity and
+native composition progress; it does not assert physical input or native
+post-occlusion screenshot visibility.
+
+## Native health/stamina HUD
+
+KCD2's health/stamina widgets still overlap Minecraft's HUD. They should be hidden
+only while MineCome owns the session and restored afterward. The existing
+`wh_ui_ShowHud` probe verified a reversible whole-HUD toggle, but selective
+health/stamina element identities are not yet verified; hiding the whole HUD may
+also affect dialogue, subtitles and the compass. The old helper's 120-second
+lease is not suitable for sustained sessions. Selective hiding, or a renewable
+lease with original-state restoration and dialogue checks, remains required UI
+integration work.
+
 ## Survival food and regeneration
 
 The gameplay block profiles also route held right-click to Minecraft food in

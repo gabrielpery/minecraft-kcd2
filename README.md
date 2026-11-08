@@ -67,6 +67,21 @@ exact player-state save/reload. Native KCD2 eating acceptance remains pending;
 no additional renderer installation is required for this guest-side change.
 See [food controls and automation](docs/GAMEPLAY_SESSION.md#survival-food-and-regeneration).
 
+WorldBlocks now renders actual Minecraft dropped-item models, including their
+vanilla bob/spin, in the same world/depth layer as blocks and Steve. Timed Survival
+mining creates the real server drop; walking into it collects the stack through
+Minecraft's pickup logic. An automated two-launch Minecraft check verifies item
+identity, colour/depth pixels, pickup, pickaxe wear and saved inventory.
+A coupled automated KCD2 check also passes mining, terrain recovery, walking
+pickup and native world composition using the real camera and scripted guest
+controls. Physical mining input was not repeated for this increment.
+See [dropped items and automation](docs/GAMEPLAY_SESSION.md#dropped-items-and-survival-pickup).
+
+KCD2's health/stamina bars still need session-scoped suppression so Minecraft's
+HUD is the gameplay display. The existing whole-HUD toggle needs further work to
+preserve dialogue/subtitles and restore the original state on exit; this is
+tracked [UI integration work](docs/GAMEPLAY_SESSION.md#native-healthstamina-hud).
+
 The [`-Hands` profile](docs/GAMEPLAY_SESSION.md#minecraft-hands-and-held-items)
 includes those controls and adds Minecraft's actual first-person arm and held-item
 rendering to the HUD stream. A real-Minecraft automated check captures empty hand,
