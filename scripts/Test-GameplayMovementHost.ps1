@@ -6,7 +6,7 @@ $ErrorActionPreference='Stop';Set-StrictMode -Version Latest
 $directory=Join-Path ([IO.Path]::GetTempPath()) ('minecome-gameplay-host-test-'+[guid]::NewGuid().ToString('N'))
 $null=New-Item -ItemType Directory -Path (Join-Path $directory 'scripts')
 $poseFile=Join-Path $directory 'pose.json';$viewFile=Join-Path $directory 'view.json';$gameLog=Join-Path $directory 'game.log'
-$identity=[pscustomobject]@{Run='a'*32;WorldId='11111111-1111-4111-8111-111111111111';Pid=123;Start='133456789012345678';PatchRun='b'*32;PatchHash='c'*64}
+$identity=[pscustomobject]@{Run='a'*32;WorldId='11111111-1111-4111-8111-111111111111';Pid=123;Start='133456789012345678';PatchRun='b'*32;PatchHash='c'*64;CameraOrigin=[pscustomobject]@{x=0.;y=0.;z=-64.}}
 $bounds=[pscustomobject]@{MinX=-10.;MaxX=10.;MinY=-10.;MaxY=10.;MinZ=-10.;MaxZ=10.}
 $now=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
 $valid=[ordered]@{schema=1;kind='minecome_gameplay_pose_v1';run=$identity.Run;world_id=$identity.WorldId;target_pid=$identity.Pid;target_start_filetime=$identity.Start;patch_run=$identity.PatchRun;patch_sha256=$identity.PatchHash;seq=1;utc_ms=$now;source_ms=0;position=@{x=1.;y=2.;z=3.}}
@@ -14,6 +14,8 @@ $passed=0;$pipeline=$null;$runspace=$null;$cancel=$null
 function Require([bool]$Condition,[string]$Message){if(-not $Condition){throw $Message}}
 function Write-Pose($Value){$Value|ConvertTo-Json -Depth 6 -Compress|Set-Content -LiteralPath $poseFile -Encoding utf8NoBOM}
 function Copy-Pose{$copy=@{};foreach($key in $valid.Keys){$copy[$key]=$valid[$key]};return $copy}
+function New-CameraCollision{[ordered]@{generation=1;complete=$true;origin=@{x=0.;y=0.;z=-64.};boxes='000004000000001004100010'}}
+function Copy-WorldPose{$copy=Copy-Pose;$copy.perspective_request=1;$copy.camera_collision=New-CameraCollision;return $copy}
 function Refuses([scriptblock]$Action){$threw=$false;try{& $Action|Out-Null}catch{$threw=$true};Require $threw 'Invalid pose was accepted.'}
 try{
     Write-Pose $valid
@@ -37,7 +39,7 @@ try{
     # their exact field set, clocks and identity instead of silently opting in.
     Write-Pose $valid;Refuses {Read-GameplayMovementPose $poseFile $identity $bounds 0 -1 $now $true}
     foreach($perspective in @(0,1,2)){
-        $v=Copy-Pose;$v.perspective_request=$perspective;Write-Pose $v
+        $v=Copy-WorldPose;$v.perspective_request=$perspective;Write-Pose $v
         $p=Read-GameplayMovementPose $poseFile $identity $bounds 0 -1 $now $true
         Require ($p.perspective_request -eq $perspective) 'WorldBlocks perspective request changed.'
         Refuses {Read-GameplayMovementPose $poseFile $identity $bounds 0 -1 $now}
@@ -45,16 +47,40 @@ try{
         Require ($null -eq (Read-GameplayMovementPose $poseFile $identity $bounds 0 -1 ($now+251) $true)) 'WorldBlocks stale request was admitted.'
     };$passed++
     foreach($perspective in @(-1,3,1.5,'1',$true,$null)){
-        $v=Copy-Pose;$v.perspective_request=$perspective;Write-Pose $v
+        $v=Copy-WorldPose;$v.perspective_request=$perspective;Write-Pose $v
         Refuses {Read-GameplayMovementPose $poseFile $identity $bounds 0 -1 $now $true}
     };$passed++
     foreach($change in @(@{run='d'*32},@{world_id='other'},@{target_pid=999},@{target_start_filetime='different'},@{patch_run='e'*32},@{patch_sha256='f'*64},@{utc_ms=$now+51},@{source_ms=86400001},@{seq=0})){
-        $v=Copy-Pose;$v.perspective_request=1;foreach($key in $change.Keys){$v[$key]=$change[$key]};Write-Pose $v
+        $v=Copy-WorldPose;foreach($key in $change.Keys){$v[$key]=$change[$key]};Write-Pose $v
         Refuses {Read-GameplayMovementPose $poseFile $identity $bounds 0 -1 $now $true}
     };$passed++
-    $v=Copy-Pose;$v.perspective_request=1
+    $v=Copy-WorldPose
     $json=($v|ConvertTo-Json -Depth 6 -Compress).Replace('"perspective_request":1','"perspective_request":1,"perspective_request":2')
     [IO.File]::WriteAllText($poseFile,$json);Refuses {Read-GameplayMovementPose $poseFile $identity $bounds 0 -1 $now $true};$passed++
+
+    # Packed collision geometry is allowed only on WorldBlocks, with exact
+    # captured-origin binding and no partial, malformed or oversized boxes.
+    foreach($complete in @($true,$false)){$v=Copy-WorldPose;$v.camera_collision.complete=$complete;$v.camera_collision.boxes='';Write-Pose $v
+        $p=Read-GameplayMovementPose $poseFile $identity $bounds 0 -1 $now $true;Require ($p.camera_collision.complete -eq $complete) 'Empty collision completeness changed.'};$passed++
+    foreach($change in @(@{generation=0},@{generation=1.5},@{generation='1'},@{generation=10000001},@{complete='true'},@{complete=$false},@{boxes='g'*24},@{boxes='F'*24},@{boxes='0000'},@{boxes='0'*24},@{boxes='000004000000002104100010'},@{boxes='000004000000001004100010'*513},@{boxes=$null},@{extra=1})){
+        $v=Copy-WorldPose;foreach($key in $change.Keys){$v.camera_collision[$key]=$change[$key]};Write-Pose $v
+        Refuses {Read-GameplayMovementPose $poseFile $identity $bounds 0 -1 $now $true}
+    };$passed++
+    foreach($origin in @(@{x=0.1;y=0.;z=-64.},@{x='0';y=0.;z=-64.},@{x=0.;y=0.;z=-63.},@{x=0.;y=0.;z=-64.;extra=1},@{x=1e10;y=0.;z=-64.})){
+        $v=Copy-WorldPose;$v.camera_collision.origin=$origin;Write-Pose $v;Refuses {Read-GameplayMovementPose $poseFile $identity $bounds 0 -1 $now $true}
+    };$passed++
+    foreach($duplicate in @('"generation":1,"generation":2','"complete":true,"complete":false','"boxes":"","boxes":""')){
+        $v=Copy-WorldPose;$v.camera_collision.boxes='';$json=$v|ConvertTo-Json -Depth 6 -Compress
+        $name=$duplicate.Split(':')[0];$pattern=switch($name){'"generation"' {'"generation":1'};'"complete"' {'"complete":true'};'"boxes"' {'"boxes":""'}}
+        [IO.File]::WriteAllText($poseFile,$json.Replace($pattern,$duplicate));Refuses {Read-GameplayMovementPose $poseFile $identity $bounds 0 -1 $now $true}
+    }
+    $v=Copy-WorldPose;$json=($v|ConvertTo-Json -Depth 6 -Compress).Replace('"origin":{','"origin":{"x":0,')
+    [IO.File]::WriteAllText($poseFile,$json);Refuses {Read-GameplayMovementPose $poseFile $identity $bounds 0 -1 $now $true};$passed++
+    $v=Copy-WorldPose;$v.camera_collision.boxes='000004000000001004100010'*512;Write-Pose $v
+    Require ((Get-Item -LiteralPath $poseFile).Length -gt 4096) 'Large camera fixture did not exercise the extended file bound.'
+    Require ((Read-GameplayMovementPose $poseFile $identity $bounds 0 -1 $now $true).camera_collision.boxes.Length -eq 12288) 'Maximum512 camera boxes rejected.'
+    Refuses {Read-GameplayMovementPose $poseFile $identity $bounds 0 -1 $now}
+    [IO.File]::WriteAllText($poseFile,(' '*20481));Refuses {Read-GameplayMovementPose $poseFile $identity $bounds 0 -1 $now $true};$passed++
 
     # Windows ReplaceFile can report the deletion phase as 1175 instead of a
     # normal sharing violation. Only that replacement error preserves both
@@ -142,7 +168,19 @@ function Invoke-MineComeToolsRequest([string]$PathAndQuery,[int]$TimeoutMillisec
     }
     $script:fixtureSequence++
     $p=[ordered]@{schema=1;kind='minecome_gameplay_pose_v1';run=$Identity.Run;world_id=$Identity.WorldId;target_pid=$Identity.Pid;target_start_filetime=$Identity.Start;patch_run=$Identity.PatchRun;patch_sha256=$Identity.PatchHash;seq=$script:fixtureSequence;utc_ms=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds();source_ms=$script:fixtureSequence*10;position=@{x=1.;y=2.;z=3.}}
-    if($WorldBlocks){$p.perspective_request=$Context.FixturePerspective}
+    if($WorldBlocks){
+        $p.perspective_request=$Context.FixturePerspective
+        $p.camera_collision=[ordered]@{generation=1;complete=$true;origin=@{x=0.;y=0.;z=-64.};boxes=('000004000000001004100010'*$Context.FixtureBoxCount)}
+        if($Context.FixtureCameraFault -eq 'incomplete'){$p.camera_collision.complete=$false;$p.camera_collision.boxes=''}
+        if($Context.FixtureCameraFault -eq 'regress'){$p.camera_collision.generation=2}
+        if($script:fixtureSequence -ge 5){
+            switch($Context.FixtureCameraFault){
+                'mutate' {$p.camera_collision.boxes='001004000000002004100010'}
+                'regress' {$p.camera_collision.generation=1}
+                'fresh' {$p.camera_collision.generation=2;$p.camera_collision.boxes='001004000000002004100010'}
+            }
+        }
+    }
     [IO.File]::WriteAllText($PoseFile,($p|ConvertTo-Json -Depth 5 -Compress))
 }
 '@
@@ -174,19 +212,24 @@ function Invoke-MineComeToolsRequest([string]$PathAndQuery,[int]$TimeoutMillisec
         @{Perspective=1;Fault='perspective'},@{Perspective=1;Fault='fov'},@{Perspective=1;Fault='sequence'},
         @{Perspective=1;Fault='cleanup_result'},@{Perspective=1;Fault='cleanup_active'},@{Perspective=1;Fault='cleanup_camera'},
         @{Perspective=1;Fault='cleanup_body'},@{Perspective=1;Fault='cleanup_hidden'},@{Perspective=1;Fault='cleanup_missing'},
-        @{Perspective=1;Fault='cleanup_type'},@{Perspective=1;Fault='perspective_cleanup'},@{Perspective=0;Fault='buffered_view'})){
+        @{Perspective=1;Fault='cleanup_type'},@{Perspective=1;Fault='perspective_cleanup'},@{Perspective=0;Fault='buffered_view'},
+        @{Perspective=1;Fault='';Boxes=512},@{Perspective=1;Fault='';CameraFault='incomplete'},
+        @{Perspective=1;Fault='';CameraFault='mutate'},@{Perspective=1;Fault='';CameraFault='regress'},@{Perspective=1;Fault='';CameraFault='fresh'})){
         [IO.File]::WriteAllText($gameLog,'');[IO.File]::Delete($poseFile);[IO.File]::Delete($viewFile)
         $aimFile=Join-Path $directory 'gameplay-aim.json';[IO.File]::Delete($aimFile)
         $shared=[Collections.Concurrent.ConcurrentDictionary[string,object]]::new()
         $shared['FixtureCommands']=[Collections.Concurrent.ConcurrentQueue[string]]::new()
         $cancel=[Threading.CancellationTokenSource]::new();$runspace=[RunspaceFactory]::CreateRunspace();$runspace.Open()
         $pipeline=[PowerShell]::Create();$pipeline.Runspace=$runspace
-        $context=[pscustomobject]@{GameLog=$gameLog;FixturePerspective=$case.Perspective;FixtureFault=$case.Fault}
+        $boxCount=if($case.ContainsKey('Boxes')){[int]$case['Boxes']}else{1}
+        $cameraFault=if($case.ContainsKey('CameraFault')){[string]$case['CameraFault']}else{''}
+        $minimumPoses=if($boxCount -gt 32){[int][Math]::Ceiling($boxCount/32.0)+3}elseif($cameraFault){6}else{3}
+        $context=[pscustomobject]@{GameLog=$gameLog;FixturePerspective=$case.Perspective;FixtureFault=$case.Fault;FixtureBoxCount=$boxCount;FixtureCameraFault=$cameraFault}
         $expires=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()+5000
         $null=$pipeline.AddScript((Get-GameplayMovementWorker).ToString()).AddArgument($context).AddArgument($identity).AddArgument($bounds).AddArgument($poseFile).AddArgument($viewFile).AddArgument($expires).AddArgument(0L).AddArgument($shared).AddArgument($cancel.Token).AddArgument($directory).AddArgument($null).AddArgument($null).AddArgument($false).AddArgument($true)
         $async=$pipeline.BeginInvoke();$watch=[Diagnostics.Stopwatch]::StartNew()
         do{
-            if($shared.ContainsKey('Snapshot')){$s=$shared['Snapshot'];if($s.Stopped -or ($s.ViewCount -ge 3 -and $s.PoseCount -ge 3)){break}}
+            if($shared.ContainsKey('Snapshot')){$s=$shared['Snapshot'];if($s.Stopped -or ($s.ViewCount -ge 3 -and $s.PoseCount -ge $minimumPoses)){break}}
             Start-Sleep -Milliseconds 10
         }while($watch.ElapsedMilliseconds -lt 3000 -and -not $async.IsCompleted)
         $cancel.Cancel();Require ($async.AsyncWaitHandle.WaitOne(2000)) 'WorldBlocks worker cleanup timed out.'
@@ -194,10 +237,18 @@ function Invoke-MineComeToolsRequest([string]$PathAndQuery,[int]$TimeoutMillisec
         $s=$shared['Snapshot'];Require ($s.Stopped -and $null -ne $s.Terminal) 'WorldBlocks did not return native cleanup acknowledgement.'
         $commands=@($shared['FixtureCommands'].ToArray())
         Require (@($commands|Where-Object {$_ -match "GameplayMovementBegin\('[a-f0-9]+',[^)]*,true,true\)"}).Count -eq 1) 'WorldBlocks begin did not enable flight and camera authority.'
-        Require (@($commands|Where-Object {$_ -match "GameplayMovementPose\('[a-f0-9]+',\d+,[0-9.]+,1,2,3,$($case.Perspective)\)"}).Count -gt 0) 'WorldBlocks pose omitted its perspective request.'
+        Require (@($commands|Where-Object {$_ -match "GameplayMovementPose\('[a-f0-9]+',\d+,[0-9.]+,1,2,3,$($case.Perspective),[12]\)"}).Count -gt 0) 'WorldBlocks pose omitted its perspective request/collision generation.'
         Require (@($commands|Where-Object {$_ -match "GameplayMovementSample\('[a-f0-9]+',\d+,true\)"}).Count -gt 0) 'WorldBlocks did not request native aim.'
         Require ($s.MaxRequestPathLength -le 2000) 'Perspective request exceeded console URL bound.'
-        if($case.Fault.StartsWith('cleanup_')){
+        $geometry=@(foreach($command in $commands){foreach($m in [regex]::Matches($command,"GameplayCameraGeometry\('[a-f0-9]+',(\d+),(\d+),(\d+),0,0,-64,(true|false),'([0-9a-f]*)'\)")){
+            [pscustomobject]@{Generation=[int]$m.Groups[1].Value;Index=[int]$m.Groups[2].Value;Count=[int]$m.Groups[3].Value;Complete=$m.Groups[4].Value;Boxes=$m.Groups[5].Value}
+        }})
+        Require ($geometry.Count -gt 0) 'WorldBlocks never dispatched camera geometry.'
+        foreach($chunk in $geometry){Require ($chunk.Boxes.Length -le 768 -and $chunk.Boxes.Length%24 -eq 0) 'Camera dispatch split a box or exceeded32 boxes.'}
+        if($cameraFault -in @('mutate','regress')){
+            Require ($s.Failure -ceq 'Gameplay camera collision generation regressed or changed.') "Camera $cameraFault was admitted: $($s.Failure)"
+            Require ($geometry.Count -eq 1) 'Changed/replayed camera generation was partially dispatched.'
+        }elseif($case.Fault.StartsWith('cleanup_')){
             $expected=switch($case.Fault){
                 'cleanup_result' {'Native gameplay cleanup acknowledgement differs: camera_restore_failed:explicit_stop'}
                 'cleanup_active' {'Native gameplay cleanup acknowledgement differs: explicit_stop'}
@@ -225,6 +276,18 @@ function Invoke-MineComeToolsRequest([string]$PathAndQuery,[int]$TimeoutMillisec
             Require ($view.forward.y -eq 1 -and $view.up.z -eq 1 -and $aim.range -eq 4.5 -and $aim.known -and $aim.distance -eq 2.5 -and $aim.terrain_hit) 'Movement direction or native occlusion was lost.'
             if($case.Fault -eq 'buffered_view'){
                 Require (@($commands|Where-Object {$_ -match 'MineComeGameplayViewFlush'}).Count -ge 3) 'Pending timer views were not flushed within their original acknowledgement deadline.'
+            }
+        }
+        if(-not $case.Fault -and $cameraFault -notin @('mutate','regress')){
+            if($cameraFault -eq 'fresh'){
+                Require ($geometry.Count -eq 2 -and $geometry[0].Generation -eq 1 -and $geometry[1].Generation -eq 2 -and $geometry[0].Boxes -cne $geometry[1].Boxes) 'Fresh geometry replacement was lost or repeated.'
+            }else{
+                $expectedChunks=if($cameraFault -eq 'incomplete'){1}else{[int][Math]::Ceiling($boxCount/32.0)}
+                Require ($geometry.Count -eq $expectedChunks) 'Stable geometry was resent or chunks were lost.'
+                for($i=0;$i -lt $geometry.Count;$i++){Require ($geometry[$i].Index -eq $i+1 -and $geometry[$i].Count -eq $expectedChunks -and $geometry[$i].Generation -eq 1) 'Camera staging order/count/generation differed.'}
+                $expectedPacked=if($cameraFault -eq 'incomplete'){''}else{'000004000000001004100010'*$boxCount}
+                Require (($geometry.Boxes -join '') -ceq $expectedPacked) 'Atomic camera chunks changed or dropped packed geometry.'
+                Require ($geometry[0].Complete -ceq $(if($cameraFault -eq 'incomplete'){'false'}else{'true'})) 'Camera completeness flag changed.'
             }
         }
         Require (-not [IO.File]::Exists($viewFile+'.'+$identity.Run+'.tmp') -and -not [IO.File]::Exists($aimFile+'.'+$identity.Run+'.tmp')) 'WorldBlocks temporary camera publication survived cleanup.'

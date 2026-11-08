@@ -134,10 +134,31 @@ alongside the image stream. `gameplay-pose.json` keeps schema 1 and kind
 `minecome_gameplay_pose_v1`: `run`, `world_id`, `target_pid`, string
 `target_start_filetime`, `patch_run`, `patch_sha256`, `seq`, `utc_ms`, `source_ms`
 and native-coordinate feet `position`. WorldBlocks additionally **requires**
-numeric `perspective_request` 0/1/2 (first/back/front); legacy poses reject this
-extra field. Identity, exact keys, finite bounds, monotonic sequence/source time
+numeric `perspective_request` 0/1/2 (first/back/front) and `camera_collision`;
+legacy poses reject these extra fields. Identity, exact keys, finite bounds, monotonic sequence/source time
 and the 250 ms freshness limit remain enforced. A duplicate or stale pose cannot
 renew a camera request. F5 changes the request, not the acknowledged view.
+
+`camera_collision` has exactly `generation`, `complete`, `origin` and `boxes`.
+The positive integer generation changes whenever geometry or availability changes;
+one generation must never name different data. Its origin is pinned to the saved
+terrain centre `(centerX, centerY, centerZ - 64)`. The server extracts actual
+`getCameraCollisionShape` (vanilla VISUAL) boxes for all confirmed owned blocks.
+Each box uses six signed 16-bit integers in sixteenths of a Minecraft block,
+encoded as 24 lowercase hex characters: min X/Y/Z, max X/Y/Z. Boxes are sorted,
+deduplicated, nondegenerate and at most two metres per axis. There are at most
+512 boxes. Unsupported/incomplete geometry produces `complete=false` and an
+empty string; it is never truncated. Empty complete geometry means clear space.
+WorldBlocks pose files allow 20 KiB; legacy poses keep their 4 KiB bound.
+
+The host sends at most 32 boxes per console statement, within the existing
+2,000-character encoded URL limit. Native code stages ordered chunks and commits
+only a complete generation. Every pose names its required generation. Missing,
+incomplete or mismatched geometry collapses the orbit to the eye; it cannot reuse
+an older clear path. A native-frame swept camera volume clips the current head
+direction against the committed boxes (0.12m radius and 0.03m clearance), then
+takes the nearer result from Minecraft geometry and native scene raycasts.
+Movement/geometry publication never changes the player's eye interaction reach.
 
 WorldBlocks publishes `gameplay-aim.json` with schema 3 and kind
 `minecome_gameplay_aim_v3`. It repeats the run/world/patch/target identity, `seq`
@@ -161,5 +182,5 @@ but cannot acknowledge third person. These file schemas do not change the image
 mapping layout or input ABI. Third-person selection also checks the segment from
 the render camera to the eye-ray hit against owned blocks' actual outline shapes.
 This rejects a hidden target without extending eye reach or treating slab/fence
-gaps as full cubes. It does not yet move the orbit camera around Minecraft blocks.
+gaps as full cubes. Orbit collision uses the separate VISUAL geometry above.
 Native acceptance and remaining limits are recorded in `docs/PROGRESS.md`.

@@ -39,6 +39,7 @@ public final class GameplaySession {
     private final HudStreamProducer.Identity identity;
     private final boolean standalone=Boolean.getBoolean("minecome.gameplayStandalone");
     private final String fixtureMode=System.getProperty("minecome.gameplayFixture","");
+    private final boolean nativeWalkingCheck=Boolean.getBoolean("minecome.gameplayThirdPersonWalkingCheck");
     private final boolean chatMode=Boolean.getBoolean("minecome.gameplayChat");
     private final boolean flightMode=Boolean.getBoolean("minecome.gameplayFlight");
     private final boolean handsMode=Boolean.getBoolean("minecome.gameplayHands"); private final boolean worldBlocksMode=Boolean.getBoolean("minecome.gameplayWorldBlocks");
@@ -59,7 +60,7 @@ public final class GameplaySession {
     private GameplayMovementFixture movementFixture;
     private GameplayBlocks blocks;
     private GameplayAimReader aimReader;
-    private GameplayAimReader.RenderSample admittedNativeView; private volatile int desiredPerspective;
+    private final GameplayNativeViewAdmission nativeView=new GameplayNativeViewAdmission(); private volatile int desiredPerspective;
     private boolean nativePerspectiveObserved; private int lastAcknowledgedPerspective;
     private GameplayBlocksFixture blocksFixture;
     private GameplayTerrainFixture terrainFixture;
@@ -69,6 +70,7 @@ public final class GameplaySession {
     private GameplayShapesFixture shapesFixture; private GameplayDepthFixture depthFixture;
     private GameplayPlayerFixture playerFixture; private boolean playerFrameRendered; private long playerRenderFrames; private net.minecraft.client.option.Perspective oldPerspective;
     private GameplayConnectedBlocksFixture connectedFixture; private GameplayShapeWalkingFixture shapeWalkingFixture;
+    private GameplayNativeWalkingFixture nativeWalkingFixture;
     private int renderedTerrainOccluders; private long terrainDepthFrames;
     private net.minecraft.util.math.BlockPos outlinedBlock;
     private boolean handFrameRendered;
@@ -100,6 +102,7 @@ public final class GameplaySession {
         if(!requested.getParent().equals(parent))throw new IOException("Gameplay stop file must be in this session directory");
         stopFile=requested;
         if(!fixtureMode.isEmpty()&&!standalone)throw new IllegalArgumentException("Persistence fixture requires standalone gameplay");
+        if(nativeWalkingCheck&&(standalone||!worldBlocksMode||!fixtureMode.isEmpty()))throw new IllegalArgumentException("Native walking check requires connected WorldBlocks without another fixture");
         if(chatMode&&!blocksMode)throw new IllegalArgumentException("Gameplay chat requires the explicit blocks/movement profile");
         if(flightMode&&!chatMode)throw new IllegalArgumentException("Gameplay flight requires the chat/world input profile");
         if(worldBlocksMode&&!handsMode)throw new IllegalArgumentException("World blocks requires the hands/gameplay profile"); if(handsMode&&!flightMode)throw new IllegalArgumentException("Gameplay hands requires the flight/gameplay profile");
@@ -200,6 +203,7 @@ public final class GameplaySession {
                         blocks=new GameplayBlocks(root,save,movement.surface(),wire,directory.getParent(),worldBlocksMode);
                         movement.blockController(blocks);
                         if(!standalone)aimReader=new GameplayAimReader(directory.getParent(),wire,movement.surface(),save.id().toString(),worldBlocksMode);
+                        if(nativeWalkingCheck)nativeWalkingFixture=new GameplayNativeWalkingFixture(movement,save,directory.getParent(),proof->{fixtureResult=proof.deepCopy();requestStop(MinecraftClient.getInstance(),"native_walking_check_complete",proof.get("result").getAsString().equals("passed")?null:proof.toString());});
                         if(fixtureMode.startsWith("blocks"))blocksFixture=new GameplayBlocksFixture(fixtureMode,blocks,movement,save,wire,directory.getParent(),proof->{
                             fixtureResult=proof.deepCopy();requestStop(MinecraftClient.getInstance(),"blocks_fixture_complete",proof.get("result").getAsString().equals("passed")?null:proof.toString());
                         });
@@ -270,19 +274,10 @@ public final class GameplaySession {
                 if(!standalone)ui=new HudVanillaUiAdapter(client,true);
             }
             if(movement!=null)movement.afterTick(client,System.nanoTime());
-            // Admit once on the client thread, before click dispatch. Projection,
-            // player visibility and interaction use this same native observation.
-            if(aimReader!=null&&!stopping){
-                if(aimReader.failure()!=null)throw new IllegalStateException("Native aim: "+aimReader.failure());
-                if(worldBlocksMode){admittedNativeView=aimReader.worldSample();
-                    if(admittedNativeView!=null){
-                        GameplayPerspective.select(client,GameplayPerspective.acknowledged(admittedNativeView.perspective()));
-                        if(admittedNativeView.schema()==3){nativePerspectiveObserved=true;lastAcknowledgedPerspective=admittedNativeView.perspective();}
-                    }
-                    blocks.aim(admittedNativeView==null?null:admittedNativeView.aim());
-                }else blocks.aim(aimReader.current());
-            }
+            // Refresh before clicks, independently of the render-frame cadence.
+            admitNativeView(client,false);
             if(!standalone)inputTick(client);
+            if(nativeWalkingFixture!=null&&!stopping)nativeWalkingFixture.tick(client,input!=null&&input.connected()&&input.hostState()==1,nativeView.current());
             if(blocksFixture!=null&&!stopping)blocksFixture.tick(client);
             if(terrainFixture!=null&&!stopping)terrainFixture.tick(client);
             if(chatFixture!=null&&!stopping)chatFixture.tick(client);
@@ -408,6 +403,22 @@ public final class GameplaySession {
         if(!windowCleanup.get("cleanup_succeeded").getAsBoolean()&&failure==null)failure="Owned gameplay window cleanup failed";
     }
 
+    private void admitNativeView(MinecraftClient client,boolean beginFrame){
+        if(aimReader==null||stopping)return;
+        if(!client.isOnThread())throw new IllegalStateException("Native view admission requires the client thread");
+        if(aimReader.failure()!=null)throw new IllegalStateException("Native aim: "+aimReader.failure());
+        if(!worldBlocksMode){blocks.aim(aimReader.current());return;}
+        var sample=aimReader.worldSample();long utc=System.currentTimeMillis(),nanos=System.nanoTime();
+        java.util.function.Consumer<GameplayAimReader.RenderSample> apply=next->{
+            if(next!=null){
+                GameplayPerspective.select(client,GameplayPerspective.acknowledged(next.perspective()));
+                if(next.schema()==3){nativePerspectiveObserved=true;lastAcknowledgedPerspective=next.perspective();}
+            }
+            blocks.aim(next==null?null:next.aim());
+        };
+        if(beginFrame)nativeView.beginFrame(sample,utc,nanos,apply);else nativeView.admit(sample,utc,nanos,apply);
+    }
+
     public static void beforeGuiClear(){
         var s=active;var client=MinecraftClient.getInstance();if(s==null||(s.standalone&&!s.handsMode)||!s.owns(client))return;
         // The hand pass already cleared the world colour; keep its actual pixels
@@ -432,7 +443,7 @@ public final class GameplaySession {
         else if(s.shapeWalkingFixture!=null){view=s.shapeWalkingFixture.view();ray=s.shapeWalkingFixture.renderAim();}
         else if(s.shapesFixture!=null){view=s.shapesFixture.view();ray=s.shapesFixture.renderAim();}
         else if(s.worldBlocksFixture!=null){view=s.worldBlocksFixture.view();ray=s.worldBlocksFixture.renderAim();}
-        else{var sample=s.admittedNativeView;if(sample==null||!sample.fresh()||s.aimReader==null||s.aimReader.failure()!=null)return null;view=sample.view();ray=sample.aim();}
+        else{var sample=s.nativeView.frame(System.currentTimeMillis(),System.nanoTime());if(sample==null||s.aimReader==null||s.aimReader.failure()!=null)return null;view=sample.view();ray=sample.aim();}
         // A valid rendering view does not require a hover ray. Fixtures and
         // ordinary denied/missed targets deliberately omit the outline ray.
         if(view==null)return null;
@@ -462,6 +473,11 @@ public final class GameplaySession {
     private void beginTransparentFrame(MinecraftClient client){
         RenderSystem.assertOnRenderThread();
         if(frameTransparent){requestStop(client,"render_failure","Nested gameplay HUD frame");return;}
+        // The reader may publish between 20 Hz client ticks. Admit immediately
+        // before the custom world layer, then pin this exact view through capture.
+        // Preserve its source UTC; rendering must never renew camera freshness.
+        try{admitNativeView(client,true);}
+        catch(Exception e){requestStop(client,"render_failure",e.toString());return;}
         priorBlend=new int[]{GL11.glGetInteger(GL14.GL_BLEND_SRC_RGB),GL11.glGetInteger(GL14.GL_BLEND_DST_RGB),GL11.glGetInteger(GL14.GL_BLEND_SRC_ALPHA),GL11.glGetInteger(GL14.GL_BLEND_DST_ALPHA)};
         frameTransparent=true;handFrameRendered=false;playerFrameRendered=false;renderedWorldBlocks=0;renderedTerrainOccluders=0;outlinedBlock=null;
         frameWorldCamera=null;worldLayers.beginFrame();
@@ -480,11 +496,12 @@ public final class GameplaySession {
         catch(Exception e){s.requestStop(client,"render_failure",e.toString());}
         finally{s.restoreBlend();}
     }
-    private void restoreBlend(){frameTransparent=false;handFrameRendered=false;playerFrameRendered=false;renderedWorldBlocks=0;renderedTerrainOccluders=0;outlinedBlock=null;if(priorBlend!=null){RenderSystem.blendFuncSeparate(priorBlend[0],priorBlend[1],priorBlend[2],priorBlend[3]);priorBlend=null;}}
+    private void restoreBlend(){nativeView.endFrame();frameTransparent=false;handFrameRendered=false;playerFrameRendered=false;renderedWorldBlocks=0;renderedTerrainOccluders=0;outlinedBlock=null;if(priorBlend!=null){RenderSystem.blendFuncSeparate(priorBlend[0],priorBlend[1],priorBlend[2],priorBlend[3]);priorBlend=null;}}
     private void capture(MinecraftClient client){
         readback.poll(frame->{
             if(frame.id()<=lastReadbackId)return;lastReadbackId=frame.id();if(stopping||output==null)return;
             var meta=JsonParser.parseString(frame.metadata()).getAsJsonObject();
+            if(nativeWalkingFixture!=null)nativeWalkingFixture.captured(frame);
             if(playerFixture!=null)playerFixture.captured(frame);if(handsFixture!=null)handsFixture.captured(frame);if(worldBlocksFixture!=null)worldBlocksFixture.captured(frame);if(shapesFixture!=null)shapesFixture.captured(frame);if(depthFixture!=null)depthFixture.captured(frame);if(connectedFixture!=null)connectedFixture.captured(frame);
             output.offer(new HudStreamProducer.Frame(frame.width(),frame.height(),frame.layersBottomUp()==null?frame.bottomUp():null,meta.get("captured_utc_ms").getAsLong(),meta.get("selected_slot").getAsInt(),meta.get("screen").getAsInt(),frame.metadata(),frame.layersBottomUp()));
         });
@@ -508,6 +525,7 @@ public final class GameplaySession {
         if(connectedFixture!=null){var stage=connectedFixture.captureStage();if(stage!=null)meta.addProperty("world_blocks_fixture_stage",stage);}
         if(depthFixture!=null){var stage=depthFixture.captureStage();if(stage!=null)meta.addProperty("world_blocks_fixture_stage",stage);}
         if(playerFixture!=null){var stage=playerFixture.captureStage();if(stage!=null){meta.addProperty("player_fixture_stage",stage);meta.add("player_fixture_motion",playerFixture.captureState());}}
+        if(nativeWalkingFixture!=null){var stage=nativeWalkingFixture.captureStage();if(stage!=null){meta.addProperty("native_walking_stage",stage);meta.add("native_walking_motion",nativeWalkingFixture.captureState(client));}}
         if(handsFixture!=null){var stage=handsFixture.captureStage();if(stage!=null)meta.addProperty("hands_fixture_stage",stage);}
         meta.addProperty("health_client",client.player.getHealth());meta.addProperty("food_client",client.player.getHungerManager().getFoodLevel());
         if(readback.capture(client.getFramebuffer(),worldBlocksMode?worldLayers.framebuffer():null,++captureId,meta.toString())){lastCaptureAt=now;if(handFrameRendered)handCapturedFrames++;}
@@ -547,6 +565,7 @@ public final class GameplaySession {
     }
     private void requestStop(MinecraftClient client,String reason,String problem){
         if(stopping)return;stopReason=reason;failure=problem;
+        if(nativeWalkingFixture!=null)nativeWalkingFixture.close();
         // End the host pose lease before draining asynchronous collision/input
         // cleanup. The final receipt can legitimately take longer than the lease.
         try{

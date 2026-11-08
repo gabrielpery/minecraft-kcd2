@@ -5,7 +5,7 @@ param([Parameter(Mandatory)][string]$EvidenceDirectory,[Parameter(Mandatory)][st
  [Parameter(Mandatory)][string]$Run,[Parameter(Mandatory)][int]$TargetPid,
  [Parameter(Mandatory)][string]$TargetStart,[Parameter(Mandatory)][long]$Expires,
  [Parameter(Mandatory)][string]$JavaHome,[ValidateSet('','create','resume','walking','walking-resume','blocks','blocks-resume','blocks-survival','terrain','terrain-resume','chat','chat-resume','flight','flight-resume','flight-fall','flight-fall-resume','hands','world-blocks','world-blocks-resume','shapes','shapes-resume','depth','connected','connected-resume','shape-walking','player')][string]$FixturePhase='',
- [switch]$Connected,[switch]$Movement,[switch]$Blocks,[switch]$Explore,[switch]$Chat,[switch]$Flight,[switch]$Hands,[switch]$WorldBlocks,[string]$GroundPatchFile)
+ [switch]$Connected,[switch]$Movement,[switch]$Blocks,[switch]$Explore,[switch]$Chat,[switch]$Flight,[switch]$Hands,[switch]$WorldBlocks,[string]$GroundPatchFile,[switch]$ThirdPersonWalkingCheck)
 $ErrorActionPreference='Stop'
 if($WorldBlocks){$Hands=$true};if($Hands){$Flight=$true};if($Flight){$Chat=$true}
 if($Explore -or $Chat){$Blocks=$true};if($Blocks){$Movement=$true}
@@ -19,6 +19,7 @@ $arguments=@('-p',(Join-Path $root 'minecraft'),'--offline','runClient','--conso
  "-PminecomeHudStreamTargetStart=$TargetStart","-PminecomeHudStreamExpiresUtcMs=$Expires")
 if(-not $Connected){$arguments+='-PminecomeGameplayStandalone'}
 if($FixturePhase){$arguments+="-PminecomeGameplayFixture=$FixturePhase"}
+if($ThirdPersonWalkingCheck){if(-not $Connected -or -not $WorldBlocks -or $FixturePhase){throw 'Native walking check requires connected WorldBlocks without another fixture.'};$arguments+='-PminecomeGameplayThirdPersonWalkingCheck'}
 if($Blocks){$arguments+='-PminecomeGameplayBlocks'}
 if($Explore){$arguments+='-PminecomeGameplayExplore'}
 if($Chat){$arguments+='-PminecomeGameplayChat'}

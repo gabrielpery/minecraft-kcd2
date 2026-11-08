@@ -25,6 +25,23 @@ local function scale(a,n)return{x=a.x*n,y=a.y*n,z=a.z*n}end
 local function plus(a,b)return{x=a.x+b.x,y=a.y+b.y,z=a.z+b.z}end
 local function unit(v)if not vector(v) then return nil end local n=math.sqrt(dot(v,v));if n<.000001 then return nil end return scale(v,1/n)end
 local function up_for(f)return unit({x=-f.x*f.z,y=-f.y*f.z,z=1-f.z*f.z})end
+local function horizontal_basis(direction)
+ if not vector(direction) then return nil end
+ local forward=unit({x=direction.x,y=direction.y,z=0});if not forward then return nil end
+ return forward,{x=forward.y,y=-forward.x,z=0}
+end
+-- Live run 33f9667359a04903968ddb5f69a64d06: GetHeadPos stayed frozen
+-- while observed native feet moved 0.68m under SetViewCamera. GetHeadDir still
+-- supplies independent mouse look. Preserve the bounded local eye offset
+-- observed at Begin, rotated by live yaw and translated by actual native feet;
+-- never use a guest-requested position or the overridden camera as the eye.
+local function camera_eye(s,p)
+ if not p or not p.allow_perspective or not (p.camera_owned or p.requested_mode~=0) then return copy(s.head_position) end
+ local forward,right=horizontal_basis(s.head_direction);local offset=p.head_offset
+ if not forward or not vector(offset) or not vector(s.position) then return nil end
+ local eye=plus(s.position,plus(scale(right,offset.x),plus(scale(forward,offset.y),{x=0,y=0,z=offset.z})))
+ return distance(eye,s.position)<=3 and eye or nil
+end
 local function quote(v) return '"'..tostring(v):gsub('[%z\1-\31\\"]',function(c)return string.format('\\u%04x',string.byte(c))end)..'"' end
 local function number(v) return finite(v) and string.format('%.17g',v) or 'null' end
 local function vec(v) return vector(v) and ('{"x":'..number(v.x)..',"y":'..number(v.y)..',"z":'..number(v.z)..'}') or 'null' end
@@ -44,7 +61,7 @@ end
 local function normal(s,p)
  if not vector(s.forward) or not vector(s.up) or not vector(s.camera) or not finite(s.fov) or s.fov<=0 or s.fov>=math.pi then return false end
  if p and p.camera_owned then
-  if distance(s.head_position,s.position)>3 or distance(s.camera,s.head_position)>4 then return false end
+  local eye=camera_eye(s,p);if distance(eye,s.position)>3 or distance(s.camera,eye)>4 then return false end
  elseif distance(s.camera,s.position)>3 then return false end
  local f,u=s.forward,s.up
  return math.abs(f.x*f.x+f.y*f.y+f.z*f.z-1)<=0.05 and math.abs(u.x*u.x+u.y*u.y+u.z*u.z-1)<=0.05 and math.abs(f.x*u.x+f.y*u.y+f.z*u.z)<=0.05
@@ -55,7 +72,7 @@ local function safe(s,p)
  for _,f in ipairs(s.flags) do if not f.ok or type(f.value)~='boolean' or f.value then return 'unsafe_player_state' end end
  if not s.link_ok or (s.link~=nil and s.link~=0) then return 'linked_player' end
  if not normal(s,p) then return 'camera_unavailable' end
- if p and p.allow_perspective and (distance(s.head_position,s.position)>3 or not unit(s.head_direction) or not up_for(unit(s.head_direction))) then return 'head_camera_unavailable' end
+ if p and p.allow_perspective and (distance(camera_eye(s,p),s.position)>3 or not unit(s.head_direction) or not up_for(unit(s.head_direction))) then return 'head_camera_unavailable' end
  if p and (s.entity~=p.entity or s.id~=p.id or (s.link==nil)~=p.link_nil) then return 'player_changed' end
  if p and distance(s.position,p.last_owned)>0.35 then return 'unexpected_player_navigation' end
  if math.sqrt(s.velocity.x*s.velocity.x+s.velocity.y*s.velocity.y)>0.2 or math.abs(s.velocity.z)>6 then return 'native_input_or_velocity' end
@@ -103,6 +120,7 @@ local function emit(p,event,result,s,seq)
   ..(s and s.aim and (',"aim":{"known":'..tostring(s.aim.known)..',"distance":'..number(s.aim.distance)..',"terrain_hit":'..tostring(s.aim.terrain_hit)..',"range":4.5}') or '')
   ..',"camera_basis_valid":'..tostring(s~=nil and normal(s,p))..',"camera_override_changed":'..tostring(p.camera_attempted==true)..',"camera_restored":'..tostring(p.camera_restored==true)..',"camera_reset_attempts":'..number(p.reset_attempts or 0)..',"timers_cancelled":'..tostring(p.timers_cancelled==true)..',"position_restored":false,"control_state_changed":false}'
  if p.allow_perspective then t=t:sub(1,-2)..',"body_visible_baseline_owned":true,"body_hidden":'..tostring(p.body_hidden==true)..',"body_restore_dispatched":'..tostring(p.body_restore_dispatched==true)..',"body_draw_calls":'..number(p.body_draw_calls or 0)..'}' end
+ if p.allow_perspective then local g=p.camera_geometry;t=t:sub(1,-2)..',"camera_collision_generation":'..number(g and g.generation or 0)..',"camera_collision_required":'..number(p.latest and p.latest.camera_generation or 0)..',"camera_collision_complete":'..tostring(g~=nil and g.complete==true)..',"camera_collision_boxes":'..number(g and #g.boxes or 0)..',"camera_collision_distance":'..number(p.camera_owned_distance or 0)..'}' end
  local ok,v=pcall(System.LogAlways,'[MineComeGameplayMovement] '..t);return ok and v~=false
 end
 local function cancel(p)
@@ -172,13 +190,13 @@ cleanup=function(p)
  return true
 end
 function MineCome_GameplayMovementCleanup(data)local p=consume(data);if p and p.stopping then return cleanup(p) end return false end
-local function clipped_distance(s,direction,up)
+local function clipped_distance(s,eye,direction,up)
  if not Physics or type(Physics.RayWorldIntersection)~='function' or not finite(ent_all) or ent_all<=0 or ent_all>2147483647 or ent_all~=math.floor(ent_all) then return 0 end
  local right=unit({x=direction.y*up.z-direction.z*up.y,y=direction.z*up.x-direction.x*up.z,z=direction.x*up.y-direction.y*up.x})
  if not right then return 0 end
  local nearest=2.5
  for _,corner in ipairs({{0,0},{-.12,-.12},{-.12,.12},{.12,-.12},{.12,.12}}) do
-  local origin=plus(s.head_position,plus(scale(right,corner[1]),scale(up,corner[2])));local hits={}
+  local origin=plus(eye,plus(scale(right,corner[1]),scale(up,corner[2])));local hits={}
   local ok,count=pcall(Physics.RayWorldIntersection,copy(origin),scale(direction,2.5),16,ent_all,s.id,nil,hits)
   if not ok or not finite(count) or count<0 or count>=16 or count~=math.floor(count) then return 0 end
   for i=1,16 do local h=hits[i]
@@ -191,6 +209,62 @@ local function clipped_distance(s,direction,up)
   if hits[17]~=nil then return 0 end
  end
  return nearest
+end
+-- Immutable, guest-owned VISUAL voxel boxes. Sweep the camera volume, rather
+-- than its centre alone, so its near plane cannot cross a thin slab/fence face.
+local function owned_camera_distance(p,origin,direction)
+ local required=p.latest and p.latest.camera_generation
+ local geometry=p.camera_geometry
+ if not required or not geometry or geometry.generation~=required or not geometry.complete then return 0 end
+ local nearest=2.5
+ for _,b in ipairs(geometry.boxes) do
+  local entry,leave=0,nearest
+  for axis,key in ipairs({'x','y','z'}) do
+   local minimum,maximum=b[axis]-.12,b[axis+3]+.12
+   local at,speed=origin[key],direction[key]
+   if math.abs(speed)<.0000001 then
+    if at<minimum or at>maximum then entry=math.huge;break end
+   else
+    local a,c=(minimum-at)/speed,(maximum-at)/speed
+    if a>c then a,c=c,a end
+    entry=math.max(entry,a);leave=math.min(leave,c)
+    if entry>leave then break end
+   end
+  end
+  if entry<=leave then nearest=math.min(nearest,math.max(0,entry-.03)) end
+ end
+ return nearest
+end
+-- Chunks never become visible individually. Poses bind a complete generation;
+-- a missing/incomplete/new generation collapses to the eye until committed.
+function MineCome.GameplayCameraGeometry(run,generation,index,total,ox,oy,oz,complete,packed)
+ local p=state.active
+ if not token(run) or not p or p.run~=run or not p.allow_perspective then return false,'inactive' end
+ if p.stopping then return false,'stopping' end
+ if not finite(generation) or generation<1 or generation>10000000 or generation~=math.floor(generation)
+  or not finite(index) or not finite(total) or index~=math.floor(index) or total~=math.floor(total) or total<1 or total>16 or index<1 or index>total
+  or not vector({x=ox,y=oy,z=oz}) or type(complete)~='boolean' or type(packed)~='string' or #packed>768 or #packed%24~=0 or packed:find('[^0-9a-f]')
+  or (not complete and (total~=1 or #packed~=0)) or (#packed==0 and (index~=1 or total~=1)) then return false,'camera_geometry_invalid' end
+ local committed=p.camera_geometry
+ if committed and generation<=committed.generation then return false,'camera_geometry_replayed' end
+ local stage=p.camera_geometry_pending
+ if index==1 then
+  if stage and generation<=stage.generation then return false,'camera_geometry_replayed' end
+  stage={generation=generation,total=total,origin={x=ox,y=oy,z=oz},complete=complete,boxes={},next=1};p.camera_geometry_pending=stage
+ end
+ if not stage or stage.generation~=generation or stage.next~=index or stage.total~=total or stage.complete~=complete
+  or distance(stage.origin,{x=ox,y=oy,z=oz})~=0 then return false,'camera_geometry_sequence' end
+ local boxes={}
+ for offset=1,#packed,24 do
+  local q={};for i=1,6 do local n=tonumber(packed:sub(offset+(i-1)*4,offset+i*4-1),16);if n>=32768 then n=n-65536 end;q[i]=n/16 end
+  for i=1,3 do if q[i]>=q[i+3] or q[i+3]-q[i]>2 then return false,'camera_geometry_box_invalid' end end
+  boxes[#boxes+1]={ox+q[1],oy-q[6],oz+q[2],ox+q[4],oy-q[3],oz+q[5]}
+ end
+ if #stage.boxes+#boxes>512 then return false,'camera_geometry_capacity' end
+ for _,b in ipairs(boxes) do stage.boxes[#stage.boxes+1]=b end
+ stage.next=index+1
+ if index==total then p.camera_geometry=stage;p.camera_geometry_pending=nil end
+ return true,index==total and 'committed' or 'staged'
 end
 -- A mode is acknowledged only from System's actual camera readback. The eye
 -- and natural look belong to that exact submitted view, never a later head pose.
@@ -235,13 +309,15 @@ local function update_camera(p,s,t)
   return true
  end
  local forward=unit(s.head_direction);local up=forward and up_for(forward)
- if not forward or not up then return false,'head_camera_unavailable' end
+ local eye=camera_eye(s,p)
+ if not forward or not up or not eye then return false,'head_camera_unavailable' end
  if not p.body_hidden and not draw_body(p,0) then return false,'body_hide_failed' end
- local offset=scale(forward,p.requested_mode==1 and -1 or 1);local reach=clipped_distance(s,offset,up)
- local target=plus(s.head_position,scale(offset,reach));local direction=scale(forward,p.requested_mode==2 and -1 or 1)
+ local offset=scale(forward,p.requested_mode==1 and -1 or 1);local owned_reach=owned_camera_distance(p,eye,offset)
+ local reach=math.min(clipped_distance(s,eye,offset,up),owned_reach);p.camera_owned_distance=owned_reach
+ local target=plus(eye,scale(offset,reach));local direction=scale(forward,p.requested_mode==2 and -1 or 1)
  local history=p.camera_requests or {};p.camera_requests=history
  while #history>0 and (t-history[1].at>.25 or #history>=16) do table.remove(history,1) end
- history[#history+1]={camera=target,direction=direction,eye=copy(s.head_position),forward=forward,up=up,mode=p.requested_mode,at=t}
+ history[#history+1]={camera=target,direction=direction,eye=copy(eye),forward=forward,up=up,mode=p.requested_mode,at=t}
  p.camera_attempted=true;p.camera_owned=true;p.camera_restored=false;p.unacked_since=p.unacked_since or t
  if t-p.unacked_since>.25 then return false,'camera_readback_expired' end
  local ok,v=pcall(p.set_camera,copy(target),{direction.x,direction.y,direction.z})
@@ -268,6 +344,9 @@ function MineCome.GameplayMovementBegin(run,duration_ms,minx,maxx,miny,maxy,minz
  if p.allow_perspective then
   p.set_camera=field(CryAction,'SetViewCamera');p.reset_camera=field(CryAction,'ResetToNormalCamera')
   if type(p.set_camera)~='function' or type(p.reset_camera)~='function' or distance(s.head_position,s.position)>3 or not unit(s.head_direction) or not up_for(unit(s.head_direction)) then return false,'perspective_api_unavailable' end
+  local forward,right=horizontal_basis(s.head_direction);if not forward then return false,'perspective_api_unavailable' end
+  local delta={x=s.head_position.x-s.position.x,y=s.head_position.y-s.position.y,z=s.head_position.z-s.position.z}
+  p.head_offset={x=dot(delta,right),y=dot(delta,forward),z=delta.z}
   p.draw_body,p.slot_valid,p.slot_character,p.is_hidden=field(s.entity,'DrawSlot'),field(s.entity,'IsSlotValid'),field(s.entity,'IsSlotCharacter'),field(s.entity,'IsHidden')
   if type(p.draw_body)~='function' or type(p.slot_valid)~='function' or type(p.slot_character)~='function' or type(p.is_hidden)~='function' or not body_valid(p) then return false,'body_slot_unavailable' end
  end
@@ -282,18 +361,19 @@ function MineCome.GameplayMovementBegin(run,duration_ms,minx,maxx,miny,maxy,minz
  if not emit(p,'begin','ready',s) then finish(p,'log_failed');return false,'log_failed' end
  return true,'ready'
 end
-function MineCome.GameplayMovementPose(run,seq,source_ms,x,y,z,requested_mode)
+function MineCome.GameplayMovementPose(run,seq,source_ms,x,y,z,requested_mode,camera_generation)
  local p=state.active;if not token(run) or not p or p.run~=run then return false,'inactive' end
  local target={x=x,y=y,z=z};local t=clock();local reason
  if p.stopping then return false,'stopping' end
  if (p.allow_perspective and (not finite(requested_mode) or requested_mode<0 or requested_mode>2 or requested_mode~=math.floor(requested_mode))) or (not p.allow_perspective and requested_mode~=nil) then reason='perspective_request_invalid'
+ elseif (p.allow_perspective and (not finite(camera_generation) or camera_generation<1 or camera_generation>10000000 or camera_generation~=math.floor(camera_generation) or p.latest and camera_generation<p.latest.camera_generation)) or (not p.allow_perspective and camera_generation~=nil) then reason='camera_geometry_generation_invalid'
  elseif not finite(seq) or seq<1 or seq>10000000 or seq~=math.floor(seq) or seq<=p.sequence then reason='sequence_replayed_or_invalid'
  elseif not finite(source_ms) or source_ms<0 or source_ms>86400000 or (p.latest and source_ms<=p.latest.source_ms) then reason='source_time_invalid'
  elseif not inside(p,target,0) then reason='target_outside_capture'
  elseif not t or t<p.last_clock or t>=p.deadline or (p.latest and t-p.latest.received>LEASE) then reason='source_lease_expired'
  elseif p.latest and distance(target,p.latest.target)>0.5+p.max_speed*(source_ms-p.latest.source_ms)/1000 then reason='source_velocity_invalid' end
  if reason then finish(p,reason);return false,reason end
- p.segment={from=copy(p.last_owned),started=t};p.latest={seq=seq,source_ms=source_ms,target=copy(target),received=t,first=p.sequence==0};p.sequence=seq
+ p.segment={from=copy(p.last_owned),started=t};p.latest={seq=seq,source_ms=source_ms,target=copy(target),received=t,first=p.sequence==0,camera_generation=camera_generation};p.sequence=seq
  if p.allow_perspective then p.requested_mode=requested_mode end
  return true,'queued'
 end

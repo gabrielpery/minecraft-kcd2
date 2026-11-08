@@ -15,6 +15,7 @@ import net.minecraft.item.BlockItem;
 import net.minecraft.item.ItemPlacementContext;
 import net.minecraft.registry.Registries;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.util.Hand;
 import net.minecraft.util.hit.*;
 import net.minecraft.util.math.*;
@@ -50,6 +51,7 @@ public final class GameplayBlocks {
     private final Map<GameplayBlocksLedger.Cell,String> serverCells=new TreeMap<>();
     private final AtomicReference<Map<GameplayBlocksLedger.Cell,String>> owned=new AtomicReference<>();
     private final boolean worldBlocks;
+    private final GameplayCameraCollision cameraCollision=new GameplayCameraCollision();
     private final AtomicReference<Intent> intent=new AtomicReference<>();private final AtomicReference<Observation> observation=new AtomicReference<>();
     private final AtomicReference<String> failure=new AtomicReference<>();
     private volatile MinecraftServer server;private Object clientWorld,clientPlayer,serverWorld,serverPlayer;
@@ -84,6 +86,21 @@ public final class GameplayBlocks {
         for(var entry:owned.get().entrySet()){var position=pos(entry.getKey());var state=client.world.getBlockState(position);
             if(entry.getValue().equals(stateName(state)))result.put(position,state);}
         return Map.copyOf(result);
+    }
+    /** Called by the pose publisher on END_SERVER_TICK, after observe reconciles
+     * confirmed ownership. Never read a client world or predict placement here. */
+    public GameplayCameraCollision.Snapshot cameraCollision(MinecraftServer source,ServerPlayerEntity player){
+        if(source==null||!source.isOnThread())throw new IllegalStateException("Camera collision requires server thread");
+        if(!worldBlocks||closing||serverClosed||!serverInitialized||source!=server||source.getOverworld()!=serverWorld||
+                player==null||player!=serverPlayer||player.getWorld()!=serverWorld)return cameraCollision.unavailable();
+        var shapes=new HashMap<BlockPos,VoxelShape>();var world=source.getOverworld();var context=ShapeContext.of(player);
+        for(var entry:serverCells.entrySet()){
+            var position=pos(entry.getKey());if(!world.isChunkLoaded(position))return cameraCollision.unavailable();
+            var state=world.getBlockState(position);
+            if(!entry.getValue().equals(stateName(state))||!supported(state))return cameraCollision.unavailable();
+            shapes.put(position,state.getCameraCollisionShape(world,position,context));
+        }
+        return cameraCollision.capture(shapes);
     }
     /** Read-only render selection, with the same reach, shape and obstruction checks as mining. */
     public BlockHitResult hoveredBlock(MinecraftClient client,Aim ray){

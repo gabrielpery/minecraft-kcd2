@@ -21,7 +21,7 @@ local function fixture()
   KillTimer=function(id)assert(f.timers[id] and f.timers[id].alive,'unowned timer');f.timers[id].alive=false end}
  dofile(MINECOME_MODULE_PATH);eq(MineCome._movement_probe,retained);eq(f.serial,0);eq(f.writes,0)
  function f:begin(run,duration)return MineCome.GameplayMovementBegin(run or A,duration or 86400000,-10,10,-10,10,-10,10)end
- function f:pose(seq,source,x,y,z,mode)return MineCome.GameplayMovementPose(A,seq,source,x,y,z,mode)end
+ function f:pose(seq,source,x,y,z,mode,generation)return MineCome.GameplayMovementPose(A,seq,source,x,y,z,mode,mode~=nil and (generation or 1) or nil)end
  function f:fire(slot,advance)
   local event;for _,e in pairs(self.timers)do if e.alive and e.data.slot==slot then event=e;break end end
   assert(event,'missing timer '..slot);event.alive=false;self.time=self.time+(advance or 0);self.callback=true
@@ -178,7 +178,11 @@ local function perspective_fixture()
   else f.last_aim={origin=copy(o),direction=copy(d)} end
   return 0
  end}
- function f:beginPerspective()return MineCome.GameplayMovementBegin(A,86400000,-10,10,-10,10,-10,10,false,true)end
+ function f:beginPerspective()
+  local ok,why=MineCome.GameplayMovementBegin(A,86400000,-10,10,-10,10,-10,10,false,true)
+  if ok then eq(MineCome.GameplayCameraGeometry(A,1,1,1,0,0,0,true,''),true) end
+  return ok,why
+ end
  function f:finishPerspective()MineCome.GameplayMovementEnd(A);for i=1,3 do if MineCome._gameplay_movement.active then self:fire('cleanup',.05)end end;eq(self:activeTimers(),0)end
  return f
 end
@@ -283,5 +287,87 @@ test('successful perspective cleanup permits later legacy and perspective sessio
   else eq(f:begin(B),true);eq(MineCome.GameplayMovementEnd(B),true)end
   eq(f:activeTimers(),0);eq(f.body_visible,true);eq(f.camera,nil)
  end
+end)
+local function pack_box(q)local t={};for _,n in ipairs(q)do t[#t+1]=string.format('%04x',(n*16)%65536)end;return table.concat(t)end
+test('owned camera volume clips full boxes and corners while preserving partial gaps',function()
+ -- MC boxes map (x,y,z) to native (x,-z,y). Native eye is (1,2,4.6).
+ for _,case in ipairs({
+  {box={.5,4,-1,1.5,5,0},reach=.85},
+  {box={1.1,4,-1,1.5,5,0},reach=.85},
+  {box={.5,3,-1,1.5,4,0},reach=2.5},
+  {box={.5,4,-2,1.5,5,-1},reach=0},
+ }) do
+  -- Quantized thin corner begins at 1.0625, intersecting the camera volume.
+  if case.box[1]==1.1 then case.box[1]=1.0625 end
+  local f=perspective_fixture();f:beginPerspective()
+  eq(MineCome.GameplayCameraGeometry(A,2,1,1,0,0,0,true,pack_box(case.box)),true)
+  eq(f:pose(1,0,1,2,3,1,2),true);f:fire('tick',.01);f:fire('tick',.01)
+  assert(math.abs(f.camera.position.y-(2-case.reach))<.000001,tostring(f.camera.position.y));f:finishPerspective()
+ end
+end)
+test('owned geometry is atomic and new incomplete generation collapses camera until commit',function()
+ local f=perspective_fixture();f:beginPerspective();f:pose(1,0,1,2,3,1,2);f:fire('tick',.01);f:fire('tick',.01);eq(f.camera.position.y,2)
+ local far=pack_box({5,5,5,6,6,6});local wall=pack_box({.5,4,-1,1.5,5,0})
+ eq(MineCome.GameplayCameraGeometry(A,2,1,2,0,0,0,true,far),true)
+ f:fire('tick',.01);f:fire('tick',.01);eq(f.camera.position.y,2)
+ eq(MineCome.GameplayCameraGeometry(A,2,2,2,0,0,0,true,wall),true)
+ f:fire('tick',.01);f:fire('tick',.01);assert(math.abs(f.camera.position.y-1.15)<.000001)
+ f:pose(2,100,1,2,3,1,3);eq(MineCome.GameplayCameraGeometry(A,3,1,1,0,0,0,false,''),true)
+ f:fire('tick',.01);f:fire('tick',.01);eq(f.camera.position.y,2)
+ f:pose(3,150,1,2,3,1,4);eq(MineCome.GameplayCameraGeometry(A,4,1,1,0,0,0,true,''),true)
+ f:fire('tick',.01);f:fire('tick',.01);eq(f.camera.position.y,-.5);f:finishPerspective()
+end)
+test('front orbit and native scenery take the nearest independently clipped distance',function()
+ local f=perspective_fixture();f:beginPerspective();local wall=pack_box({.5,4,-4,1.5,5,-3})
+ eq(MineCome.GameplayCameraGeometry(A,2,1,1,0,0,0,true,wall),true)
+ f:pose(1,0,1,2,3,2,2);f:fire('tick',.01);f:fire('tick',.01)
+ assert(math.abs(f.camera.position.y-2.85)<.000001)
+ f.clip_distance=.5;f:fire('tick',.01);f:fire('tick',.01)
+ assert(math.abs(f.camera.position.y-2.35)<.000001);f:finishPerspective()
+end)
+test('geometry rejects malformed replay and mixed chunks without partial commit',function()
+ local f=perspective_fixture();f:beginPerspective();local wall=pack_box({.5,4,0,1.5,5,1})
+ for _,packed in ipairs({'g',string.rep('0',24),wall..'a',string.rep(wall,33)})do eq(MineCome.GameplayCameraGeometry(A,2,1,1,0,0,0,true,packed),false)end
+ eq(MineCome.GameplayCameraGeometry(B,2,1,1,0,0,0,true,wall),false)
+ eq(MineCome.GameplayCameraGeometry(A,1,1,1,0,0,0,true,wall),false)
+ eq(MineCome.GameplayCameraGeometry(A,3,1,2,0,0,0,true,wall),true)
+ eq(MineCome.GameplayCameraGeometry(A,3,2,2,1,0,0,true,wall),false)
+ eq(MineCome.GameplayCameraGeometry(A,3,2,2,0,0,0,true,wall),true)
+ eq(MineCome.GameplayCameraGeometry(A,3,2,2,0,0,0,true,wall),false)
+ eq(MineCome._gameplay_movement.active.camera_geometry.generation,3);eq(#MineCome._gameplay_movement.active.camera_geometry.boxes,2)
+ eq(f:pose(1,0,1,2,3,1,3),true);eq(f:pose(2,100,1,2,3,1,2),false);f:lastReason('camera_geometry_generation_invalid')
+end)
+test('third person follows observed feet beyond frozen native head position',function()
+ local f=perspective_fixture();local head=player.actor.GetHeadPos;local frozen=head()
+ player.actor.GetHeadPos=function()return f.camera and copy(frozen) or head()end
+ f:beginPerspective();f:pose(1,0,1,2,3,1);f:fire('tick',.01);f:fire('tick',.01)
+ for i=2,42 do
+  eq(f:pose(i,(i-1)*50,1+(i-1)*.1,2,3,1),true);f:fire('tick',.05)
+  assert(MineCome._gameplay_movement.active and not MineCome._gameplay_movement.active.stopping)
+ end
+ f:fire('tick',.1);f:fire('tick',.01);eq(MineCome.GameplayMovementSample(A,1,true),true)
+ assert(f.position.x-frozen.x>4);assert(math.abs(f.last_aim.origin.x-f.position.x)<.000001)
+ assert(math.abs(f.camera.position.x-f.position.x)<.000001);eq(f.last_aim.origin.z,4.6)
+ -- Reset still requires the actual normal head readback, not the derived eye.
+ f:pose(43,2200,f.position.x,2,3,0);f:fire('tick',.01);f:fire('tick',.01);f:fire('tick',.01)
+ eq(f.camera,nil);eq(MineCome.GameplayMovementSample(A,2,true),true)
+ assert(f.logs[#f.logs]:find('"perspective":0',1,true),f.logs[#f.logs]);f:finishPerspective()
+end)
+test('captured local eye offset rotates with live yaw without tilting its height',function()
+ local f=perspective_fixture();local function actual_head()return{x=f.position.x+.2,y=f.position.y+.1,z=f.position.z+1.6}end
+ local frozen=actual_head();player.actor.GetHeadPos=function()return f.camera and copy(frozen) or actual_head()end
+ local camera_pos=System.GetViewCameraPos;System.GetViewCameraPos=function()return f.camera and camera_pos() or actual_head()end
+ f:beginPerspective();f:pose(1,0,1,2,3,1);f:fire('tick',.01);f:fire('tick',.01)
+ f.look={x=.8,y=0,z=.6};f:pose(2,50,1.1,2,3,1);f:fire('tick',.1);f:fire('tick',.01)
+ eq(MineCome.GameplayMovementSample(A,1,true),true)
+ assert(math.abs(f.last_aim.origin.x-1.2)<.000001);assert(math.abs(f.last_aim.origin.y-1.8)<.000001);eq(f.last_aim.origin.z,4.6)
+ assert(math.abs(f.camera.position.x-(1.2-2))<.000001);assert(math.abs(f.camera.position.z-3.1)<.000001)
+ f:finishPerspective();f:lastReason('explicit_stop')
+end)
+test('derived eye preserves head baseline bounds and native velocity guards',function()
+ local f=perspective_fixture();player.actor.GetHeadPos=function()return{x=1,y=2,z=6.01}end
+ local ok,why=f:beginPerspective();eq(ok,false);eq(why,'perspective_api_unavailable');eq(f.camera_writes,0)
+ f=perspective_fixture();f:beginPerspective();f:pose(1,0,1,2,3,1);f:fire('tick',.01);f:fire('tick',.01)
+ f.velocity.x=.21;f:fire('tick',.01);f:fire('cleanup',.05);f:lastReason('native_input_or_velocity')
 end)
 print('PASS '..passed..' gameplay movement tests (simulated bindings)')

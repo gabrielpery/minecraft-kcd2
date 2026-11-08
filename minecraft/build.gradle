@@ -19,6 +19,8 @@ loom {
                     vmArgs '-Dminecome.gameplayStandalone=true'
                 if (project.hasProperty('minecomeGameplayFixture'))
                     vmArgs "-Dminecome.gameplayFixture=${project.property('minecomeGameplayFixture')}"
+                if (project.hasProperty('minecomeGameplayThirdPersonWalkingCheck'))
+                    vmArgs '-Dminecome.gameplayThirdPersonWalkingCheck=true'
                 if (project.hasProperty('minecomeGameplayMovement'))
                     vmArgs '-Dminecome.gameplayMovement=true'
                 if (project.hasProperty('minecomeGameplayBlocks'))

@@ -22,7 +22,7 @@ final class GameplayMotionFiles {
         if(Files.exists(pose)||Files.exists(this.directory.resolve("gameplay-movement-ready.json")))throw new IOException("Movement output already exists");
     }
     void start(){worker=new Thread(this::run,"MineComeGameplayMotionFiles");worker.setDaemon(true);worker.start();}
-    void pose(JsonObject json){String text=json.toString();if(text.length()>4096)throw new IllegalArgumentException("Pose bound");latest.set(text);}
+    void pose(JsonObject json){String text=json.toString();int bound=Boolean.getBoolean("minecome.gameplayWorldBlocks")?20480:4096;if(text.length()>bound)throw new IllegalArgumentException("Pose bound");latest.set(text);}
     void ready(JsonObject json){ready.compareAndSet(null,json.toString());}
     void close(GameplayTerrainBinding.Position position){checkpoint=position;closing=true;}
     boolean finished(){return finished;}

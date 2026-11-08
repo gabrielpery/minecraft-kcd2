@@ -541,16 +541,28 @@ The WorldBlocks pose includes `perspective_request` 0/1/2. Aim schema 3 carries
 separate player-eye interaction and displaced render-camera data, admitted as one
 sample. Block reach remains measured from the eye while Steve, blocks and their
 depth use the actual camera. See the [snapshot contract](../protocol/HUD_STREAM.md#gameplay-pose-and-camera-snapshots).
-Native mouse look uses the player's independent head position/direction, so the
-displaced camera does not feed its own previous view back into aiming. The native
-camera follows that look and clips its 2.5m offset against physical KCD scenery.
-This clipping does not yet include owned Minecraft blocks. Block interactions
-retain eye-based reach while the body, blocks, outline and scene depth use the
-acknowledged render view.
+Native mouse look uses the player's independent head direction, so the displaced
+camera does not feed its own previous view back into aiming. KCD's head-position
+getter freezes during the override; the bridge therefore preserves the local
+eye offset observed before takeover, rotates it with live yaw and translates it
+with the actual native feet. The acknowledged camera follows walking as well as
+mouse look. Block interactions retain eye-based reach while the body, blocks,
+outline and scene depth use that render view.
+
+The 2.5m orbit clips against both physical KCD scenery and owned Minecraft
+blocks. On the server thread, the bridge extracts vanilla camera collision
+shapes from confirmed blocks, including partial shapes and fence gaps. Native
+code sweeps against their boxes with 0.12m clearance and a further 0.03m surface
+margin. Geometry is bounded to the existing 64 owned blocks and 512 voxel boxes;
+coordinates must be exactly representable in sixteenths, and each box axis must
+span at most 2m. Packed snapshots are installed atomically in bounded chunks.
+Every pose names its required geometry generation. Missing, incomplete or
+superseded geometry collapses the orbit to the eye until the complete matching
+set is installed; it never drops excess boxes to continue through a wall.
 Selection additionally checks actual owned voxel shapes from the render camera
 to the eye-ray hit. A nearer visible block rejects a hidden target; slab and
-fence gaps remain usable. This visibility check does not extend reach or move
-the orbit camera around Minecraft blocks.
+fence gaps remain usable. This visibility check does not extend reach and remains
+separate from the camera collision sweep.
 
 While a third-person view is active, the bridge suppresses Henry's slot-0 body
 with the documented render-only `DrawSlot` binding. This owned WorldBlocks path
@@ -579,14 +591,43 @@ failure and restored the native camera/body:
 It was manually stopped after those observations at 226.9 seconds. The launcher's
 verification failed only the requested 240-second duration assertion; the full
 duration smoke remains incomplete.
-Sustained native third-person walking remains unverified: Computer Use key taps
-recorded zero movement events and held ticks. Camera clipping against owned
-Minecraft blocks also remains pending; the target-visibility rejection above is
-implemented. Input, pose, camera admission and cleanup have automated
-contract/lifecycle coverage. These native checks are separate from the
-older static probes and standalone Steve fixture above. F5 applies only to
-WorldBlocks; legacy `-Hands` and flat-stream profiles keep their first-person
-behavior.
+The subsequent combined walking/collision check passes in live KCD2:
+`runtime/evidence/gameplay-kcd-20261108-124939-1ae7d0c08c614ae8b364b11f68b71051`.
+Scripted guest key events drive vanilla Minecraft movement and the production
+native pose follower through six strides in each third-person view: 4.01m
+cumulative travel in back view and 3.91m in front, while remaining within 0.81m
+of the start. Inventory keeps the player still, and first-person hand/HUD return,
+save and camera/body cleanup pass. This verifies repeated integrated movement;
+it does not claim physical Windows key routing or prolonged free roaming.
+
+The same run passes independent native-camera clearance verification against
+eight controlled magenta-concrete wall cells: 69 back and 66 front readbacks,
+including clipped samples in both modes, with no penetration of the expanded
+boxes. The source fixture was seeded through an isolated vanilla load datapack;
+this camera test is not another placement-input acceptance. Partial-shape
+geometry and malformed/chunked transport have focused automated coverage;
+the live collision fixture currently uses full cubes.
+
+With a fresh loaded KCD2 test world, installed WorldBlocks `$bundle` and isolated
+`$instance`, the repeatable automated walking check is:
+
+```powershell
+& './scripts/Test-KcdThirdPersonWalking.ps1' -BundleDirectory $bundle -InstanceDirectory $instance
+```
+
+Keep KCD2 in front; no movement keys are needed. The wrapper checks all eight
+image stages, repeated client/server/native displacement, inventory suppression
+and normal cleanup. It also holds the back camera still for twelve seconds before
+walking and records the interval for depth diagnostics. For the controlled eight-wall fixture, preserve that run's
+native movement log and validate its saved geometry/readbacks with
+`Test-KcdCameraCollisionEvidence.ps1 -EvidenceDirectory <saved-evidence-directory>`.
+That verifier rejects changing geometry because a final snapshot alone cannot
+prove earlier camera clearance. The receipts are `native-walking-verification.json`
+and `camera-collision-verification.json` inside the run directory.
+
+Input, pose, camera admission and cleanup also have automated contract/lifecycle
+coverage. F5 applies only to WorldBlocks; legacy `-Hands` and flat-stream profiles
+keep their first-person behavior.
 
 ## Minecraft hands and held items
 

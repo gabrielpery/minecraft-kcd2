@@ -72,14 +72,17 @@ function Read-GameplayMovementPose([string]$Path,$Identity,$Bounds,[long]$LastSe
     $file=$null
     try{
         $file=[IO.FileStream]::new($Path,[IO.FileMode]::Open,[IO.FileAccess]::Read,([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
-        if($file.Length -lt 2 -or $file.Length -gt 4096){throw 'Gameplay pose exceeds4096 bytes.'}
+        $maximum=if($WorldBlocks){20480}else{4096}
+        if($file.Length -lt 2 -or $file.Length -gt $maximum){throw 'Gameplay pose exceeds its byte bound.'}
         $bytes=[byte[]]::new([int]$file.Length);$file.ReadExactly($bytes)
         if($file.ReadByte() -ne -1){throw 'Gameplay pose changed size.'}
         $json=[Text.UTF8Encoding]::new($false,$true).GetString($bytes)
         $document=[Text.Json.JsonDocument]::Parse($json)
         try{
             if($document.RootElement.ValueKind -ne [Text.Json.JsonValueKind]::Object){throw 'Gameplay pose must be an object.'}
-            foreach($element in @($document.RootElement,$document.RootElement.GetProperty('position'))){
+            $objects=@($document.RootElement,$document.RootElement.GetProperty('position'))
+            if($WorldBlocks){$objects+=@($document.RootElement.GetProperty('camera_collision'),$document.RootElement.GetProperty('camera_collision').GetProperty('origin'))}
+            foreach($element in $objects){
                 if($element.ValueKind -ne [Text.Json.JsonValueKind]::Object){throw 'Gameplay pose position must be an object.'}
                 $names=@($element.EnumerateObject()|ForEach-Object {$_.Name})
                 if(@($names|Select-Object -Unique).Count -ne $names.Count){throw 'Gameplay pose contains duplicate fields.'}
@@ -89,13 +92,27 @@ function Read-GameplayMovementPose([string]$Path,$Identity,$Bounds,[long]$LastSe
     }catch [IO.IOException]{if(($_.Exception.HResult -band 0xffff) -in @(2,3,32,33,303)){return $null};throw}
     finally{if($file){$file.Dispose()}}
     $keys=@('schema','kind','run','world_id','target_pid','target_start_filetime','patch_run','patch_sha256','seq','utc_ms','source_ms','position')
-    if($WorldBlocks){$keys+='perspective_request'}
+    if($WorldBlocks){$keys+=@('perspective_request','camera_collision')}
     if($p -isnot [pscustomobject] -or (($p.PSObject.Properties.Name|Sort-Object)-join ',') -cne (($keys|Sort-Object)-join ',') -or
         $p.schema -ne 1 -or $p.kind -cne 'minecome_gameplay_pose_v1' -or $p.run -cne $Identity.Run -or $p.world_id -cne $Identity.WorldId -or
         $p.target_pid -ne $Identity.Pid -or $p.target_start_filetime -cne $Identity.Start -or $p.patch_run -cne $Identity.PatchRun -or $p.patch_sha256 -cne $Identity.PatchHash){throw 'Gameplay pose identity differs.'}
     foreach($key in @('schema','target_pid','seq','utc_ms','source_ms')){if(-not(Test-GameplayHostNumber $p.$key)){throw "Invalid gameplay pose number: $key"}}
     if($p.target_start_filetime -isnot [string]){throw 'Gameplay target start must be a string.'}
     if($WorldBlocks -and (-not(Test-GameplayHostNumber $p.perspective_request) -or $p.perspective_request -notin @(0,1,2))){throw 'Invalid gameplay perspective request.'}
+    if($WorldBlocks){
+        $c=$p.camera_collision
+        if($c -isnot [pscustomobject] -or (($c.PSObject.Properties.Name|Sort-Object)-join ',') -cne 'boxes,complete,generation,origin' -or
+           -not(Test-GameplayHostNumber $c.generation) -or $c.generation -lt 1 -or $c.generation -gt 10000000 -or $c.generation -ne [Math]::Floor($c.generation) -or
+           $c.complete -isnot [bool] -or $c.boxes -isnot [string] -or $c.boxes.Length -gt 12288 -or $c.boxes.Length%24 -ne 0 -or $c.boxes -cmatch '[^0-9a-f]' -or
+           (-not $c.complete -and $c.boxes.Length -ne 0) -or $c.origin -isnot [pscustomobject] -or (($c.origin.PSObject.Properties.Name|Sort-Object)-join ',') -cne 'x,y,z'){throw 'Invalid gameplay camera collision snapshot.'}
+        foreach($axis in @('x','y','z')){if(-not(Test-GameplayHostNumber $c.origin.$axis) -or [Math]::Abs($c.origin.$axis) -ge 10000000 -or
+            -not $Identity.PSObject.Properties['CameraOrigin'] -or -not(Test-GameplayHostNumber $Identity.CameraOrigin.$axis) -or
+            $c.origin.$axis -ne $Identity.CameraOrigin.$axis){throw 'Invalid camera collision origin.'}}
+        for($offset=0;$offset -lt $c.boxes.Length;$offset+=24){
+            $q=@(for($i=0;$i -lt 6;$i++){$n=[Convert]::ToInt32($c.boxes.Substring($offset+$i*4,4),16);if($n -ge 32768){$n-=65536};$n})
+            for($i=0;$i -lt 3;$i++){if($q[$i] -ge $q[$i+3] -or $q[$i+3]-$q[$i] -gt 32){throw 'Invalid camera collision box.'}}
+        }
+    }
     if($p.seq -lt 1 -or $p.seq -gt 10000000 -or $p.seq -ne [Math]::Floor($p.seq) -or $p.utc_ms -le 0 -or $p.utc_ms -ne [Math]::Floor($p.utc_ms) -or $p.utc_ms -gt $Now+50 -or $p.source_ms -lt 0 -or $p.source_ms -gt 86400000){throw 'Gameplay pose clock/sequence differs.'}
     if($p.position -isnot [pscustomobject] -or (($p.position.PSObject.Properties.Name|Sort-Object)-join ',') -cne 'x,y,z'){throw 'Gameplay position differs.'}
     foreach($axis in @('x','y','z')){if(-not(Test-GameplayHostNumber $p.position.$axis)){throw 'Gameplay position is not finite.'}}
@@ -113,6 +130,7 @@ function Get-GameplayMovementWorker {
         $log=$null;$position=$LogOffset;$lastLength=$LogOffset;$begin=$null;$terminal=$null;$latestView=$null
         $sequence=0L;$source=-1.0;$viewSequence=0L;$views=0L;$poses=0L;$lastPoseUtc=0L;$lastPoseAt=0.0;$lastViewAt=-1000.0;$failure=$null;$started=$false;$stage='starting'
         $requestCount=0L;$maxRequestPathLength=0;$lastDispatch=$null
+        $cameraGeometry=$null;$cameraGeometryText=$null;$cameraGeometryNext=1;$cameraGeometryChunks=0
         $temp=$ViewFile+'.'+$run+'.tmp'
         $aimFile=Join-Path (Split-Path -Parent $ViewFile) 'gameplay-aim.json';$aimTemp=$aimFile+'.'+$run+'.tmp'
         function Publish([bool]$Stopped=$false){$Shared['Snapshot']=[pscustomobject]@{Stopped=$Stopped;Failure=$failure;Stage=$stage;PoseCount=$poses;ViewCount=$views;LastPoseSequence=$sequence;LastPoseUtcMs=$lastPoseUtc;RequestCount=$requestCount;MaxRequestPathLength=$maxRequestPathLength;LastDispatch=$lastDispatch;Begin=$begin;Terminal=$terminal;LastView=$latestView;Blocks=$(if($BlocksState){Get-GameplayBlocksHostState $BlocksState}else{$null});Terrain=$(if($TerrainState){Get-GameplayTerrainHostState $TerrainState}else{$null})}}
@@ -167,12 +185,26 @@ function Get-GameplayMovementWorker {
                 if($utc -ge $ExpiresUtcMs -or $elapsed -ge $limit){throw 'Gameplay host identity expired.'}
                 $pose=Read-GameplayMovementPose $PoseFile $Identity $Bounds $sequence $source $utc $WorldBlocks
                 $parts=[Collections.Generic.List[string]]::new()
+                if($WorldBlocks -and $pose){
+                    $collision=$pose.camera_collision;$text=$collision|ConvertTo-Json -Depth 4 -Compress
+                    if($cameraGeometry -and ($collision.generation -lt $cameraGeometry.generation -or ($collision.generation -eq $cameraGeometry.generation -and $text -cne $cameraGeometryText))){throw 'Gameplay camera collision generation regressed or changed.'}
+                    if(-not $cameraGeometry -or $collision.generation -gt $cameraGeometry.generation){
+                        $cameraGeometry=$collision;$cameraGeometryText=$text;$cameraGeometryNext=1
+                        $cameraGeometryChunks=[int][Math]::Max(1,[Math]::Ceiling($collision.boxes.Length/768.0))
+                    }
+                }
+                if($WorldBlocks -and $cameraGeometry -and $cameraGeometryNext -le $cameraGeometryChunks){
+                    $offset=($cameraGeometryNext-1)*768;$count=[Math]::Min(768,$cameraGeometry.boxes.Length-$offset)
+                    $packed=$cameraGeometry.boxes.Substring($offset,$count);$complete=([string]$cameraGeometry.complete).ToLowerInvariant();$origin=$cameraGeometry.origin
+                    $parts.Add((RejectWrapper "MineCome.GameplayCameraGeometry('$run',$($cameraGeometry.generation),$cameraGeometryNext,$cameraGeometryChunks,$(Numeric $origin.x),$(Numeric $origin.y),$(Numeric $origin.z),$complete,'$packed')"))
+                    $cameraGeometryNext++
+                }
                 # Consume durable terrain acknowledgements before admitting any
                 # pose or block snapshot that uses newly installed collision.
                 if($TerrainState){$command=Get-GameplayTerrainCommands $TerrainState $utc $pose;if($command){$parts.Add((RejectWrapper $command))}}
                 if($pose -and $TerrainState -and -not(Test-GameplayTerrainPose $TerrainState $pose)){throw 'Gameplay pose leaves acknowledged terrain.'}
                 if($BlocksState){$command=Get-GameplayBlocksCommands $BlocksState $utc;if($command){$parts.Add((RejectWrapper $command))}}
-                if($pose){$perspectiveArgument=if($WorldBlocks){','+[string]$pose.perspective_request}else{''};$parts.Add((RejectWrapper "MineCome.GameplayMovementPose('$run',$($pose.seq),$(Numeric $pose.source_ms),$(Numeric $pose.position.x),$(Numeric $pose.position.y),$(Numeric $pose.position.z)$perspectiveArgument)"))}
+                if($pose){$perspectiveArgument=if($WorldBlocks){','+[string]$pose.perspective_request+','+[string]$pose.camera_collision.generation}else{''};$parts.Add((RejectWrapper "MineCome.GameplayMovementPose('$run',$($pose.seq),$(Numeric $pose.source_ms),$(Numeric $pose.position.x),$(Numeric $pose.position.y),$(Numeric $pose.position.z)$perspectiveArgument)"))}
                 $requestView=$elapsed-$lastViewAt -ge 90
                 if($requestView){$viewSequence++;$requestedUtc=$utc;$aimArgument=if($BlocksState -or $WorldBlocks){',true'}else{''};$parts.Add((RejectWrapper "MineCome.GameplayMovementSample('$run',$viewSequence$aimArgument)"));$lastViewAt=$elapsed}
                 if($parts.Count){Send $parts.ToArray();if($pose){$sequence=[long]$pose.seq;$source=[double]$pose.source_ms;$poses++;$lastPoseUtc=[long]$pose.utc_ms;$lastPoseAt=$elapsed}}
@@ -291,6 +323,7 @@ function Start-GameplayMovementHost {
     $terrainState=if($Explore){New-GameplayTerrainHost -Context $Context -Run $Run -WorldId $WorldId -Patch $Patch -CacheFile $TerrainCacheFile -AdmissionFile (Join-Path $evidenceDirectory 'terrain-admission.json') -AckFile (Join-Path $evidenceDirectory 'terrain-ack.json') -ExpiresUtcMs $ExpiresUtcMs}else{$null}
     $blocksState=if($Blocks -and -not $WorldBlocks){New-GameplayBlocksHost -Context $Context -Run $Run -WorldId $WorldId -Patch $Patch -SnapshotFile (Join-Path $evidenceDirectory 'gameplay-blocks.json') -ExpiresUtcMs $ExpiresUtcMs -TerrainState $terrainState}else{$null}
     $identity=[pscustomobject]@{Run=$Run;WorldId=$WorldId;Pid=$Context.GamePid;Start=$Context.GameStartedUtc.ToFileTimeUtc().ToString();PatchRun=$Patch.Run;PatchHash=$Patch.Hash}
+    if($WorldBlocks){$identity|Add-Member -NotePropertyName CameraOrigin -NotePropertyValue ([pscustomobject]@{x=[double]$Patch.Data.center.x;y=[double]$Patch.Data.center.y;z=[double]$Patch.Data.center.z-64.0})}
     $shared=[Collections.Concurrent.ConcurrentDictionary[string,object]]::new([StringComparer]::Ordinal)
     $shared['Snapshot']=[pscustomobject]@{Stopped=$false;Failure=$null;Stage='starting';PoseCount=0L;ViewCount=0L;LastPoseSequence=0L;LastPoseUtcMs=0L;RequestCount=0L;MaxRequestPathLength=0;LastDispatch=$null;Begin=$null;Terminal=$null;LastView=$null;Blocks=$null;Terrain=$null}
     $cancellation=[Threading.CancellationTokenSource]::new();$runspace=[RunspaceFactory]::CreateRunspace();$pipeline=[PowerShell]::Create()

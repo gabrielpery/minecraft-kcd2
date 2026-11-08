@@ -91,7 +91,49 @@ public final class GameplayBlocksTests {
         terrainLedgerTests(root);
         worldBlockStateTests(root);
         cameraVisibilityTests();
+        cameraCollisionTests();
         System.out.println("GameplayBlocksTests: "+checks+" checks passed; no game calls");
+    }
+    private static void cameraCollisionTests()throws Exception{
+        var producer=new GameplayCameraCollision();
+        var empty=producer.capture(Map.of());
+        check(empty.complete()&&empty.generation()==1&&empty.boxes().isEmpty(),"An observed empty owned set explicitly clears camera obstacles");
+        check(producer.capture(Map.of())==empty,"Unchanged actual geometry reuses its immutable snapshot");
+        var cube=producer.capture(Map.of(new BlockPos(-1,64,-2),VoxelShapes.fullCube()));
+        check(cube.complete()&&cube.generation()==2&&cube.boxes().equals("fff00400ffe000000410fff0"),"Signed sixteenths retain exact negative x/z and Minecraft height");
+        var origin=cube.json(SURFACE).getAsJsonObject("origin");
+        check(origin.get("x").getAsDouble()==100&&origin.get("y").getAsDouble()==200&&origin.get("z").getAsDouble()==-14,"Fixed native origin preserves x / negative z / y coordinate mapping");
+        check(cube.json(SURFACE).keySet().equals(Set.of("generation","complete","origin","boxes")),"Collision payload exposes only the agreed bounded wire fields");
+        var slab=producer.capture(Map.of(new BlockPos(-1,64,-2),VoxelShapes.cuboid(0,0,0,1,.5,1)));
+        check(slab.complete()&&slab.generation()==3&&slab.boxes().equals("fff00400ffe000000408fff0"),"Bottom slab keeps its empty upper half rather than becoming a cube");
+        var stair=VoxelShapes.union(VoxelShapes.cuboid(0,0,0,1,.5,1),VoxelShapes.cuboid(.5,.5,0,1,1,1));
+        var stairs=producer.capture(Map.of(BlockPos.ORIGIN,stair));
+        check(stairs.complete()&&stairs.boxes().length()==48,"Two stair volumes retain their step geometry");
+        var post=VoxelShapes.cuboid(.375,0,.375,.625,1,.625);
+        var fence=producer.capture(Map.of(BlockPos.ORIGIN,post));
+        check(fence.complete()&&fence.boxes().equals("000600000006000a0010000a"),"Fence camera post preserves narrow geometry and surrounding gaps");
+        var ordered=new LinkedHashMap<BlockPos,net.minecraft.util.shape.VoxelShape>();ordered.put(new BlockPos(2,0,0),post);ordered.put(new BlockPos(-2,0,0),post);
+        var firstOrder=producer.capture(ordered);var reversed=new LinkedHashMap<BlockPos,net.minecraft.util.shape.VoxelShape>();reversed.put(new BlockPos(-2,0,0),post);reversed.put(new BlockPos(2,0,0),post);
+        check(producer.capture(reversed)==firstOrder,"Map enumeration order cannot change collision generation");
+        var duplicated=new LinkedHashMap<BlockPos,net.minecraft.util.shape.VoxelShape>();duplicated.put(BlockPos.ORIGIN,VoxelShapes.fullCube());duplicated.put(new BlockPos(1,0,0),VoxelShapes.fullCube().offset(-1,0,0));
+        check(producer.capture(duplicated).boxes().length()==24,"Equivalent world-space geometry is deduplicated before transport");
+        var incomplete=producer.capture(Map.of(BlockPos.ORIGIN,VoxelShapes.cuboid(0,0,0,.1,1,1)));
+        check(!incomplete.complete()&&incomplete.boxes().isEmpty(),"Off-grid camera shape fails closed instead of rounding into a different obstacle");
+        check(producer.unavailable()==incomplete,"Repeated unavailable observations do not churn generations");
+        check(!producer.capture(Map.of(new BlockPos(2047,0,0),VoxelShapes.fullCube())).complete(),"Signed-sixteenth upper overflow fails closed");
+        check(!producer.capture(Map.of(new BlockPos(-2049,0,0),VoxelShapes.fullCube())).complete(),"Signed-sixteenth lower overflow fails closed");
+        check(!producer.capture(Map.of(BlockPos.ORIGIN,VoxelShapes.cuboid(0,0,0,2.0625,1,1))).complete(),"Overlarge camera box fails closed consistently with native bounds");
+        check(producer.capture(Map.of(new BlockPos(-2048,0,0),VoxelShapes.fullCube())).complete(),"Exact signed-sixteenth minimum is representable");
+        var tooMany=new HashMap<BlockPos,net.minecraft.util.shape.VoxelShape>();for(int i=0;i<65;i++)tooMany.put(new BlockPos(i,0,0),VoxelShapes.fullCube());
+        check(!producer.capture(tooMany).complete(),"Unbounded owned set cannot be partially serialized");
+        var manyParts=VoxelShapes.empty();for(int i=0;i<513;i++)manyParts=VoxelShapes.union(manyParts,VoxelShapes.cuboid(i*.125,0,0,i*.125+.0625,.0625,.0625));
+        check(!producer.capture(Map.of(BlockPos.ORIGIN,manyParts)).complete(),"Over512 actual boxes collapse the whole camera set rather than dropping distant boxes");
+        var recovered=producer.capture(Map.of(BlockPos.ORIGIN,VoxelShapes.fullCube()));
+        check(recovered.complete()&&recovered.generation()>incomplete.generation(),"A complete fresh geometry set recovers with a new generation");
+        var cleared=producer.capture(Map.of());check(cleared.complete()&&cleared.generation()==recovered.generation()+1&&cleared.boxes().isEmpty(),"Mining the final obstacle publishes a new complete empty generation");
+        reject(()->new GameplayCameraCollision.Snapshot(0,true,""),"Zero collision generation rejected");
+        reject(()->new GameplayCameraCollision.Snapshot(1,true,"ffff"),"Partial packed box rejected");
+        reject(()->new GameplayCameraCollision.Snapshot(1,false,cube.boxes()),"Incomplete collision cannot smuggle partial obstacles");
     }
     private static void cameraVisibilityTests()throws Exception{
         var eye=new Vec3d(0,.75,.5);var camera=new Vec3d(-2,.75,.5);var target=new Vec3d(3,.75,.5);

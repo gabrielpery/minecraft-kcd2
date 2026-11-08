@@ -47,7 +47,41 @@ public final class GameplayWireTests {
         check(GameplayMode.MAX_LEASE_MS==86_400_000L);
         worldButtons(id);
         chat(id);
+        nativeViewAdmission();
         System.out.println("GameplayWireTests: "+checks+" checks passed; no games");
+    }
+    private static void nativeViewAdmission(){
+        var origin=net.minecraft.util.math.Vec3d.ZERO;
+        var direction=new net.minecraft.util.math.Vec3d(1,0,0);
+        var up=new net.minecraft.util.math.Vec3d(0,1,0);
+        var tick=new dev.minecome.gameplay.GameplayAimReader.RenderSample(
+            new dev.minecome.gameplay.GameplayBlocks.Aim(1000,1_000_000_000L,origin,direction,4.5,true,-1,false),
+            new GameplayWorldRenderer.View(origin,direction,up,1.2),1,3);
+        var newer=new dev.minecome.gameplay.GameplayAimReader.RenderSample(
+            new dev.minecome.gameplay.GameplayBlocks.Aim(1020,1_020_000_000L,origin,direction,4.5,true,-1,false),
+            new GameplayWorldRenderer.View(origin,direction,up,1.2),2,3);
+        var admission=new GameplayNativeViewAdmission();
+        var applied=new java.util.concurrent.atomic.AtomicReference<dev.minecome.gameplay.GameplayAimReader.RenderSample>();
+        admission.admit(tick,1005,1_005_000_000L,applied::set);
+        check(admission.current()==tick&&applied.get().perspective()==1);
+        // Native publication arrives between ticks: the next render must use it
+        // immediately, with matching perspective/aim and the original source age.
+        admission.beginFrame(newer,1025,1_025_000_000L,applied::set);
+        check(admission.current()==newer&&applied.get()==newer&&applied.get().perspective()==2);
+        check(admission.frame(1049,1_049_000_000L)==newer&&admission.frame(1049,1_049_000_000L).aim().capturedUtcMs()==1020);
+        boolean blocked=false;try{admission.admit(tick,1030,1_030_000_000L,applied::set);}catch(IllegalStateException e){blocked=true;}
+        check(blocked&&applied.get()==newer&&admission.frame(1049,1_049_000_000L)==newer);
+        check(admission.frame(1321,1_050_000_000L)==null); // Original UTC expires even inside a frame.
+        check(admission.frame(1050,1_320_000_001L)==null); // Independent monotonic expiry remains.
+        admission.endFrame();check(admission.frame(1050,1_050_000_000L)==null);
+        admission.beginFrame(newer,1321,1_321_000_000L,applied::set);
+        check(admission.current()==null&&applied.get()==null&&admission.frame(1321,1_321_000_000L)==null);
+        admission.endFrame();admission.admit(tick,1005,1_005_000_000L,applied::set);
+        admission.beginFrame(null,1010,1_010_000_000L,applied::set);
+        check(admission.current()==null&&applied.get()==null&&admission.frame(1010,1_010_000_000L)==null);
+        admission.endFrame();admission.admit(tick,1005,1_005_000_000L,applied::set);
+        boolean rejected=false;try{admission.beginFrame(newer,1025,1_025_000_000L,s->{throw new IllegalStateException("client application failed");});}catch(IllegalStateException e){rejected=true;}
+        check(rejected&&admission.current()==tick&&admission.frame(1025,1_025_000_000L)==null);
     }
     private static void worldButtons(HudInputProtocol.Identity id){
         var b=ByteBuffer.allocate(HudInputProtocol.MAPPING_BYTES).order(ByteOrder.LITTLE_ENDIAN);

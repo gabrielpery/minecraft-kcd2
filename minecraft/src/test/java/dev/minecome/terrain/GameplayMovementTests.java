@@ -12,6 +12,15 @@ public final class GameplayMovementTests {
     private static void reject(Action a,String why)throws Exception{try{a.run();throw new AssertionError(why);}catch(java.io.IOException expected){checks++;}}
     private interface Action{void run()throws Exception;}
     public static void main(String[] args)throws Exception{
+        // Deterministic interleaving: the server publishes after the caller's
+        // earlier tick clock, but before the atomic observation is read.
+        long tickClock=1_000_000_000L;var order=new StringBuilder();
+        var concurrent=GameplayObservationLease.read(()->{order.append('S');return tickClock+1;},Long::longValue,()->{order.append('C');return tickClock+2;});
+        check(order.toString().equals("SC")&&concurrent.fresh(),"concurrent server publication is checked against a later clock");
+        check(!GameplayObservationLease.read(()->tickClock,Long::longValue,()->tickClock+GameplayObservationLease.MAX_AGE_NS+1).fresh(),"server age limit stays strict");
+        check(GameplayObservationLease.read(()->tickClock,Long::longValue,()->tickClock+GameplayObservationLease.MAX_AGE_NS).fresh(),"server observation accepted at exact age boundary");
+        check(!GameplayObservationLease.read(()->tickClock+1,Long::longValue,()->tickClock).fresh(),"genuinely future server timestamp rejected");
+        check(!GameplayObservationLease.<Long>read(()->null,Long::longValue,()->tickClock).fresh(),"missing server observation rejected");
         var keys=new GameplayMovementKeys();long now=1_000_000_000L;keys.authority(now,true);check(keys.event(1,'W',now,true),"initial press");
         for(int i=1;i<=1000;i++){now+=50_000_000L;keys.authority(now,true);}
         check(keys.down('W',now),"ongoing50second hold must not reach demo expiry");

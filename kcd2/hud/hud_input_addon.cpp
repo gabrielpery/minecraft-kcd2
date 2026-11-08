@@ -97,6 +97,8 @@ namespace ui = minecome::hud::input;
 #ifdef MINECOME_HUD_GAMEPLAY_CHAT
 namespace depth = minecome::host_depth;
 std::atomic<std::uint64_t> depth_frames{0};
+std::atomic<std::uint64_t> depth_considered{0},depth_no_sample{0},depth_bad_view{0},depth_bad_source{0},depth_ready_changes{0};
+std::atomic<std::uint64_t> depth_sample_age{0},depth_camera_age{0},depth_position{0},depth_basis{0},depth_projection{0},depth_other{0};
 #endif
 #ifdef MINECOME_HUD_GAMEPLAY
 constexpr std::uint32_t stream_schema = 3;
@@ -683,7 +685,12 @@ struct Service {
                         << ",\"mapped\":" << depth_stats.map_attempts << ",\"map_failed\":" << depth_stats.map_failed
                         << ",\"non_upload\":" << depth_stats.non_upload_rejected << ",\"view_rejected\":" << depth_stats.view_rejected
                         << ",\"accepted\":" << depth_stats.accepted << ",\"submitted\":" << depth_stats.submitted
-                        << ",\"composited\":" << depth_frames.load() << "}";
+                        << ",\"composited\":" << depth_frames.load() << ",\"considered\":" << depth_considered.load()
+                        << ",\"no_sample\":" << depth_no_sample.load() << ",\"bad_view\":" << depth_bad_view.load()
+                        << ",\"bad_source\":" << depth_bad_source.load() << ",\"ready_changes\":" << depth_ready_changes.load()
+                        << ",\"sample_age\":" << depth_sample_age.load() << ",\"camera_age\":" << depth_camera_age.load()
+                        << ",\"position\":" << depth_position.load() << ",\"basis\":" << depth_basis.load()
+                        << ",\"projection\":" << depth_projection.load() << ",\"other_view\":" << depth_other.load() << "}";
                     reshade::log::message(reshade::log::level::info,depth_line.str().c_str());
 #endif
                 }
@@ -724,6 +731,7 @@ struct RuntimeState {
     api::effect_texture_variable host_depth{};
     st::Header uploaded_header{};
     bool depth_armed=false;
+    bool previous_depth_ready=false;
     std::uint64_t depth_sequence=0;
     std::optional<depth::sample> depth_sample;
 #endif
@@ -1483,10 +1491,15 @@ bool upload(api::effect_runtime *runtime, api::command_list *commands, RuntimeSt
 }
 #ifdef MINECOME_HUD_GAMEPLAY_CHAT
 void update_layers(api::effect_runtime *runtime, RuntimeState &state) {
+    struct Readiness {
+        RuntimeState &state; bool ready=false;
+        ~Readiness(){if(state.previous_depth_ready!=ready)++depth_ready_changes;state.previous_depth_ready=ready;}
+    } readiness{state};
     const bool layered=state.format==2;
     runtime->set_uniform_value_bool(state.layers,layered);
     runtime->set_uniform_value_bool(state.depth_ready,false);
     if(!layered)return;
+    ++depth_considered;
     if(!depth::instance().metadata_available())return;
     const auto &h=state.uploaded_header;
     runtime->set_uniform_value_float(state.guest_projection,h.near_plane,h.far_plane);
@@ -1498,16 +1511,29 @@ void update_layers(api::effect_runtime *runtime, RuntimeState &state) {
     if(!state.depth_armed){depth::instance().arm(true,expected);state.depth_armed=true;}
     else if(state.depth_sequence!=state.uploaded_sequence)depth::instance().update_expected(expected);
     state.depth_sequence=state.uploaded_sequence;
-    if(auto value=depth::instance().take_sample())state.depth_sample=value;
-    if(!state.depth_sample || st::utc_ms()<state.depth_sample->captured_unix_ms ||
-        st::utc_ms()-state.depth_sample->captured_unix_ms>250 ||
-        !depth::validate(*state.depth_sample,expected,st::utc_ms()))return;
     // DEPTH is maintained by ReShade's public generic-depth addon. Never assume
     // a semantic name itself is a handle or that a dummy depth texture is valid.
     api::resource_view view{},srgb{};
     runtime->get_texture_binding(state.host_depth,&view,&srgb);
     auto *device=runtime->get_device();
-    if(view==0)return;
+    const auto selected=depth::selected_depth(runtime,view);
+    if(selected==0){++depth_bad_source;return;}
+    if(auto value=depth::instance().take_sample(device,selected))state.depth_sample=value;
+    if(!state.depth_sample){++depth_no_sample;return;}
+    const auto depth_now=st::utc_ms();
+    if(depth_now<state.depth_sample->captured_unix_ms || depth_now-state.depth_sample->captured_unix_ms>250){++depth_bad_view;++depth_sample_age;return;}
+    const auto rejection=depth::validate_reason(*state.depth_sample,expected,depth_now);
+    if(rejection!=depth::view_rejection::none){
+        ++depth_bad_view;
+        switch(rejection){
+        case depth::view_rejection::age:++depth_camera_age;break;
+        case depth::view_rejection::position:++depth_position;break;
+        case depth::view_rejection::basis:++depth_basis;break;
+        case depth::view_rejection::projection:++depth_projection;break;
+        default:++depth_other;break;
+        }
+        return;
+    }
     const auto resource=device->get_resource_from_view(view);
     if(resource==0)return;
     const auto desc=device->get_resource_desc(resource);
@@ -1516,7 +1542,7 @@ void update_layers(api::effect_runtime *runtime, RuntimeState &state) {
        (format!=api::format::r32_float && format!=api::format::r24_unorm_x8_uint &&
         format!=api::format::r32_float_x8_uint && format!=api::format::r16_unorm))return;
     const auto &s=*state.depth_sample;
-    if(!depth::matches_depth(runtime,view,s))return;
+    if(!depth::matches_depth(runtime,view,s)){++depth_bad_source;return;}
     if(std::abs(static_cast<float>(desc.texture.width)-s.viewport.width)>1 ||
        std::abs(static_cast<float>(desc.texture.height)-s.viewport.height)>1)return;
     // Letterboxing would compare different camera rays. Fallback captured-ground
@@ -1524,7 +1550,7 @@ void update_layers(api::effect_runtime *runtime, RuntimeState &state) {
     if(std::abs(state.rectangle.width-1.0f)>0.001f || std::abs(state.rectangle.height-1.0f)>0.001f)return;
     runtime->set_uniform_value_float(state.depth_projection,s.ratio[0],s.ratio[1],s.far_metres,s.reversed?1.0f:0.0f);
     runtime->set_uniform_value_float(state.depth_nearest,s.nearest[0],s.nearest[1],s.nearest[2],s.nearest[3]);
-    runtime->set_uniform_value_bool(state.depth_ready,true);++depth_frames;
+    runtime->set_uniform_value_bool(state.depth_ready,true);++depth_frames;readiness.ready=true;
 }
 #endif
 #ifdef MINECOME_HUD_REPEAT_SESSION

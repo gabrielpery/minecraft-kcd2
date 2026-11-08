@@ -64,6 +64,32 @@ struct sample {
     float far_metres{};
 };
 
+// Several full-size depth targets can use the same camera in one frame. Keep
+// their submitted proofs separate: an auxiliary target must never replace the
+// proof for the resource actually selected by GenericDepth.
+class submitted_samples {
+    std::array<std::optional<sample>,8> values_{};
+public:
+    void clear() { for (auto &value:values_) value.reset(); }
+    void erase(api::device *device,api::resource resource) {
+        for (auto &value:values_) if(value && value->device==device && value->source_depth==resource)value.reset();
+    }
+    void publish(const sample &value) {
+        if(!value.device || !value.source_depth.handle)return;
+        auto slot=values_.end();
+        for(auto it=values_.begin();it!=values_.end();++it) {
+            if(*it && (*it)->device==value.device && (*it)->source_depth==value.source_depth){slot=it;break;}
+            if(!*it && slot==values_.end())slot=it;
+        }
+        if(slot==values_.end())slot=std::min_element(values_.begin(),values_.end(),[](const auto &a,const auto &b){return a->captured_unix_ms<b->captured_unix_ms;});
+        if(!*slot || (*slot)->device!=value.device || (*slot)->source_depth!=value.source_depth || (*slot)->captured_unix_ms<=value.captured_unix_ms)*slot=value;
+    }
+    std::optional<sample> take(api::device *device,api::resource resource) {
+        for(auto &value:values_)if(value && value->device==device && value->source_depth==resource){auto result=value;value.reset();return result;}
+        return {};
+    }
+};
+
 // Reflection is required even on the exact supported executable: float3x4 packing
 // and compiler optimizations must not turn source declaration order into an ABI.
 template<class Reflection,class BufferDesc,class VariableDesc,class TypeDesc>
@@ -160,34 +186,38 @@ inline bool viewport_matches(const api::viewport &v, const expected_view &e) {
     return sx >= 0.25f && sx <= 1.01f && sy >= 0.25f && sy <= 1.01f && std::abs(sx-sy) < 0.005f;
 }
 
-inline bool validate(sample &s, const expected_view &e, std::uint64_t now) {
-    if (!fresh(e,now) || !viewport_matches(s.viewport,e) || !unit(e.forward) || !unit(e.up) ||
-        !std::isfinite(e.vertical_fov) || e.vertical_fov < 0.1f || e.vertical_fov > 3.0f) return false;
+enum class view_rejection { none, age, viewport, basis, position, projection, parameters };
+inline view_rejection validate_reason(sample &s, const expected_view &e, std::uint64_t now) {
+    if (!fresh(e,now)) return view_rejection::age;
+    if (!viewport_matches(s.viewport,e))return view_rejection::viewport;
+    if (!unit(e.forward) || !unit(e.up))return view_rejection::basis;
+    if (!std::isfinite(e.vertical_fov) || e.vertical_fov < 0.1f || e.vertical_fov > 3.0f)return view_rejection::projection;
     // CommonZPass.cfi uses -CV_CameraFrontVector for forward eye depth.
     const vec3 forward{-s.front[0],-s.front[1],-s.front[2]};
     const vec3 up{s.up[0],s.up[1],s.up[2]}, right{s.right[0],s.right[1],s.right[2]};
     if (!unit(forward) || !unit(up) || !unit(right) || std::abs(dot(forward,up)) > 0.02f ||
         std::abs(dot(forward,right)) > 0.02f || std::abs(dot(up,right)) > 0.02f ||
-        dot(forward,e.forward) < e.direction_cosine || dot(up,e.up) < e.direction_cosine) return false;
+        dot(forward,e.forward) < e.direction_cosine || dot(up,e.up) < e.direction_cosine) return view_rejection::basis;
     float distance_squared = 0;
     for (std::size_t i=0;i<3;++i) {
-        if (!std::isfinite(e.position[i])) return false;
+        if (!std::isfinite(e.position[i])) return view_rejection::position;
         const float delta = s.position[i]-e.position[i]; distance_squared += delta*delta;
     }
-    if (distance_squared > e.position_tolerance*e.position_tolerance) return false;
-    if (std::abs(s.screen[0]-s.viewport.width) > 1.0f || std::abs(s.screen[1]-s.viewport.height) > 1.0f) return false;
+    if (distance_squared > e.position_tolerance*e.position_tolerance) return view_rejection::position;
+    if (std::abs(s.screen[0]-s.viewport.width) > 1.0f || std::abs(s.screen[1]-s.viewport.height) > 1.0f) return view_rejection::viewport;
     const float fy = std::abs(s.projection[5]), fx = std::abs(s.projection[0]);
     if (fx <= 0 || fy <= 0 || std::abs(2.0f*std::atan(1.0f/fy)-e.vertical_fov) > e.fov_tolerance ||
-        std::abs(fy/fx-s.viewport.width/s.viewport.height) > 0.02f) return false;
+        std::abs(fy/fx-s.viewport.width/s.viewport.height) > 0.02f) return view_rejection::projection;
     const float d0 = s.ratio[1]/(-s.ratio[0]), d1 = s.ratio[1]/(1.0f-s.ratio[0]);
     if (!std::isfinite(d0) || !std::isfinite(d1) || d0 <= 0 || d1 <= 0 ||
         std::abs(std::max(d0,d1)-1.0f) > 0.002f || std::min(d0,d1) >= 0.1f ||
         s.clips[1] <= 0 || std::abs(s.clips[1]*s.clips[3]-1.0f) > 0.002f ||
-        std::abs(s.nearest[1]) < 1e-10f || std::abs(s.nearest[2]-s.ratio[0]) < 1e-10f) return false;
+        std::abs(s.nearest[1]) < 1e-10f || std::abs(s.nearest[2]-s.ratio[0]) < 1e-10f) return view_rejection::parameters;
     s.reversed = d0 > d1;
     s.far_metres = s.clips[1];
-    return true;
+    return view_rejection::none;
 }
+inline bool validate(sample &s,const expected_view &e,std::uint64_t now){return validate_reason(s,e,now)==view_rejection::none;}
 
 // Same normalized-depth formula and nearest-camera remap as LinearizeDepthPS.
 // A shader should treat the exact sky endpoint as infinity before this formula.
@@ -226,7 +256,7 @@ class tracker {
     expected_view expected_{};
     std::uint64_t generation_{1};
     std::uint32_t frame_attempts_{};
-    std::optional<sample> latest_;
+    submitted_samples submitted_;
     diagnostics diagnostics_{};
     std::atomic<std::uint64_t> invalidation_{0}, contention_{0};
     std::uint64_t observed_invalidation_{};
@@ -242,7 +272,7 @@ class tracker {
         if (invalidation!=observed_invalidation_) {
             // A dropped state-changing callback makes all command snapshots
             // incomplete. Reconstruct them from subsequent game bindings.
-            commands_.clear(); latest_.reset(); observed_invalidation_=invalidation;
+            commands_.clear(); submitted_.clear(); observed_invalidation_=invalidation;
         }
         return lock;
     }
@@ -258,7 +288,7 @@ public:
     void arm(bool value, const expected_view &view) {
         armed_.store(false);
         std::scoped_lock lock(mutex_);
-        expected_=view; ++generation_; frame_attempts_=0; latest_.reset();
+        expected_=view; ++generation_; frame_attempts_=0; submitted_.clear();
         if (!value) commands_.clear();
         armed_.store(value && compatible_.load());
     }
@@ -271,9 +301,9 @@ public:
         std::scoped_lock lock(mutex_); auto result=diagnostics_;
         result.recording_contention=contention_.load(std::memory_order_relaxed); return result;
     }
-    std::optional<sample> take_sample() {
+    std::optional<sample> take_sample(api::device *device,api::resource selected_depth) {
         auto lock=recording_lock(false); if (!lock.owns_lock()) return {};
-        auto result=latest_; latest_.reset();
+        auto result=submitted_.take(device,selected_depth);
         const auto now=unix_milliseconds();
         if (result && (!armed_.load() || now<result->captured_unix_ms ||
             now-result->captured_unix_ms>expected_.max_age_ms || !validate(*result,expected_,now))) return {};
@@ -325,12 +355,12 @@ public:
         std::scoped_lock lock(mutex_); devices_[device].layouts.erase(layout.handle);
     }
     void destroy_device(api::device *device) {
-        std::scoped_lock lock(mutex_); devices_.erase(device); commands_.clear(); latest_.reset();
+        std::scoped_lock lock(mutex_); devices_.erase(device); commands_.clear(); submitted_.clear();
     }
     void destroy_resource(api::device *device,api::resource resource) {
         if (!armed_.load()) return;
         auto lock=recording_lock(); if (!lock.owns_lock()) return;
-        if (latest_ && latest_->device==device && latest_->source_depth==resource) latest_.reset();
+        submitted_.erase(device,resource);
         for (auto &[cmd,state]:commands_) {
             if (cmd->get_device()!=device) continue;
             const auto previous=state.buffers.size();
@@ -450,7 +480,7 @@ public:
         if (entry==commands_.end()) return;
         auto &state=entry->second;
         if (state.candidate && state.sampled_generation==generation_) {
-            state.candidate->submitted_unix_ms=unix_milliseconds(); latest_=state.candidate; ++diagnostics_.submitted;
+            state.candidate->submitted_unix_ms=unix_milliseconds(); submitted_.publish(*state.candidate); ++diagnostics_.submitted;
         }
         state.candidate.reset();
     }
@@ -471,17 +501,21 @@ struct __declspec(uuid("7c6363c7-f94e-437a-9160-141782c44a98")) generic_depth_me
     api::resource_view selected_shader_resource{};
     bool using_backup_texture{};
 };
+inline api::resource selected_depth(api::effect_runtime *runtime,api::resource_view actual_depth) {
+    if(!runtime || !actual_depth.handle)return {};
+    const auto *data=runtime->get_private_data<generic_depth_metadata>();
+    if(!data || !data->selected_depth_stencil.handle || !data->selected_shader_resource.handle)return {};
+    auto *device=runtime->get_device();
+    const auto expected=device->get_resource_from_view(data->selected_shader_resource);
+    return expected.handle && expected==device->get_resource_from_view(actual_depth) ? data->selected_depth_stencil : api::resource{};
+}
 inline bool matches_depth(api::effect_runtime *runtime,api::resource_view actual_depth,const sample &captured) {
     // Read only on this runtime's render/effects thread, after GenericDepth has
     // selected and bound DEPTH. D3D12 always uses a backup resource, so compare
     // both the selected original DSV and the selected backup's actual SRV.
     if (!runtime || !actual_depth.handle || !captured.source_depth.handle ||
         runtime->get_device()!=captured.device) return false;
-    const auto *data=runtime->get_private_data<generic_depth_metadata>();
-    if (!data || data->selected_depth_stencil!=captured.source_depth || !data->selected_shader_resource.handle) return false;
-    auto *device=runtime->get_device();
-    const auto expected=device->get_resource_from_view(data->selected_shader_resource);
-    return expected.handle && expected==device->get_resource_from_view(actual_depth);
+    return selected_depth(runtime,actual_depth)==captured.source_depth;
 }
 namespace callbacks {
 inline void init_pipeline(api::device *d,api::pipeline_layout l,std::uint32_t n,const api::pipeline_subobject *s,api::pipeline p) { instance().init_pipeline(d,l,n,s,p); }

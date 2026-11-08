@@ -28,5 +28,7 @@ public final class GameplayMovementKeys {
     public void expire(long now){if((!held.isEmpty()||sampledJump||!jumpEdges.isEmpty())&&(now>=until||now<until-LEASE_NS))suspend();}
     public boolean down(int key,long now){expire(now);return tickJump&&key==0x20?sampledJump:held.contains(key);}
     public boolean neutral(long now){expire(now);return held.isEmpty()&&!sampledJump;}
+    /** Diagnostic only; observing a held edge must not renew or expire its lease. */
+    boolean heldInput(){return !held.isEmpty()||sampledJump;}
     public void close(){closed=true;suspend();raw.clear();}
 }

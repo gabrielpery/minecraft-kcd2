@@ -38,6 +38,7 @@ public final class GameplayMovement {
     private Object clientWorld,clientPlayer;private volatile UUID playerId;
     private volatile boolean closing,ready;private boolean clientInstalled,clientReleased,teleportRequested,authority,controlsOwned;
     private long setupAt,stableAt,sequence,events,heldTicks,boundaryPauses;private double clientWalk,serverWalk;
+    private long sourcePauses,heldSourcePauses;private JsonObject lastSourcePause,lastHeldSourcePause;
     private long clientFlightTicks,serverFlightTicks;private double maxClientAltitude,maxServerAltitude;
     private volatile boolean resumeFallRestored,resumeFallLanded;
     private volatile float resumeFallDistanceMax,resumeFallLandingHealth;
@@ -67,8 +68,8 @@ public final class GameplayMovement {
         if(closing)return;check();if(clientWorld==null)return;requireClient(client);
         if(admission!=null){paused="terrain_admission";suspend(client);if(blocks!=null)blocks.suspend(client);return;}
         if(!ready()||!authority||client.currentScreen!=null||client.getOverlay()!=null||client.isPaused()){suspend(client);return;}
-        var view=views.current(System.currentTimeMillis(),now);var observed=fresh(now);
-        if(view==null||observed==null){paused="source_stale";suspend(client);return;}
+        var view=views.current(System.currentTimeMillis(),now);var reading=readObservation();var observed=fresh(reading);
+        if(view==null||observed==null){recordSourcePause(now,view==null,observed==null,reading);paused="source_stale";suspend(client);return;}
         client.player.setYaw(view.view().yaw());client.player.setPitch(view.view().pitch());
         if(client.player.isFallFlying()||client.player.getAbilities().flying&&(!flight||!creativeFlight(client.player))){paused="flight_not_connected";suspend(client);return;}
         keys.tick(now);
@@ -113,7 +114,7 @@ public final class GameplayMovement {
                 }catch(Exception e){failure.set("Gameplay attachment: "+e);}
             });return;
         }
-        var o=fresh(now);var current=motion(client.player);
+        var o=fresh(readObservation());var current=motion(client.player);
         if(!ready){
             boolean aerial=resume!=null&&resume.flying();
             boolean stable=teleported.get()&&o!=null&&(aerial?creativeFlight(client.player)&&o.flying()&&Math.abs(current.vy())<.01&&Math.abs(current.vx())<.01&&Math.abs(current.vz())<.01:grounded(current,(BlockView)clientWorld)&&o.grounded())&&distance(current,o.motion())<.01&&views.current(System.currentTimeMillis(),now)!=null;
@@ -155,10 +156,27 @@ public final class GameplayMovement {
         var j=new JsonObject();j.addProperty("schema",1);j.addProperty("kind","minecome_gameplay_pose_v1");j.addProperty("run",identity.run());j.addProperty("world_id",save.id().toString());
         j.addProperty("target_pid",identity.targetPid());j.addProperty("target_start_filetime",Long.toUnsignedString(identity.targetStart()));j.addProperty("patch_run",surface.run());j.addProperty("patch_sha256",surface.sha256());
         j.addProperty("seq",o.seq());j.addProperty("utc_ms",o.utc());j.addProperty("source_ms",(o.at()-born)/1_000_000);
-        if(Boolean.getBoolean("minecome.gameplayWorldBlocks"))j.addProperty("perspective_request",dev.minecome.hud.GameplaySession.requestedPerspective());
+        if(Boolean.getBoolean("minecome.gameplayWorldBlocks")){
+            j.addProperty("perspective_request",dev.minecome.hud.GameplaySession.requestedPerspective());
+            if(blocks==null)throw new IllegalStateException("WorldBlocks camera collision owner missing");
+            j.add("camera_collision",blocks.cameraCollision(server,(ServerPlayerEntity)serverPlayer).json(serverSurface));
+        }
         var p=new JsonObject();p.addProperty("x",surface.centerX()+o.motion().x());p.addProperty("y",surface.centerY()-o.motion().z());p.addProperty("z",surface.centerZ()+o.motion().y()-GroundPatch.ANCHOR_Y);j.add("position",p);files.pose(j);
     }
-    private Observation fresh(long now){var o=observation.get();return o!=null&&o.world()==serverWorld&&o.player()==serverPlayer&&now>=o.at()&&now-o.at()<=250_000_000L?o:null;}
+    private GameplayObservationLease.Reading<Observation> readObservation(){return GameplayObservationLease.read(observation::get,Observation::at,System::nanoTime);}
+    private Observation fresh(GameplayObservationLease.Reading<Observation> reading){var o=reading.observation();return reading.fresh()&&o.world()==serverWorld&&o.player()==serverPlayer?o:null;}
+    private void recordSourcePause(long tickAt,boolean viewRejected,boolean serverRejected,GameplayObservationLease.Reading<Observation> reading){
+        sourcePauses++;boolean held=keys.heldInput();if(held)heldSourcePauses++;
+        var j=new JsonObject();j.addProperty("utc_ms",System.currentTimeMillis());j.addProperty("tick_monotonic_ns",tickAt);
+        j.addProperty("held_input",held);j.addProperty("view_rejected",viewRejected);j.addProperty("server_rejected",serverRejected);
+        j.addProperty("server_checked_at_ns",reading.checkedAt());j.addProperty("server_max_age_ms",GameplayObservationLease.MAX_AGE_NS/1_000_000);
+        var o=reading.observation();j.addProperty("server_sample_present",o!=null);
+        if(o!=null){j.addProperty("server_sequence",o.seq());j.addProperty("server_age_ms",(reading.checkedAt()-o.at())/1_000_000.0);j.addProperty("server_identity_matches",o.world()==serverWorld&&o.player()==serverPlayer);}
+        // The rejection flags above retain the exact decision; reader diagnostics
+        // are a subsequent snapshot and may already show a newer native sample.
+        j.add("view_reader",views.diagnostics(System.currentTimeMillis(),System.nanoTime()));
+        lastSourcePause=j;if(held)lastHeldSourcePause=j;
+    }
     private void requireClient(MinecraftClient c){if(c.world!=clientWorld||c.player!=clientPlayer||c.getServer()!=server||!c.isIntegratedServerRunning())throw new IllegalStateException("Gameplay client world/player changed");}
     private void requireServer(MinecraftServer s,ServerPlayerEntity p){
         if(s!=server||p==null||p.getWorld()!=serverWorld||!GroundCollision.matches(s.getOverworld(),serverSurface,true))throw new IllegalStateException("Gameplay server/player ownership changed");
@@ -232,6 +250,7 @@ public final class GameplayMovement {
         var j=new JsonObject();j.addProperty("schema",1);j.addProperty("kind","minecome_gameplay_movement_v1");j.addProperty("run",identity.run());j.addProperty("world_id",save.id().toString());
         j.addProperty("patch_run",surface.run());j.addProperty("patch_sha256",surface.sha256());j.addProperty("fixture",fixture);j.addProperty("ready",ready);j.addProperty("first_attachment",resume==null);j.addProperty("resume_position_restored",resume!=null&&teleported.get());
         j.addProperty("movement_events",events);j.addProperty("held_ticks",heldTicks);j.addProperty("client_walk",clientWalk);j.addProperty("server_walk",serverWalk);j.addProperty("boundary_pauses",boundaryPauses);j.addProperty("paused",paused);
+        j.addProperty("source_pauses",sourcePauses);j.addProperty("held_source_pauses",heldSourcePauses);if(lastSourcePause!=null)j.add("last_source_pause",lastSourcePause.deepCopy());if(lastHeldSourcePause!=null)j.add("last_held_source_pause",lastHeldSourcePause.deepCopy());
         j.addProperty("flight_enabled",flight);j.addProperty("client_flying",client.player!=null&&client.player==clientPlayer&&creativeFlight(client.player));j.addProperty("server_flying",observation.get()!=null&&observation.get().flying());j.addProperty("client_flight_ticks",clientFlightTicks);j.addProperty("server_flight_ticks",serverFlightTicks);j.addProperty("max_client_altitude",maxClientAltitude);j.addProperty("max_server_altitude",maxServerAltitude);
         if(resume!=null&&resume.falling()){j.addProperty("resume_fall_restored",resumeFallRestored);j.addProperty("resume_fall_distance_max",resumeFallDistanceMax);j.addProperty("resume_fall_landed",resumeFallLanded);j.addProperty("resume_fall_landing_health",resumeFallLandingHealth);j.addProperty("resume_fall_landing_age",resumeFallLandingAge);}
         j.addProperty("client_queries",Math.max(clientQueries.get(),GroundCollision.queries(false)));j.addProperty("server_queries",Math.max(serverQueries.get(),GroundCollision.queries(true)));j.addProperty("pose_writes",files.writes());j.addProperty("server_observations",sequence);

@@ -1,5 +1,77 @@
 # MineCome progress — 2026-11-08
 
+## Owned-block camera collision and integrated third-person walking
+
+Implemented, compiled and live verified camera clipping against server-confirmed
+owned Minecraft blocks. The producer uses actual `getCameraCollisionShape`
+voxel boxes, including partial shapes. A bounded, atomic generation carries up
+to 512 boxes for the existing 64-block ledger; poses bind the required generation.
+The native camera sweeps with 0.12m clearance and combines the result with native
+scenery clipping. Incomplete or mismatched geometry collapses the orbit to the
+eye until a complete generation arrives; interaction reach stays eye-based.
+
+The automated coupled-game test passed in both back and front perspectives:
+six alternating strides each, cumulative travel 4.013m / 3.915m, maximum
+excursion 0.808m, inventory movement suppression, first-person return and normal
+save/cleanup. Sixteen PNGs record eight stages. Input was scripted through the
+guest key adapter and vanilla client/server movement, not physical Windows keys;
+the fixture does not write player position, velocity or camera. The ordinary
+production bridge still applies its owned native player poses.
+
+Evidence: `runtime/evidence/gameplay-kcd-20261108-124939-1ae7d0c08c614ae8b364b11f68b71051`.
+`native-walking-verification.json` passes, and the independent
+`camera-collision-verification.json` checks actual native camera readbacks:
+69 back / 66 front samples, 45 / 66 clipped, zero segment penetration into the
+expanded fixture boxes. The eight magenta blocks were prepared in a disposable
+save, so this test does not claim new placement proof. Existing live placement
+and aiming evidence below remains valid.
+
+Two concrete failures found during this work are fixed: KCD's `GetHeadPos` can
+freeze under the camera override while native feet move, and a concurrent server
+observation could appear newer than a caller's earlier clock reading, falsely
+clearing held movement. Camera following now translates the bounded initial
+local eye offset with actual native feet and live yaw. Observation freshness
+reads the immutable sample before the clock, retaining the 250ms expiry.
+The passing run recorded zero source pauses while a movement key was held.
+Original failed runs `33f9667359a04903968ddb5f69a64d06` and
+`31f1499086f54a3ba18e3b39386108bc` remain preserved locally.
+
+Focused validation: Java assemble, 323 block checks and 42 movement checks;
+33 Lua movement cases; 39 host-worker test groups, including maximum geometry
+chunking, malformed/replayed generations and cleanup. Native depth regressions
+also pass. Reusable automation is `scripts/Test-KcdThirdPersonWalking.ps1` and
+`scripts/Test-KcdCameraCollisionEvidence.ps1`.
+
+The reported foliage/Steve flashing is a real remaining rendering issue. A
+depth-source mismatch is fixed by retaining metadata per selected depth resource
+rather than allowing an auxiliary target to replace it. The first moving run
+still rejected camera alignment/age on many frames; no claim of fully resolved
+foliage flicker is made from that run.
+
+The final 31.469-second coupled run also passes all walking/collision assertions:
+`runtime/evidence/gameplay-kcd-20261108-130101-5e1f8cec43244b5199caeffe9976f712`.
+It adds a 12.046-second stationary back-view interval and checks 177 back / 65
+front native readbacks with zero penetration. The guest now admits the newest
+native camera at render-frame start as well as before clicks, removing up to one
+50ms tick of waiting. The immutable sample stays pinned through perspective,
+aiming, render and capture metadata; original timestamps and expiry limits remain.
+Java wire tests pass 215 checks, including ten frame-admission regressions.
+
+The stationary comparison establishes a remaining cause of flashing: in one
+complete five-second interval, depth was available on 325/441 frames; all 116
+rejections were guest camera age above 250ms, with zero position, basis,
+projection or depth-source mismatches. Depth readiness toggled 79 times.
+See `host-depth-analysis.json` and `native-depth-addon.log` in the final evidence
+directory. This is whole-frame occlusion disabling, not proof of coplanar mesh
+z-fighting. Transport/capture latency still needs reduction. Any remaining
+temporal alpha/jitter artifacts need assessment after that correction; neither
+the depth-source fix nor frame admission alone is claimed to cure all flicker.
+
+Both games are closed and the renderer baseline is restored:
+`runtime/evidence/gameplay-hud-restore-20261108-130327-0461c330d7f344349c5a0792b2abafa0`.
+The current prepared bundle is `runtime/hud-camera-depth-20261108`; its updated
+addon/profile is pinned. No manual test was requested for this milestone.
+
 ## Native third-person Steve, mouse look and aimed building
 
 WorldBlocks now connects F5 perspective requests to the native camera and waits
@@ -41,7 +113,8 @@ was needed; the rebuilt Chat addon hash is pinned in the existing profile.
 Third-person selection now rejects targets hidden by owned Minecraft geometry
 between the render camera and eye-ray hit. The shared hover/client/server check
 uses real voxel shapes, preserving slab/fence gaps and the 4.5m eye reach.
-It does not yet clip the orbit camera against owned Minecraft blocks.
+At this earlier checkpoint it did not yet clip the orbit camera against owned
+Minecraft blocks; the milestone above adds that collision.
 
 A subsequent native run verified front Steve, yaw/pitch and inventory mouse
 suppression, but returning to first person exposed a buffered-log ACK failure:
@@ -63,12 +136,12 @@ The agent requested stop at 226,920ms after the visual check; the launcher's
 240,000ms duration assertion therefore failed. That original failure receipt is
 preserved. This is perspective-transition acceptance, not a passed 240s smoke.
 
-Sustained native third-person walking remains unverified: Computer Use's brief W
+At this earlier checkpoint native third-person walking was unverified: Computer Use's brief W
 taps recorded zero movement events. The separate actual-Minecraft player fixture
 passed nine stages/18 PNGs, including 1.2915m matching client/server walking:
 `runtime/evidence/gameplay-player-20261108-114203-c9f9e299830e417bbfc3a41b776a8ca4/verification.json`.
-Owned Minecraft blocks still do not clip the orbit camera. The WorldBlocks/chat
-addon permits one accepted arm per KCD process; a same-process retry did not arm
+Owned-block camera clipping and repeated walking are now verified above. The
+WorldBlocks/chat addon permits one accepted arm per KCD process; a same-process retry did not arm
 and was stopped normally. Use a fresh KCD process for this profile.
 
 Both games are now closed and the renderer baseline was restored:

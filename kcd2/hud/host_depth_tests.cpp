@@ -63,8 +63,29 @@ float4 main(float4 position:SV_Position):SV_Target {
         wrong=s; wrong.viewport.width=1024; check(!validate(wrong,expected,1100),"wrong viewport rejected");
         wrong=s; wrong.projection[5]*=2; check(!validate(wrong,expected,1100),"wrong lens rejected");
         check(!validate(s,expected,1300),"stale camera rejected");
+        check(validate_reason(s,expected,1300)==view_rejection::age,"stale camera diagnostic distinguished");
+        wrong=s;wrong.position[0]+=2;check(validate_reason(wrong,expected,1100)==view_rejection::position,"position diagnostic distinguished");
+        wrong=s;wrong.front[1]=1;check(validate_reason(wrong,expected,1100)==view_rejection::basis,"direction diagnostic distinguished");
+        wrong=s;wrong.projection[5]*=2;check(validate_reason(wrong,expected,1100)==view_rejection::projection,"lens diagnostic distinguished");
         check(!validate(s,expected,900),"future camera rejected");
         check(!parse(*layout,bytes.data(),layout->size-1,wrong),"truncated buffer rejected");
+        // Regression: both resources use a valid main-view camera, but only A
+        // is bound as DEPTH. Submission of B must not disable A's occlusion.
+        submitted_samples samples;
+        auto main_depth=s;main_depth.device=reinterpret_cast<api::device *>(1);main_depth.source_depth={11};main_depth.captured_unix_ms=1000;
+        auto auxiliary=main_depth;auxiliary.source_depth={22};auxiliary.captured_unix_ms=1001;
+        samples.publish(main_depth);samples.publish(auxiliary);
+        check(samples.take(main_depth.device,main_depth.source_depth)->source_depth==main_depth.source_depth,"auxiliary target does not replace selected depth proof");
+        check(samples.take(auxiliary.device,auxiliary.source_depth).has_value(),"other selected resource retains its own proof");
+        samples.publish(main_depth);main_depth.captured_unix_ms=1002;samples.publish(main_depth);
+        auto older=main_depth;older.captured_unix_ms=999;samples.publish(older);
+        check(samples.take(main_depth.device,main_depth.source_depth)->captured_unix_ms==1002,"older submission cannot replace newer camera proof");
+        samples.publish(main_depth);samples.erase(main_depth.device,main_depth.source_depth);
+        check(!samples.take(main_depth.device,main_depth.source_depth),"destroyed depth proof removed");
+        samples.publish(main_depth);samples.clear();
+        check(!samples.take(main_depth.device,main_depth.source_depth),"disarm invalidates submitted proof");
+        samples.publish(main_depth);
+        check(!samples.take(reinterpret_cast<api::device *>(2),main_depth.source_depth),"depth proof cannot cross device identity");
         s.ratio={-near_plane/(far_plane-near_plane),-b,0,0}; s.nearest={s.ratio[0],s.ratio[1],1,0};
         check(validate(s,expected,1100) && s.reversed,"reversed projection detected");
         const float reversed_ten=s.ratio[0]+s.ratio[1]*far_plane/10.0f;
