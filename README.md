@@ -59,6 +59,14 @@ collision, cross-game combat and Elytra remain unfinished. The WorldBlocks
 profile adds third-person Steve as described below.
 Bounded labs remain available.
 
+Survival food is now connected to the same gameplay controls: select food and
+hold right-click to eat through Minecraft's actual item-use logic. Release,
+inventory, slot/mode changes and authority loss interrupt eating. An automated
+actual-Minecraft check passes consumption, hunger/saturation, regeneration and
+exact player-state save/reload. Native KCD2 eating acceptance remains pending;
+no additional renderer installation is required for this guest-side change.
+See [food controls and automation](docs/GAMEPLAY_SESSION.md#survival-food-and-regeneration).
+
 The [`-Hands` profile](docs/GAMEPLAY_SESSION.md#minecraft-hands-and-held-items)
 includes those controls and adds Minecraft's actual first-person arm and held-item
 rendering to the HUD stream. A real-Minecraft automated check captures empty hand,

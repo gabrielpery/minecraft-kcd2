@@ -1,5 +1,39 @@
 # MineCome progress — 2026-11-08
 
+## Survival food through the gameplay mouse controller
+
+Held right-click with a main-hand FOOD component now calls vanilla interactItem.
+A narrow redirect preserves that admitted hold when Minecraft's own use key is
+up; it does not synthesize a use-key press or invoke block interaction under the
+crosshair. Vanilla owns use duration, consumption, nutrition, effects and healing.
+Release, attack, menus, selected item/slot/mode changes, stale authority and
+shutdown cancel the hold. A new press is required after interruption.
+
+Actual-Minecraft two-launch verification PASS:
+`runtime/evidence/gameplay-food-20261108-175737-4ef70f7c300e42af90de52e819c84c7c/verification.json`.
+The isolated Hands-profile world exercised the production controller, five
+interruptions (release, slot, inventory, disabled authority, game mode), full
+hunger refusal, two actual server-counted bread consumptions (food 11→16→20),
+and vanilla regeneration (health 12→13). Reopening preserved health 13, food 20,
+saturation 10, exhaustion 2 and four remaining bread exactly. Both launches saved
+and closed normally. No direct health/hunger/inventory writes or synthetic use
+key; setup used actual vanilla command packets. Scripted camera/input on a
+synthetic terrain patch, **not a new live KCD2 or physical-input eating claim**.
+The first fixture attempt lacked its required camera lease and stopped before
+food testing; the harness was corrected, without relaxing movement admission.
+
+`Test-GameplayFood.ps1` repeats both launches without manual input. Java compile,
+323 block-policy checks and 230 input-protocol checks pass. The sustained profiles
+inherit this control through their existing Blocks path; native binaries and
+renderer pins are unchanged. General item/offhand use, combat, death/respawn,
+crafting and dropped-item rendering remain unfinished gameplay work.
+
+The actual-Minecraft Survival placement/release/held-mining regression also PASS:
+`runtime/evidence/gameplay-blocks-survival-20261108-175905-ffeeff34593640869c1ffec4abea5362/verification.json`.
+It confirms the shared mouse controller still places, cancels an early mining
+hold, completes timed mining and cleans up normally. All test game processes
+closed normally; KCD2 was not launched or modified for this increment.
+
 ## Camera scheduling and measured renderer overhead
 
 Single-entry native descriptor copies now snapshot their source on the stack,

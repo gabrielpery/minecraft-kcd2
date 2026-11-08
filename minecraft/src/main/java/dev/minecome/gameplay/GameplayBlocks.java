@@ -52,6 +52,7 @@ public final class GameplayBlocks {
     private final AtomicReference<Map<GameplayBlocksLedger.Cell,String>> owned=new AtomicReference<>();
     private final boolean worldBlocks;
     private final GameplayCameraCollision cameraCollision=new GameplayCameraCollision();
+    private final GameplayFoodUse foodUse=new GameplayFoodUse();
     private final AtomicReference<Intent> intent=new AtomicReference<>();private final AtomicReference<Observation> observation=new AtomicReference<>();
     private final AtomicReference<String> failure=new AtomicReference<>();
     private volatile MinecraftServer server;private Object clientWorld,clientPlayer,serverWorld,serverPlayer;
@@ -140,15 +141,26 @@ public final class GameplayBlocks {
             }
             if(pending!=null&&now-pending.at()>(pending.action()==0&&!pending.creative()&&!breakCancelled?30_000_000_000L:2_000_000_000L))finish(client,"vanilla_rejected_or_cancelled",false);
         }
+        foodUse.tick(client,actions&&pending==null);
         if(actions&&pending==null&&now-lastDispatch>=250_000_000L){if(left)queue(client,0);else if(right)queue(client,1);}
     }
     public void event(MinecraftClient client,HudInputProtocol.Event event){
         if(event.kind()!=7&&event.kind()!=8)throw new IllegalArgumentException("Expected world button edge");if(event.code()<0||event.code()>1)throw new IllegalArgumentException("World button");
-        if(closing)return;boolean down=event.kind()==7;if(event.code()==0)left=down;else right=down;
+        if(closing)return;boolean down=event.kind()==7;
+        if(foodUse.event(client,event,actions&&pending==null&&!left&&foodAuthority(client))){right=false;return;}
+        if(down&&event.code()==0)foodUse.suspend(client);
+        if(event.code()==0)left=down;else right=down;
         if(down&&actions&&pending==null)queue(client,event.code());
         if(!down&&event.code()==0&&dispatched&&pending!=null&&pending.action()==0&&!pending.creative()&&client.interactionManager!=null){client.interactionManager.cancelBlockBreaking();breakCancelled=true;}
     }
-    public void suspend(MinecraftClient client){actions=false;left=false;right=false;if(client.interactionManager!=null&&pending!=null&&pending.action()==0&&dispatched&&!breakCancelled){client.interactionManager.cancelBlockBreaking();breakCancelled=true;}}
+    public void suspend(MinecraftClient client){actions=false;left=false;right=false;foodUse.suspend(client);if(client.interactionManager!=null&&pending!=null&&pending.action()==0&&dispatched&&!breakCancelled){client.interactionManager.cancelBlockBreaking();breakCancelled=true;}}
+    /** Recheck input/owner authority before vanilla has an opportunity to continue a held meal. */
+    public void beforeTick(MinecraftClient client,boolean enabled){foodUse.tick(client,enabled&&actions&&pending==null&&foodAuthority(client));}
+    public boolean needsVanillaFoodUsePreserved(MinecraftClient client){return foodUse.preserve(client,actions&&pending==null&&foodAuthority(client));}
+    private boolean foodAuthority(MinecraftClient client){
+        if(closing||!ready()||!client.isOnThread()||client.world!=clientWorld||client.player!=clientPlayer||client.getServer()!=server||!client.isIntegratedServerRunning())return false;
+        var observed=observation.get();long now=System.nanoTime();return observed!=null&&now>=observed.at()&&now-observed.at()<=250_000_000L;
+    }
     private void queue(MinecraftClient client,int action){
         var current=aim;long now=System.nanoTime();lastDispatch=now;if(current==null||!current.fresh(System.currentTimeMillis(),now)){rejections++;lastResult="aim_stale";return;}
         try{
@@ -267,6 +279,7 @@ public final class GameplayBlocks {
             var request=intent.get();long planId=0;boolean admitted=false;String reason="no_request",targetState="unknown";
             if(playerId!=null){var player=source.getPlayerManager().getPlayer(playerId);if(player==null||player.getWorld()!=world)throw new IllegalStateException("Block player changed");
                 if(serverPlayer==null)serverPlayer=player;if(serverPlayer!=player)throw new IllegalStateException("Block player identity changed");
+                foodUse.observe(player);
                 if(request!=null){var plan=request.plan();planId=plan.id();targetState=state(world,plan.selection().target());
                     if(request.dispatchedAt()==0){try{var selected=select(world,player,plan.aim(),plan.action(),Set.copyOf(serverCells.keySet()));
                         admitted=same(selected,plan.selection())&&sameStack(player,plan)&&(plan.action()!=1||placementState(player,selected).equals(plan.expectedState()));reason=admitted?"admitted":"server_selection_or_stack_changed";
@@ -320,6 +333,7 @@ public final class GameplayBlocks {
         j.addProperty("ready",ready);j.addProperty("revision",revision);j.addProperty("owned_count",owned.get().size());j.add("blocks",GameplayBlocksLedger.blocks(owned.get()));
         j.addProperty("places",places);j.addProperty("breaks",breaks);j.addProperty("ground_places",groundPlaces);j.addProperty("rejections",rejections);j.addProperty("cancellations",cancellations);j.addProperty("last_result",lastResult);
         j.addProperty("survival_breaks",survivalBreaks);j.addProperty("survival_preserved_ticks",survivalPreservedTicks);
+        j.add("food_use",foodUse.evidence(client));
         j.addProperty("world_blocks",worldBlocks);
         j.addProperty("pending",pending!=null);j.addProperty("snapshot_writes",files.writes());j.addProperty("persisted_revision",files.persistedRevision());j.addProperty("cleanup_complete",cleanupComplete());j.addProperty("controls_released",!left&&!right);
         j.addProperty("minecraft_blocks_removed_on_stop",0);j.addProperty("failure",failure.get()!=null?failure.get():files.failure());return j;}

@@ -1,5 +1,35 @@
 # Resume checkpoint — 8 November 2026
 
+## Latest gameplay milestone: Survival food
+
+Continue feature delivery, not camera microtuning. Main-hand food now works through
+held right-click in the existing Blocks/Chat/Flight/Hands/WorldBlocks gameplay
+profiles. Vanilla interactItem and a narrow input-cancellation redirect preserve
+real eating duration, nutrition, consumption and healing. No use-key synthesis or
+direct player-stat writes. Release, attack, menus, slot/item/mode or authority
+changes cancel; a fresh press is needed afterward.
+
+Automated actual-Minecraft food + food-resume PASS, no manual input:
+`runtime/evidence/gameplay-food-20261108-175737-4ef70f7c300e42af90de52e819c84c7c/verification.json`.
+Five interruptions passed; two bread raised hunger 11→16→20, regeneration raised
+health 12→13, exact health/food/saturation/exhaustion/count survived reload. Scripted
+guest/Hands-profile evidence only; native KCD eating acceptance can wait for the
+next larger combined milestone. Repeat with scripts/Test-GameplayFood.ps1.
+Survival mining regression also passed:
+`runtime/evidence/gameplay-blocks-survival-20261108-175905-ffeeff34593640869c1ffec4abea5362/verification.json`.
+All test games closed normally; KCD2 and its renderer installation were untouched.
+
+Implementation: gameplay/GameplayFoodUse.java, GameplayBlocks food integration,
+hud/GameplaySession authority hook and GameplayBlockBreakingMixin redirect.
+New GameplayFoodFixture feeds a synthetic view lease before movement readiness;
+do not omit this when extending standalone movement fixtures. No native rebuild
+or installation is needed for this guest-side feature.
+
+Next useful Survival work: render real dropped ItemEntity stacks in the world
+layer and verify timed mining → drops → walking pickup → saved inventory, then
+crafting. Preserve existing vanilla durability/mining; don't replace server drops
+with direct inventory grants. NPC combat, death/respawn and Elytra remain required.
+
 ## Working capability
 
 Follow PRODUCT.md. Preserve the persistent HUD/inventory/chat, walking/Creative

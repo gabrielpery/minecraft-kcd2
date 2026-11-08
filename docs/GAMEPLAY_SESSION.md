@@ -792,6 +792,32 @@ Its hotbar was visible in KCD and cleanup passed. No native input events were
 recorded, so this does not prove physical walking in the new sustained profile.
 The previous renderer installation was restored after the check.
 
+## Survival food and regeneration
+
+The gameplay block profiles also route held right-click to Minecraft food in
+the selected main-hand slot. Use `/gamemode survival` and, for example,
+`/give @s minecraft:bread 8`, select the food, then hold right-click. Vanilla
+Minecraft decides whether the player can eat, the use duration, item consumption,
+hunger/saturation and regeneration. No replacement health or hunger model is used.
+The Hands/WorldBlocks profiles use the same real active-item state for rendering.
+
+Releasing right-click, attacking, changing the slot or mode, opening a menu, or
+losing gameplay authority cancels the held use. Resume with a fresh right-click.
+Holding food does not interact with the block under the crosshair. This increment
+supports main-hand food components; general item use, offhand controls, NPC combat,
+death/respawn and crafting integration remain separate work.
+
+Run the automatic check without KCD2 or manual input:
+
+```powershell
+& './scripts/Test-GameplayFood.ps1'
+```
+
+It uses an isolated actual Minecraft world, sends setup commands through vanilla
+client packets, exercises the production mouse controller and normally saves and
+reopens the world. The receipt distinguishes this scripted guest verification
+from native KCD2 input and visual acceptance.
+
 ## Automatic persistence check
 
 ```powershell
