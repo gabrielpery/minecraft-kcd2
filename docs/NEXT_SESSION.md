@@ -1,6 +1,40 @@
 # Resume checkpoint — 8 November 2026
 
-## Latest gameplay milestone: inventory and table crafting
+## Latest gameplay milestone: furnace smelting
+
+WorldBlocks now supports actual furnaces, including facing/lit model states,
+aimed right-click, FurnaceScreen input and vanilla fuel/recipes/output. Closing
+keeps slots inside the actual FurnaceBlockEntity. Workstation use and saved
+ownership tolerate lit-only changes; live entity replacement or changed facing/
+type fails closed. Preserve the existing crafting, food and mining controls.
+
+Actual-Minecraft two-launch PASS:
+`runtime/evidence/gameplay-furnace-20261108-190913-834b94abeeff40838604653fe6774655/verification.json`.
+First launch smelts/collects one stone, then saves second cobblestone inside
+with 1,374 burn ticks and 17 cook ticks. Reopen completes/collects stone two,
+leaving empty input/output and retained remaining fuel. Actual GUI clicks,
+vanilla 200-tick recipe, movement suppression, images, save and cleanup passed.
+Assemble and 350 block-policy checks pass. Repeat Test-GameplayFurnace.ps1;
+Test-KcdFurnace.ps1 supports live execution or -VerifyEvidenceDirectory.
+
+Connected KCD2 automated PASS:
+`runtime/evidence/gameplay-kcd-20261108-191255-2832045e36df4fab887f159310a14a61/native-furnace-verification.json`.
+Real native terrain/camera, both smelts/collection, closed-screen contents,
+actual UI, suppression, save/body restore/cleanup passed. Composition/reprojection
+advanced 134 frames over 4,997ms inside the 11s UI dwell. Scripted guest inputs,
+no new physical mouse or post-composite screenshot claim. Furnace particles were
+not newly verified. Avoid UI capture during active strict leases.
+KCD2 closed normally; runtime/hud-furnace-20261108-a was restored, nothing armed:
+`runtime/evidence/gameplay-hud-restore-20261108-191430-f362d7bb2d6e4ff0928eb8879a34d8bb`.
+
+Next coordinated Survival work is [death/respawn](RESPAWN_PLAN.md). This is a
+source-inspected implementation plan, not implemented code: real death UI,
+same-UUID replacement on both game threads, safe captured spawn and acknowledged
+native relocation are all needed. Do not relax ordinary pose velocity/freshness
+guards. NPC combat, Elytra and selective KCD health/stamina suppression remain
+required. Other containers/smokers/blast furnaces are not enabled by this increment.
+
+## Previous milestone: inventory and table crafting
 
 WorldBlocks now supports actual vanilla 2×2 inventory crafting, placed/saved
 crafting tables and server-opened 3×3 crafting through aimed right-click.

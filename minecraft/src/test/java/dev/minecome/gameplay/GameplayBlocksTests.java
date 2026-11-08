@@ -251,6 +251,25 @@ public final class GameplayBlocksTests {
         connectedLedger.persist(8,Map.of(c,"minecraft:crafting_table"));
         check(new GameplayBlocksLedger(save,SURFACE,true).initialStates.equals(Map.of(c,"minecraft:crafting_table")),"Crafting table ownership persists for vanilla handler use after reload");
         reject(()->new GameplayBlocksLedger(save,SURFACE),"Legacy stone renderer cannot adopt crafting table ownership");
+        for(var facing:List.of("north","south","east","west"))for(var lit:List.of(false,true)){
+            var furnace="minecraft:furnace[facing="+facing+",lit="+lit+"]";
+            check(GameplayBlocksPalette.supportsState(furnace)&&GameplayBlocksPalette.furnaceState(furnace),"Actual furnace orientation and burn state supported");
+        }
+        check(GameplayBlocksPalette.supportsBlock("minecraft:furnace")&&GameplayBlocksPalette.blockIds().contains("minecraft:furnace"),"Furnace item is admitted for vanilla placement");
+        var cold="minecraft:furnace[facing=north,lit=false]";var burning="minecraft:furnace[facing=north,lit=true]";
+        check(GameplayBlocksPalette.sameFurnace(cold,burning)&&GameplayBlocksPalette.sameFurnace(burning,cold)&&GameplayBlocksPalette.sameFurnace(cold,cold),"Fuel ignition/extinction preserves exact furnace identity");
+        for(var other:List.of("minecraft:furnace","minecraft:furnace[facing=up,lit=false]","minecraft:furnace[facing=north]",
+                "minecraft:furnace[lit=false,facing=north]","minecraft:furnace[facing=north,lit=False]","minecraft:furnace[facing=north,lit=false,extra=1]",
+                "minecraft:smoker[facing=north,lit=false]","minecraft:blast_furnace[facing=north,lit=false]")){
+            check(!GameplayBlocksPalette.supportsState(other)&&!GameplayBlocksPalette.sameFurnace(cold,other),"Invalid or unimplemented furnace state cannot reconcile ownership");
+        }
+        check(!GameplayBlocksPalette.sameFurnace(cold,"minecraft:furnace[facing=south,lit=false]")&&!GameplayBlocksPalette.sameFurnace(cold,"minecraft:crafting_table"),"Rotation or a different workstation cannot masquerade as a fuel transition");
+        check(!GameplayBlocksPalette.supportsBlock("minecraft:smoker")&&!GameplayBlocksPalette.supportsBlock("minecraft:blast_furnace"),"Only the vanilla furnace item is enabled");
+        connectedLedger.persist(9,Map.of(c,cold));
+        var furnaceLedger=new GameplayBlocksLedger(save,SURFACE,true);
+        check(furnaceLedger.initialStates.equals(Map.of(c,cold)),"Furnace ownership survives ledger reopen");
+        furnaceLedger.persist(10,Map.of(c,burning));
+        check(new GameplayBlocksLedger(save,SURFACE,true).initialStates.equals(Map.of(c,burning)),"Confirmed burning state persists without replacing the furnace cell");
     }
     private static void terrainLedgerTests(Path root)throws Exception{
         var seed=GameplayTerrain.initial(tile(0));var grown=seed.admit(1,0,tile(1));

@@ -1,7 +1,7 @@
 # Sustained HUD/inventory, with an explicit Minecraft walking profile.
 [CmdletBinding()]
 param([string]$BundleDirectory,[string]$InstanceDirectory,[string]$JavaHome='C:/Program Files/Java/jdk-24',
- [ValidateRange(0,300)][int]$SmokeSeconds=0,[switch]$PreflightOnly,[switch]$Movement,[switch]$Blocks,[switch]$Explore,[switch]$Chat,[switch]$Flight,[switch]$Hands,[switch]$WorldBlocks,[string]$GroundPatchFile,[switch]$ThirdPersonWalkingCheck,[switch]$DropsCheck,[switch]$CraftingCheck)
+ [ValidateRange(0,300)][int]$SmokeSeconds=0,[switch]$PreflightOnly,[switch]$Movement,[switch]$Blocks,[switch]$Explore,[switch]$Chat,[switch]$Flight,[switch]$Hands,[switch]$WorldBlocks,[string]$GroundPatchFile,[switch]$ThirdPersonWalkingCheck,[switch]$DropsCheck,[switch]$CraftingCheck,[switch]$FurnaceCheck)
 . (Join-Path $PSScriptRoot 'powershell7.ps1')
 if($PSVersionTable.PSVersion.Major -lt 7){
  $code=Invoke-MineComePowerShell7 -ScriptPath $PSCommandPath -BoundParameters $PSBoundParameters
@@ -14,6 +14,7 @@ $root=[IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
 . (Join-Path $PSScriptRoot 'GameplayMovementHost.ps1')
 if($WorldBlocks){$Hands=$true};if($Hands){$Flight=$true};if($Flight){$Chat=$true}
 if($Explore -or $Chat){$Blocks=$true};if($Blocks){$Movement=$true}
+if($FurnaceCheck -and (-not $WorldBlocks -or $SmokeSeconds -ne 0 -or $ThirdPersonWalkingCheck -or $DropsCheck -or $CraftingCheck)){throw "FurnaceCheck requires WorldBlocks and owns its bounded duration; omit other checks/SmokeSeconds."}
 if($CraftingCheck -and (-not $WorldBlocks -or $SmokeSeconds -ne 0 -or $ThirdPersonWalkingCheck -or $DropsCheck)){throw "CraftingCheck requires WorldBlocks and owns its bounded duration; omit other checks/SmokeSeconds."}
 if($DropsCheck -and (-not $WorldBlocks -or $SmokeSeconds -ne 0 -or $ThirdPersonWalkingCheck)){throw "DropsCheck requires WorldBlocks and owns its bounded duration; omit other checks/SmokeSeconds."}
 if($ThirdPersonWalkingCheck -and (-not $WorldBlocks -or $SmokeSeconds -ne 0)){throw 'ThirdPersonWalkingCheck requires WorldBlocks and owns its bounded duration; omit SmokeSeconds.'}
@@ -72,6 +73,7 @@ try{
  if($Chat){$arguments+='-Chat'}
  if($Flight){$arguments+='-Flight'}
  if($Hands){$arguments+='-Hands'};if($WorldBlocks){$arguments+='-WorldBlocks'}
+ if($FurnaceCheck){$arguments+='-FurnaceCheck'}
  if($CraftingCheck){$arguments+='-CraftingCheck'}
  if($DropsCheck){$arguments+='-DropsCheck'}
  if($ThirdPersonWalkingCheck){$arguments+='-ThirdPersonWalkingCheck'}
@@ -109,6 +111,7 @@ try{
  try{$bytes=[Text.Encoding]::UTF8.GetBytes($armText);$file.Write($bytes,0,$bytes.Length);$file.Flush($true);$armWritten=$true}finally{$file.Dispose()}
  [IO.File]::WriteAllText((Join-Path $directory 'arm.ini'),$armText)
  Write-Output "GAMEPLAY_READY run=$run stop_file=$(Join-Path $directory 'session.stop')"
+ if($FurnaceCheck){Write-Output 'AUTOMATED_FURNACE_CHECK: keep KCD2 focused; actual guest UI clicks load fuel/input, smelt and collect output, then save. Physical input is not claimed.'}
  if($CraftingCheck){Write-Output 'AUTOMATED_CRAFTING_CHECK: keep KCD2 focused; real guest UI clicks craft ingredients/table/tool, verify unused-input return, then save. Physical input is not claimed.'}
  if($DropsCheck){Write-Output 'AUTOMATED_DROPS_CHECK: keep KCD2 focused and controls released; scripted guest actions mine, render and walk to collect a drop, then save. Physical mouse/keys are not claimed.'}
  if($ThirdPersonWalkingCheck){Write-Output 'AUTOMATED_THIRD_PERSON_WALKING_CHECK: keep KCD2 focused and controls released; the guest will test back/front walking, inventory suppression and first-person return, then save and close. Physical keyboard input is not claimed by this check.'}
@@ -149,6 +152,14 @@ try{
   $f=$session.fixture
   if($f.kind -cne 'minecome_native_third_person_walking_v1' -or $f.result -cne 'passed' -or $f.failure -or -not $f.actual_minecraft -or -not $f.scripted_guest_input -or $f.physical_native_keys_verified -or $f.position_writes_used -or $f.velocity_writes_used -or $f.camera_writes_used -or
    -not $f.back_walking_verified -or -not $f.front_walking_verified -or -not $f.inventory_suppression_verified -or -not $f.first_person_return_verified -or @($f.images).Count -ne 8 -or $session.movement.movement_events -lt 2 -or $session.movement.held_ticks -lt 8 -or -not $session.native_perspective_connected -or $session.native_perspective_last_acknowledged -ne 0){throw 'Native third-person walking acceptance proof incomplete.'}
+ }
+ if($FurnaceCheck){
+  $f=$session.fixture
+  if($f.kind -cne 'minecome_gameplay_furnace_fixture_v1' -or $f.mode -cne 'furnace-native' -or $f.result -cne 'passed' -or $f.failure -or
+   -not $f.actual_minecraft -or $f.standalone_scripted -or $f.native_input_verified -or $f.position_writes_used){throw 'Native furnace fixture identity/scope differs.'}
+  foreach($flag in @('furnace_placement_verified','furnace_open_verified','smelting_verified','fuel_consumption_verified','inventory_suppression_verified','output_collection_verified','render_pixels_verified')){
+   if($f.$flag -ne $true){throw "Native furnace capability missing: $flag"}
+  }
  }
  if($CraftingCheck){
   $f=$session.fixture
@@ -193,7 +204,7 @@ finally{
  }
  [ordered]@{schema=1;kind='minecome_gameplay_kcd_session_v1';run=$run;result=$(if($passed){'passed'}else{'failed'});failure=$failure;
   target_pid=$context.GamePid;target_start_filetime=$targetStart;instance=$InstanceDirectory;smoke_seconds=$SmokeSeconds;
-  minecraft_movement_connected=[bool]($Movement -and $passed);movement_profile=[bool]$Movement;blocks_profile=[bool]$Blocks;explore_profile=[bool]$Explore;chat_profile=[bool]$Chat;flight_profile=[bool]$Flight;hands_profile=[bool]$Hands;world_blocks_profile=[bool]$WorldBlocks;drops_check=[bool]$DropsCheck;crafting_check=[bool]$CraftingCheck;host_command_typing_verified=$false;normal_client_exit=($helper -and $helper.HasExited -and $helper.ExitCode -eq 0)}|
+  minecraft_movement_connected=[bool]($Movement -and $passed);movement_profile=[bool]$Movement;blocks_profile=[bool]$Blocks;explore_profile=[bool]$Explore;chat_profile=[bool]$Chat;flight_profile=[bool]$Flight;hands_profile=[bool]$Hands;world_blocks_profile=[bool]$WorldBlocks;drops_check=[bool]$DropsCheck;crafting_check=[bool]$CraftingCheck;furnace_check=[bool]$FurnaceCheck;host_command_typing_verified=$false;normal_client_exit=($helper -and $helper.HasExited -and $helper.ExitCode -eq 0)}|
   ConvertTo-Json|Set-Content -LiteralPath (Join-Path $directory 'verification.json') -Encoding utf8NoBOM
 }
 if(-not $passed){throw $failure}

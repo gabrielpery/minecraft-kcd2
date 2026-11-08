@@ -22,7 +22,7 @@ final class HudVanillaUiAdapter {
     private boolean pointerKnown;
     HudVanillaUiAdapter(MinecraftClient client,boolean mouseAllowed){this(client,mouseAllowed,false);}
     HudVanillaUiAdapter(MinecraftClient client,boolean mouseAllowed,boolean commandsAllowed){world=client.world;player=client.player;server=client.getServer();this.mouseAllowed=mouseAllowed;this.commandsAllowed=commandsAllowed;}
-    static boolean inventory(Screen screen){return screen instanceof InventoryScreen || screen instanceof CreativeInventoryScreen || screen instanceof CraftingScreen;}
+    static boolean inventory(Screen screen){return screen instanceof InventoryScreen || screen instanceof CreativeInventoryScreen || screen instanceof CraftingScreen || screen instanceof FurnaceScreen;}
     static boolean chat(Screen screen){return screen instanceof ChatScreen;}
     static int screenKind(Screen screen){return screen==null?0:chat(screen)?2:inventory(screen)?1:-1;}
     // Inspected Yarn 1.21.1 ChatScreen: constructor seeds chatField; vanilla
@@ -86,6 +86,11 @@ final class HudVanillaUiAdapter {
         // inventory state, but never admit a detached/stale crafting screen.
         if(current instanceof CraftingScreen crafting && (crafting.getScreenHandler()!=client.player.currentScreenHandler || crafting.getScreenHandler().syncId<=0))
             throw new IllegalStateException("Crafting screen handler ownership changed");
+        // FurnaceScreen inherits ordinary HandledScreen slot/close behavior;
+        // recipes, fuel and stored contents remain on its actual server handler.
+        // Inspected runtime/evidence/furnace-source-20261108/FurnaceScreen.txt.
+        if(current instanceof FurnaceScreen furnace && (furnace.getScreenHandler()!=client.player.currentScreenHandler || furnace.getScreenHandler().syncId<=0))
+            throw new IllegalStateException("Furnace screen handler ownership changed");
         if(ownedChat!=null&&current!=ownedChat){releaseChatKeys();ownedChat=null;}
         if(commandsAllowed&&current!=null&&!inventory(current)&&current!=ownedChat)throw new IllegalStateException("Unowned screen during gameplay chat");
         if(current==pointerScreen)return;

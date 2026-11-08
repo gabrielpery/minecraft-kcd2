@@ -1,5 +1,50 @@
 # MineCome progress — 2026-11-08
 
+## Furnace smelting and saved contents
+
+WorldBlocks now admits the eight vanilla furnace facing/lit states. Aimed
+right-click opens its actual FurnaceScreenHandler before food or placement,
+while preserving sneaking, reach, obstruction and ownership checks. The UI uses
+the existing inventory pointer and movement suppression path. Vanilla controls
+fuel, recipes, cooking, output, experience and saved block-entity data.
+
+Workstation use accepts a lit-only state change while its packet is in flight.
+The ownership ledger also reconciles lit-only drift between the final snapshot
+and world save on reopening. Orientation/type changes and replacement of a live
+tracked FurnaceBlockEntity are rejected. Other container types, smokers and
+blast furnaces remain excluded. Native binaries and compatibility pins are unchanged.
+
+Actual-Minecraft two-launch check PASS:
+`runtime/evidence/gameplay-furnace-20261108-190913-834b94abeeff40838604653fe6774655/verification.json`.
+Ordinary GUI clicks loaded one coal and cobblestone, the vanilla 200-tick recipe
+produced stone, and taking the output used the real furnace slot. The first
+launch saved with stone count one, another cobblestone still inside the furnace,
+1,374 burn ticks and 17 cook ticks. Reopening retained the real furnace and
+remaining fuel, completed the second smelt and collected stone count two with
+empty input/output slots. Both launches closed normally; no direct world,
+inventory or block-entity writes. Actual furnace UI images, input suppression,
+lit-state reconciliation and saved player/construction identity passed. Setup
+used vanilla item/mode commands; this standalone check uses scripted clicks.
+Assemble and 350 focused block-policy checks pass.
+
+Coupled KCD2 automated PASS:
+`runtime/evidence/gameplay-kcd-20261108-191255-2832045e36df4fab887f159310a14a61/native-furnace-verification.json`.
+Real captured terrain and acknowledged native camera, production placement/use,
+fuel and two smelts, close/reopen contents, output collection, actual FurnaceScreen
+pixels and movement suppression all passed. Native composition/reprojection
+advanced 134 frames over 4,997ms inside the 11-second UI dwell. Normal guest save,
+host body restoration and resource cleanup passed. These are scripted guest
+clicks with the live native bridge, not new physical-mouse or screenshot-level
+post-composite acceptance. Furnace smoke/flame particles were not newly verified.
+KCD2 closed normally; the temporary installation was restored and nothing is armed:
+`runtime/evidence/gameplay-hud-restore-20261108-191430-f362d7bb2d6e4ff0928eb8879a34d8bb`.
+
+Death/respawn remains a coordinated follow-up, detailed in
+[the implementation plan](RESPAWN_PLAN.md). It needs actual death-screen routing,
+same-player replacement reconciliation, supported captured-ground spawn selection
+and an acknowledged native relocation. Ordinary pose velocity/freshness guards
+must stay intact. The plan is inspected design, not an implemented feature.
+
 ## Vanilla inventory and crafting-table recipes
 
 The sustained WorldBlocks session now accepts the real 2×2 inventory crafting

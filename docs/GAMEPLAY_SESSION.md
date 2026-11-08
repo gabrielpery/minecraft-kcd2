@@ -389,7 +389,7 @@ model. Fence gates, leads and NPC interaction are not included.
 On captured ground, a short shape that would be buried is placed in the next
 grid cell. This retains normal slab orientation and obstruction checks; the
 block may sit above uneven ground because placement remains grid-aligned.
-Fluids, waterlogged blocks, glass, leaves, containers, redstone and other
+Fluids, waterlogged blocks, glass, leaves, other containers, redstone and other
 blocks requiring transparency or additional behavior integration remain excluded.
 The existing 64-block capacity, Minecraft Y56..80 bounds and captured-terrain
 coverage remain. The new rendering layer does not create native KCD physics for
@@ -807,7 +807,7 @@ Ownership, reach and obstruction checks still apply. Movement, camera look and
 world mouse actions pause while the crafting screen owns input. The placed table
 and crafted inventory are saved in the existing persistent world.
 
-This enables the inventory/table crafting workflow; furnaces, storage containers,
+This enables the inventory/table crafting workflow; storage containers,
 enchanting and other block-entity systems remain separate features. Recipes and
 ingredient/result updates are not reimplemented or replaced with item grants.
 
@@ -822,6 +822,28 @@ unused ingredients return when the table closes, and reopens the same save.
 `Test-KcdCrafting.ps1` performs the corresponding connected check with scripted
 guest inputs in a fresh supported tools world. It also accepts
 `-VerifyEvidenceDirectory` to inspect saved receipts without rerunning a game.
+
+## Furnace smelting
+
+WorldBlocks also supports ordinary Minecraft furnaces. Select a furnace and
+right-click captured ground to place it. Right-click the placed furnace to open
+its actual screen, put ingredients in the top slot and fuel in the lower slot,
+then take the smelted output. Minecraft owns the recipes, fuel duration, cooking
+progress, inventory and experience. The world model follows the furnace's facing
+and lit state.
+
+**E** or **Escape** closes the screen. Ingredients, fuel and output stay in the
+furnace, including across save/reopen; closing it does not return its contents
+to the player. Movement and camera input are suppressed while its screen is
+open. Sneak with an item held to place against a furnace instead of opening it.
+Normal ownership, reach, captured-terrain and obstruction limits still apply.
+Smokers, blast furnaces, storage containers and automation are separate work.
+
+`Test-GameplayFurnace.ps1` uses real inventory clicks, waits for vanilla smelting,
+and reopens the same saved furnace to finish another item. `Test-KcdFurnace.ps1`
+exercises the connected path with scripted guest inputs and records native
+composition while the furnace screen is open. Its -VerifyEvidenceDirectory
+option checks an existing run without launching either game again.
 
 ## Dropped items and Survival pickup
 
@@ -891,7 +913,7 @@ Releasing right-click, attacking, changing the slot or mode, opening a menu, or
 losing gameplay authority cancels the held use. Resume with a fresh right-click.
 Holding food does not interact with the block under the crosshair. This increment
 supports main-hand food components; general item use, offhand controls, NPC combat,
-death/respawn and crafting integration remain separate work.
+death/respawn remain separate work; crafting and furnaces are described above.
 
 Run the automatic check without KCD2 or manual input:
 

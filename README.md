@@ -85,8 +85,17 @@ a table and a wooden pickaxe, then verifies the table and resulting inventory
 after reopening the save. A coupled KCD2 check passes the same recipe chain with
 the actual crafting screen streamed through the native renderer. These checks
 use scripted guest controls; physical mouse crafting was not newly verified.
-Other containers, furnaces and enchanting remain separate work.
+Other containers and enchanting remain separate work.
 See [crafting controls and automation](docs/GAMEPLAY_SESSION.md#crafting).
+
+Ordinary furnaces now use Minecraft's real smelting screen, fuel and recipes.
+Place one, right-click to load ingredients and fuel, and collect its output.
+Closing the screen leaves its contents in the furnace for the next visit or
+saved session. Its world model tracks facing and burning state. Automated
+Minecraft checks pass fuel consumption, smelting and unfinished-input save/reopen.
+A connected KCD2 check also passes both smelts, screen close/reopen and collection
+with native composition using scripted guest clicks.
+See [furnace controls and automation](docs/GAMEPLAY_SESSION.md#furnace-smelting).
 
 KCD2's health/stamina bars still need session-scoped suppression so Minecraft's
 HUD is the gameplay display. The existing whole-HUD toggle needs further work to
@@ -128,7 +137,7 @@ See [player rendering and perspective](docs/GAMEPLAY_SESSION.md#player-rendering
 
 The [`-WorldBlocks` profile](docs/GAMEPLAY_SESSION.md#minecraft-world-blocks) adds
 an initial palette of solid blocks, including planks, oriented logs, wool,
-concrete, masonry, crafting tables, dry slabs/stairs, fences and walls. Minecraft
+concrete, masonry, crafting tables, furnaces, dry slabs/stairs, fences and walls. Minecraft
 renders their actual state models into a transparent layer aligned to KCD2's
 camera; it also owns placement, collision,
 mining and saved block states. Hovered blocks use Minecraft's black shape outline,
@@ -161,7 +170,7 @@ restores the blocks. Hands and HUD remain visible. This uses reflected KCD2 DXIL
 projection data and matching depth resources; foliage and NPC scenes still need
 broader coverage.
 Building remains bounded to 64 blocks inside captured coverage;
-fluids, waterlogged/transparent blocks, containers and other dynamic blocks are not
+fluids, waterlogged/transparent blocks, other containers and other dynamic blocks are not
 included. Native KCD2 walking/flight with this new world layer has not been re-verified.
 
 The new [repeat-session development profile](kcd2/MOVEMENT-LAB.md#repeat-sessions-in-one-kcd-process)

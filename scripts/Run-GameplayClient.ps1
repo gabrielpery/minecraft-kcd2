@@ -4,8 +4,8 @@
 param([Parameter(Mandatory)][string]$EvidenceDirectory,[Parameter(Mandatory)][string]$InstanceDirectory,
  [Parameter(Mandatory)][string]$Run,[Parameter(Mandatory)][int]$TargetPid,
  [Parameter(Mandatory)][string]$TargetStart,[Parameter(Mandatory)][long]$Expires,
- [Parameter(Mandatory)][string]$JavaHome,[ValidateSet('','create','resume','walking','walking-resume','blocks','blocks-resume','blocks-survival','food','food-resume','drops','drops-resume','crafting','crafting-resume','terrain','terrain-resume','chat','chat-resume','flight','flight-resume','flight-fall','flight-fall-resume','hands','world-blocks','world-blocks-resume','shapes','shapes-resume','depth','connected','connected-resume','shape-walking','player')][string]$FixturePhase='',
- [switch]$Connected,[switch]$Movement,[switch]$Blocks,[switch]$Explore,[switch]$Chat,[switch]$Flight,[switch]$Hands,[switch]$WorldBlocks,[string]$GroundPatchFile,[switch]$ThirdPersonWalkingCheck,[switch]$DropsCheck,[switch]$CraftingCheck)
+ [Parameter(Mandatory)][string]$JavaHome,[ValidateSet('','create','resume','walking','walking-resume','blocks','blocks-resume','blocks-survival','food','food-resume','drops','drops-resume','crafting','crafting-resume','furnace','furnace-resume','terrain','terrain-resume','chat','chat-resume','flight','flight-resume','flight-fall','flight-fall-resume','hands','world-blocks','world-blocks-resume','shapes','shapes-resume','depth','connected','connected-resume','shape-walking','player')][string]$FixturePhase='',
+ [switch]$Connected,[switch]$Movement,[switch]$Blocks,[switch]$Explore,[switch]$Chat,[switch]$Flight,[switch]$Hands,[switch]$WorldBlocks,[string]$GroundPatchFile,[switch]$ThirdPersonWalkingCheck,[switch]$DropsCheck,[switch]$CraftingCheck,[switch]$FurnaceCheck)
 $ErrorActionPreference='Stop'
 if($WorldBlocks){$Hands=$true};if($Hands){$Flight=$true};if($Flight){$Chat=$true}
 if($Explore -or $Chat){$Blocks=$true};if($Blocks){$Movement=$true}
@@ -19,6 +19,7 @@ $arguments=@('-p',(Join-Path $root 'minecraft'),'--offline','runClient','--conso
  "-PminecomeHudStreamTargetStart=$TargetStart","-PminecomeHudStreamExpiresUtcMs=$Expires")
 if(-not $Connected){$arguments+='-PminecomeGameplayStandalone'}
 if($FixturePhase){$arguments+="-PminecomeGameplayFixture=$FixturePhase"}
+if($FurnaceCheck){if(-not $Connected -or -not $WorldBlocks -or $FixturePhase -or $ThirdPersonWalkingCheck -or $DropsCheck -or $CraftingCheck){throw "Native furnace check requires connected WorldBlocks without another fixture."};$arguments+="-PminecomeGameplayFurnaceCheck"}
 if($CraftingCheck){if(-not $Connected -or -not $WorldBlocks -or $FixturePhase -or $ThirdPersonWalkingCheck -or $DropsCheck){throw "Native crafting check requires connected WorldBlocks without another fixture."};$arguments+="-PminecomeGameplayCraftingCheck"}
 if($DropsCheck){if(-not $Connected -or -not $WorldBlocks -or $FixturePhase -or $ThirdPersonWalkingCheck){throw "Native drops check requires connected WorldBlocks without another fixture."};$arguments+="-PminecomeGameplayDropsCheck"}
 if($ThirdPersonWalkingCheck){if(-not $Connected -or -not $WorldBlocks -or $FixturePhase){throw 'Native walking check requires connected WorldBlocks without another fixture.'};$arguments+='-PminecomeGameplayThirdPersonWalkingCheck'}

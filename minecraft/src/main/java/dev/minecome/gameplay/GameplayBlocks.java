@@ -7,6 +7,7 @@ import dev.minecome.terrain.GameplayTerrain;
 import net.minecraft.block.Blocks;
 import net.minecraft.block.BlockState;
 import net.minecraft.block.ShapeContext;
+import net.minecraft.block.entity.FurnaceBlockEntity;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.component.DataComponentTypes;
 import net.minecraft.entity.player.PlayerEntity;
@@ -15,6 +16,7 @@ import net.minecraft.item.BlockItem;
 import net.minecraft.item.ItemPlacementContext;
 import net.minecraft.registry.Registries;
 import net.minecraft.screen.CraftingScreenHandler;
+import net.minecraft.screen.FurnaceScreenHandler;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.util.Hand;
@@ -29,7 +31,7 @@ import java.util.concurrent.atomic.*;
 
 /** Persistent bounded building through vanilla interaction packets, with server-confirmed block states. */
 public final class GameplayBlocks {
-    private static final int TABLE_USE=2;
+    private static final int WORKSTATION_USE=2;
     public record Aim(long capturedUtcMs,long observedAtNanos,Vec3d origin,Vec3d direction,double range,
                       boolean obstructionKnown,double obstructionDistance,boolean terrainHit,Vec3d cameraOrigin) {
         public Aim(long capturedUtcMs,long observedAtNanos,Vec3d origin,Vec3d direction,double range,
@@ -51,6 +53,7 @@ public final class GameplayBlocks {
     private final GameplayWorld save;private volatile GroundSurface surface;private final HudInputProtocol.Identity identity;
     private final GameplayBlocksLedger ledger;private final GameplayBlocksFiles files;
     private final Map<GameplayBlocksLedger.Cell,String> serverCells=new TreeMap<>();
+    private final Map<GameplayBlocksLedger.Cell,FurnaceBlockEntity> serverFurnaces=new HashMap<>();
     private final AtomicReference<Map<GameplayBlocksLedger.Cell,String>> owned=new AtomicReference<>();
     private final boolean worldBlocks;
     private final GameplayCameraCollision cameraCollision=new GameplayCameraCollision();
@@ -60,7 +63,7 @@ public final class GameplayBlocks {
     private volatile MinecraftServer server;private Object clientWorld,clientPlayer,serverWorld,serverPlayer;
     private volatile UUID playerId;private volatile boolean serverInitialized,closing,serverClosed;private volatile long closeAt;
     private Aim aim;private Plan pending;private boolean actions,ready,left,right,dispatched,breakCancelled;
-    private long ids,serverSequence,revision,confirmed,dispatchedAt,lastDispatch,places,breaks,rejections,cancellations,groundPlaces,survivalBreaks,survivalPreservedTicks,craftingOpens;
+    private long ids,serverSequence,revision,confirmed,dispatchedAt,lastDispatch,places,breaks,rejections,cancellations,groundPlaces,survivalBreaks,survivalPreservedTicks,craftingOpens,furnaceOpens;
     private String lastResult="starting";
 
     public GameplayBlocks(Path root,GameplayWorld save,GroundSurface surface,HudInputProtocol.Identity identity,Path evidenceDirectory)throws IOException {
@@ -134,7 +137,7 @@ public final class GameplayBlocks {
                 }
             }else{
                 if(observed!=null&&observed.confirmed()==pending.id()){
-                    if(state(client.world,pending.selection().target()).equals(pending.expectedState())){if(pending.action()==1){places++;if(pending.selection().ground())groundPlaces++;}else if(pending.action()==TABLE_USE){craftingOpens++;}else{breaks++;if(!pending.creative())survivalBreaks++;}finish(client,"confirmed",true);}
+                    if(expectedStateMatches(pending,state(client.world,pending.selection().target()))){if(pending.action()==1){places++;if(pending.selection().ground())groundPlaces++;}else if(pending.action()==WORKSTATION_USE){if(GameplayBlocksPalette.furnaceState(pending.expectedState()))furnaceOpens++;else craftingOpens++;}else{breaks++;if(!pending.creative())survivalBreaks++;}finish(client,"confirmed",true);}
                 }
                 if(pending!=null&&pending.action()==0&&!pending.creative()){
                     if(!actions||!left||!sameCurrentTarget(client,pending)){if(!breakCancelled){client.interactionManager.cancelBlockBreaking();breakCancelled=true;}}
@@ -150,10 +153,10 @@ public final class GameplayBlocks {
         if(event.kind()!=7&&event.kind()!=8)throw new IllegalArgumentException("Expected world button edge");if(event.code()<0||event.code()>1)throw new IllegalArgumentException("World button");
         if(closing)return;boolean down=event.kind()==7;
         // Vanilla block use precedes food use unless sneaking with a held item.
-        // A valid table hit opens its actual handler even while holding food.
-        boolean tablePress=down&&event.code()==1&&actions&&pending==null&&!left&&craftingTarget(client);
-        if(!tablePress&&foodUse.event(client,event,actions&&pending==null&&!left&&foodAuthority(client))){right=false;return;}
-        if(tablePress)foodUse.suspend(client);
+        // A valid workstation hit opens its actual handler even while holding food.
+        boolean workstationPress=down&&event.code()==1&&actions&&pending==null&&!left&&workstationTarget(client);
+        if(!workstationPress&&foodUse.event(client,event,actions&&pending==null&&!left&&foodAuthority(client))){right=false;return;}
+        if(workstationPress)foodUse.suspend(client);
         if(down&&event.code()==0)foodUse.suspend(client);
         if(event.code()==0)left=down;else right=down;
         if(down&&actions&&pending==null)queue(client,event.code());
@@ -170,10 +173,10 @@ public final class GameplayBlocks {
     private void queue(MinecraftClient client,int action){
         var current=aim;long now=System.nanoTime();lastDispatch=now;if(current==null||!current.fresh(System.currentTimeMillis(),now)){rejections++;lastResult="aim_stale";return;}
         try{
-            if(action==1&&craftingTarget(client))action=TABLE_USE;
+            if(action==1&&workstationTarget(client))action=WORKSTATION_USE;
             var selected=select(client.world,client.player,current,action,owned.get().keySet());
             if(action==1&&!owned.get().containsKey(cell(selected.target()))&&owned.get().size()>=GameplayBlocksLedger.MAX_BLOCKS){rejections++;lastResult="block_capacity";return;}
-            var expected=action==1?placementState(client.player,selected):action==TABLE_USE?"minecraft:crafting_table":"minecraft:air";
+            var expected=action==1?placementState(client.player,selected):action==WORKSTATION_USE?state(client.world,selected.target()):"minecraft:air";
             int slot=client.player.getInventory().selectedSlot;var stack=client.player.getInventory().getStack(slot);
             pending=new Plan(++ids,action,current,selected,slot,Registries.ITEM.getId(stack.getItem()).toString(),stack.getCount(),client.player.isCreative(),expected,now);
             dispatched=false;breakCancelled=false;intent.set(new Intent(pending,0));lastResult="awaiting_server";
@@ -183,11 +186,12 @@ public final class GameplayBlocks {
         try{
             var p=pending;if(!p.aim().fresh(System.currentTimeMillis(),now))throw new IllegalArgumentException("aim_expired_before_dispatch");
             var selected=select(client.world,client.player,p.aim(),p.action(),owned.get().keySet());
-            if(!same(selected,p.selection())||!sameStack(client.player,p)||(p.action()==1&&!placementState(client.player,selected).equals(p.expectedState())))throw new IllegalArgumentException("selection_or_stack_changed");
-            // Pinned CraftingTableBlock.onUse returns SUCCESS on the client and
-            // opens a real server CraftingScreenHandler. interactBlock sends the
-            // ordinary sequenced packet; recipes/slots remain entirely vanilla.
-            // Inspected source: runtime/evidence/crafting-source-20261108/.
+            if(!same(selected,p.selection())||!sameStack(client.player,p)||(p.action()==1&&!placementState(client.player,selected).equals(p.expectedState()))||
+                (p.action()==WORKSTATION_USE&&!expectedStateMatches(p,state(client.world,selected.target()))))throw new IllegalArgumentException("selection_or_stack_changed");
+            // Pinned CraftingTableBlock/AbstractFurnaceBlock.onUse return SUCCESS
+            // on the client and open their actual server handlers. interactBlock
+            // sends the ordinary packet; recipes, fuel and slots remain vanilla.
+            // Source: runtime/evidence/{crafting,furnace}-source-20261108/.
             boolean accepted=p.action()!=0?client.interactionManager.interactBlock(client.player,Hand.MAIN_HAND,p.selection().hit()).isAccepted():client.interactionManager.attackBlock(p.selection().target(),p.selection().hit().getSide());
             if(!accepted){finish(client,"vanilla_dispatch_rejected",false);return;}
             dispatched=true;dispatchedAt=System.nanoTime();lastDispatch=dispatchedAt;intent.set(new Intent(p,dispatchedAt));lastResult="awaiting_confirmation";
@@ -205,7 +209,7 @@ public final class GameplayBlocks {
     private void finish(MinecraftClient client,String reason,boolean success){if(pending!=null&&pending.action()==0&&client.interactionManager!=null)client.interactionManager.cancelBlockBreaking();
         if(!success){rejections++;if(reason.contains("cancel"))cancellations++;}lastResult=reason;pending=null;intent.set(null);dispatched=false;breakCancelled=false;}
     private Selection select(World world,PlayerEntity player,Aim ray,int action,Set<GameplayBlocksLedger.Cell> cells){
-        if(action==TABLE_USE&&(!worldBlocks||!blockUseAllowed(player)||player.currentScreenHandler!=player.playerScreenHandler))throw new IllegalArgumentException("crafting_unavailable");
+        if(action==WORKSTATION_USE&&(!worldBlocks||!blockUseAllowed(player)||player.currentScreenHandler!=player.playerScreenHandler))throw new IllegalArgumentException("workstation_unavailable");
         if(!ray.obstructionKnown()||!ray.fresh(System.currentTimeMillis(),System.nanoTime()))throw new IllegalArgumentException("aim_unavailable");
         if(ray.origin().distanceTo(player.getEyePos())>.35)throw new IllegalArgumentException("eye_disagrees");
         var end=ray.origin().add(ray.direction().multiply(ray.range()));
@@ -215,8 +219,8 @@ public final class GameplayBlocks {
             double distance=hit.getPos().distanceTo(ray.origin());
             if(ray.obstructionDistance()>=0&&ray.obstructionDistance()<distance-.05)throw new IllegalArgumentException("native_obstruction");
             requireCameraVisibility(world,player,ray,hit.getPos(),cells);
-            if(action==TABLE_USE&&!world.getBlockState(hit.getBlockPos()).isOf(Blocks.CRAFTING_TABLE))throw new IllegalArgumentException("not_crafting_table");
-            if(action==1&&worldBlocks&&world.getBlockState(hit.getBlockPos()).isOf(Blocks.CRAFTING_TABLE)&&blockUseAllowed(player))throw new IllegalArgumentException("crafting_action_changed");
+            if(action==WORKSTATION_USE&&!workstation(world.getBlockState(hit.getBlockPos())))throw new IllegalArgumentException("not_supported_workstation");
+            if(action==1&&worldBlocks&&workstation(world.getBlockState(hit.getBlockPos()))&&blockUseAllowed(player))throw new IllegalArgumentException("workstation_action_changed");
             // Vanilla chooses the replaceable hit cell for a slab merge, otherwise
             // its adjacent cell. Never assume every placement offsets a full cube.
             var target=action==1?new ItemPlacementContext(player,Hand.MAIN_HAND,player.getMainHandStack(),hit).getBlockPos():hit.getBlockPos();validateTarget(world,player,target,action,cells);
@@ -252,13 +256,17 @@ public final class GameplayBlocks {
         // This user-placed block can overlap the sampled slab; breaking it restores AIR.
         return new Selection(target,groundHit,true);
     }
-    private boolean craftingTarget(MinecraftClient client){
+    private boolean workstationTarget(MinecraftClient client){
         if(!worldBlocks||aim==null||client.player==null||client.world==null)return false;
-        try{select(client.world,client.player,aim,TABLE_USE,owned.get().keySet());return true;}
+        try{select(client.world,client.player,aim,WORKSTATION_USE,owned.get().keySet());return true;}
         catch(IllegalArgumentException rejected){return false;}
     }
+    private static boolean workstation(BlockState state){return state.isOf(Blocks.CRAFTING_TABLE)||state.isOf(Blocks.FURNACE);}
+    private static boolean expectedStateMatches(Plan plan,String actual){
+        return plan.expectedState().equals(actual)||(plan.action()==WORKSTATION_USE&&GameplayBlocksPalette.sameFurnace(plan.expectedState(),actual));
+    }
     /** Pinned interactBlockInternal cancels block use only while sneaking with
-     * an item in either hand; sneaking with both hands empty still uses a table. */
+     * an item in either hand; sneaking with both hands empty still uses a workstation. */
     private static boolean blockUseAllowed(PlayerEntity player){
         return !player.shouldCancelInteraction()||(player.getMainHandStack().isEmpty()&&player.getOffHandStack().isEmpty());
     }
@@ -284,6 +292,7 @@ public final class GameplayBlocks {
         if(!GameplayBlocksLedger.allowed(surface,cell(target))||!world.isChunkLoaded(target)||!player.canInteractWithBlockAt(target,0))throw new IllegalArgumentException("outside_build_coverage_or_reach");
         if(action==1){if(!world.getBlockState(target).isAir()&&(!cells.contains(cell(target))||!supported(world.getBlockState(target))))throw new IllegalArgumentException("occupied_target");}
         else if(!cells.contains(cell(target))||!supported(world.getBlockState(target)))throw new IllegalArgumentException("unowned_target");
+        if(world.getBlockState(target).isOf(Blocks.FURNACE)&&!(world.getBlockEntity(target) instanceof FurnaceBlockEntity))throw new IllegalArgumentException("missing_vanilla_furnace");
     }
     /** Called only on END_SERVER_TICK, including the short orderly-shutdown drain. */
     public void observe(MinecraftServer source){
@@ -297,7 +306,15 @@ public final class GameplayBlocks {
                 if(serverCells.keySet().stream().anyMatch(c->!world.isChunkLoaded(pos(c))))return;
                 boolean reconciled=false;for(var entry:new ArrayList<>(serverCells.entrySet())){var s=state(world,pos(entry.getKey()));
                     if(s.equals("minecraft:air")){serverCells.remove(entry.getKey());reconciled=true;}
-                    else if(!s.equals(entry.getValue()))throw new IllegalStateException("Saved owned block state changed outside session");}
+                    else{
+                        // Vanilla may tick fuel after the last ownership snapshot
+                        // but before saving the world. Only LIT can differ on reopen.
+                        if(!s.equals(entry.getValue())){
+                            if(!GameplayBlocksPalette.sameFurnace(entry.getValue(),s))throw new IllegalStateException("Saved owned block state changed outside session");
+                            serverCells.put(entry.getKey(),s);reconciled=true;
+                        }
+                        if(GameplayBlocksPalette.furnaceState(s))retainFurnace(world,entry.getKey());
+                    }}
                 if(reconciled)revision++;owned.set(Map.copyOf(serverCells));serverInitialized=true;
             }
             var request=intent.get();long planId=0;boolean admitted=false;String reason="no_request",targetState="unknown";
@@ -306,13 +323,14 @@ public final class GameplayBlocks {
                 foodUse.observe(player);
                 if(request!=null){var plan=request.plan();planId=plan.id();targetState=state(world,plan.selection().target());
                     if(request.dispatchedAt()==0){try{var selected=select(world,player,plan.aim(),plan.action(),Set.copyOf(serverCells.keySet()));
-                        admitted=same(selected,plan.selection())&&sameStack(player,plan)&&(plan.action()!=1||placementState(player,selected).equals(plan.expectedState()));reason=admitted?"admitted":"server_selection_or_stack_changed";
+                        admitted=same(selected,plan.selection())&&sameStack(player,plan)&&(plan.action()!=1||placementState(player,selected).equals(plan.expectedState()))&&
+                            (plan.action()!=WORKSTATION_USE||expectedStateMatches(plan,targetState));reason=admitted?"admitted":"server_selection_or_stack_changed";
                     }catch(IllegalArgumentException rejected){reason=rejected.getMessage();}}
-                    else if(confirmed<plan.id()&&targetState.equals(plan.expectedState())){
-                        if(plan.action()==TABLE_USE){
-                            if(player.currentScreenHandler instanceof CraftingScreenHandler)confirmed=plan.id();
+                    else if(confirmed<plan.id()&&expectedStateMatches(plan,targetState)){
+                        if(plan.action()==WORKSTATION_USE){
+                            if(plan.expectedState().equals("minecraft:crafting_table")?player.currentScreenHandler instanceof CraftingScreenHandler:player.currentScreenHandler instanceof FurnaceScreenHandler)confirmed=plan.id();
                         }else{
-                            if(plan.action()==1)serverCells.put(cell(plan.selection().target()),targetState);else serverCells.remove(cell(plan.selection().target()));revision++;confirmed=plan.id();owned.set(Map.copyOf(serverCells));
+                            if(plan.action()==1)serverCells.put(cell(plan.selection().target()),targetState);else{serverCells.remove(cell(plan.selection().target()));serverFurnaces.remove(cell(plan.selection().target()));}revision++;confirmed=plan.id();owned.set(Map.copyOf(serverCells));
                         }
                     }
                 }
@@ -323,15 +341,25 @@ public final class GameplayBlocks {
             for(var entry:new ArrayList<>(serverCells.entrySet())){
                 var c=entry.getKey();if(!world.isChunkLoaded(pos(c)))throw new IllegalStateException("Owned block chunk unloaded");
                 var value=state(world,pos(c));
-                if(value.equals("minecraft:air")){serverCells.remove(c);reconciled=true;}
+                if(value.equals("minecraft:air")){serverCells.remove(c);serverFurnaces.remove(c);reconciled=true;}
                 else if(!supported(world.getBlockState(pos(c))))throw new IllegalStateException("Owned block changed to unsupported block");
-                else if(!value.equals(entry.getValue())){serverCells.put(c,value);reconciled=true;}
+                else{
+                    boolean furnace=GameplayBlocksPalette.furnaceState(value);
+                    if((furnace||GameplayBlocksPalette.furnaceState(entry.getValue()))&&!GameplayBlocksPalette.sameFurnace(entry.getValue(),value))throw new IllegalStateException("Owned furnace identity changed");
+                    if(furnace)retainFurnace(world,c);
+                    if(!value.equals(entry.getValue())){serverCells.put(c,value);reconciled=true;}
+                }
             }
             if(reconciled){revision++;owned.set(Map.copyOf(serverCells));}
             long utc=System.currentTimeMillis(),now=System.nanoTime();var cells=Map.copyOf(serverCells);
             observation.set(new Observation(now,utc,planId,admitted,reason,targetState,confirmed,cells));publish(utc,cells);
             if(closing&&now-closeAt>=150_000_000L){serverClosed=true;files.close();}
         }catch(Exception error){failure.compareAndSet(null,error.toString());if(closing){serverClosed=true;files.close();}}
+    }
+    private void retainFurnace(World world,GameplayBlocksLedger.Cell cell){
+        if(!(world.getBlockEntity(pos(cell)) instanceof FurnaceBlockEntity furnace))throw new IllegalStateException("Owned furnace block entity missing");
+        var previous=serverFurnaces.putIfAbsent(cell,furnace);
+        if(previous!=null&&previous!=furnace)throw new IllegalStateException("Owned furnace block entity replaced");
     }
     private void publish(long utc,Map<GameplayBlocksLedger.Cell,String> cells){
         var j=new JsonObject();j.addProperty("schema",1);j.addProperty("kind","minecome_gameplay_blocks_v1");j.addProperty("run",identity.run());j.addProperty("world_id",save.id().toString());
@@ -361,7 +389,7 @@ public final class GameplayBlocks {
         j.addProperty("ready",ready);j.addProperty("revision",revision);j.addProperty("owned_count",owned.get().size());j.add("blocks",GameplayBlocksLedger.blocks(owned.get()));
         j.addProperty("places",places);j.addProperty("breaks",breaks);j.addProperty("ground_places",groundPlaces);j.addProperty("rejections",rejections);j.addProperty("cancellations",cancellations);j.addProperty("last_result",lastResult);
         j.addProperty("survival_breaks",survivalBreaks);j.addProperty("survival_preserved_ticks",survivalPreservedTicks);
-        j.addProperty("crafting_opens",craftingOpens);
+        j.addProperty("crafting_opens",craftingOpens);j.addProperty("furnace_opens",furnaceOpens);
         j.add("food_use",foodUse.evidence(client));
         j.addProperty("world_blocks",worldBlocks);
         j.addProperty("pending",pending!=null);j.addProperty("snapshot_writes",files.writes());j.addProperty("persisted_revision",files.persistedRevision());j.addProperty("cleanup_complete",cleanupComplete());j.addProperty("controls_released",!left&&!right);

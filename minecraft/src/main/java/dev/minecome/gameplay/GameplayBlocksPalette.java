@@ -2,7 +2,7 @@ package dev.minecome.gameplay;
 
 import java.util.*;
 
-/** Bounded world-rendered palette: solid cubes, crafting tables and dry slabs/stairs/fences/walls.
+/** Bounded world-rendered palette: solid cubes, crafting tables, furnaces and dry shapes.
  * State names are canonical and validated without initializing Minecraft registries,
  * so saved ownership validation also runs in the offline protocol tests.
  */
@@ -17,6 +17,7 @@ public final class GameplayBlocksPalette {
     private static final Set<String> STAIR_SUFFIXES;
     private static final Set<String> FENCE_SUFFIXES;
     private static final Set<String> WALL_SUFFIXES;
+    private static final Set<String> FURNACE_STATES;
     static {
         var plain=new HashSet<String>();
         for(var name:List.of("stone","cobblestone","dirt","coarse_dirt","granite","polished_granite",
@@ -75,11 +76,18 @@ public final class GameplayBlocksPalette {
                 for(var west:List.of("none","low","tall"))
                     wallSuffixes.add("[east="+east+",north="+north+",south="+south+",up="+up+",waterlogged=false,west="+west+"]");
         FENCE_SUFFIXES=Set.copyOf(fenceSuffixes);WALL_SUFFIXES=Set.copyOf(wallSuffixes);
+        // Pinned AbstractFurnaceBlock appends only horizontal FACING and LIT;
+        // its block entity changes LIT while retaining orientation and inventory.
+        // Source: runtime/evidence/furnace-source-20261108/.
+        var furnaces=new HashSet<String>();
+        for(var facing:List.of("north","south","east","west"))for(var lit:List.of(false,true))
+            furnaces.add("minecraft:furnace[facing="+facing+",lit="+lit+"]");
+        FURNACE_STATES=Set.copyOf(furnaces);
     }
     private GameplayBlocksPalette(){}
-    public static boolean supportsBlock(String id){return id!=null&&(PLAIN.contains(id)||AXIS.contains(id)||SLABS.contains(id)||STAIRS.contains(id)||FENCES.contains(id)||WALLS.contains(id));}
+    public static boolean supportsBlock(String id){return id!=null&&(id.equals("minecraft:furnace")||PLAIN.contains(id)||AXIS.contains(id)||SLABS.contains(id)||STAIRS.contains(id)||FENCES.contains(id)||WALLS.contains(id));}
     public static boolean supportsState(String state){
-        if(state==null)return false;if(PLAIN.contains(state))return true;
+        if(state==null)return false;if(PLAIN.contains(state)||furnaceState(state))return true;
         for(var value:List.of("x","y","z")){
             var suffix="[axis="+value+"]";
             if(state.endsWith(suffix)&&AXIS.contains(state.substring(0,state.length()-suffix.length())))return true;
@@ -90,5 +98,10 @@ public final class GameplayBlocksPalette {
                 FENCES.contains(block)&&FENCE_SUFFIXES.contains(suffix)||WALLS.contains(block)&&WALL_SUFFIXES.contains(suffix);}
         return false;
     }
-    public static Set<String> blockIds(){var all=new TreeSet<>(PLAIN);all.addAll(AXIS);all.addAll(SLABS);all.addAll(STAIRS);all.addAll(FENCES);all.addAll(WALLS);return Collections.unmodifiableSet(all);}
+    public static boolean furnaceState(String state){return state!=null&&FURNACE_STATES.contains(state);}
+    /** Only vanilla burn-state changes may reconcile a persisted furnace. */
+    public static boolean sameFurnace(String before,String after){
+        return furnaceState(before)&&furnaceState(after)&&before.substring(0,before.indexOf(",lit=")).equals(after.substring(0,after.indexOf(",lit=")));
+    }
+    public static Set<String> blockIds(){var all=new TreeSet<>(PLAIN);all.addAll(AXIS);all.addAll(SLABS);all.addAll(STAIRS);all.addAll(FENCES);all.addAll(WALLS);all.add("minecraft:furnace");return Collections.unmodifiableSet(all);}
 }
