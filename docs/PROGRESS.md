@@ -1,5 +1,61 @@
 # MineCome progress — 2026-11-08
 
+## World colour and depth reprojection
+
+Implemented a separate WorldBlocks rendering path that projects each captured
+Minecraft world pixel into the current native view. Independent pixel quads
+prevent triangles connecting unrelated depths; reciprocal-depth MAX blending
+selects the nearest overlapping surface before resolving colour. Disoccluded
+gaps remain transparent. HUD, hands and inventory retain their original pixels.
+The first profile requires the exact 1280×720 guest capture; unsupported geometry
+falls back to the existing strict camera-match checks.
+
+Native proof now belongs to the exact current presentation, backbuffer and
+selected depth source. Unknown/conflicting depth writers, dropped recording
+callbacks and stale samples reject the proof. No previous-frame camera is reused.
+Reflected matrix packing and projection jitter are preserved. GenericDepth
+preservation mode must be 0; the integration does not change the user's setting.
+The source camera must be valid within 250ms at image capture. The captured image
+and current native proof each retain an independent 250ms presentation limit,
+with a separate 0.75m/20° reprojection bound. Original timestamps, input/movement
+leases and the strict same-UV 3cm match tolerance are unchanged.
+
+Standalone validation uses the **actual compiled FX**, not duplicated shader
+equations. D3D11 WARP passes camera translation/rotation/jitter, foreground
+occlusion, draw-order-independent nearest overlap, depth discontinuities,
+transparent gaps, unchanged HUD and the production 1280×720 grid. Hardware
+readback verifies occupied output before GPU timestamps: median 0.393ms for 15%
+occupancy and 0.634ms for 100%, maximum 0.847ms across the recorded five-frame
+samples. These timings exclude uploads and compilation and are not live KCD2
+frame timings. Evidence: `runtime/evidence/world-reprojection-gpu-20261108/`.
+
+Final live comparison `gameplay-kcd-20261108-151825-4f3bbaf2222645ac9fd7366f5e11a058`
+passes six walking strides in each third-person view, inventory suppression,
+first-person return and camera collision (238 back/100 front samples). Reprojection
+executes on 186/186 stationary frames and 354/356 frames (99.44%) in the fully
+covered walking-sequence intervals, including release/inventory pauses. Both
+remaining rejections are perspective-basis changes; no camera-age rejection
+remains in those intervals. The preceding comparison reached 345/360 before the
+render-only capture/presentation lease separation. This is not a physical-input
+latency or subjective foliage-appearance claim. The final ambiguous-binding and
+reused-command guards produced no false rejections in those intervals. KCD2
+exited normally and the temporary installation was restored after the check.
+
+The first failed comparisons retained walking, inventory and collision but exposed
+incomplete command-recording callbacks, omitted descriptor-table layout variants,
+and KCD2's fullscreen native depth-copy pass. Descriptor table variants are now
+resolved, and complete recording callbacks are retained. The guarded copy path
+recognizes the exact captured shader pair by size/SHA256 and must trace its current source view;
+it does not exempt arbitrary unreflected writers. Shader captures and disassembly
+remain outside Git. The actual auxiliary copy resizes 1707×960 to 2560×1440 and is
+deliberately rejected; it does not block the selected native depth. Accepted copy
+propagation itself has unit coverage, not live acceptance.
+`Test-KcdWorldReprojectionEvidence.ps1` distinguishes nonzero
+native reprojection execution from coverage and subjective foliage appearance.
+Focused CTests pass, including 440 actual-FX checks after the lease change.
+Concurrent KCD2/headless GPU measurements are slower than the unloaded figures
+above: median 1.60/2.18ms, peak 2.20ms; both sets exclude uploads/compilation.
+
 ## Faster camera publication and stationary foliage stability
 
 Implemented and live verified a shorter camera handoff. Each WorldBlocks camera

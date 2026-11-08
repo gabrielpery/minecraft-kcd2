@@ -77,6 +77,7 @@
 #include <reshade.hpp>
 #ifdef MINECOME_HUD_GAMEPLAY_CHAT
 #include "host_depth.hpp"
+#include "world_reprojection.hpp"
 #endif
 #include <algorithm>
 #include <array>
@@ -99,6 +100,20 @@ namespace depth = minecome::host_depth;
 std::atomic<std::uint64_t> depth_frames{0};
 std::atomic<std::uint64_t> depth_considered{0},depth_no_sample{0},depth_bad_view{0},depth_bad_source{0},depth_ready_changes{0};
 std::atomic<std::uint64_t> depth_sample_age{0},depth_camera_age{0},depth_position{0},depth_basis{0},depth_projection{0},depth_other{0};
+std::atomic<std::uint64_t> depth_reprojected{0},depth_warp_rejected{0},depth_strict_fallback{0};
+// Five-second evidence must describe completed frames, not an atomic counter
+// read midway through one frame's considered/outcome/readiness updates.
+std::mutex depth_counters_mutex;
+struct WarpRejection {
+    depth::sample native;
+    depth::expected_view guest;
+    std::uint32_t width=0,height=0;
+    std::uint64_t image_utc=0,now=0;
+};
+std::optional<WarpRejection> first_warp_rejection;
+bool warp_rejection_reported=false;
+constexpr const char *warp_uniform_names[]={"McWarpSourceOrigin","McWarpSourceForward","McWarpSourceUp","McWarpSourceTanHalf",
+    "McWarpTargetOrigin","McWarpTargetRight","McWarpTargetForward","McWarpTargetUp","McWarpClipX","McWarpClipY","McWarpClipZ","McWarpClipW"};
 #endif
 #ifdef MINECOME_HUD_GAMEPLAY
 constexpr std::uint32_t stream_schema = 3;
@@ -223,6 +238,43 @@ void receipt(std::string_view event, std::string_view result, std::string_view r
         "\",\"result\":\""+std::string(result)+"\",\"run\":\""+std::string(run)+"\",\"visual_verified\":false}";
     reshade::log::message(reshade::log::level::info,message.c_str());
 }
+#ifdef MINECOME_HUD_GAMEPLAY_CHAT
+// Optional developer capture: the test launcher supplies a fresh ignored
+// runtime/evidence directory. No default disk writes, no draw-thread I/O and no
+// shader assets in source control. Never overwrite a previous observation.
+void save_rejected_depth_writer(std::string_view run) noexcept {
+    try {
+        std::array<wchar_t,4096> configured{};
+        const auto size=GetEnvironmentVariableW(L"MINECOME_DEPTH_DIAGNOSTIC_DIR",configured.data(),static_cast<DWORD>(configured.size()));
+        if(!size||size>=configured.size()||run.size()!=32||run.find_first_not_of("0123456789abcdef")!=std::string_view::npos)return;
+        const std::filesystem::path directory(configured.data());if(!directory.is_absolute())return;
+        for(auto cursor=directory;!cursor.empty();){
+            const auto attributes=GetFileAttributesW(cursor.c_str());
+            if(attributes==INVALID_FILE_ATTRIBUTES||(attributes&FILE_ATTRIBUTE_REPARSE_POINT)||!(attributes&FILE_ATTRIBUTE_DIRECTORY))return;
+            auto parent=cursor.parent_path();if(parent==cursor)break;cursor=std::move(parent);
+        }
+        const auto snapshot=depth::instance().take_rejected_pipeline();if(!snapshot)return;
+        const auto prefix="native-depth-rejected-"+std::string(run);
+        const auto write=[&](const std::string &suffix,const void *data,std::size_t bytes){
+            if(bytes>2u*1024u*1024u)return false;
+            const auto path=directory/(prefix+suffix);
+            st::Handle file(CreateFileW(path.c_str(),GENERIC_WRITE,0,nullptr,CREATE_NEW,FILE_ATTRIBUTE_NORMAL|FILE_FLAG_OPEN_REPARSE_POINT,nullptr));
+            DWORD written=0;return file&&WriteFile(file.value,data,static_cast<DWORD>(bytes),&written,nullptr)&&written==bytes;
+        };
+        bool saved=true;
+        if(!snapshot->vertex.empty())saved=write("-vs.dxil",snapshot->vertex.data(),snapshot->vertex.size())&&saved;
+        if(!snapshot->pixel.empty())saved=write("-ps.dxil",snapshot->pixel.data(),snapshot->pixel.size())&&saved;
+        std::ostringstream metadata;
+        metadata<<"{\"schema\":1,\"run\":\""<<run<<"\",\"pipeline\":"<<snapshot->pipeline
+            <<",\"source_depth\":"<<snapshot->source_depth<<",\"vertex_bytes\":"<<snapshot->vertex.size()
+            <<",\"pixel_bytes\":"<<snapshot->pixel.size()<<",\"width\":"<<snapshot->width<<",\"height\":"<<snapshot->height
+            <<",\"depth_compare\":"<<snapshot->depth_compare<<",\"depth_enabled\":"<<(snapshot->depth_enabled?"true":"false")
+            <<",\"depth_write\":"<<(snapshot->depth_write?"true":"false")<<",\"saved\":"<<(saved?"true":"false")<<"}";
+        const auto text=metadata.str();saved=write(".json",text.data(),text.size())&&saved;
+        receipt("depth_writer_snapshot",saved?"saved":"write_failed",run);
+    }catch(...){receipt("depth_writer_snapshot","capture_failed",run);}
+}
+#endif
 void input_receipt(std::string_view event,const ui::Writer &inputs,std::string_view run,std::uint64_t closed_wait=0) {
     const auto &status=inputs.status();
     std::ostringstream line;
@@ -679,6 +731,7 @@ struct Service {
                     reshade::log::message(reshade::log::level::info,line.str().c_str()); reported=now;
 #ifdef MINECOME_HUD_GAMEPLAY_CHAT
                     const auto depth_stats=depth::instance().counters();
+                    std::unique_lock depth_count_lock(depth_counters_mutex);
                     std::ostringstream depth_line;
                     depth_line << "[MineComeHudInput] {\"event\":\"host_depth\",\"run\":\"" << identity.run
                         << "\",\"reflected\":" << depth_stats.shaders_reflected << ",\"reflection_rejected\":" << depth_stats.reflection_rejected
@@ -690,8 +743,59 @@ struct Service {
                         << ",\"bad_source\":" << depth_bad_source.load() << ",\"ready_changes\":" << depth_ready_changes.load()
                         << ",\"sample_age\":" << depth_sample_age.load() << ",\"camera_age\":" << depth_camera_age.load()
                         << ",\"position\":" << depth_position.load() << ",\"basis\":" << depth_basis.load()
-                        << ",\"projection\":" << depth_projection.load() << ",\"other_view\":" << depth_other.load() << "}";
+                        << ",\"projection\":" << depth_projection.load() << ",\"other_view\":" << depth_other.load()
+                        << ",\"reprojected\":" << depth_reprojected.load() << ",\"warp_rejected\":" << depth_warp_rejected.load()
+                        << ",\"strict_fallback\":" << depth_strict_fallback.load()
+                        << ",\"presentation_seals\":" << depth_stats.presentation_seals << ",\"presentation_accepted\":" << depth_stats.presentation_accepted
+                        << ",\"presentation_identity\":" << depth_stats.presentation_identity << ",\"presentation_missing\":" << depth_stats.presentation_missing
+                        << ",\"presentation_ambiguous\":" << depth_stats.presentation_ambiguous << ",\"presentation_unknown\":" << depth_stats.presentation_unknown
+                        << ",\"presentation_overflow\":" << depth_stats.presentation_overflow << ",\"presentation_age\":" << depth_stats.presentation_age
+                        << ",\"native_reads\":" << depth_stats.native_reads << ",\"native_nonwriters\":" << depth_stats.native_nonwriters
+                        << ",\"native_unknown_draws\":" << depth_stats.native_unknown_draws << ",\"native_budget_rejected\":" << depth_stats.native_budget_rejected
+                        << ",\"recording_contention\":" << depth_stats.recording_contention << ",\"recording_waits\":" << depth_stats.recording_waits
+                        << ",\"native_incomplete_epochs\":" << depth_stats.native_incomplete_epochs << ",\"native_unknown_access\":" << depth_stats.native_unknown_access
+                        << ",\"native_viewport_rejected\":" << depth_stats.native_viewport_rejected << ",\"native_pipeline_missing\":" << depth_stats.native_pipeline_missing
+                        << ",\"native_layout_missing\":" << depth_stats.native_layout_missing << ",\"native_binding_missing\":" << depth_stats.native_binding_missing
+                        << ",\"native_binding_ambiguous\":" << depth_stats.native_binding_ambiguous
+                        << ",\"native_resource_rejected\":" << depth_stats.native_resource_rejected << ",\"native_map_failed\":" << depth_stats.native_map_failed
+                        << ",\"native_incoherent\":" << depth_stats.native_incoherent << ",\"native_invalid_view\":" << depth_stats.native_invalid_view
+                        << ",\"native_submission_changed\":" << depth_stats.native_submission_changed
+                        << ",\"native_copy_draws\":" << depth_stats.native_copy_draws << ",\"native_copy_accepted\":" << depth_stats.native_copy_accepted
+                        << ",\"native_copy_source_missing\":" << depth_stats.native_copy_source_missing << ",\"native_copy_rejected\":" << depth_stats.native_copy_rejected
+                        << ",\"native_descriptor_updates\":" << depth_stats.native_descriptor_updates
+                        << ",\"native_descriptor_copies\":" << depth_stats.native_descriptor_copies << "}";
+                    const auto warp_rejection=warp_rejection_reported?std::optional<WarpRejection>{}:first_warp_rejection;
+                    if(warp_rejection)warp_rejection_reported=true;
+                    depth_count_lock.unlock();
                     reshade::log::message(reshade::log::level::info,depth_line.str().c_str());
+                    if(warp_rejection){
+                        const auto &r=*warp_rejection;
+                        std::ostringstream detail;
+                        detail<<"[MineComeHudInput] {\"event\":\"world_warp_rejected\",\"run\":\""<<identity.run
+                            <<"\",\"width\":"<<r.width<<",\"height\":"<<r.height<<",\"now\":"<<r.now
+                            <<",\"image_utc\":"<<r.image_utc<<",\"camera_utc\":"<<r.guest.captured_unix_ms
+                            <<",\"native_utc\":"<<r.native.captured_unix_ms;
+                        const auto array=[&](const char *name,const auto &values){detail<<",\""<<name<<"\":[";bool first=true;
+                            for(const auto value:values){if(!first)detail<<',';first=false;if(std::isfinite(value))detail<<value;else detail<<"null";}detail<<']';};
+                        array("source_position",r.guest.position);array("source_forward",r.guest.forward);array("source_up",r.guest.up);
+                        array("target_position",r.native.position);array("target_right",r.native.right);array("target_front",r.native.front);array("target_up",r.native.up);
+                        array("ratio",r.native.ratio);array("far_and_fov",std::array<float,2>{r.native.far_metres,r.guest.vertical_fov});
+                        for(unsigned row=0;row<4;++row){depth::vec4 values{};for(unsigned col=0;col<4;++col)values[col]=r.native.projection_element(row,col);
+                            array(("projection_row"+std::to_string(row)).c_str(),values);}
+                        detail<<'}';reshade::log::message(reshade::log::level::info,detail.str().c_str());
+                    }
+                    save_rejected_depth_writer(identity.run);
+                    if(const auto copy=depth::instance().take_copy_diagnostic()){
+                        std::ostringstream detail;
+                        detail<<"[MineComeHudInput] {\"event\":\"native_depth_copy\",\"run\":\""<<identity.run
+                            <<"\",\"stage\":"<<copy->stage<<",\"proof_status\":"<<copy->proof_status
+                            <<",\"source\":"<<copy->source<<",\"destination\":"<<copy->destination
+                            <<",\"source_width\":"<<copy->source_width<<",\"source_height\":"<<copy->source_height
+                            <<",\"destination_width\":"<<copy->destination_width<<",\"destination_height\":"<<copy->destination_height
+                            <<",\"source_format\":"<<copy->source_format<<",\"view_format\":"<<copy->view_format
+                            <<",\"source_samples\":"<<copy->source_samples<<",\"source_levels\":"<<copy->source_levels<<'}';
+                        reshade::log::message(reshade::log::level::info,detail.str().c_str());
+                    }
 #endif
                 }
                 WaitForSingleObject(stop.value,5);
@@ -729,6 +833,9 @@ struct RuntimeState {
 #ifdef MINECOME_HUD_GAMEPLAY_CHAT
     api::effect_uniform_variable layers{},depth_ready{},depth_projection{},depth_nearest{},guest_projection{};
     api::effect_texture_variable host_depth{};
+    api::effect_uniform_variable warp_ready{};
+    std::array<api::effect_uniform_variable,12> warp_uniforms{};
+    api::effect_technique warp_technique{};
     st::Header uploaded_header{};
     bool depth_armed=false;
     bool previous_depth_ready=false;
@@ -1372,6 +1479,10 @@ bool sdr(api::format format) {
 }
 void hide(api::effect_runtime *runtime, RuntimeState &state) {
     if (state.active != 0) runtime->set_uniform_value_bool(state.active,false);
+#ifdef MINECOME_HUD_GAMEPLAY_CHAT
+    if(state.warp_ready!=0)runtime->set_uniform_value_bool(state.warp_ready,false);
+    if(state.warp_technique!=0)runtime->set_technique_state(state.warp_technique,false);
+#endif
 #ifdef MINECOME_HUD_LIVE_MOUSE
     if(state.cursor_visible!=0)runtime->set_uniform_value_bool(state.cursor_visible,false);
 #endif
@@ -1379,6 +1490,7 @@ void hide(api::effect_runtime *runtime, RuntimeState &state) {
 void forget(RuntimeState &state) { state.active={}; state.frame={}; state.rect={}; state.technique={}; state.bound=false;
 #ifdef MINECOME_HUD_GAMEPLAY_CHAT
     state.layers={};state.depth_ready={};state.depth_projection={};state.depth_nearest={};state.guest_projection={};state.host_depth={};
+    state.warp_ready={};state.warp_uniforms={};state.warp_technique={};
 #endif
 #ifdef MINECOME_HUD_LIVE_MOUSE
     state.cursor_visible={};state.cursor={};
@@ -1397,6 +1509,9 @@ bool handles(api::effect_runtime *runtime, RuntimeState &state) {
         state.depth_nearest=runtime->find_uniform_variable(effect_name,"McHostNearest");
         state.guest_projection=runtime->find_uniform_variable(effect_name,"McGuestProjection");
         state.host_depth=runtime->find_texture_variable(effect_name,"McHostDepth");
+        state.warp_ready=runtime->find_uniform_variable(effect_name,"McWorldWarpReady");
+        state.warp_technique=runtime->find_technique(effect_name,"MineComeWorldWarp");
+        for(std::size_t i=0;i<state.warp_uniforms.size();++i)state.warp_uniforms[i]=runtime->find_uniform_variable(effect_name,warp_uniform_names[i]);
 #endif
 #ifdef MINECOME_HUD_LIVE_MOUSE
         state.cursor_visible=runtime->find_uniform_variable(effect_name,"McHudCursorVisible");
@@ -1491,6 +1606,7 @@ bool upload(api::effect_runtime *runtime, api::command_list *commands, RuntimeSt
 }
 #ifdef MINECOME_HUD_GAMEPLAY_CHAT
 void update_layers(api::effect_runtime *runtime, RuntimeState &state) {
+    std::lock_guard depth_count_lock(depth_counters_mutex);
     struct Readiness {
         RuntimeState &state; bool ready=false;
         ~Readiness(){if(state.previous_depth_ready!=ready)++depth_ready_changes;state.previous_depth_ready=ready;}
@@ -1500,7 +1616,7 @@ void update_layers(api::effect_runtime *runtime, RuntimeState &state) {
     runtime->set_uniform_value_bool(state.depth_ready,false);
     if(!layered)return;
     ++depth_considered;
-    if(!depth::instance().metadata_available())return;
+    if(!depth::instance().metadata_available()){++depth_bad_source;return;}
     const auto &h=state.uploaded_header;
     runtime->set_uniform_value_float(state.guest_projection,h.near_plane,h.far_plane);
     depth::expected_view expected;
@@ -1508,7 +1624,7 @@ void update_layers(api::effect_runtime *runtime, RuntimeState &state) {
     expected.position=h.camera_position;expected.forward=h.camera_direction;expected.up=h.camera_up;
     expected.vertical_fov=h.vertical_fov;expected.captured_unix_ms=h.camera_utc_ms;
     expected.position_tolerance=0.03f;expected.direction_cosine=0.99995f;expected.fov_tolerance=0.005f;
-    if(!state.depth_armed){depth::instance().arm(true,expected);state.depth_armed=true;}
+    if(!state.depth_armed){depth::instance().set_presented_sampling(true);depth::instance().arm(true,expected);state.depth_armed=true;}
     else if(state.depth_sequence!=state.uploaded_sequence)depth::instance().update_expected(expected);
     state.depth_sequence=state.uploaded_sequence;
     // DEPTH is maintained by ReShade's public generic-depth addon. Never assume
@@ -1518,11 +1634,19 @@ void update_layers(api::effect_runtime *runtime, RuntimeState &state) {
     auto *device=runtime->get_device();
     const auto selected=depth::selected_depth(runtime,view);
     if(selected==0){++depth_bad_source;return;}
-    if(auto value=depth::instance().take_sample(device,selected))state.depth_sample=value;
-    if(!state.depth_sample){++depth_no_sample;return;}
+    // Preserve the proven strict same-view path separately. Its cached sample
+    // must pass every original age/pose/source check and can NEVER enable warp.
+    if(auto strict=depth::instance().take_sample(device,selected))state.depth_sample=*strict;
+    // Reprojection requires a unique current presentation; a matching resource
+    // handle or an older strict sample is not sufficient to authorize it.
+    const auto presented=depth::take_current_presentation(runtime,view);
+    if(!presented&&!state.depth_sample){++depth_no_sample;return;}
+    auto selected_sample=presented?presented->view:*state.depth_sample;
     const auto depth_now=st::utc_ms();
-    if(depth_now<state.depth_sample->captured_unix_ms || depth_now-state.depth_sample->captured_unix_ms>250){++depth_bad_view;++depth_sample_age;return;}
-    const auto rejection=depth::validate_reason(*state.depth_sample,expected,depth_now);
+    if(depth_now<selected_sample.captured_unix_ms || depth_now-selected_sample.captured_unix_ms>250){++depth_bad_view;++depth_sample_age;return;}
+    const auto warp=presented?minecome::world_reprojection::make(presented->view,expected,state.width,state.height,h.capture_utc_ms,depth_now):std::nullopt;
+    if(presented&&!warp){++depth_warp_rejected;if(!first_warp_rejection)first_warp_rejection=WarpRejection{presented->view,expected,state.width,state.height,h.capture_utc_ms,depth_now};}
+    const auto rejection=warp?depth::view_rejection::none:depth::validate_reason(selected_sample,expected,depth_now);
     if(rejection!=depth::view_rejection::none){
         ++depth_bad_view;
         switch(rejection){
@@ -1535,21 +1659,30 @@ void update_layers(api::effect_runtime *runtime, RuntimeState &state) {
         return;
     }
     const auto resource=device->get_resource_from_view(view);
-    if(resource==0)return;
+    if(resource==0){++depth_bad_source;return;}
     const auto desc=device->get_resource_desc(resource);
     const auto format=device->get_resource_view_desc(view).format;
     if(desc.type!=api::resource_type::texture_2d || desc.texture.samples!=1 ||
        (format!=api::format::r32_float && format!=api::format::r24_unorm_x8_uint &&
-        format!=api::format::r32_float_x8_uint && format!=api::format::r16_unorm))return;
-    const auto &s=*state.depth_sample;
+        format!=api::format::r32_float_x8_uint && format!=api::format::r16_unorm)){++depth_bad_source;return;}
+    const auto &s=selected_sample;
     if(!depth::matches_depth(runtime,view,s)){++depth_bad_source;return;}
     if(std::abs(static_cast<float>(desc.texture.width)-s.viewport.width)>1 ||
-       std::abs(static_cast<float>(desc.texture.height)-s.viewport.height)>1)return;
+       std::abs(static_cast<float>(desc.texture.height)-s.viewport.height)>1){++depth_bad_source;return;}
     // Letterboxing would compare different camera rays. Fallback captured-ground
     // depth remains active until both renderers cover the same full viewport.
-    if(std::abs(state.rectangle.width-1.0f)>0.001f || std::abs(state.rectangle.height-1.0f)>0.001f)return;
+    if(std::abs(state.rectangle.width-1.0f)>0.001f || std::abs(state.rectangle.height-1.0f)>0.001f){++depth_bad_source;return;}
     runtime->set_uniform_value_float(state.depth_projection,s.ratio[0],s.ratio[1],s.far_metres,s.reversed?1.0f:0.0f);
     runtime->set_uniform_value_float(state.depth_nearest,s.nearest[0],s.nearest[1],s.nearest[2],s.nearest[3]);
+    if(warp){
+        const auto set3=[&](std::size_t index,const depth::vec3 &value){runtime->set_uniform_value_float(state.warp_uniforms[index],value.data(),3);};
+        set3(0,warp->source_position);set3(1,warp->source_forward);set3(2,warp->source_up);
+        runtime->set_uniform_value_float(state.warp_uniforms[3],warp->source_tan_half.data(),2);
+        set3(4,warp->target_position);set3(5,warp->target_right);set3(6,warp->target_forward);set3(7,warp->target_up);
+        for(unsigned i=0;i<4;++i)runtime->set_uniform_value_float(state.warp_uniforms[8+i],warp->clip[i].data(),4);
+        runtime->set_uniform_value_bool(state.warp_ready,true);
+        runtime->set_technique_state(state.warp_technique,true);++depth_reprojected;
+    }else if(!presented)++depth_strict_fallback;
     runtime->set_uniform_value_bool(state.depth_ready,true);++depth_frames;readiness.ready=true;
 }
 #endif
@@ -1693,6 +1826,15 @@ void on_begin(api::effect_runtime *runtime, api::command_list *commands, api::re
         if (!state.bound) {
             runtime->update_texture_bindings(semantic,state.view,state.view);
             runtime->set_uniform_value_int(state.frame,0);
+#ifdef MINECOME_HUD_GAMEPLAY_CHAT
+            if(state.warp_technique==0 || state.warp_ready==0 ||
+               std::any_of(state.warp_uniforms.begin(),state.warp_uniforms.end(),[](auto value){return value==0;})){fail(state,9);return;}
+            // ReShade preset sorting can override declaration order. The two
+            // owned techniques must run warp first, foreground composition last.
+            // This precedes runtime.cpp's technique iteration in begin-effects.
+            const api::effect_technique order[]={state.warp_technique,state.technique};
+            runtime->reorder_techniques(std::size(order),order);
+#endif
             runtime->set_technique_state(state.technique,true);
             state.bound=true;
         }

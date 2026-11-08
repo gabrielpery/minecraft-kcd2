@@ -85,9 +85,11 @@ against both native scenery and actual owned Minecraft camera shapes; an
 eight-block fixture passes native back/front clearance checks. Henry's body is
 hidden while Steve is shown.
 Camera publication now prioritizes the renderer and overlaps the next query with
-movement-file writes. An automated stationary foliage check kept native depth
-active for all 392 measured frames, with no readiness transitions. Moving-camera
-alignment can still drop out and cause foliage flashing; this remains unfinished.
+movement-file writes. The world compositor now reprojects Minecraft colour and
+depth into the current native camera, preserving the HUD and hands. Automated
+live checks verify this path during third-person walking, alongside inventory,
+camera collision and cleanup. Remaining coverage and visual foliage limitations
+are recorded in [progress](docs/PROGRESS.md); this is still a development build.
 See [player rendering and perspective](docs/GAMEPLAY_SESSION.md#player-rendering-and-perspective).
 
 The [`-WorldBlocks` profile](docs/GAMEPLAY_SESSION.md#minecraft-world-blocks) adds

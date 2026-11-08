@@ -259,7 +259,7 @@ if(MSVC)
     target_compile_options(minecome_hud_gameplay_chat_compositor PRIVATE /W4 /permissive- /utf-8 /EHsc)
 endif()
 add_custom_command(TARGET minecome_hud_gameplay_chat_compositor POST_BUILD
-    COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/shaders/MineComeMouseHud.fx"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${CMAKE_CURRENT_SOURCE_DIR}/shaders/MineComeWorldHud.fx"
     "$<TARGET_FILE_DIR:minecome_hud_gameplay_chat_compositor>/MineComeHud.fx")
 if(BUILD_TESTING)
     add_executable(minecome_hud_gameplay_chat_tests gameplay_chat_tests.cpp)
@@ -267,7 +267,7 @@ if(BUILD_TESTING)
     target_compile_features(minecome_host_depth_tests PRIVATE cxx_std_20)
     target_include_directories(minecome_host_depth_tests PRIVATE "${MINECOME_RESHADE_ROOT}/include")
     target_compile_definitions(minecome_host_depth_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
-    target_link_libraries(minecome_host_depth_tests PRIVATE d3dcompiler)
+    target_link_libraries(minecome_host_depth_tests PRIVATE d3dcompiler bcrypt)
     add_test(NAME hud_host_depth COMMAND minecome_host_depth_tests)
     target_link_libraries(minecome_hud_gameplay_chat_tests PRIVATE minecome_hud_input user32)
     if(MSVC)

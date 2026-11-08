@@ -93,4 +93,23 @@ if(MINECOME_BUILD_HUD_COMPOSITOR)
   target_link_libraries(minecome_check_hud_fx PRIVATE d3dcompiler)
   add_test(NAME hud_effect_dxbc COMMAND minecome_check_hud_fx "${PROJECT_SOURCE_DIR}/kcd2/hud/shaders/MineComeHud.fx")
   add_test(NAME hud_mouse_effect_dxbc COMMAND minecome_check_hud_fx "${PROJECT_SOURCE_DIR}/kcd2/hud/shaders/MineComeMouseHud.fx")
+  add_test(NAME hud_world_effect_dxbc COMMAND minecome_check_hud_fx "${PROJECT_SOURCE_DIR}/kcd2/hud/shaders/MineComeWorldHud.fx")
+  add_executable(minecome_world_reprojection_tests kcd2/hud/world_reprojection_tests.cpp
+    "${reshade_source}/effect_lexer.cpp" "${reshade_source}/effect_preprocessor.cpp"
+    "${reshade_source}/effect_expression.cpp" "${reshade_source}/effect_symbol_table.cpp"
+    "${reshade_source}/effect_parser_exp.cpp" "${reshade_source}/effect_parser_stmt.cpp"
+    "${reshade_source}/effect_codegen_dxbc.cpp")
+  target_include_directories(minecome_world_reprojection_tests PRIVATE "${reshade_source}" "${MINECOME_RESHADE_ROOT}/include")
+  target_compile_features(minecome_world_reprojection_tests PRIVATE cxx_std_20)
+  target_compile_definitions(minecome_world_reprojection_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+  if(MSVC)
+    target_compile_options(minecome_world_reprojection_tests PRIVATE /Zc:char8_t- /utf-8 /EHsc)
+  endif()
+  target_link_libraries(minecome_world_reprojection_tests PRIVATE d3d11 d3dcompiler)
+  add_test(NAME hud_world_reprojection_gpu COMMAND minecome_world_reprojection_tests "${PROJECT_SOURCE_DIR}/kcd2/hud/shaders/MineComeWorldHud.fx")
+  add_executable(minecome_native_depth_copy_tests kcd2/hud/native_depth_copy_tests.cpp)
+  target_compile_features(minecome_native_depth_copy_tests PRIVATE cxx_std_20)
+  target_compile_definitions(minecome_native_depth_copy_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+  target_link_libraries(minecome_native_depth_copy_tests PRIVATE bcrypt)
+  add_test(NAME hud_native_depth_copy COMMAND minecome_native_depth_copy_tests)
 endif()

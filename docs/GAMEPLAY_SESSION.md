@@ -637,6 +637,25 @@ occlusion or readiness transition. Its immutable `foliage-depth-verification.jso
 records failures as well as passes. This checks whole-frame depth stability;
 it does not establish every foliage material's temporal appearance.
 
+The WorldBlocks compositor now projects captured world colour **and** depth into
+the current native camera. Each source pixel has an independent quad; nearest
+depth wins overlaps and uncovered gaps remain transparent. HUD/hands are unchanged.
+This profile requires a 1280×720 guest capture and current, unique native depth
+provenance with GenericDepth `DepthCopyBeforeClears=0`. It reads that setting but
+does not change it. Unsupported or unproven views retain the strict fallback.
+
+The original source camera must be within 250ms of capture; the image and native
+proof each have their own 250ms limit at presentation. The renderer also bounds
+translation to 0.75m and rotation to 20°. These rendering rules do not renew any
+input/movement lease or widen the fallback's camera-match tolerance. Large view
+changes can still reject a frame until a corresponding new image arrives.
+
+After the foliage verifier, run
+`Test-KcdWorldReprojectionEvidence.ps1 -EvidenceDirectory <saved-evidence-directory>`.
+Its immutable receipt requires nonzero native reprojection execution and reports
+stationary and walking-sequence coverage separately. PASS does not itself claim
+complete coverage, reduced physical-input latency, or perfect foliage appearance.
+
 Input, pose, camera admission and cleanup also have automated contract/lifecycle
 coverage. F5 applies only to WorldBlocks; legacy `-Hands` and flat-stream profiles
 keep their first-person behavior.
