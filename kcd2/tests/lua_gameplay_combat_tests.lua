@@ -1,9 +1,9 @@
 -- Standalone native API simulations: no actual-game claim.
 local clock,logs,timers,next_timer,damage_calls,ray_hits,entities=0,{}, {},0,0,{},{}
-local last_ray
+local last_ray,on_ray
 local function require_true(v,m)if not v then error(m,2)end end
 local function npc(raw,y)
- local e={id=raw,raw=raw,health=100,max_health=100,dead=false,pos={x=0,y=y,z=0}}
+ local e={id=raw,raw=raw,this={id='wuid-'..raw},health=100,max_health=100,dead=false,pos={x=0,y=y,z=0}}
  e.soul={};e.actor={}
  function e:GetRawId()return self.raw end
  function e:GetWorldPos()return self.pos end
@@ -11,7 +11,7 @@ local function npc(raw,y)
  function e.soul:GetId()return raw+1000 end
  function e.soul:GetState(name)require_true(name=='health','nonhealth read');return e.health end
  function e.soul:DealDamage(stamina,health,attacker,reaction)
-  require_true(stamina==0 and attacker==player.id and reaction==false,'wrong attributed damage arguments')
+  require_true(stamina==0 and attacker==player.this.id and attacker~=player.id and reaction==false,'damage must attribute WUID, not entity handle')
   damage_calls=damage_calls+1;e.health=math.max(0,e.health-health)
  end
  function e.actor:GetMaxHealth()return e.max_health end
@@ -25,6 +25,7 @@ Script={SetTimerForFunction=function(ms,name,data)next_timer=next_timer+1;timers
 Physics={RayWorldIntersection=function(origin,direction,count,mask,skip1,skip2,out)
  last_ray=direction
  require_true(skip1==player.id and skip2~=player.id,'ray excluded wrong entities')
+ if on_ray then on_ray()end
  for i,h in ipairs(ray_hits)do out[i]=h end;return #ray_hits
 end}
 MineCome={GameplayMovementCombatView=function()return{origin={x=0,y=0,z=1.6},direction={x=0,y=1,z=0},entity=player,id=player.id}end}
@@ -36,6 +37,8 @@ local function hit(seq,token,source,fraction)
  return MineCome.GameplayCombatHit(run,seq,token or 1,source or 1,fraction or .1,0,0,1.6,0,1.7,1.6)
 end
 local function finish()require_true(MineCome.GameplayCombatEnd(run),'cleanup failed');require_true(next(timers)==nil,'timer leaked')end
+local player_this=player.this;player.this=nil
+require_true(not MineCome.GameplayCombatBegin(run,10000,16,8),'missing attacker WUID admitted');player.this=player_this
 local a=npc(1,2);entities={a};start();sample(1)
 require_true(logs[#logs]:match('"token":1') and logs[#logs]:match('"max_health":100'),'missing real actor snapshot')
 require_true(hit(1),'accepted melee failed');require_true(a.health==90 and damage_calls==1,'damage did not scale native maxHP')
@@ -71,6 +74,13 @@ a=npc(1,2);entities={a};start();sample(1);require_true(hit(1,1,1,50),'strong mel
 -- Loss of the original player cancels the lease without writing health.
 entities={npc(1,2)};start();local original=player;player=npc(100,0)
 local before=damage_calls;ok,why=MineCome.GameplayCombatSample(run,1);require_true(not ok and why=='player_changed','player identity change ignored');require_true(next(timers)==nil and before==damage_calls,'identity cleanup failed');player=original
+-- WUID changes must not silently reattribute an otherwise unchanged handle.
+entities={npc(1,2)};start();sample(1);local saved_wuid=player.this.id;before=damage_calls
+player.this.id='replacement-wuid';ok,why=hit(1)
+require_true(not ok and why=='player_changed' and damage_calls==before and next(timers)==nil,'changed attacker WUID admitted');player.this.id=saved_wuid
+entities={npc(1,2)};start();sample(1);before=damage_calls
+on_ray=function()player.this.id='replacement-wuid'end;ok,why=hit(1);on_ray=nil
+require_true(ok and why=='target_changed' and damage_calls==before,'WUID changed during ray was used');player.this.id=saved_wuid;finish()
 -- Maximum actor snapshots fit the engine's4095-byte log ceiling.
 entities={};for i=1,8 do entities[i]=npc(i,2+i*.1)end;start();sample(1);require_true(#logs[#logs]<4000,'native log truncation risk');finish()
 print('PASS native combat lifecycle, normalization, replay, identity, occlusion, stale input and cleanup (simulated engine)')

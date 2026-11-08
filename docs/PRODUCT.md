@@ -32,6 +32,11 @@ Combat must remain free-moving and free-aiming, as in Minecraft. KCD2 target loc
 forced camera alignment and combat movement restrictions must not take ownership
 of the player during MineCome gameplay. NPCs retain their native movement and
 attacks; session cleanup restores any host control settings it changes.
+Native enemies should visibly react to valid Minecraft hits through KCD2's own
+hit-reaction/animation system. Health loss alone does not establish that visual
+requirement. Minecraft bows and crossbows are part of ranged combat: preserve
+actual charge/ammunition, projectile flight, collisions, damage and enchantments,
+and render the real Minecraft projectiles in the host world.
 Flights must use Minecraft's actual ability and Elytra mechanics; increasing a
 ground-test position limit alone is not a flight implementation.
 

@@ -22,6 +22,12 @@ local function read(o,k,...)
  if type(o)~='table' or type(o[k])~='function' then return nil end
  local ok,v,w=pcall(o[k],o,...);if ok then return v,w end
 end
+local function wuid(e)
+ local id=type(e)=='table' and type(e.this)=='table' and e.this.id
+ if (type(id)=='string' and id~='') or (type(id)=='number' and finite(id) and id>0) or type(id)=='userdata' then
+  if __null==nil or id~=__null then return id end
+ end
+end
 local function emit(p,event,result,extra)
  local s='[MineComeGameplayCombat] {"schema":1,"run":"'..p.run..'","event":"'..event..'","result":"'..result..'","active":'..tostring(state.active==p and not p.stopped)..',"timers_cancelled":'..tostring(p.timer==nil)..',"hit_ack":'..p.hit_ack..(extra or '')..'}'
  if #s>4000 then return false end
@@ -35,7 +41,7 @@ local function stop(p,why)
 end
 local function valid(p)
  local t=clock();if not t or t<p.last_clock or t>=p.deadline or t-p.received>LEASE then return nil,'lease_expired'end
- if player~=p.player or player.id~=p.player_id or player.soul~=p.player_soul then return nil,'player_changed'end
+ if player~=p.player or player.id~=p.player_id or player.soul~=p.player_soul or wuid(player)~=p.player_wuid then return nil,'player_changed'end
  if read(player.actor,'IsDead')~=false then return nil,'player_unavailable'end
  p.last_clock=t;return t
 end
@@ -72,9 +78,9 @@ function MineCome.GameplayCombatBegin(run,duration_ms,radius,max_actors)
  if not token(run) or not integer(duration_ms,1000,86400000) or not finite(radius) or radius<4 or radius>32 or not integer(max_actors,1,8) then return false,'invalid_begin'end
  if state.active then return false,'session_owned'end
  if not System or type(System.GetEntitiesInSphere)~='function' or type(System.GetCurrTime)~='function' or type(System.LogAlways)~='function' or not Script or type(Script.SetTimerForFunction)~='function' or type(Script.KillTimer)~='function' or not Physics or type(Physics.RayWorldIntersection)~='function' or not integer(ent_all,1,2147483647) then return false,'api_unavailable'end
- if type(player)~='table' or not player.id or type(player.soul)~='table' or read(player.actor,'IsDead')~=false then return false,'player_unavailable'end
+ if type(player)~='table' or not player.id or not wuid(player) or type(player.soul)~='table' or read(player.actor,'IsDead')~=false then return false,'player_unavailable'end
  local t=clock();if not t then return false,'clock_unavailable'end
- local p={run=run,deadline=t+duration_ms/1000,received=t,last_clock=t,player=player,player_id=player.id,player_soul=player.soul,radius=radius,max_actors=max_actors,next_token=1,actors={},samples={},sequence=0,hit_ack=0}
+ local p={run=run,deadline=t+duration_ms/1000,received=t,last_clock=t,player=player,player_id=player.id,player_wuid=wuid(player),player_soul=player.soul,radius=radius,max_actors=max_actors,next_token=1,actors={},samples={},sequence=0,hit_ack=0}
  state.active=p;if not schedule(p)then state.active=nil;return false,'timer_unavailable'end
  emit(p,'begin','ready');return true
 end
@@ -153,12 +159,14 @@ function MineCome.GameplayCombatHit(run,sequence,actor_token,source_seq,fraction
  end
  if hits[17]~=nil then return reject(p,sequence,'occlusion_unknown')end
  local ended=clock();local again=actor(current.entity)
- if not ended or ended<t or ended-t>.1 or ended-sample.time>FRESH or not same(current,again) or not again.alive or player~=p.player or player.id~=p.player_id then return reject(p,sequence,'target_changed')end
+ if not ended or ended<t or ended-t>.1 or ended-sample.time>FRESH or not same(current,again) or not again.alive or player~=p.player or player.id~=p.player_id or wuid(player)~=p.player_wuid then return reject(p,sequence,'target_changed')end
  local before=again.health;local damage=math.min(before,fraction*again.max_health)
  -- Documented player-only observation, not a guessed unlock setter. Native
  -- combat lock/forced alignment remains a separate compatibility requirement.
  local locked_before=read(p.player.player,'IsLockedToOpponent',again.id)
- local applied=pcall(again.soul.DealDamage,again.soul,0,damage,p.player_id,false)
+ -- Official hostageSituation scripts attribute DealDamage to player.this.id
+ -- (WUID). player.id is only the entity handle used by ray/view APIs above.
+ local applied=pcall(again.soul.DealDamage,again.soul,0,damage,p.player_wuid,false)
  local after=read(again.soul,'GetState','health')
  local locked_after=read(p.player.player,'IsLockedToOpponent',again.id)
  if not applied or not finite(after) or after<0 or after>before+.01 then return reject(p,sequence,'damage_unconfirmed',before,after)end

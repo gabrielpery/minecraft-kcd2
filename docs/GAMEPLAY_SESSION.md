@@ -1008,6 +1008,15 @@ does not request native targeting or combat mode. Disabling native target lock
 under hostile NPC attacks still needs a verified policy; the current work does
 not claim that hostile combat is ready.
 
+The outgoing native call attributes damage using the player's native WUID and
+requests hit reactions (`suppressHitreaction=false`). A basic native recoil was
+visually observed on the owned test NPC; the suppressed control stayed upright.
+This does not establish every enemy animation or hostile retaliation. The next
+combat sequence is reciprocal NPC damage and free movement/aiming, then vanilla
+bow projectiles (including charge, ammunition and native target collisions),
+followed by crossbows and other ranged/secondary combat effects. Ranged items are
+not yet connected to native NPC damage; equipping one does not establish support.
+
 Automated checks use isolated saves and require no manual attack sequence:
 
 ```powershell

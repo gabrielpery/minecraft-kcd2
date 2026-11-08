@@ -1,5 +1,33 @@
 # MineCome progress — 2026-11-08
 
+## Correct native attacker attribution and observed hit reactions
+
+Corrected outgoing damage to use `player.this.id` (WUID), following official
+hostage scripts; `player.id` remains the entity handle for aiming/rays. Missing
+or changed WUIDs reject damage, including replacement during native raycasting.
+The production native check passed HP100→65, duplicate protection and exact
+cleanup in `runtime/evidence/combat-native-20261108-221428-7cc1bb949525489495c705b993dece07/result.json`.
+
+Native screenshots show the owned NPC recoiling with hit reactions enabled and
+remaining upright in the suppressed control. The default body-part settings used
+by gameplay also recoil. All observed runs had matching damage/cleanup receipts;
+no user testing or forced animation was used. Evidence and scope are recorded in
+`runtime/evidence/combat-reaction-20261108-221429-6f97fea063714c77a1f942e14b235b8c/visual-observation.json`.
+This is direct native visual proof, not a new full two-game visual acceptance.
+The documented animation getters stayed idle/nil even during the visible recoil.
+
+The owned-NPC protection experiment verified native immortality at1HP and exact
+buff removal. It did not establish a usable incoming hit callback. The legacy
+ServerHit route had no native damage effect, and the documented brain variable
+was nil on the dummy. Player protection/retaliation and hostile lock suppression
+remain disabled pending a real event source. The required next weapon milestone
+is vanilla bows (charge, ammunition, rendered arrows and native scenery/target
+collision), followed by crossbows. See [combat evidence](research/KCD-COMBAT.md).
+The final protection experiment used the corrected WUID and still produced zero
+callbacks. Four registered Lua CTests and the PowerShell float-receipt regression
+passed. KCD2 was closed normally; this native-only continuation did not alter the
+previously restored, unarmed HUD installation.
+
 ## NPC primary melee bridge
 
 Added the opt-in `-Combat` gameplay profile. Invisible, unsaved Minecraft actor

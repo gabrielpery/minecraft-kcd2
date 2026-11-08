@@ -21,9 +21,15 @@ and loopback-owner guard and execute through the game console on its game thread
 - `soul:DealDamage(stamina,health,attackerId,suppressHitreaction,bodyPart)` uses
   **stamina first** and **health second**, as documented by
   `C_ScriptBindSoul__DealDamage@IFunctionHandler__@float@float.html`.
-  The adapter calls `(0, healthDamage, player.id, false)`, scales Minecraft damage
+  The adapter calls `(0, healthDamage, player.this.id, false)`, scales Minecraft damage
   by the target's real maximum health, caps at remaining health, and reports
   actual before/after health. It never retries a setter after an ambiguous result.
+  Official `Scripts/AI/special/hostageSituation/maleHoldsTiedFemale_kidnapper.xml`
+  uses `player.this.id` for this argument. This is the player's WUID, distinct
+  from the entity handle `player.id` used for rays and entity lookup. The session
+  captures both identities and rejects missing/replaced WUIDs before damage.
+  The earlier entity-handle call changed HP, but that alone did not validate
+  correct attacker attribution or native hit reactions.
 - `Physics.RayWorldIntersection(origin,direction,capacity,mask,skip1,skip2,hits)`
   is used in installed `Scripts/Entities/Physics/PressurizedObject.lua:308-315`.
   A fresh native scene ray excludes player and target, checks all returned
@@ -95,6 +101,31 @@ Normal save, timer cleanup, owned NPC removal and original path-function restora
 were confirmed. The passive NPC's lock observations remained false; hostile lock
 suppression and native reciprocal damage remain unverified.
 
+## Native hit reactions
+
+The corrected WUID call passed the production native adapter check: HP100→65,
+duplicate acknowledgement without repeated damage, zero movement writes and
+exact cleanup:
+`runtime/evidence/combat-native-20261108-221428-7cc1bb949525489495c705b993dece07/result.json`.
+
+`Test-KcdCombatReaction.ps1` compares fresh owned NPCs with reactions enabled and
+suppressed, samples only documented getters and records separate native HP
+evidence. With the correct WUID, both cases took35HP damage, while
+`GetCurrentAnimationState()` still reported `MotionIdle`, `GetCurAnimation()` was
+nil, and the read-only `hitReaction` brain variable was nil. Those getters cannot
+prove or disprove a layered flinch in this fixture:
+`runtime/evidence/combat-reaction-20261108-221429-6f97fea063714c77a1f942e14b235b8c/result.json`.
+
+Timed native-window screenshots were then inspected automatically, without user
+input. The enabled case visibly recoiled (torso/head bend and arms moving); the
+suppressed control stayed upright. The production default with no explicit body
+part also recoiled. All three runs recorded100→65HP and exact timer/NPC/path
+cleanup. `visual-observation.json` beside the result above records this separate
+visual observation; the log-only runner deliberately continues to report
+`visual_animation_verified=false`. This confirms a basic native reaction on the
+owned debug NPC, not every enemy/stagger variation or a new coupled-HUD visual
+acceptance. No animation was forced and no native combat lock was requested.
+
 ## Incoming damage and unrestricted camera remain separate requirements
 
 `Scripts/GameRules/SinglePlayer.lua:291-298` forwards `Client.OnHit(hit)` to
@@ -109,18 +140,45 @@ enable invulnerability, spoof incoming damage, heal/revive the native player, or
 claim full reciprocal combat. Host `hurts` stays empty until a real inbound hook
 is verified.
 
-A source-supported protection experiment remains available without changing the
-unknown GameRules baseline. Official `Libs/Tables/rpg/buff.xml:150` defines
+A bounded protection experiment now runs without changing the unknown GameRules
+baseline. Official `Libs/Tables/rpg/buff.xml:150` defines
 `player_immortality_nonpersistent` (`44e1ccc9-9252-48a9-922d-2ae4523c69a3`,
 `imm=1,upr=1`); training combat applies it in
 `Scripts/Quests/Final/Barbora/utils/combat/traininggroundmanager.xml:154`.
 `Scripts/Scripts/Debug/CombatDebug.lua:207-212` demonstrates retaining the instance
 returned by `soul:AddBuff` and removing that exact instance with `RemoveBuff`.
 Its `IdExclusive` rule (`buff_exclusivity.xml:5`) requires a confirmed absent
-baseline before ownership can be claimed. Next test: on an isolated owned actor,
-verify damage/death behavior and whether real hit notifications survive the buff,
-then remove the owned instance. This has not been run or enabled in gameplay;
-immortality must not be treated as proof of damage interception or combat unlock.
+baseline before ownership can be claimed.
+
+On an isolated owned NPC, `Test-KcdCombatProtection.ps1` observed native health
+100→90 after nonlethal damage, then 90→1 after lethal damage, with the actor alive.
+`HasBuffDebug` returned false before admission and true after `AddBuff`; the
+returned instance was removed, the original callback table restored, and the NPC
+and path wrapper cleaned up. Evidence:
+`runtime/evidence/combat-protection-20261108-221837-f34ba64258f84048ba23c422e0c3bb50/result.json`.
+This final run uses the corrected stable WUID and records
+`attacker_identifier_kind='wuid'`. The earlier220441 run used the entity handle;
+it remains historical evidence, not the basis for corrected attribution claims.
+The player's health, buffs and camera were not changed. Its read-only buff
+baseline was also false. This establishes a candidate native death guard, not
+incoming damage interception or hostile camera behavior.
+
+Neither corrected-WUID `DealDamage` nor the source-supported legacy
+`g_gameRules:CreateHit(...,'normal')` route produced a `Client.OnHit` callback.
+The latter did not change native health at all (100→100→100), correctly leaving
+`protection_observed=false`:
+`runtime/evidence/combat-protection-20261108-220756-6a028ad533e449869c38778c496e7452/result.json`.
+Do not use that ignored legacy route or infer callbacks from health changes.
+No native player protection is enabled in gameplay yet.
+
+Official player and NPC root AI behaviors store their native `hitReaction` inbox
+in a variable of the same name. `XGenAIModule.GetBrainVariable(wuid,name)` is a
+documented read-only candidate, but the public bindings expose no Lua inbox
+subscription or event sequence. A snapshot alone cannot distinguish repeated
+identical hits; do not turn it into an incoming damage stream without proof of
+freshness and event identity. The owned path-follower NPC returned nil throughout
+both corrected-WUID reaction comparisons. Do not keep polling that fixture as
+though it supplied a damage event stream.
 
 `player:IsLockedToOpponent(entityId)` is documented as checking melee target
 lock. The adapter records optional `locked_before`/`locked_after` on real damage

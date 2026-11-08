@@ -2,6 +2,45 @@
 
 ## Current work: NPC combat
 
+Latest continuation corrected attacker identity to `player.this.id` (WUID),
+keeping `player.id` for entity/ray APIs. Missing/changed WUIDs reject before
+damage. Native production proof passed100→65HP, duplicate protection, zero
+movement writes and cleanup:
+`runtime/evidence/combat-native-20261108-221428-7cc1bb949525489495c705b993dece07/result.json`.
+
+Basic native hit reactions are now visibly observed: enabled reactions recoil,
+the suppressed control stays upright, and production's unspecified body part
+also recoils. Timed Computer Use screenshots required no user input. Each run's
+damage and cleanup receipts were verified; see
+`runtime/evidence/combat-reaction-20261108-221429-6f97fea063714c77a1f942e14b235b8c/visual-observation.json`.
+The animation getters stayed MotionIdle/nil and GetBrainVariable('hitReaction')
+returned nil. Do not mistake these getters for an event stream or repeat this
+passive-NPC observation as a hostile-combat check.
+
+Owned-NPC protection now has live proof of100→90→1HP with survival and exact
+AddBuff-instance removal. No player buff/health mutation was made. Client.OnHit
+did not fire; legacy CreateHit/ServerHit also did not change health. Incoming
+native attacks and hostile target-lock suppression therefore remain open. See
+the specific evidence and source limits in `docs/research/KCD-COMBAT.md`.
+The final corrected-WUID protection run is
+`runtime/evidence/combat-protection-20261108-221837-f34ba64258f84048ba23c422e0c3bb50/result.json`;
+callbacks remained zero. Four registered Lua CTests and the native-float receipt
+regression passed. KCD2 was closed normally after exact native cleanup. This
+continuation did not install/arm a HUD bundle; the prior unarmed restoration
+below still applies. No manual test is needed for these verified changes.
+
+Next weapon milestone is ordinary bows, then crossbows. Reuse vanilla hold/release
+and the existing dropped-item render/depth pattern for real arrows. Projectile
+impacts need their own actual trajectory/contact validation: the current melee
+contract requires the player's current eye and cannot safely admit arrows that
+have flown elsewhere. Reuse the combat fixture; do not build another test stack.
+Concrete integration points: `GameplayRangedUse` beside `GameplayFoodUse`, admit
+hold/release through `GameplayBlocks` and the existing item-use redirect, render
+tracked `PersistentProjectileEntity` via its registered vanilla renderer in
+`GameplayWorldRenderer`, and add a projectile-specific combat impact contract.
+Use the actual arrow owner/weapon/trajectory; retain native scenery obstruction.
+Do not copy food cancellation blindly: stopping a charged bow use fires it.
+
 The opt-in `-Combat` profile now sends actual Minecraft primary melee to native
 KCD2 NPCs. Preserve the existing HUD, walking, blocks, crafting and respawn paths.
 Minecraft owns damage/cooldown/durability; native code validates exact NPC identity,
@@ -59,10 +98,9 @@ Remaining combat work: reciprocal native attacks into Minecraft health, hostile
 NPC target-lock suppression, ranged/sweep/native knockback/secondary effects.
 The user explicitly requires free aiming and walking, with native enemy AI active.
 Passive dummy lock=false observations do not prove hostile free-camera behavior.
-No invulnerability or guessed lock CVars were changed. A source-supported next
-protection experiment is the official nonpersistent immortality buff, with an
-absent baseline and owned returned instance ID; verify damage/hit notifications
-and exact removal before using it. See `docs/research/KCD-COMBAT.md`.
+No player invulnerability or guessed lock CVars were changed. The owned-NPC
+immortality experiment above supersedes the earlier untested proposal. It is not
+enabled in gameplay and does not establish incoming event delivery.
 
 ## Latest gameplay milestone: death, respawn and preserved drops
 
