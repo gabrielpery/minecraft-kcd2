@@ -21,9 +21,12 @@ void contract(){
         check(!ui::valid_event({1000,ui::Kind::edit_down,8},1000,old),"old profile rejects edits");
         check(!ui::valid_key('T',old)&&!ui::valid_key(0xbf,old),"old opener allowlists remain frozen");
         check(!ui::valid_key(0x10,old)&&!ui::valid_key(0x11,old),"old flight modifier allowlists remain frozen");
+        check(!ui::valid_key(0x74,old),"old profiles cannot switch perspective");
     }
     check(ui::valid_key('T',profile)&&ui::valid_key(0xbf,profile),"explicit chat openers");
     check(ui::valid_key(0x10,profile)&&ui::valid_key(0x11,profile),"input6 flight modifiers");
+    for(auto kind:{ui::Kind::key_down,ui::Kind::key_up})check(ui::valid_event({1000,kind,0x74},1000,profile),"input6 F5 paired edge");
+    check(!ui::valid_event({1000,ui::Kind::key_down,0x74},1251,profile),"F5 retains input freshness bound");
     for(auto key:ui::movement_keys)check(ui::valid_key(key,profile),"chat retains physical movement");
     for(auto kind:{ui::Kind::world_button_down,ui::Kind::world_button_up})check(ui::valid_event({1000,kind,1},1000,profile),"chat retains world actions");
     for(unsigned scalar:{32u,126u,160u,0x263au,0x10000u,0x1f600u,0x10ffffu})check(ui::valid_event({1000,ui::Kind::text,scalar},1000,profile),"valid Unicode scalar");
@@ -74,6 +77,21 @@ void keyboard(){
     keys={};keyboard.update(false,keys,8503);keys['W']=0x80;keyboard.update(false,keys,8504);
     check(!keyboard.update(true,keys,9000).down['W'],"key pressed during transition not replayed");
 }
+void perspective_controls(){
+    check(ui::gameplay_capture_keys[ui::gameplay_ui_key_count-1]==0x74,"F5 is final UI key");
+    check(ui::gameplay_capture_keys.size()==ui::gameplay_ui_key_count+ui::flight_movement_keys.size(),"movement partition size");
+    check(!ui::chat_opener(0x74)&&ui::world_one_shot(0x74),"F5 pairs its release without entering chat");
+    check(ui::chat_opener('T')&&ui::chat_opener(0xbf),"only actual openers initiate chat");
+    for(unsigned key=0;key<256;++key)check(ui::chat_opener(key)==(key=='T'||key==0xbf),"explicit chat key allowlist");
+    for(unsigned format=0;format<4;++format)for(unsigned screen=0;screen<4;++screen)
+        check(ui::perspective_allowed(format,screen)==(format==2&&screen==0),"perspective requires WorldBlocks without inventory/chat");
+    const auto perspective_bit=1u<<(ui::gameplay_ui_key_count-1);
+    check((perspective_bit>>ui::gameplay_ui_key_count)==0,"F5 never becomes movement");
+    for(std::size_t i=0;i<ui::flight_movement_keys.size();++i){
+        check(ui::gameplay_capture_keys[ui::gameplay_ui_key_count+i]==ui::flight_movement_keys[i],"all movement controls retain their order");
+        check(((perspective_bit|(1u<<(ui::gameplay_ui_key_count+i)))>>ui::gameplay_ui_key_count)==(1u<<i),"F5 chord preserves movement bit");
+    }
+}
 void unicode(){
     std::vector<std::uint32_t> out;
     const std::array<std::uint16_t,9> input{'A',0xd83d,0xde00,0xd800,'B',0xdc00,0x7f,0x1f,0xe9};
@@ -84,7 +102,7 @@ void unicode(){
 void released_taps(){
     ui::ReleasedTapGate gate;ui::ChatKeyboard keyboard;ui::ChatKeyState down{},released{};
     check(!gate.update(true,down,released)['T'],"first sample only establishes baseline");
-    for(unsigned key:{static_cast<unsigned>('T'),0xbfu,static_cast<unsigned>('2'),static_cast<unsigned>('A'),8u,13u,27u}){
+    for(unsigned key:{static_cast<unsigned>('T'),0xbfu,0x74u,static_cast<unsigned>('2'),static_cast<unsigned>('A'),8u,13u,27u}){
         released={};gate.update(true,down,released);released[key]=1;
         auto taps=gate.update(true,down,released);
         check(taps[key]!=0,"fresh release between up samples recovers one short tap");
@@ -156,4 +174,4 @@ void flight_movement(){
     check(!legacy.update(true,96).down&&!legacy.held(),"legacy gate still masks flight modifiers");
 }
 }
-int main(){try{contract();keyboard();unicode();released_taps();ownership();flight_movement();std::cout<<"HUD_GAMEPLAY_CHAT_TESTS checks="<<checks<<" PASS\n";return 0;}catch(const std::exception&e){std::cerr<<e.what()<<'\n';return 1;}}
+int main(){try{contract();keyboard();perspective_controls();unicode();released_taps();ownership();flight_movement();std::cout<<"HUD_GAMEPLAY_CHAT_TESTS checks="<<checks<<" PASS\n";return 0;}catch(const std::exception&e){std::cerr<<e.what()<<'\n';return 1;}}

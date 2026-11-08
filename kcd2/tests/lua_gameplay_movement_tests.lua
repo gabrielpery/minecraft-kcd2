@@ -7,7 +7,7 @@ local function test(name,fn)local ok,err=pcall(fn);if not ok then error(name..':
 local function copy(v)return{x=v.x,y=v.y,z=v.z}end
 local function fixture()
  local f={time=10,position={x=1,y=2,z=3},velocity={x=0,y=0,z=0},timers={},logs={},writes=0,serial=0,callback=false}
- Physics=nil;ent_all=15;ent_terrain=1
+ Physics=nil;CryAction=nil;ent_all=15;ent_terrain=1
  local retained={marker='untouched'};MineCome={_movement_probe=retained}
  player={id=17,actor={IsDead=function()return false end,IsUnconscious=function()return false end,GetLinkedEntity=function()return nil end},
   player={IsSitting=function()return false end,IsLaying=function()return false end},human={IsMounted=function()return false end},
@@ -21,10 +21,11 @@ local function fixture()
   KillTimer=function(id)assert(f.timers[id] and f.timers[id].alive,'unowned timer');f.timers[id].alive=false end}
  dofile(MINECOME_MODULE_PATH);eq(MineCome._movement_probe,retained);eq(f.serial,0);eq(f.writes,0)
  function f:begin(run,duration)return MineCome.GameplayMovementBegin(run or A,duration or 86400000,-10,10,-10,10,-10,10)end
- function f:pose(seq,source,x,y,z)return MineCome.GameplayMovementPose(A,seq,source,x,y,z)end
+ function f:pose(seq,source,x,y,z,mode)return MineCome.GameplayMovementPose(A,seq,source,x,y,z,mode)end
  function f:fire(slot,advance)
   local event;for _,e in pairs(self.timers)do if e.alive and e.data.slot==slot then event=e;break end end
   assert(event,'missing timer '..slot);event.alive=false;self.time=self.time+(advance or 0);self.callback=true
+  if self.pending_camera~=nil then self.camera=self.pending_camera or nil;self.pending_camera=nil end
   local ok,result=pcall(_G[event.name],event.data);self.callback=false;assert(ok,result);return result
  end
  function f:activeTimers()local n=0;for _,e in pairs(self.timers)do if e.alive then n=n+1 end end;return n end
@@ -143,5 +144,144 @@ test('uncertain rays never authorize native obstruction bypass',function()
   assert(line:find('"aim":{"known":false,"distance":-1,"terrain_hit":false',1,true),line);eq(f.writes,0)
  end
  local f=aim_fixture(2,1);local line=f:sample();assert(line:find('"known":false',1,true),line)
+end)
+local function perspective_fixture()
+ local f=fixture();f.look={x=0,y=1,z=0};f.camera_writes=0;f.resets=0;f.clip_rays=0;f.body_draws={};f.body_visible=true
+ player.IsSlotValid=function(_,slot)eq(slot,0);return true end;player.IsSlotCharacter=player.IsSlotValid;player.IsHidden=function()return false end
+ player.DrawSlot=function(_,slot,enabled)
+  eq(slot,0);f.body_draws[#f.body_draws+1]=enabled;f.body_visible=enabled==1
+  if enabled==0 and f.body_hide_error then error('partial body hide')end
+  if enabled==1 and f.body_restore_error then return false end
+ end
+ local function eye()return{x=f.position.x,y=f.position.y,z=f.position.z+1.6}end
+ player.actor.GetHeadPos=eye;player.actor.GetHeadDir=function()return copy(f.look)end
+ System.GetViewCameraPos=function()return f.camera and copy(f.camera.position) or eye()end
+ System.GetViewCameraDir=function()return f.camera and copy(f.camera.direction) or copy(f.look)end
+ System.GetViewCameraUpDir=function()
+  local d=System.GetViewCameraDir();local u={x=-d.x*d.z,y=-d.y*d.z,z=1-d.z*d.z};local n=math.sqrt(u.x*u.x+u.y*u.y+u.z*u.z)
+  return{x=u.x/n,y=u.y/n,z=u.z/n}
+ end
+ CryAction={SetViewCamera=function(position,direction)
+  eq(f.callback,true);f.camera_writes=f.camera_writes+1
+  if not f.drop_camera then f.pending_camera={position=copy(position),direction={x=direction[1],y=direction[2],z=direction[3]}} end
+  if f.camera_error then error('partial camera write')end
+ end,ResetToNormalCamera=function()
+  f.resets=f.resets+1;if f.reset_errors and f.resets<=f.reset_errors then error('reset error')end
+  f.pending_camera=false
+ end}
+ Physics={RayWorldIntersection=function(o,d,n,mask,skip,skip2,hits)
+  eq(n,16);eq(skip,17);eq(skip2,nil);local length=math.sqrt(d.x*d.x+d.y*d.y+d.z*d.z)
+  if math.abs(length-2.5)<.00001 then
+   f.clip_rays=f.clip_rays+1;if f.bad_clip then error('clip unavailable')end
+   local distance=f.clip_distance
+   if distance then hits[1]={pos={x=o.x+d.x*distance/length,y=o.y+d.y*distance/length,z=o.z+d.z*distance/length},dist=distance};return 1 end
+  else f.last_aim={origin=copy(o),direction=copy(d)} end
+  return 0
+ end}
+ function f:beginPerspective()return MineCome.GameplayMovementBegin(A,86400000,-10,10,-10,10,-10,10,false,true)end
+ function f:finishPerspective()MineCome.GameplayMovementEnd(A);for i=1,3 do if MineCome._gameplay_movement.active then self:fire('cleanup',.05)end end;eq(self:activeTimers(),0)end
+ return f
+end
+test('perspective is explicit and initial first person remains camera-write free',function()
+ local f=perspective_fixture();eq(MineCome.GameplayMovementBegin(A,1000,-10,10,-10,10,-10,10,false,'true'),false)
+ eq(f:beginPerspective(),true);eq(f:pose(1,0,1,2,3,0),true);f:fire('tick',.01)
+ eq(MineCome.GameplayMovementSample(A,1,true),true);assert(f.logs[#f.logs]:find('"perspective":0',1,true));eq(f.camera_writes,0);eq(f.resets,0);f:finishPerspective()
+ f=fixture();f:begin();eq(f:pose(1,0,1,2,3,1),false);f:lastReason('perspective_request_invalid')
+ for _,mode in ipairs({-1,3,1.5,'1'})do f=perspective_fixture();f:beginPerspective();eq(f:pose(1,0,1,2,3,mode),false);eq(f.camera_writes,0)end
+end)
+test('third back acknowledges only actual deferred camera and keeps eye aiming',function()
+ local f=perspective_fixture();f:beginPerspective();f:pose(1,0,1,2,3,1);f:fire('tick',.01)
+ eq(f.camera_writes,1);eq(f.clip_rays,5)
+ local logs=#f.logs;local ok,result=MineCome.GameplayMovementSample(A,1,true);eq(ok,true);eq(result,'camera_pending');eq(#f.logs,logs)
+ f:fire('tick',.01);assert(f.logs[#f.logs]:find('"perspective":1',1,true),f.logs[#f.logs]);eq(f.camera.position.y,-.5)
+ eq(f.last_aim.origin.y,2);eq(f.last_aim.origin.z,4.6);eq(f.last_aim.direction.y,4.5)
+ f:finishPerspective();f:lastReason('explicit_stop');assert(f.logs[#f.logs]:find('"camera_restored":true',1,true))
+end)
+test('independent native yaw pitch drives camera while front retains natural movement forward',function()
+ local f=perspective_fixture();f:beginPerspective();f:pose(1,0,1,2,3,1);f:fire('tick',.01);f:fire('tick',.01)
+ f.look={x=.8,y=0,z=.6};f:pose(2,50,1,2,3,2);f:fire('tick',.01);f:fire('tick',.01)
+ eq(MineCome.GameplayMovementSample(A,2,true),true);local line=f.logs[#f.logs]
+ assert(line:find('"perspective":2',1,true),line);assert(line:find('"forward":{"x":0.8',1,true) or line:find('"forward":{"x":0.800000',1,true),line)
+ assert(f.camera.direction.x<-.79);assert(f.last_aim.direction.x< -3.59);eq(f.last_aim.origin.x,1)
+ f:finishPerspective();eq(f.writes,0)
+end)
+test('camera corner rays clip displacement and malformed clipping collapses to eye',function()
+ for _,bad in ipairs({false,true})do
+  local f=perspective_fixture();f.clip_distance=.7;f.bad_clip=bad;f:beginPerspective();f:pose(1,0,1,2,3,1);f:fire('tick',.01);f:fire('tick',.01)
+  assert(math.abs(f.camera.position.y-(bad and 2 or 1.45))<.000001);eq(MineCome.GameplayMovementSample(A,1,true),true);f:finishPerspective()
+ end
+end)
+test('return to first person waits for current head readback and releases override',function()
+ local f=perspective_fixture();f:beginPerspective();f:pose(1,0,1,2,3,1);f:fire('tick',.01);f:fire('tick',.01)
+ f:pose(2,50,1,2,3,0);f:fire('tick',.01);local ok,result=MineCome.GameplayMovementSample(A,1,true);eq(ok,true);eq(result,'camera_pending')
+ f:fire('tick',.01);f:fire('tick',.01);assert(f.logs[#f.logs]:find('"perspective":0',1,true),f.logs[#f.logs]);eq(f.camera,nil)
+ local resets=f.resets;f:finishPerspective();eq(f.resets,resets)
+end)
+test('camera lease loss and partial write failure restore before terminal receipt',function()
+ for _,write_error in ipairs({false,true})do
+  local f=perspective_fixture();f:beginPerspective();f.camera_error=write_error;f:pose(1,0,1,2,3,1);f:fire('tick',.01)
+  if not write_error then f:fire('tick',.401)end
+  assert(MineCome._gameplay_movement.active.stopping);f:fire('cleanup',.05);eq(MineCome._gameplay_movement.active,nil);eq(f.camera,nil);eq(f:activeTimers(),0)
+  f:lastReason(write_error and 'camera_write_failed' or 'source_lease_expired')
+ end
+end)
+test('reset retries are bounded and failed camera readback never acknowledges new mode',function()
+ local f=perspective_fixture();f:beginPerspective();f:pose(1,0,1,2,3,1);f:fire('tick',.01);f:fire('tick',.01);f.reset_errors=9;f:finishPerspective();eq(f.resets,3);f:lastReason('camera_restore_failed:explicit_stop')
+ f=perspective_fixture();f.drop_camera=true;f:beginPerspective();f:pose(1,0,1,2,3,1);f:fire('tick',.01);MineCome.GameplayMovementSample(A,1,true)
+ f:fire('tick',.26);f:fire('cleanup',.05);eq(MineCome._gameplay_movement.active,nil);f:lastReason('camera_readback_expired')
+ for _,line in ipairs(f.logs)do assert(not line:find('"event":"view"',1,true),line)end
+end)
+test('delayed camera readback matches its original eye and mode amid newer mouse requests',function()
+ local f=perspective_fixture();f:beginPerspective();f:pose(1,0,1,2,3,1);f:fire('tick',.005)
+ local old=f.pending_camera;f.pending_camera=nil;f.look={x=1,y=0,z=0};f:pose(2,10,1,2,3,2);f:fire('tick',.005)
+ f.pending_camera=nil;f.camera=old;eq(MineCome.GameplayMovementSample(A,1,true),true)
+ local line=f.logs[#f.logs];assert(line:find('"perspective":1',1,true),line);assert(line:find('"forward":{"x":0,"y":1,"z":0}',1,true),line)
+ eq(f.last_aim.origin.y,2);eq(f.last_aim.direction.y,4.5)
+ for i=1,20 do f:fire('tick',.001)end
+ assert(#MineCome._gameplay_movement.active.camera_requests<=16);f:finishPerspective()
+end)
+test('high frequency ticks do not exhaust reset retries before delayed normal view',function()
+ local f=perspective_fixture();f:beginPerspective();f:pose(1,0,1,2,3,1);f:fire('tick',.005);f:fire('tick',.005)
+ f:pose(2,20,1,2,3,0);f:fire('tick',.001);eq(f.resets,1)
+ for i=1,8 do f.pending_camera=nil;f:fire('tick',.005)end
+ eq(f.resets,1);assert(MineCome._gameplay_movement.active);f.pending_camera=false;f:fire('tick',.005)
+ eq(MineCome._gameplay_movement.active.camera_owned,false);f:finishPerspective();eq(f.resets,1)
+end)
+test('owned body baseline hides only third person and restores on first person and stop',function()
+ local f=perspective_fixture();f:beginPerspective();eq(#f.body_draws,1);eq(f.body_draws[1],1)
+ f:pose(1,0,1,2,3,1);f:fire('tick',.005);eq(f.body_visible,false);eq(f.body_draws[2],0);f:fire('tick',.005);eq(#f.body_draws,2)
+ f:pose(2,20,1,2,3,0);f:fire('tick',.005);eq(f.body_visible,true);f:fire('tick',.005)
+ f:pose(3,40,1,2,3,2);f:fire('tick',.005);eq(f.body_visible,false);f:fire('tick',.005);f:finishPerspective();eq(f.body_visible,true)
+ assert(f.logs[#f.logs]:find('"body_restore_dispatched":true',1,true),f.logs[#f.logs]);eq(f.writes,0)
+end)
+test('body slot validation and partial hide failures never leave an owned hidden slot',function()
+ local f=perspective_fixture();player.IsSlotCharacter=function()return false end;eq(f:beginPerspective(),false);eq(#f.body_draws,0)
+ f=perspective_fixture();f:beginPerspective();f.body_hide_error=true;f:pose(1,0,1,2,3,1);f:fire('tick',.005)
+ eq(f.body_visible,true);eq(MineCome._gameplay_movement.active,nil);f:lastReason('body_hide_failed');eq(f.camera_writes,0)
+ f=perspective_fixture();f:beginPerspective();f:pose(1,0,1,2,3,1);f:fire('tick',.005);f:fire('tick',.005);f.body_restore_error=true;f:finishPerspective()
+ f:lastReason('body_restore_failed:explicit_stop');assert(f.logs[#f.logs]:find('"body_restore_dispatched":false',1,true),f.logs[#f.logs])
+end)
+test('unresolved camera or body cleanup blocks both legacy and perspective begin without writes',function()
+ for _,failure in ipairs({'camera','body'})do
+  local f=perspective_fixture();f:beginPerspective();f:pose(1,0,1,2,3,1);f:fire('tick',.005);f:fire('tick',.005)
+  if failure=='camera' then f.reset_errors=9 else f.body_restore_error=true end
+  f:finishPerspective();f:lastReason(failure..'_restore_failed:explicit_stop')
+  local previous=MineCome._gameplay_movement.last
+  assert(previous.camera_owned or previous.body_restore_needed)
+  local serial,writes,resets,draws,logs=f.serial,f.camera_writes,f.resets,#f.body_draws,#f.logs
+  local ok,reason=f:begin(B);eq(ok,false);eq(reason,'prior_cleanup_incomplete')
+  ok,reason=f:beginPerspective();eq(ok,false);eq(reason,'prior_cleanup_incomplete')
+  eq(MineCome._gameplay_movement.active,nil);eq(MineCome._gameplay_movement.last,previous)
+  eq(f.serial,serial);eq(f.camera_writes,writes);eq(f.resets,resets);eq(#f.body_draws,draws);eq(#f.logs,logs);eq(f:activeTimers(),0)
+ end
+end)
+test('successful perspective cleanup permits later legacy and perspective sessions',function()
+ for _,perspective in ipairs({false,true})do
+  local f=perspective_fixture();f:beginPerspective();f:pose(1,0,1,2,3,1);f:fire('tick',.005);f:fire('tick',.005);f:finishPerspective()
+  f:lastReason('explicit_stop');eq(MineCome._gameplay_movement.last.camera_owned,false);eq(MineCome._gameplay_movement.last.body_restore_needed,false)
+  if perspective then eq(f:beginPerspective(),true);f:finishPerspective()
+  else eq(f:begin(B),true);eq(MineCome.GameplayMovementEnd(B),true)end
+  eq(f:activeTimers(),0);eq(f.body_visible,true);eq(f.camera,nil)
+ end
 end)
 print('PASS '..passed..' gameplay movement tests (simulated bindings)')

@@ -18,6 +18,7 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.util.Hand;
 import net.minecraft.util.hit.*;
 import net.minecraft.util.math.*;
+import net.minecraft.util.shape.VoxelShape;
 import net.minecraft.world.*;
 import java.io.IOException;
 import java.nio.file.Path;
@@ -27,9 +28,13 @@ import java.util.concurrent.atomic.*;
 /** Persistent bounded building through vanilla interaction packets, with server-confirmed block states. */
 public final class GameplayBlocks {
     public record Aim(long capturedUtcMs,long observedAtNanos,Vec3d origin,Vec3d direction,double range,
-                      boolean obstructionKnown,double obstructionDistance,boolean terrainHit) {
+                      boolean obstructionKnown,double obstructionDistance,boolean terrainHit,Vec3d cameraOrigin) {
+        public Aim(long capturedUtcMs,long observedAtNanos,Vec3d origin,Vec3d direction,double range,
+                boolean obstructionKnown,double obstructionDistance,boolean terrainHit){
+            this(capturedUtcMs,observedAtNanos,origin,direction,range,obstructionKnown,obstructionDistance,terrainHit,origin);
+        }
         public Aim {
-            if(origin==null||direction==null||!finite(origin)||!finite(direction)||!Double.isFinite(range)||range<=0||range>4.5||
+            if(origin==null||direction==null||cameraOrigin==null||!finite(origin)||!finite(direction)||!finite(cameraOrigin)||cameraOrigin.squaredDistanceTo(origin)>16.00000001||!Double.isFinite(range)||range<=0||range>4.5||
                 Math.abs(direction.lengthSquared()-1)>.01||!Double.isFinite(obstructionDistance)||obstructionDistance< -1||obstructionDistance>range||
                 (obstructionDistance<0&&obstructionDistance!=-1)||(!obstructionKnown&&obstructionDistance!=-1)||
                 (terrainHit&&(!obstructionKnown||obstructionDistance<0)))throw new IllegalArgumentException("Invalid gameplay aim");
@@ -168,6 +173,7 @@ public final class GameplayBlocks {
             if(!cells.contains(cell(hit.getBlockPos()))||!supported(world.getBlockState(hit.getBlockPos())))throw new IllegalArgumentException("unowned_target");
             double distance=hit.getPos().distanceTo(ray.origin());
             if(ray.obstructionDistance()>=0&&ray.obstructionDistance()<distance-.05)throw new IllegalArgumentException("native_obstruction");
+            requireCameraVisibility(world,player,ray,hit.getPos(),cells);
             // Vanilla chooses the replaceable hit cell for a slab merge, otherwise
             // its adjacent cell. Never assume every placement offsets a full cube.
             var target=action==1?new ItemPlacementContext(player,Hand.MAIN_HAND,player.getMainHandStack(),hit).getBlockPos():hit.getBlockPos();validateTarget(world,player,target,action,cells);
@@ -175,6 +181,7 @@ public final class GameplayBlocks {
         }
         if(action==0||!ray.terrainHit()||ray.obstructionDistance()<0)throw new IllegalArgumentException("no_owned_block_hit");
         var point=ray.origin().add(ray.direction().multiply(ray.obstructionDistance()));
+        requireCameraVisibility(world,player,ray,point,cells);
         if(!surface.containsFeet(point.x,point.z,.001)||Math.abs(surface.heightAt(point.x,point.z)-point.y)>.65)throw new IllegalArgumentException("terrain_hit_outside_capture");
         var target=BlockPos.ofFloored(point);
         var groundHit=new BlockHitResult(point,Direction.UP,target,false);
@@ -201,6 +208,24 @@ public final class GameplayBlocks {
         // PlayerInteractBlock's usual reach/collision/mode checks remain vanilla.
         // This user-placed block can overlap the sampled slab; breaking it restores AIR.
         return new Selection(target,groundHit,true);
+    }
+    private void requireCameraVisibility(World world,PlayerEntity player,Aim ray,Vec3d target,Set<GameplayBlocksLedger.Cell> cells){
+        if(!worldBlocks||ray.cameraOrigin().squaredDistanceTo(ray.origin())<1e-12)return;
+        var context=ShapeContext.of(player);
+        for(var cell:cells){var position=pos(cell);
+            if(!world.isChunkLoaded(position))continue;
+            var shape=world.getBlockState(position).getOutlineShape(world,position,context);
+            if(cameraOccludes(ray,target,position,shape))throw new IllegalArgumentException("camera_obstruction");
+        }
+    }
+    /** Pinned Yarn1.21.1 VoxelShape.raycast tests the actual voxel boxes and
+     * reports a start inside solid geometry. Use the same outline shape as the
+     * renderer, not a cell-sized cube (slabs/fence gaps must remain visible).
+     * This rejects hidden eye hits; it never extends the 4.5m eye interaction ray. */
+    static boolean cameraOccludes(Aim ray,Vec3d target,BlockPos position,VoxelShape shape){
+        if(ray.cameraOrigin().squaredDistanceTo(ray.origin())<1e-12)return false;
+        var hit=shape.raycast(ray.cameraOrigin(),target,position);
+        return hit!=null&&(hit.isInsideBlock()||hit.getPos().distanceTo(ray.cameraOrigin())<target.distanceTo(ray.cameraOrigin())-.0001);
     }
     private void validateTarget(World world,PlayerEntity player,BlockPos target,int action,Set<GameplayBlocksLedger.Cell> cells){
         if(!GameplayBlocksLedger.allowed(surface,cell(target))||!world.isChunkLoaded(target)||!player.canInteractWithBlockAt(target,0))throw new IllegalArgumentException("outside_build_coverage_or_reach");

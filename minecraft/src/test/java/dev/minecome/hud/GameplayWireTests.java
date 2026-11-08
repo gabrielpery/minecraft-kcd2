@@ -127,7 +127,7 @@ public final class GameplayWireTests {
             rejects(()->GameplayChatInput.glfw(code));
             rejects(()->HudInputProtocol.validateEvent(new HudInputProtocol.Event(1,1000,10,code,0,0,0),1000,true,true,true,true));
         }
-        for(int code:new int[]{0x54,0xbf,0x10,0x11})for(int kind:new int[]{1,2}){
+        for(int code:new int[]{0x54,0xbf,0x10,0x11,0x74})for(int kind:new int[]{1,2}){
             var event=new HudInputProtocol.Event(1,1000,kind,code,0,0,0);
             HudInputProtocol.validateEvent(event,1000,true,true,true,true);check(true);
             rejects(()->HudInputProtocol.validateEvent(event,1000,true,true,true));
@@ -150,6 +150,17 @@ public final class GameplayWireTests {
         rejects(()->gate.apply(new HudInputProtocol.Event(10,1000,10,13,0,0,0),1000));
         rejects(()->gate.apply(new HudInputProtocol.Event(11,1000,9,'a',0,0,0),1000));
         gate.releaseAll();check(gate.sequence()==9&&gate.heldKeyCount()==0&&gate.heldButtonCount()==0);
+        // F5 is a balanced world-key request, not a repeatable editor key.
+        gate.apply(new HudInputProtocol.Event(10,1000,1,0x74,0,0,0),1000);
+        check(gate.heldKeyCount()==1);
+        rejects(()->gate.apply(new HudInputProtocol.Event(11,1000,1,0x74,0,0,0),1000));
+        gate.apply(new HudInputProtocol.Event(11,1000,2,0x74,0,0,0),1000);
+        check(gate.heldKeyCount()==0);
+        rejects(()->gate.apply(new HudInputProtocol.Event(12,1000,2,0x74,0,0,0),1000));
+        gate.apply(new HudInputProtocol.Event(12,1000,1,0x74,0,0,0),1000);
+        gate.releaseAll();check(gate.heldKeyCount()==0&&gate.sequence()==12);
+        for(var legacy:new HudInputGate[]{new HudInputGate(),new HudInputGate(true),new HudInputGate(true,true)})
+            rejects(()->legacy.apply(new HudInputProtocol.Event(1,1000,1,0x74,0,0,0),1000));
         rejects(()->new HudInputReader(id,true,true,false,true));
         var ack=new HudInputReader.Acknowledgement(3,1000,1,2,0);
         new HudInputReader(id,true,true,true,true).acknowledge(ack);check(true);

@@ -3,6 +3,9 @@ package dev.minecome.gameplay;
 import com.google.gson.*;
 import dev.minecome.hud.HudInputProtocol;
 import dev.minecome.terrain.*;
+import net.minecraft.util.math.BlockPos;
+import net.minecraft.util.math.Vec3d;
+import net.minecraft.util.shape.VoxelShapes;
 import java.io.IOException;
 import java.nio.file.*;
 import java.util.*;
@@ -87,7 +90,28 @@ public final class GameplayBlocksTests {
         aimTests(root,save);
         terrainLedgerTests(root);
         worldBlockStateTests(root);
+        cameraVisibilityTests();
         System.out.println("GameplayBlocksTests: "+checks+" checks passed; no game calls");
+    }
+    private static void cameraVisibilityTests()throws Exception{
+        var eye=new Vec3d(0,.75,.5);var camera=new Vec3d(-2,.75,.5);var target=new Vec3d(3,.75,.5);
+        var ray=new GameplayBlocks.Aim(1,1,eye,new Vec3d(1,0,0),4.5,true,-1,false,camera);
+        var near=new BlockPos(-1,0,0);var cube=VoxelShapes.fullCube();
+        check(GameplayBlocks.cameraOccludes(ray,target,near,cube),"Back-view camera cannot target through an owned block behind the eye");
+        check(!GameplayBlocks.cameraOccludes(ray,target,new BlockPos(3,0,0),cube),"The selected block's visible face at the endpoint is not its own occluder");
+        check(!GameplayBlocks.cameraOccludes(ray,target,new BlockPos(4,0,0),cube),"Blocks beyond the selected surface do not reject a visible hit");
+        check(!GameplayBlocks.cameraOccludes(ray,target,near,VoxelShapes.cuboid(0,0,0,1,.5,1)),"A bottom slab leaves the actual upper sightline clear");
+        check(GameplayBlocks.cameraOccludes(ray,target,near,VoxelShapes.cuboid(0,.5,0,1,1,1)),"A top slab occludes that same sightline");
+        check(!GameplayBlocks.cameraOccludes(ray,target,near,VoxelShapes.cuboid(.375,0,.65,.625,1.5,.85)),"A fence-sized post beside the ray does not act as a full block");
+        check(GameplayBlocks.cameraOccludes(ray,target,near,VoxelShapes.cuboid(.375,0,.375,.625,1.5,.625)),"A fence post on the actual ray blocks the hidden target");
+        var inside=new GameplayBlocks.Aim(1,1,eye,new Vec3d(1,0,0),4.5,true,-1,false,new Vec3d(-.5,.75,.5));
+        check(GameplayBlocks.cameraOccludes(inside,target,near,cube),"A camera inside an owned shape cannot see through its outer face");
+        var front=new GameplayBlocks.Aim(1,1,eye,new Vec3d(-1,0,0),4.5,true,-1,false,new Vec3d(2,.75,.5));
+        check(GameplayBlocks.cameraOccludes(front,new Vec3d(-3,.75,.5),new BlockPos(1,0,0),cube),"Front-view camera cannot target behind a nearer owned block between camera and eye");
+        var first=new GameplayBlocks.Aim(1,1,eye,new Vec3d(1,0,0),4.5,true,-1,false);
+        check(first.cameraOrigin().equals(eye)&&!GameplayBlocks.cameraOccludes(first,target,new BlockPos(1,0,0),cube),"Legacy first-person aims preserve the existing eye-ray obstruction behavior");
+        check(ray.range()==4.5&&target.distanceTo(camera)>ray.range()&&target.distanceTo(eye)<ray.range(),"Camera offset does not shorten or extend authoritative eye reach");
+        reject(()->new GameplayBlocks.Aim(1,1,eye,new Vec3d(1,0,0),4.5001,true,-1,false,camera),"Displaced cameras cannot extend eye reach beyond4.5m");
     }
     private static void worldBlockStateTests(Path root)throws Exception{
         for(var state:List.of("minecraft:stone","minecraft:dirt","minecraft:oak_planks","minecraft:bricks",
@@ -276,6 +300,7 @@ public final class GameplayBlocksTests {
         try(var reader=new GameplayAimReader(viewDirectory,id,SURFACE,world,true)){
             long deadline=System.nanoTime()+1_000_000_000L;while(reader.worldSample()==null&&reader.failure()==null&&System.nanoTime()<deadline)Thread.sleep(2);
             var sample=reader.worldSample();check(sample!=null&&sample.aim().equals(reader.current())&&reader.failure()==null,"World-block reader publishes matching aim and camera");var camera=sample.view();
+            check(sample.schema()==2&&sample.perspective()==0,"Legacy camera retains first person without claiming perspective acknowledgment");
             check(camera.origin().squaredDistanceTo(new net.minecraft.util.math.Vec3d(2.5,65.62,.5))<1e-15,"World camera origin uses native coordinate transform");
             check(camera.forward().squaredDistanceTo(new net.minecraft.util.math.Vec3d(1,0,0))<1e-15&&camera.up().squaredDistanceTo(new net.minecraft.util.math.Vec3d(0,1,0))<1e-15,"World camera basis uses same transform as aiming");
             check(Math.abs(camera.verticalFovRadians()-1.2)<1e-12,"World camera retains actual vertical FOV");
@@ -286,6 +311,66 @@ public final class GameplayBlocksTests {
         try(var reader=new GameplayAimReader(legacyView,id,SURFACE,world,true)){
             long deadline=System.nanoTime()+1_000_000_000L;while(reader.failure()==null&&System.nanoTime()<deadline)Thread.sleep(2);
             check(reader.failure()!=null&&reader.worldSample()==null,"World renderer rejects legacy aim without camera/FOV instead of guessing");
+        }
+        perspectiveAimTests(root,save,id,view);
+    }
+    private static JsonObject perspectiveAim(JsonObject view,int mode){
+        var j=view.deepCopy();j.addProperty("schema",3);j.addProperty("kind","minecome_gameplay_aim_v3");j.addProperty("perspective",mode);
+        j.add("camera_origin",j.get("origin").deepCopy());j.add("camera_direction",j.get("direction").deepCopy());j.add("camera_up",j.remove("up"));
+        if(mode!=0)j.getAsJsonObject("camera_origin").addProperty("x",mode==1?100:105);
+        if(mode==2){j.getAsJsonObject("camera_direction").addProperty("x",-1);j.getAsJsonObject("direction").addProperty("x",-1);}
+        return j;
+    }
+    private static void perspectiveAimTests(Path root,GameplayWorld save,HudInputProtocol.Identity id,JsonObject view)throws Exception{
+        String world=save.id().toString();long now=System.currentTimeMillis();
+        for(int mode=0;mode<3;mode++){
+            var j=perspectiveAim(view,mode);j.addProperty("utc_ms",now);
+            check(GameplayAimReader.parse(j.toString(),id,world,SURFACE,now).get("perspective").getAsInt()==mode,"First/back/front acknowledged camera accepted");
+            var expected=new net.minecraft.client.option.Perspective[]{net.minecraft.client.option.Perspective.FIRST_PERSON,net.minecraft.client.option.Perspective.THIRD_PERSON_BACK,net.minecraft.client.option.Perspective.THIRD_PERSON_FRONT};
+            check(dev.minecome.hud.GameplayPerspective.acknowledged(mode)==expected[mode],"Acknowledged wire mode selects the exact vanilla perspective");
+            if(mode!=0){j.add("camera_origin",j.get("origin").deepCopy());GameplayAimReader.parse(j.toString(),id,world,SURFACE,now);checks++;}
+        }
+        var valid=perspectiveAim(view,1);valid.addProperty("utc_ms",now);
+        // Crosshair target parallax may make the interaction ray differ from the
+        // view direction. Neither direction may overwrite the other on import.
+        valid.add("direction",JsonParser.parseString("{\"x\":0.8,\"y\":0.6,\"z\":0}"));
+        GameplayAimReader.parse(valid.toString(),id,world,SURFACE,now);checks++;
+        for(String field:List.of("camera_origin","camera_direction","camera_up","perspective")){
+            var j=valid.deepCopy();j.remove(field);reject(()->GameplayAimReader.parse(j.toString(),id,world,SURFACE,now),"Schema3 requires separate camera field: "+field);
+        }
+        var legacyUp=valid.deepCopy();legacyUp.add("up",legacyUp.get("camera_up").deepCopy());reject(()->GameplayAimReader.parse(legacyUp.toString(),id,world,SURFACE,now),"Schema3 does not admit ambiguous legacy up field");
+        for(double mode:List.of(-1.,3.,1.5)){
+            var j=valid.deepCopy();j.addProperty("perspective",mode);reject(()->GameplayAimReader.parse(j.toString(),id,world,SURFACE,now),"Unknown/fractional acknowledged perspective rejected");
+        }
+        var textMode=valid.deepCopy();textMode.addProperty("perspective","1");reject(()->GameplayAimReader.parse(textMode.toString(),id,world,SURFACE,now),"Perspective requires integer wire type");
+        var boundary=valid.deepCopy();boundary.getAsJsonObject("camera_origin").addProperty("x",98.5);GameplayAimReader.parse(boundary.toString(),id,world,SURFACE,now);checks++;
+        boundary.getAsJsonObject("camera_origin").addProperty("x",98.4999);reject(()->GameplayAimReader.parse(boundary.toString(),id,world,SURFACE,now),"Camera outside four metre eye bound rejected");
+        var first=perspectiveAim(view,0);first.addProperty("utc_ms",now);first.getAsJsonObject("camera_origin").addProperty("x",102.61);
+        reject(()->GameplayAimReader.parse(first.toString(),id,world,SURFACE,now),"First person cannot hide a displaced third-person camera");
+        var wrongFirst=perspectiveAim(view,0);wrongFirst.addProperty("utc_ms",now);wrongFirst.getAsJsonObject("camera_direction").addProperty("x",-1);
+        reject(()->GameplayAimReader.parse(wrongFirst.toString(),id,world,SURFACE,now),"First person camera must agree with eye direction");
+        for(String field:List.of("camera_direction","camera_up")){
+            var j=valid.deepCopy();j.getAsJsonObject(field).addProperty(field.equals("camera_up")?"z":"x",2);reject(()->GameplayAimReader.parse(j.toString(),id,world,SURFACE,now),"Camera basis remains unit: "+field);
+        }
+        var parallel=valid.deepCopy();parallel.add("camera_up",parallel.get("camera_direction").deepCopy());reject(()->GameplayAimReader.parse(parallel.toString(),id,world,SURFACE,now),"Separate camera basis must remain orthogonal");
+        var huge=valid.deepCopy();huge.getAsJsonObject("camera_origin").addProperty("z",new java.math.BigDecimal("1e999"));reject(()->GameplayAimReader.parse(huge.toString(),id,world,SURFACE,now),"Nonfinite camera values rejected");
+        String duplicate=valid.toString().replace("\"camera_origin\":{","\"camera_origin\":{\"x\":100,");reject(()->GameplayAimReader.parse(duplicate,id,world,SURFACE,now),"Separate camera duplicate vector keys rejected");
+        Path directory=Files.createDirectories(root.resolve("runtime/evidence/perspective-camera-reader"));var file=directory.resolve("gameplay-aim.json");
+        valid.addProperty("utc_ms",System.currentTimeMillis());write(file,valid);
+        try(var reader=new GameplayAimReader(directory,id,SURFACE,world,true)){
+            long deadline=System.nanoTime()+1_000_000_000L;while(reader.worldSample()==null&&reader.failure()==null&&System.nanoTime()<deadline)Thread.sleep(2);
+            var sample=reader.worldSample();check(sample!=null&&reader.failure()==null&&sample.perspective()==1&&sample.schema()==3,"Reader imports acknowledged third-back perspective");
+            check(sample.aim().equals(reader.current())&&sample.aim().origin().squaredDistanceTo(new net.minecraft.util.math.Vec3d(2.5,65.62,.5))<1e-15,"Interaction origin retains player eye rather than displaced camera");
+            check(sample.view().origin().squaredDistanceTo(new net.minecraft.util.math.Vec3d(0,65.62,.5))<1e-15,"Render camera imports distinct displaced origin");
+            check(sample.aim().cameraOrigin().equals(sample.view().origin()),"Controller visibility and renderer retain the same admitted displaced camera");
+            check(sample.aim().direction().squaredDistanceTo(new net.minecraft.util.math.Vec3d(.8,0,-.6))<1e-15&&sample.view().forward().squaredDistanceTo(new net.minecraft.util.math.Vec3d(1,0,0))<1e-15,"Eye ray and render ray retain their distinct mapped directions");
+            var front=perspectiveAim(view,2);front.addProperty("seq",2);front.addProperty("utc_ms",System.currentTimeMillis());GameplayBlocksFiles.atomic(file,front.toString());
+            deadline=System.nanoTime()+1_000_000_000L;while((sample=reader.worldSample())!=null&&sample.perspective()!=2&&reader.failure()==null&&System.nanoTime()<deadline)Thread.sleep(2);
+            check(sample!=null&&sample.perspective()==2&&sample.view().origin().x==5&&sample.aim().origin().x==2.5&&sample.view().forward().x==-1,"Mode/camera/interaction publish atomically during front transition");
+            Thread.sleep(320);check(reader.worldSample()==null&&reader.current()==null&&reader.failure()==null,"Perspective camera obeys unchanged dual freshness deadlines");
+            front.addProperty("utc_ms",System.currentTimeMillis());GameplayBlocksFiles.atomic(file,front.toString());
+            deadline=System.nanoTime()+1_000_000_000L;while(reader.failure()==null&&System.nanoTime()<deadline)Thread.sleep(2);
+            check(reader.failure()!=null&&reader.current()==null&&reader.worldSample()==null,"Same-sequence perspective replay invalidates all published view/aim state");
         }
     }
 }

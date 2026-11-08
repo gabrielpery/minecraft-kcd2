@@ -67,7 +67,7 @@ function Publish-GameplayMovementView([string]$Temporary,[string]$Destination,[V
         }
     }
 }
-function Read-GameplayMovementPose([string]$Path,$Identity,$Bounds,[long]$LastSequence,[double]$LastSource,[long]$Now){
+function Read-GameplayMovementPose([string]$Path,$Identity,$Bounds,[long]$LastSequence,[double]$LastSource,[long]$Now,[bool]$WorldBlocks=$false){
     if(-not [IO.File]::Exists($Path)){return $null}
     $file=$null
     try{
@@ -89,11 +89,13 @@ function Read-GameplayMovementPose([string]$Path,$Identity,$Bounds,[long]$LastSe
     }catch [IO.IOException]{if(($_.Exception.HResult -band 0xffff) -in @(2,3,32,33,303)){return $null};throw}
     finally{if($file){$file.Dispose()}}
     $keys=@('schema','kind','run','world_id','target_pid','target_start_filetime','patch_run','patch_sha256','seq','utc_ms','source_ms','position')
+    if($WorldBlocks){$keys+='perspective_request'}
     if($p -isnot [pscustomobject] -or (($p.PSObject.Properties.Name|Sort-Object)-join ',') -cne (($keys|Sort-Object)-join ',') -or
         $p.schema -ne 1 -or $p.kind -cne 'minecome_gameplay_pose_v1' -or $p.run -cne $Identity.Run -or $p.world_id -cne $Identity.WorldId -or
         $p.target_pid -ne $Identity.Pid -or $p.target_start_filetime -cne $Identity.Start -or $p.patch_run -cne $Identity.PatchRun -or $p.patch_sha256 -cne $Identity.PatchHash){throw 'Gameplay pose identity differs.'}
     foreach($key in @('schema','target_pid','seq','utc_ms','source_ms')){if(-not(Test-GameplayHostNumber $p.$key)){throw "Invalid gameplay pose number: $key"}}
     if($p.target_start_filetime -isnot [string]){throw 'Gameplay target start must be a string.'}
+    if($WorldBlocks -and (-not(Test-GameplayHostNumber $p.perspective_request) -or $p.perspective_request -notin @(0,1,2))){throw 'Invalid gameplay perspective request.'}
     if($p.seq -lt 1 -or $p.seq -gt 10000000 -or $p.seq -ne [Math]::Floor($p.seq) -or $p.utc_ms -le 0 -or $p.utc_ms -ne [Math]::Floor($p.utc_ms) -or $p.utc_ms -gt $Now+50 -or $p.source_ms -lt 0 -or $p.source_ms -gt 86400000){throw 'Gameplay pose clock/sequence differs.'}
     if($p.position -isnot [pscustomobject] -or (($p.position.PSObject.Properties.Name|Sort-Object)-join ',') -cne 'x,y,z'){throw 'Gameplay position differs.'}
     foreach($axis in @('x','y','z')){if(-not(Test-GameplayHostNumber $p.position.$axis)){throw 'Gameplay position is not finite.'}}
@@ -154,7 +156,7 @@ function Get-GameplayMovementWorker {
             $log=[IO.FileStream]::new($Context.GameLog,[IO.FileMode]::Open,[IO.FileAccess]::Read,([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete),1,[IO.FileOptions]::None)
             $remaining=[Math]::Min(86400000,$limit)
             $started=$true
-            $flightArgument=if($Flight){',true'}else{''}
+            $flightArgument=if($WorldBlocks){',true,true'}elseif($Flight){',true'}else{''}
             Send (RejectWrapper "MineCome.GameplayMovementBegin('$run',$remaining,$(Numeric $Bounds.MinX),$(Numeric $Bounds.MaxX),$(Numeric $Bounds.MinY),$(Numeric $Bounds.MaxY),$(Numeric $Bounds.MinZ),$(Numeric $Bounds.MaxZ)$flightArgument)")
             $until=$stopwatch.Elapsed.TotalMilliseconds+1000
             do{foreach($r in @(Receipts)){if($r.event -ceq 'begin'){$begin=$r}elseif($r.event -in @('rejected','terminal')){throw "Native gameplay begin rejected: $($r.result)"}};if($begin){break};Start-Sleep -Milliseconds 5}while($stopwatch.Elapsed.TotalMilliseconds -lt $until)
@@ -163,19 +165,20 @@ function Get-GameplayMovementWorker {
             while(-not $Token.IsCancellationRequested){
                 $utc=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds();$elapsed=$stopwatch.Elapsed.TotalMilliseconds
                 if($utc -ge $ExpiresUtcMs -or $elapsed -ge $limit){throw 'Gameplay host identity expired.'}
-                $pose=Read-GameplayMovementPose $PoseFile $Identity $Bounds $sequence $source $utc
+                $pose=Read-GameplayMovementPose $PoseFile $Identity $Bounds $sequence $source $utc $WorldBlocks
                 $parts=[Collections.Generic.List[string]]::new()
                 # Consume durable terrain acknowledgements before admitting any
                 # pose or block snapshot that uses newly installed collision.
                 if($TerrainState){$command=Get-GameplayTerrainCommands $TerrainState $utc $pose;if($command){$parts.Add((RejectWrapper $command))}}
                 if($pose -and $TerrainState -and -not(Test-GameplayTerrainPose $TerrainState $pose)){throw 'Gameplay pose leaves acknowledged terrain.'}
                 if($BlocksState){$command=Get-GameplayBlocksCommands $BlocksState $utc;if($command){$parts.Add((RejectWrapper $command))}}
-                if($pose){$parts.Add((RejectWrapper "MineCome.GameplayMovementPose('$run',$($pose.seq),$(Numeric $pose.source_ms),$(Numeric $pose.position.x),$(Numeric $pose.position.y),$(Numeric $pose.position.z))"))}
+                if($pose){$perspectiveArgument=if($WorldBlocks){','+[string]$pose.perspective_request}else{''};$parts.Add((RejectWrapper "MineCome.GameplayMovementPose('$run',$($pose.seq),$(Numeric $pose.source_ms),$(Numeric $pose.position.x),$(Numeric $pose.position.y),$(Numeric $pose.position.z)$perspectiveArgument)"))}
                 $requestView=$elapsed-$lastViewAt -ge 90
                 if($requestView){$viewSequence++;$requestedUtc=$utc;$aimArgument=if($BlocksState -or $WorldBlocks){',true'}else{''};$parts.Add((RejectWrapper "MineCome.GameplayMovementSample('$run',$viewSequence$aimArgument)"));$lastViewAt=$elapsed}
                 if($parts.Count){Send $parts.ToArray();if($pose){$sequence=[long]$pose.seq;$source=[double]$pose.source_ms;$poses++;$lastPoseUtc=[long]$pose.utc_ms;$lastPoseAt=$elapsed}}
                 if($poses -gt 0 -and $elapsed-$lastPoseAt -gt 350){throw 'Gameplay guest pose expired.'}
                 $until=$stopwatch.Elapsed.TotalMilliseconds+$(if($requestView){300}else{0})
+                $lastViewFlush=$stopwatch.Elapsed.TotalMilliseconds
                 do{
                     foreach($r in @(Receipts)){
                         if($r.event -ceq 'terminal'){$terminal=$r;throw "Native gameplay stopped: $($r.result)"}
@@ -194,7 +197,9 @@ function Get-GameplayMovementWorker {
                                     $aim=[ordered]@{schema=1;kind='minecome_gameplay_aim_v1';run=$run;world_id=$Identity.WorldId;patch_run=$Identity.PatchRun;patch_sha256=$Identity.PatchHash;target_pid=$Identity.Pid;target_start_filetime=$Identity.Start;seq=$viewSequence;utc_ms=$requestedUtc;origin=$r.camera;direction=$r.forward;range=$r.aim.range;known=$r.aim.known;distance=$r.aim.distance;terrain_hit=$r.aim.terrain_hit}
                                     if($WorldBlocks){
                                         if(-not(Test-GameplayHostNumber $r.fov) -or $r.fov -le .05 -or $r.fov -ge ([Math]::PI-.05)){throw 'World block camera FOV unavailable.'}
-                                        $aim.schema=2;$aim.kind='minecome_gameplay_aim_v2';$aim.up=$r.up;$aim.vertical_fov=$r.fov
+                                        if($r.perspective -notin @(0,1,2)){throw 'Native gameplay perspective missing.'}
+                                        $aim.schema=3;$aim.kind='minecome_gameplay_aim_v3';$aim.origin=$r.eye;$aim.direction=$r.aim_direction
+                                        $aim.camera_origin=$r.camera;$aim.camera_direction=$r.camera_forward;$aim.camera_up=$r.camera_up;$aim.vertical_fov=$r.fov;$aim.perspective=$r.perspective
                                     }
                                     [IO.File]::WriteAllText($aimTemp,($aim|ConvertTo-Json -Depth 5 -Compress),[Text.UTF8Encoding]::new($false));Publish-GameplayMovementView $aimTemp $aimFile
                                 }
@@ -203,7 +208,16 @@ function Get-GameplayMovementWorker {
                             $requestView=$false
                         }
                     }
-                    if(-not $requestView){break};Start-Sleep -Milliseconds 5
+                    if(-not $requestView){break}
+                    # Perspective reset/readback can acknowledge from a later
+                    # engine timer, after the original console flush. Delimit
+                    # that buffered line without resampling, renewing its UTC
+                    # or extending the existing acknowledgement deadline.
+                    if(-not $Token.IsCancellationRequested -and $stopwatch.Elapsed.TotalMilliseconds-$lastViewFlush -ge 50){
+                        Send "System.LogAlways('[MineComeGameplayViewFlush] $run')"
+                        $lastViewFlush=$stopwatch.Elapsed.TotalMilliseconds
+                    }
+                    Start-Sleep -Milliseconds 5
                 }while($stopwatch.Elapsed.TotalMilliseconds -lt $until -and -not $Token.IsCancellationRequested)
                 if($requestView -and -not $Token.IsCancellationRequested){throw 'Native gameplay camera acknowledgement expired.'}
                 Publish;Start-Sleep -Milliseconds 10
@@ -236,6 +250,16 @@ function Get-GameplayMovementWorker {
                     Start-Sleep -Milliseconds 10
                 }while($stopwatch.Elapsed.TotalMilliseconds -lt $until)
                 if(-not $terminal -and -not $failure){$failure='Native gameplay terminal acknowledgement missing.'}
+                if($terminal -and -not $failure){
+                    if($terminal.result -cne 'explicit_stop' -or $terminal.active -isnot [bool] -or $terminal.active){$failure='Native gameplay cleanup acknowledgement differs: '+[string]$terminal.result}
+                    elseif($WorldBlocks){
+                        foreach($field in @('camera_override_changed','camera_restored','body_visible_baseline_owned','body_restore_dispatched','body_hidden')){
+                            if(-not $terminal.PSObject.Properties[$field] -or $terminal.$field -isnot [bool]){$failure='Native gameplay camera/body cleanup proof missing.';break}
+                        }
+                        if(-not $failure -and $terminal.camera_override_changed -and -not $terminal.camera_restored){$failure='Native gameplay camera cleanup incomplete.'}
+                        if(-not $failure -and $terminal.body_visible_baseline_owned -and (-not $terminal.body_restore_dispatched -or $terminal.body_hidden)){$failure='Native gameplay body cleanup incomplete.'}
+                    }
+                }
                 if($blocksStarted -and -not (Get-GameplayBlocksHostState $BlocksState).CleanupComplete -and -not $failure){$failure='Native block cleanup incomplete.'}
                 if($terrainStarted -and -not (Get-GameplayTerrainHostState $TerrainState).CleanupComplete -and -not $failure){$failure='Native terrain cleanup incomplete.'}
             }catch{if(-not $failure){$failure=$_.Exception.Message}}}

@@ -35,7 +35,7 @@
     {
       "path": "minecome-hud/addons/MineComeHudCompositor.addon64",
       "bytes": 414208,
-      "sha256": "a7ee1019bb43e13152251d6790423ec99d7400127889fbea297989fe9e0b5b80"
+      "sha256": "4ae823f4fcf1076de33210b806a148223fbfdebff102fabb477f70d3f8fe6ed0"
     },
     {
       "path": "minecome-hud/shaders/MineComeHud.fx",

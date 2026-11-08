@@ -9,14 +9,22 @@ local function near(a,b) assert(math.abs(a-b)<1e-8) end
 local function copy(v) return {x=v.x,y=v.y,z=v.z} end
 local function test(name,fn) local ok,e=pcall(fn);if not ok then error(name..': '..tostring(e),0) end;passed=passed+1;print('PASS '..name) end
 local function fixture()
- local f={ms=0,timers={},next=0,sets=0,resets=0,logs={},calls=0,position={x=120,y=2040,z=56},camera={x=120,y=2040,z=57.6},forward={x=0,y=1,z=0},up={x=0,y=0,z=1},velocity={x=0,y=0,z=0}}
+ local f={ms=0,timers={},next=0,sets=0,resets=0,logs={},calls=0,draws={},bodyVisible=true,position={x=120,y=2040,z=56},camera={x=120,y=2040,z=57.6},forward={x=0,y=1,z=0},up={x=0,y=0,z=1},velocity={x=0,y=0,z=0}}
  local retained={untouched=true};MineCome={_block_sink=retained};player={id=io.stdout};f.entity=player
  local function forbidden() error('player/input/physics write invoked') end
  function player:GetWorldPos() eq(self,f.entity);f.calls=f.calls+1;return f.position end
  function player:GetVelocity() return f.velocity end
  player.SetWorldPos=forbidden
+ function player:IsHidden() return false end
+ function player:IsSlotValid(slot) eq(slot,0);return true end
+ function player:IsSlotCharacter(slot) eq(slot,0);return true end
+ function player:DrawSlot(slot,enabled)
+  eq(self,f.entity);eq(slot,0);assert(enabled==0 or enabled==1);f.draws[#f.draws+1]=enabled;f.bodyVisible=enabled==1
+  if f.drawFailures and f.drawFailures[#f.draws] then error('draw call failed after partial write') end
+ end
  player.actor={GetLinkedEntity=function()return nil end,IsDead=function()return false end,IsUnconscious=function()return false end,
-  GetHeadDir=function()return {x=0,y=1,z=0} end,GetHeadPos=function()return {x=120,y=2040,z=57.6} end,PlayerSetViewAngles=forbidden}
+  GetAngles=function()return f.actorAngles or {x=0,y=0,z=0} end,GetViewAngleOffset=function()return {x=0,y=0,z=0} end,
+  GetHeadDir=function()return f.headDirection or f.normalForward or {x=0,y=1,z=0} end,GetHeadPos=function()return f.headPosition or f.normalCamera or {x=120,y=2040,z=57.6} end,PlayerSetViewAngles=forbidden}
  player.player={IsSitting=function()return false end,IsLaying=function()return false end};player.human={IsMounted=function()return false end}
  Physics={RayWorldIntersection=forbidden}
  System={GetCurrTime=function()return f.ms/1000 end,GetViewCameraPos=function()return f.camera end,GetViewCameraDir=function()return f.forward end,GetViewCameraUpDir=function()return f.up end,GetViewCameraFov=function()return 1.2 end,
@@ -30,7 +38,7 @@ local function fixture()
  end,ResetToNormalCamera=function()
   f.resets=f.resets+1
   if f.failReset or (f.resetFailures and f.resets<=f.resetFailures) then error('reset unavailable') end
-  if not f.ignoreReset then f.camera=copy(f.savedCamera);f.forward=copy(f.savedForward);f.up=copy(f.savedUp) end
+  if not f.ignoreReset then f.camera=copy(f.normalCamera or f.savedCamera);f.forward=copy(f.normalForward or f.savedForward);f.up=copy(f.normalUp or f.savedUp) end
  end}
  Script={SetTimerForFunction=function(ms,name,data,update)
   eq(update,true);f.next=f.next+1
@@ -143,5 +151,115 @@ test('reload and stale callbacks cannot duplicate camera writes or resets',funct
  local f=fixture();eq(f:begin(),true);local old=f.timers[4];dofile(MINECOME_MODULE_PATH);f:advance(500);f:terminal('restored')
  _G[old.name](old.data);eq(f.sets,1);eq(f.resets,1)
  eq(f:begin(),true);_G[old.name](old.data);f:advance(500);eq(f.sets,2);eq(f.resets,2);f:terminal('restored')
+end)
+test('look observation preserves bounds and does not cycle the camera',function()
+ local f=fixture();eq(MineCome.BeginPerspectiveLookProbe(RUN,'back',.25,1200,'observe'),true)
+ f:advance(600);eq(f.sets,1);eq(f.resets,0);assert(MineCome._perspective_probe.active.look_samples>=5)
+ f:advance(800);eq(f.sets,1);eq(f.resets,1);f:terminal('restored')
+end)
+test('look bounds never widen original one-second diagnostic entry',function()
+ local f=fixture();eq(f:begin('back',.25,1200),false)
+ for _,duration in ipairs({99,15001,200.5,0/0,math.huge}) do eq(MineCome.BeginPerspectiveLookProbe(RUN,'back',.25,duration,'observe'),false) end
+ for _,strategy in ipairs({'','follow','RESAMPLE',3}) do eq(MineCome.BeginPerspectiveLookProbe(RUN,'back',.25,1000,strategy),false) end
+ eq(f.sets,0);eq(next(f.timers),nil)
+end)
+test('look observations include independent actor angles without using them',function()
+ local f=fixture();eq(MineCome.BeginPerspectiveLookProbe(RUN,'back',.25,700,'observe'),true)
+ f:advance(60);f.actorAngles={x=.4,y=0,z=.2};f:advance(100)
+ local line=f.logs[#f.logs];assert(line:find('"actor_angles":{"x":0.40000000000000002',1,true));near(f.forward.z,0)
+ f:advance(800);f:terminal('restored')
+end)
+test('same-callback resample follows simulated independent normal yaw and pitch',function()
+ local f=fixture();eq(MineCome.BeginPerspectiveLookProbe(RUN,'back',.25,700,'resample'),true)
+ f:advance(60);f.normalForward={x=.6,y=0,z=.8};f.normalUp={x=-.8,y=0,z=.6}
+ f:advance(100);local p=MineCome._perspective_probe.active;eq(p.normal_sample_immediate,true);eq(p.resample_resets,1);eq(p.resample_writes,1)
+ near(f.forward.x,.6);near(f.forward.z,.8);near(f.camera.x,119.85);near(f.camera.z,57.4);near(f.position.x,120)
+ f:advance(800);local line=f:terminal('restored');assert(line:find('"normal_view_position_restored":true,"original_view_basis_restored":false',1,true))
+end)
+test('same-callback reset without immediate normal readback retains prior target',function()
+ local f=fixture();eq(MineCome.BeginPerspectiveLookProbe(RUN,'back',.25,700,'resample'),true)
+ f:advance(60);f.ignoreReset=true;f:advance(100);local p=MineCome._perspective_probe.active
+ eq(p.normal_sample_immediate,false);eq(p.resample_writes,1);near(f.camera.y,2039.75)
+ f:advance(800);f:terminal('restore_readback_failed')
+end)
+test('resample release failure falls through bounded final cleanup',function()
+ local f=fixture();eq(MineCome.BeginPerspectiveLookProbe(RUN,'back',.25,700,'resample'),true)
+ f:advance(60);f.resetFailures=1;f:advance(200);eq(f.resets,2);eq(f.sets,1);f:terminal('restored')
+end)
+test('resample write failure resets again after possible partial change',function()
+ local f=fixture();eq(MineCome.BeginPerspectiveLookProbe(RUN,'back',.25,700,'resample'),true)
+ f:advance(60);f.throwSet=true;f:advance(200);eq(f.resets,2);eq(f.sets,2);f:terminal('restored')
+end)
+test('look timer failure cancels bounded ownership',function()
+ local f=fixture();eq(MineCome.BeginPerspectiveLookProbe(RUN,'back',.25,700,'observe'),true)
+ f.failTimer='MineCome_PerspectiveProbeLook';f:advance(300);eq(f.resets,1);f:terminal('restored')
+end)
+test('look cancellation does not schedule a new sample after cleanup',function()
+ local f=fixture();eq(MineCome.BeginPerspectiveLookProbe(RUN,'front',.25,15000,'resample'),true)
+ f:advance(200);eq(MineCome.EndPerspectiveProbe(RUN),true);f:advance(20000);f:terminal('restored');eq(f.sets,2);eq(f.resets,2)
+end)
+test('look restoration follows current native head after natural eye animation',function()
+ local f=fixture();eq(MineCome.BeginPerspectiveLookProbe(RUN,'back',.25,700,'observe'),true)
+ f:advance(60);f.normalCamera={x=120,y=2040.071,z=57.6};f.normalForward={x=.6,y=0,z=.8};f.normalUp={x=-.8,y=0,z=.6}
+ f:advance(800);local line=f:terminal('restored');assert(line:find('"normal_view_position_restored":true,"original_view_basis_restored":false',1,true))
+ near(f.position.y,2040);eq(f.sets,1);eq(f.resets,1)
+end)
+test('look restoration requires current head getters even when original view matches',function()
+ for _,key in ipairs({'GetHeadPos','GetHeadDir'}) do
+  local f=fixture();eq(MineCome.BeginPerspectiveLookProbe(RUN,'back',.25,700,'observe'),true)
+  f:advance(60);player.actor[key]=nil;f:advance(800);local line=f:terminal('restore_readback_failed')
+  assert(line:find('"normal_view_position_restored":false,"original_view_basis_restored":true',1,true))
+ end
+end)
+test('look restoration rejects mismatched eye direction and remote head',function()
+ local mutations={
+  function(f) f.headPosition={x=120.051,y=2040,z=57.6} end,
+  function(f) f.headDirection={x=.03,y=math.sqrt(1-.03*.03),z=0} end,
+  function(f) f.normalCamera={x=120,y=2040,z=59.01} end,
+  function(f) f.headPosition={x=0/0,y=2040,z=57.6} end,
+ }
+ for _,mutate in ipairs(mutations) do
+  local f=fixture();eq(MineCome.BeginPerspectiveLookProbe(RUN,'back',.25,700,'observe'),true)
+  f:advance(60);mutate(f);f:advance(800);f:terminal('restore_readback_failed');eq(f.resets,1)
+ end
+end)
+test('static restoration still rejects eye motion even when it matches current head',function()
+ local f=fixture();eq(f:begin(),true);f:advance(60);f.normalCamera={x=120,y=2040.071,z=57.6}
+ f:advance(500);f:terminal('restore_readback_failed')
+end)
+test('body experiment is optional and does not write ordinary camera probes',function()
+ local f=fixture();eq(f:begin(),true);f:advance(500);f:terminal('restored');eq(#f.draws,0)
+ f=fixture();eq(MineCome.BeginPerspectiveLookProbe(RUN,'back',.25,700,'observe'),true);f:advance(800);f:terminal('restored');eq(#f.draws,0)
+ for _,bad in ipairs({1,'true',{},0}) do f=fixture();eq(MineCome.BeginPerspectiveLookProbe(RUN,'back',.25,700,'observe',bad),false);eq(f.sets,0);eq(#f.draws,0) end
+end)
+test('body experiment establishes visible baseline hides and restores slot zero',function()
+ local f=fixture();eq(MineCome.BeginPerspectiveLookProbe(RUN,'back',.25,700,'observe',true),true);f:advance(60)
+ eq(#f.draws,2);eq(f.draws[1],1);eq(f.draws[2],0);eq(f.bodyVisible,false);near(f.position.y,2040)
+ f:advance(800);local line=f:terminal('restored');eq(#f.draws,3);eq(f.draws[3],1);eq(f.bodyVisible,true)
+ assert(line:find('"body_baseline_succeeded":true,"body_hide_succeeded":true,"body_restore_succeeded":true',1,true));assert(line:find('"body_visibility_readback_verified":false',1,true))
+end)
+test('body experiment refuses missing invalid or hidden player body before writes',function()
+ local changes={function()player.DrawSlot=nil end,function()player.IsSlotValid=function()return false end end,
+  function()player.IsSlotCharacter=function()return false end end,function()player.IsHidden=function()return true end end,
+  function()player.IsSlotValid=function()return nil end end}
+ for _,change in ipairs(changes) do local f=fixture();change();eq(MineCome.BeginPerspectiveLookProbe(RUN,'back',.25,700,'observe',true),false);eq(#f.draws,0);eq(f.sets,0) end
+end)
+test('body partial hide failure still restores visible baseline and camera',function()
+ local f=fixture();f.drawFailures={[2]=true};eq(MineCome.BeginPerspectiveLookProbe(RUN,'back',.25,700,'observe',true),true)
+ f:advance(100);f:terminal('restored');eq(f.bodyVisible,true);eq(#f.draws,3);eq(f.resets,1);eq(MineCome._perspective_probe.last.body_hide_succeeded,false)
+end)
+test('body restore retries independently without duplicating camera reset',function()
+ local f=fixture();f.drawFailures={[3]=true,[4]=true};eq(MineCome.BeginPerspectiveLookProbe(RUN,'back',.25,700,'observe',true),true)
+ f:advance(1000);f:terminal('restored');eq(#f.draws,5);eq(f.resets,1);eq(f.bodyVisible,true)
+end)
+test('body restore permanent failure remains explicit and bounded',function()
+ local f=fixture();f.drawFailures={[3]=true,[4]=true,[5]=true};eq(MineCome.BeginPerspectiveLookProbe(RUN,'back',.25,700,'observe',true),true)
+ f:advance(1000);f:terminal('body_restore_failed');eq(#f.draws,5);eq(f.resets,1)
+end)
+test('body cleanup never draws on a replacement player or replaced binding',function()
+ for _,replacement in ipairs({'entity','method'}) do local f=fixture();eq(MineCome.BeginPerspectiveLookProbe(RUN,'back',.25,700,'observe',true),true);f:advance(60)
+  if replacement=='entity' then player={id=io.stderr} else player.DrawSlot=function()error('replacement must not be called')end end
+  f:advance(1000);f:terminal('body_restore_failed');eq(#f.draws,2);eq(f.resets,1)
+ end
 end)
 print('LUA_PERSPECTIVE_PROBE_TEST_PASS cases='..passed)

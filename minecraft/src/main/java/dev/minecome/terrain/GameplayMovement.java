@@ -155,6 +155,7 @@ public final class GameplayMovement {
         var j=new JsonObject();j.addProperty("schema",1);j.addProperty("kind","minecome_gameplay_pose_v1");j.addProperty("run",identity.run());j.addProperty("world_id",save.id().toString());
         j.addProperty("target_pid",identity.targetPid());j.addProperty("target_start_filetime",Long.toUnsignedString(identity.targetStart()));j.addProperty("patch_run",surface.run());j.addProperty("patch_sha256",surface.sha256());
         j.addProperty("seq",o.seq());j.addProperty("utc_ms",o.utc());j.addProperty("source_ms",(o.at()-born)/1_000_000);
+        if(Boolean.getBoolean("minecome.gameplayWorldBlocks"))j.addProperty("perspective_request",dev.minecome.hud.GameplaySession.requestedPerspective());
         var p=new JsonObject();p.addProperty("x",surface.centerX()+o.motion().x());p.addProperty("y",surface.centerY()-o.motion().z());p.addProperty("z",surface.centerZ()+o.motion().y()-GroundPatch.ANCHOR_Y);j.add("position",p);files.pose(j);
     }
     private Observation fresh(long now){var o=observation.get();return o!=null&&o.world()==serverWorld&&o.player()==serverPlayer&&now>=o.at()&&now-o.at()<=250_000_000L?o:null;}

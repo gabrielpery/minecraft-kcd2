@@ -94,14 +94,15 @@ public final class GameplayWorldRenderer {
             vertices.draw();
             BlockPos outlined=null;
             if(hover!=null&&hover.getType()==HitResult.Type.BLOCK&&client.currentScreen==null&&!client.options.hudHidden&&
-                client.options.getPerspective().isFirstPerson()&&!MinecraftClient.isFabulousGraphicsOrBetter()){
+                !MinecraftClient.isFabulousGraphicsOrBetter()){
                 var pos=hover.getBlockPos();var state=blocks.get(pos);
                 if(state!=null&&state.getRenderType()==BlockRenderType.MODEL&&client.world.isChunkLoaded(pos)&&
                     client.world.getBlockState(pos)==state&&GameplayBlocksPalette.supportsState(GameplayBlocks.stateName(state))){
                     var shape=state.getOutlineShape(client.world,pos,ShapeContext.of(client.player));
                     if(!shape.isEmpty()){
                         // Same camera and depth buffer as the owned models above. This
-                        // receives the controller's admitted hit, never an independent ray.
+                        // receives the controller's admitted eye hit in all perspectives,
+                        // never an independent ray from the displaced rendering camera.
                         // The vanilla line layer supplies scaled width, view-offset and LEQUAL.
                         drawOutline(matrices,vertices.getBuffer(RenderLayer.getLines()),shape,
                             pos.getX()-view.origin().x,pos.getY()-view.origin().y,pos.getZ()-view.origin().z);

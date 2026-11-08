@@ -8,6 +8,12 @@ import net.minecraft.util.math.Vec3d;
 public final class GameplayPerspective {
     private GameplayPerspective() {}
 
+    /** Native schema3 is an acknowledged view, not a local F5 prediction. */
+    public static Perspective acknowledged(int mode) {
+        return switch(mode){case 0->Perspective.FIRST_PERSON;case 1->Perspective.THIRD_PERSON_BACK;case 2->Perspective.THIRD_PERSON_FRONT;
+            default->throw new IllegalArgumentException("Unknown native perspective "+mode);};
+    }
+
     public static void select(MinecraftClient client, Perspective perspective) {
         if (!client.isOnThread()) throw new IllegalStateException("Perspective must change on the client thread");
         var previous = client.options.getPerspective();

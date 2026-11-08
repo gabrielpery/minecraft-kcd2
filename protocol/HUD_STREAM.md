@@ -126,3 +126,40 @@ Waiting and closed-before-first-frame format 2 headers keep bytes 128..255 zero.
 Closure after a frame repeats its complete camera and lens fields, with only
 state changed; its old capture timestamp still does not refresh the channel.
 Changing format, dimensions or immutable identity cannot renew or reconnect it.
+
+### Gameplay pose and camera snapshots
+
+The sustained host worker exchanges bounded, atomically published JSON files
+alongside the image stream. `gameplay-pose.json` keeps schema 1 and kind
+`minecome_gameplay_pose_v1`: `run`, `world_id`, `target_pid`, string
+`target_start_filetime`, `patch_run`, `patch_sha256`, `seq`, `utc_ms`, `source_ms`
+and native-coordinate feet `position`. WorldBlocks additionally **requires**
+numeric `perspective_request` 0/1/2 (first/back/front); legacy poses reject this
+extra field. Identity, exact keys, finite bounds, monotonic sequence/source time
+and the 250 ms freshness limit remain enforced. A duplicate or stale pose cannot
+renew a camera request. F5 changes the request, not the acknowledged view.
+
+WorldBlocks publishes `gameplay-aim.json` with schema 3 and kind
+`minecome_gameplay_aim_v3`. It repeats the run/world/patch/target identity, `seq`
+and original capture `utc_ms`, then carries:
+
+| Fields | Meaning |
+|---|---|
+| `origin`, `direction` | Player-eye interaction ray, independent of camera displacement |
+| `range`, `known`, `distance`, `terrain_hit` | Native obstruction result; range remains at most 4.5 |
+| `camera_origin`, `camera_direction`, `camera_up`, `vertical_fov` | Actual native render camera and vertical FOV in radians |
+| `perspective` | Native acknowledgement: 0 first person, 1 back, 2 front |
+
+The guest admits rendering and interaction together from one fresh sample.
+Block reach and native occlusion use the eye ray; world/Steve rendering and format 2
+camera metadata use the render camera. Displacement therefore does not extend
+reach. Exact keys/types, identity, sequence, unit/orthogonal basis and FOV are
+validated. Camera-to-eye separation is at most 4 metres; perspective 0 also
+requires matching origins within 0.1 metres and aligned directions. Aim schema 1
+remains the legacy ray format; schema 2 is accepted as first-person view data,
+but cannot acknowledge third person. These file schemas do not change the image
+mapping layout or input ABI. Third-person selection also checks the segment from
+the render camera to the eye-ray hit against owned blocks' actual outline shapes.
+This rejects a hidden target without extending eye reach or treating slab/fence
+gaps as full cubes. It does not yet move the orbit camera around Minecraft blocks.
+Native acceptance and remaining limits are recorded in `docs/PROGRESS.md`.

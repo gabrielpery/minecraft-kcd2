@@ -848,8 +848,8 @@ void capture_keyboard(api::effect_runtime *runtime,RuntimeState &state,bool comp
     const auto peer=service->input_status.load(std::memory_order_acquire);
     if(!peer)return;
 #ifdef MINECOME_HUD_GAMEPLAY_CHAT
-    constexpr std::size_t ui_key_count=13;
-    constexpr std::array<std::uint32_t,20> keys{0x31,0x32,0x33,0x34,0x35,0x36,0x37,0x38,0x39,0x45,0x1b,0x54,0xbf,0x57,0x41,0x53,0x44,0x20,0x10,0x11};
+    constexpr auto ui_key_count=ui::gameplay_ui_key_count;
+    constexpr auto keys=ui::gameplay_capture_keys;
 #else
     constexpr std::size_t ui_key_count=11;
 #ifdef MINECOME_HUD_PHYSICAL_MOVEMENT
@@ -1221,7 +1221,8 @@ void capture_keyboard(api::effect_runtime *runtime,RuntimeState &state,bool comp
         const bool pulse=(ui_pulses&(1u<<i))!=0;
         const bool down=pulse||(held&(1u<<i))!=0;
         if(chat_owned)continue;
-        if(i>=11&&(peer->ack.screen!=0||!down))continue;
+        if(ui::world_one_shot(keys[i])&&(peer->ack.screen!=0||!down))continue;
+        if(ui::perspective_key(keys[i])&&!ui::perspective_allowed(state.format,peer->ack.screen))continue;
         if(!down&&!(state.chat_world_held&(1u<<i)))continue;
         if(state.transition&&down)continue;
 #else
@@ -1231,12 +1232,12 @@ void capture_keyboard(api::effect_runtime *runtime,RuntimeState &state,bool comp
 #ifdef MINECOME_HUD_LIVE_MOUSE
         const bool toggle=event.kind==ui::Kind::key_down&&(keys[i]==0x45||keys[i]==0x1b
 #ifdef MINECOME_HUD_GAMEPLAY_CHAT
-            ||i>=11
+            ||ui::chat_opener(keys[i])
 #endif
             );
         if(toggle){
 #ifdef MINECOME_HUD_GAMEPLAY_CHAT
-            if(i>=11){
+            if(ui::chat_opener(keys[i])){
                 for(std::size_t held_key=0;held_key<ui_key_count;++held_key)if(state.chat_world_held&(1u<<held_key)){
                     if(!queue_input(state,{utc,ui::Kind::key_up,keys[held_key],0,0,0})){close_keyboard(runtime,ui::CloseCause::mailbox_overflow);release_mouse(runtime,state);return;}
                 }
@@ -1252,19 +1253,19 @@ void capture_keyboard(api::effect_runtime *runtime,RuntimeState &state,bool comp
         }
         if(!queue_input(state,event)){close_keyboard(runtime,ui::CloseCause::mailbox_overflow);release_mouse(runtime,state);return;}
 #ifdef MINECOME_HUD_GAMEPLAY_CHAT
-        if(i<11&&!pulse){
+        if(!ui::world_one_shot(keys[i])&&!pulse){
             if(event.kind==ui::Kind::key_down)state.chat_world_held|=1u<<i;
             else state.chat_world_held&=~(1u<<i);
         }
-        // T and slash are one-shot screen requests. Pair the release now so a
-        // held opener cannot remain in Java's world-key state during chat.
-        if((i>=11||pulse)&&!queue_input(state,{utc,ui::Kind::key_up,keys[i],0,0,0})){
+        // Chat openers and F5 are one-shot requests. Pair their releases now;
+        // F5 never enters a screen handoff or leaves a held key in Java.
+        if((ui::world_one_shot(keys[i])||pulse)&&!queue_input(state,{utc,ui::Kind::key_up,keys[i],0,0,0})){
             close_keyboard(runtime,ui::CloseCause::mailbox_overflow);release_mouse(runtime,state);return;
         }
 #endif
         if(toggle){state.transition=true;state.transition_sequence=state.forwarded_events;
 #ifdef MINECOME_HUD_GAMEPLAY_CHAT
-            state.transition_screen=i>=11?2u:(keys[i]==0x45&&peer->ack.screen==0?1u:0u);
+            state.transition_screen=ui::chat_opener(keys[i])?2u:(keys[i]==0x45&&peer->ack.screen==0?1u:0u);
 #else
             state.transition_screen=keys[i]==0x45&&peer->ack.screen==0;
 #endif

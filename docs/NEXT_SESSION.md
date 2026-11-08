@@ -1,349 +1,108 @@
-# Resume checkpoint — 6 November 2026
+# Resume checkpoint — 8 November 2026
 
 ## Direction
 
-Deliver docs/PRODUCT.md in integrated feature batches. User prioritizes progress,
-automated tests and minimal manual checks. Preserve working controls and labs.
-Creative flight, first-person hands and a bounded non-stone building palette now
-work; do not repeat their completed acceptance sequences. Full block coverage,
-third-person Steve, complete host collision, Survival/NPC combat and Elytra remain
-required. The requested hovered-block wireframe now works and is verified.
+Deliver docs/PRODUCT.md in integrated feature batches. The user prioritizes
+playable progress, automated tests and minimal manual checks. Preserve working
+HUD/inventory, movement, commands, Creative flight, hands, block shapes/outlines,
+placement on captured ground and native depth composition. Full block coverage,
+broader host collision, Survival/NPC combat and Elytra remain required.
 
-## Latest milestone: Steve body/equipment and reversible native camera
+## Latest milestone: native third-person Steve and aiming
 
-The WorldBlocks renderer now submits the real local Minecraft player through
-vanilla PlayerEntityRenderer, including armor, held items and limb animation.
-Classic wide Steve comes from the installed game asset, scoped to the owned
-WorldBlocks session (including hands and inventory). Body pixels share the
-world/depth plane; first-person hands keep their separate foreground pass.
+F5 now cycles requested first/back/front perspective in WorldBlocks. Input profile
+6 forwards a balanced edge only on the world screen; existing profiles stay
+unchanged. The request is written as perspective_request in gameplay-pose.json.
+Native schema 3 aim samples acknowledge the actual camera/perspective and carry
+separate player-eye and render-camera rays. Minecraft changes perspective only
+from that acknowledgement, keeping block reach tied to the eye.
 
-Automated actual-Minecraft acceptance PASS, 6,534ms, nine stages/18 PNGs: back/front
-views, diamond helmet/chestplate/sword through real chat, animated walking with
-matching client/server 1.2915m displacement and camera follow, inventory W
-suppression, and first-person body removal/hand return. Save/cleanup and perspective
-restoration pass. Evidence:
-`runtime/evidence/gameplay-player-20261106-190337-1d5bd07bc530461584c97e10925786ab/verification.json`.
-Run with `scripts/Test-GameplayPlayer.ps1`. The initial walking extension crossed
-the conservative fixture forecast boundary before its second image; the final
-shorter stride preserves all production limits. Source/assemble and existing
-252 block/37 movement checks also pass.
+Native camera following uses the observed player head direction, including mouse
+yaw/pitch. Scene raycasts clip the 2.5m orbit camera. Henry's character slot 0 is
+suppressed using DrawSlot while third person owns a visible baseline; no entity
+Hide/Invisible or physics changes. Cleanup resets camera and restores that known
+visible baseline. Host cleanup now requires explicit_stop and exact restoration
+proof; it cannot report success after a camera/body restore failure.
+An unresolved terminal camera/body restore obligation also blocks later Begin
+with prior_cleanup_incomplete; successful cleanup still permits a later session.
 
-**Native camera-only checks PASS:** exact tools executable, actual
-`CryAction.SetViewCamera(position,{dx,dy,dz})` / `ResetToNormalCamera()` from pinned
-`Scripts/Scripts/CommandExecutor/cube.xml:14–38`. Back 0.25m/300ms and front
-2.5m/1000ms readbacks matched; feet stayed fixed; camera, basis and FOV restored.
-`scripts/Test-KcdPerspectiveProbe.ps1` records the separate facts. Evidence:
-`runtime/evidence/perspective-probe-20261106-185859-488f32f8b87542a89f4f7334c3cc3e5d`
-and `runtime/evidence/perspective-probe-20261106-185915-1383a49e9aca47fab5e38ab2d389201b`.
-Lua lifecycle: 23 cases; runner mock: four scenarios; registered CTest PASS.
-Both games closed normally afterward; no renderer install/binary changes.
+First integrated native run PASS, via Computer Use without user testing:
+- F5 back view displayed Steve, Henry was hidden, and mouse yaw/pitch worked.
+- Actual oak-slab placement and aimed mining worked: one place/two breaks,
+  zero rejections. One magenta fixture-wall cell was mined during a CUA drag.
+- 243,069ms active, 11,072 player-render frames, 4,267 captures; normal save/exit.
+- Terminal explicit_stop, camera_restored=true, body_restore_dispatched=true,
+  body_hidden=false.
 
-**Next implementation:** connect native perspective authority, independent mouse
-look, and separate render-camera versus player-eye aim/reach. Current native
-sessions explicitly start first-person and restore the guest's prior setting;
-F5 is not forwarded. Native third-person Steve is NOT yet verified. Existing
-movement Lua rejects camera/player separation over 3m. `GetViewCameraDir` reads
-the overridden camera; observed `actor.GetHeadDir` is horizontal and has not been
-shown to track pitch/mouse while overridden. Do not substitute it blindly.
-Also handle camera collision and native player-body visibility. The renderer,
-equipment and vanilla walking fixture are complete; do not repeat them without
-a related change. Input key arrays currently use `i>=11` for chat openers, and
-HudVanillaUiAdapter's final key fallback is a hotbar index: adding F5 requires an
-explicit protocol/input path, not just extending the accepted-key list.
+Evidence: runtime/evidence/gameplay-kcd-20261108-115405-eeaa84ce4ed44b948e9fb9b8b0bb3e65
+(verification.json, gameplay-session.json, capture/stream-result.json), plus
+runtime/evidence/gameplay-movement-20261108-115432-4def0261e48b421fba1b1fdfbf78b8d8/verification.json.
+The isolated instance is runtime/gameplay/native-perspective-20261108/instance;
+its remaining wall is a disposable visual fixture, not the user's construction.
 
-## Previous milestone: connected fences/walls and actual shape walking
+Subsequent Computer Use observations verified front Steve, front mouse yaw/pitch,
+inventory mouse-look suppression and the complete F5 cycle 0→1→2→0 with the
+first-person hand/crosshair/hotbar restored. Returning to first person initially
+exposed a buffered-log ACK: native mode 0 arrived within 120ms, but its log tail was
+not flushed before the host deadline. The host now sends a flush-only marker
+every 50ms during the same 300ms wait. No timestamp renewal or deadline relaxation.
+The regression reproduces the old failure and passes; the final live return works.
 
-WorldBlocks now supports 22 dry fence/wall block IDs and 1,812 canonical connected
-states. Vanilla neighbor updates determine fence arms, wall heights and posts;
-the existing ownership ledger preserves those states across saves. Models,
-selection outlines and collision use their actual partial geometry. Gates,
-waterlogged states and other dynamic/transparent blocks remain outside this batch.
+Final evidence: runtime/evidence/gameplay-kcd-20261108-121206-2ea48f96077f4763a45f489df5863e51
+(native-perspective-observation.json, saved back/front/first-person-return aim
+receipts and host-movement.json). Normal shutdown, no session/host failure,
+camera/body restored. The agent stopped after 226,920ms, before the requested 240s;
+verification.json correctly fails that duration assertion. Preserve it; report
+perspective acceptance, not an overall 240s smoke PASS. The earlier front/inventory
+run with the original ACK failure remains at gameplay-kcd-20261108-120524-886c73ecc4424c8cab9a3bab93d87985.
 
-Automated actual-Minecraft connected-block placement, neighbor restoration,
-model/outline pixels and save/reopen PASS, with ten PNGs:
-`runtime/evidence/gameplay-connected-20261106-163159-b21f62d6c2cb471caeb7be0fcdedb051/verification.json`.
-The actual-Minecraft walking fixture also PASS (13,355ms): ordinary input ascends
-controller-placed bottom slabs and stair treads, inventory suppresses W while
-standing on the stair, S descends to ground, and fences block walking and a normal
-jump. Both client/server feet and support heights agree; no direct position,
-velocity or block-state writes are used. Normal save and collision cleanup pass:
-`runtime/evidence/gameplay-shape-walking-20261106-163317-1ae31f8068074029892b6de9bb052720/verification.json`.
-Offline assemble, 252 block checks and 37 movement checks PASS.
+## Next implementation and limits
 
-Native oak-fence placement/render/outline/mining PASS via Computer Use. Selected
-from Creative inventory, placed against the existing full block and mined; one
-place/one break, revisions 14→15→16, original six-cell fixture wall preserved.
-348,389ms active, 40/40 events acknowledged, 6,052 uploads/zero drops, normal save:
-`runtime/evidence/gameplay-kcd-20261106-164555-e4a786edaca946908957c3dfad578c43/native-fence-observation.json`.
-Native walls and walking over partial shapes remain unverified; standalone
-walking does not establish native camera-follow behavior.
+Add orbit-camera collision with owned Minecraft blocks. Target visibility is
+already protected using actual voxel shapes between render camera and eye-ray
+hit, including gaps, but the camera can still enter blocks. Native scenery
+clipping is implemented. Keep the eye-based 4.5m reach and authoritative selection.
+Then progress broader host collision and Minecraft combat/Elytra; avoid repeating
+completed small HUD/control tests.
 
-Known follow-up: place and break each needed a second automated click; two
-controller rejections lack cause history. Computer Use text entry delivered zero
-chat characters, so use Creative inventory for automated item selection. Earlier
-native attempt ended after 167s on mouse+keyboard 100ms lease expiry (mask 3072), with
-fresh frames/ACK and foreground. Specific stall unknown; not a Minecraft crash
-or the previously repaired BUSY revocation. Same-process rearm did not activate;
-fresh KCD succeeded. Preserve deadline guards; diagnose cause before changing.
-Both clients are closed, renderer restored using bundle
-`runtime/hud-connected-blocks-20261106`; receipt
-`runtime/evidence/gameplay-hud-restore-20261106-165259-d72ea05e646f47a7b285a45cb719f705`.
+Sustained native third-person walking is unverified. Brief CUA W presses produced
+zero movement events, so neither pass nor failure can be inferred. Actual-Minecraft
+player/walking acceptance passed separately (gameplay-player-20261108-114203-c9f9e299830e417bbfc3a41b776a8ca4,
+nine stages/18 PNGs, matching 1.2915m client/server movement). Batch native walking
+with the next larger acceptance instead of requiring user input now.
 
-**Continuing product priority:** native third-person camera integration for the
-now-implemented Steve/body/equipment renderer. Preserve completed controls, first-person hands,
-connected construction and depth integration. Batch native shape walking with
-broader collision acceptance when needed; do not repeat the completed inventory,
-mouse, controlled occlusion or connected-block fixture sequences. Broader host
-collision, full block coverage, Survival/NPC combat and Elytra remain required.
+Known lifecycle follow-up: after collision release during shutdown, the client can
+fall while the save/transport drains. The server/resume checkpoint retains the
+correct position and the next launch restores it. Consider keeping collision
+attached until disconnect, with a real stop/reopen fixture; do not mistake the
+terminal client-only Y change for third-person walking drift.
 
-## Previous milestone: separate world layers and native scene depth
+WorldBlocks/chat permits only one accepted arm per KCD process; a same-process
+retry correctly never armed. Restart KCD for this profile. Both games are closed
+and renderer baseline restored (gameplay-hud-restore-20261108-121748-7a1474e0745449b7adc531ebdfc6fd63).
+The fresh bundle is runtime/hud-perspective-20261108. No active test remains.
 
-**Completed native acceptance:** the mouse is reconnected and KCD initializes it.
-Controlled opaque native geometry correctly hides overlapping Minecraft blocks;
-blocks in front remain visible and removing the native occluder restores the
-wall. Hands/hotbar remain foreground. Automated Computer Use performed the checks;
-no user input was needed after reconnecting the physical mouse.
+## Checks and deployment
 
-Also fixed a live BUSY mouse-renewal race in the coordinated proxy/addon. A busy
-same-mode renewal now pauses forwarding without extending its proven deadline;
-fresh validation and neutral recovery are required. Busy release, transitions
-and expiry still fail closed. The new behavior requires the exact rebuilt proxy
-hash. Chat profile pins and build receipt are updated. Focused native tests pass.
-
-The final 180-second native run PASS: 183,181ms active, three actual BUSY renewals
-recovered, 18/18 input events acknowledged, inventory mouse clicks working before
-and after recovery, 3,141 uploads/zero drops and normal save/client exit. Receipt:
-`runtime/evidence/gameplay-kcd-20261106-161735-3ee10184931741c48178183b37841036/native-depth-mouse-observation.json`.
-This verifies controlled opaque geometry, not every foliage/NPC/material path.
-The six-cell wall was seeded into a disposable copied save by the new
-`scripts/Prepare-NativeDepthFixture.ps1`; original source hashes are unchanged.
-Do not use the fixture as evidence of player placement or walking.
-
-At completion of this prior depth milestone, both game clients were closed,
-the temporary native cube removed and all renderer bundles restored, most recently
-`runtime/evidence/gameplay-hud-restore-20261106-162248-762efa63dc7246fa816d3632eff9d9bb`.
-Current Chat proxy SHA starts `f0552e7cc1ea8f14`,
-addon `a7ee1019bb43e131`; exact hashes are in the profile.
-
-WorldBlocks now streams same-frame foreground RGBA, owned-world RGBA and raw
-float depth under one GPU fence (schema3 format2). Hands/HUD remain foreground;
-owned models/outlines can be compared against KCD depth. Captured-ground depth
-remains the fallback. Flat profiles preserve format1. Mapping capacity is
-24,883,456 bytes; logical viewport/input coordinates are unchanged.
-
-Native reader reflects actual KCD DXIL through the game's hash-pinned DXC DLL,
-resolves engine-remapped CB registers/spaces, and reads CPU-visible upload buffers
-through public ReShade callbacks. Depth use requires current camera/lens/viewport
-and exact GenericDepth original/backup association, behind the pinned proxy hash.
-No guessed engine offsets or near/far constants. See docs/PROGRESS.md and
-protocol/HUD_STREAM.md for implementation/guards.
-
-Automated Java assemble/456 checks, native transport/reflection and real FX
-compiler tests PASS. Actual Minecraft plane separation and paired model/outline/
-inventory/save fixtures PASS (151022-fba9233a74bb4c4fad770063eca892a9 and
-151408-6da5602ad31f4809969fd27774dc5585 under runtime/evidence).
-
-Earlier projection-only evidence and missing-device failures are preserved in
-docs/PROGRESS.md. Their empty scenes were not visible occlusion acceptance; the
-final combined native receipt above supersedes that pending milestone.
-
-## Previous milestone: captured-terrain depth
-
-WorldBlocks now writes the immutable collision surface's finite slabs into depth
-before owned models/outlines, using the same view/projection. No terrain colour,
-no native binary/protocol changes. Render state restores and hands clear depth
-afterwards. Sampled terrain occlusion only: objects/NPCs, unsampled ground and
-full underground volume remain unsupported.
-
-Actual-Minecraft fixture PASS first run, seven fixed-camera PNGs:
-`runtime/evidence/gameplay-depth-20261106-143024-ca082235a246425b9920b905365d7ccc/verification.json`.
-Near/partial/far controlled render-only boxes fully hide/partly hide/retain the
-same block+outline. No stray terrain colour; hand/HUD intact; real placement,
-mining and save cleanup. Offline build/181 checks and paired shape + cube/
-inventory/save regressions PASS (143130-7c1c9b72f46e46229fc1d089ed760d48,
-143230-3652ede30e8f4c3abad192d942d5f983).
-
-Native automated visual/input PASS, no manual check:
-`runtime/evidence/gameplay-kcd-20261106-144335-b4b5531b272a4935a9b5bf42a72a9ba2/terrain-depth-observation.json`.
-Saved buried slab hidden; hands/HUD visible. Real local chat removed the old
-slab, two right-click placements produced a visible double slab at (0,64,-4),
-and left-held camera drag mined it. Corrected above-ground placement confirmed;
-isolated top-face input, native stairs and walking over shapes remain unverified.
-192s, 3,405 publications, max gap79.7135ms, 11,180 depth frames, normal save/cleanup.
-
-First native attempt found aim-file ReplaceFile Win32 1175. Added it to the
-existing bounded 100ms sharing retry without renewing timestamps; 1176/1177 stay
-terminal. Host checks PASS10, combined worker PASS6 (also fixed its mock trajectory
-ending before frontier tracking started). No freshness/guard changes. Another
-attachment timed out while KCD was loading; wait for actual world readiness.
-
-The subsequent milestone above implements the separate planes and native-depth
-reader identified here. Initial pinned source refs and API inspection:
-`runtime/evidence/terrain-depth-source-20261106/host-depth-notes.txt`.
-
-## Latest milestone: slabs and stairs
-
-WorldBlocks now supports 30 dry slab and 28 stair types. Vanilla placement context
-handles same-cell slab merging, half/facing and stair corner updates. Placement
-collision and standing support use actual shapes instead of full-cell bounds.
-Owned neighbor changes persist through the existing server reconciliation.
-No native protocol/binary or GroundCollision mixin change. Legacy cubes preserved.
-
-Final paired actual-Minecraft run PASS:
-`runtime/evidence/gameplay-shapes-20261106-141741-e1dac345d69a466abfab38b4408ec546/verification.json`.
-Real chat/clicks: bottom slab, merge double, top slab, straight stair, outer-right
-corner, remove neighbor back to straight. Client/server shape volumes and support
-heights verified; 13 PNGs include raised-slab placement/mining above ground Y64.6
-with a ray checked against the fixture heightfield. Exact save/reopen and
-remaining mining/normal cleanup pass. Offline assemble and 181 checks pass.
-This verifies collision queries, not actual walking over the shapes. Waterlogged
-states, other partial blocks, transparency and dynamic behavior remain excluded.
-
-Native visual/input check placed and saved one bottom oak slab:
-`runtime/evidence/gameplay-kcd-20261106-135937-1280e71f3aff4dd190245e8e70b6a848/shapes-observation.json`.
-It exposed a buried-ground case: slab top63.5 below native hit63.614/captured
-ground63.689. Obstruction correctly suppressed selection. Ground placement now
-lifts an otherwise buried shape one grid cell, preserving vanilla half/facing
-and obstruction checks. Reject if the allowed native/sample height mismatch
-would still bury it after the lift. Full-height placement is unchanged. That
-initial session ended normally on focus loss, without a crash. The newer native
-check above confirms corrected placement/merge/mining; stairs remain unverified.
-
-## Latest milestone: hovered-block outline
-
-WorldBlocks draws the actual vanilla shape using the standard black/0.4 line
-layer. A read-only selection uses the same fresh admitted mining ray, server
-ownership, reach and native obstruction checks. One camera/ray publication feeds
-both model projection and targeting. UI/hidden HUD/third person/stale or blocked
-aim suppress the border. No native binary changes.
-
-Paired actual-Minecraft PASS (14 PNGs, saved four-type blocks and reopen/mining):
-`runtime/evidence/gameplay-world-blocks-20261106-133430-88e40d3dc1904018b8fe47635874d13b/verification.json`.
-Same-scene edge pixels verify hover, stale/blocked/miss suppression and return
-after inventory; crosshair/hands/HUD excluded. Offline build and 117 checks pass.
-Native automated visual/input PASS, no manual test:
-`runtime/evidence/gameplay-kcd-20261106-133803-f26019fca51046919afbbf81a40eb7dc/outline-observation.json`.
-Bricks placed on ground with visible border, inventory closed back to outline,
-aimed mining succeeded. Two placements/two breaks, no remaining blocks. 121s,
-2,284 outline frames, 2,143 publications, max gap 82.144ms, normal save/cleanup.
-Camera drag also mines: do not use it as look-away-only proof. No new walking/
-flight/host-depth claim. Preserve and move on; do not repeat acceptance.
-
-## Latest milestone: actual Minecraft world blocks
-
-`-WorldBlocks` implies Hands+Flight+Chat+Blocks+Movement; optional Explore. It uses
-the unchanged Chat native bundle. GameplayWorldRenderer draws confirmed owned
-states through vanilla BlockRenderManager with native camera origin, basis and
-vertical FOV. Aim schema2 carries those together; legacy stone paths retain v1.
-WorldBlocks disables the native stone mirror. Actual canonical states persist,
-including log axes and item BLOCK_STATE placement components. Opaque full cubes
-only: dirt, masonry, planks, logs, wool, concrete and mineral blocks. See palette.
-Capacity64, Y56..80, captured terrain coverage remain. Captured terrain now has
-the depth pass described above; full native scenery depth remains unfinished.
-
-Automated paired Minecraft PASS, nine PNGs:
-`runtime/evidence/gameplay-world-blocks-20261106-131410-b90d6a6eca0246ed8d1c5c426c107399/verification.json`.
-Real chat items, four vanilla placements (dirt/planks/bricks/log axis=x), inventory
-open/close, exact save/reopen, four breaks and normal cleanup. 117 unit checks,
-9 host checks, Lua movement lifecycle, compile and script parse also passed.
-
-Native visual/input proof, no manual testing:
-`runtime/evidence/gameplay-kcd-20261106-131615-e75830f6a946424d8b4b232771114561/world-blocks-observation.json`.
-Prior run fa1a258a27f748c3b0d7a75d9e7be0f9 placed dirt directly on captured ground
-and bricks on top. Its first inventory produced a380ms publication gap and the
-250ms guard stopped it; both blocks saved. Fixed by rendering real inventory
-before publication/READY in native WorldBlocks startup (12frames/750ms minimum,
-10s deadline), not by weakening freshness. Retry restored both, passed inventory
-and hand transitions, then single aimed clicks broke each. 104s,1830 publications,
-max publication gap78ms, normal save/cleanup. An intermediate attempt started
-before KCD finished loading and timed out pre-arm; no feature failure inferred.
-No walking/flight/frontier/host-depth claims from this stationary native check.
-
-## New working milestone: actual Minecraft hands
-
--Hands implies Flight+Chat+Blocks+Movement, optionally Explore. Prepare, Install,
-Start and Restore accept -Hands and reuse the unchanged Chat/Flight native bundle.
-The normal GameRenderer/HeldItemRenderer path renders actual player skin, selected
-item model and equip/swing animation. Transparent clear moved before hands; GUI
-preserves their pixels. GameplayHandRenderState supplies depth, lighting and
-renderer-dispatcher prerequisites skipped with WorldRenderer. Exact pinned
-1.21.1 bytecode was inspected under runtime/evidence/hands-source-20261106.
-Inventory/chat/third person hide hands; legacy HUD-only paths retain behavior.
-
-Actual Minecraft fixture PASS first run:
-`runtime/evidence/gameplay-hands-20261106-124151-40b756f8a9a74603aeb42bfa6702df55/verification.json`.
-Seven PNGs: empty, stone, diamond sword, swing, inventory, restored sword, empty.
-Real chat item commands, client/server agreement, actual hand-pass markers and
-transparent image regions; 92 readbacks, zero busy skips, normal save/cleanup.
-Runner scripts/Test-GameplayHands.ps1; hands-restored.png shows the full sword.
-Swing is scripted through vanilla animation/packet API, not native combat proof.
-
-Automated live KCD2 PASS:
-`runtime/evidence/gameplay-kcd-20261106-124608-4bcb28a9873c418fa72fbf184702f769/hands-observation.json`.
-Computer Use observed empty arm, typed /give minecomelab stone, observed held
-stone over terrain, chat/inventory hiding and item restoration after E close.
-282s session, 6524 actual hand passes, 1985 captured hand frames, 5010 native HUD
-uploads/zero drops, 40/40 input events acknowledged. Normal save and full cleanup.
-No walking/flight/frontier/native attack claims from this stationary visual check.
-The native log's visual_verified=false is intentionally separate from the
-explicit Computer Use observation receipt. No human testing was needed.
-
-Offline assemble, launcher PowerShell parse and diff checks passed. Focused
-independent review found no launcher/gating regression. No native rebuild needed.
-Hands inherit 20 FPS capture and aspect-fit, have no host depth occlusion, and use
-the saved player's skin rather than forcing Steve. Special translucent/glint item
-renderers and host lighting are unverified. These are documented limitations.
-
-## Next integrated feature
-
-Complete native-depth visual acceptance and expand host-world collision beyond
-the captured-heightfield pass; reuse real models, no per-block KCD assets. The
-world/overlay transport and live projection reader are now implemented above.
-Batch native checks rather than restarting a small manual acceptance loop.
-Player collision with owned blocks and placement directly on captured ground
-already exist. Arbitrary KCD walls/trees/objects are not captured as buildable
-surfaces, and KCD NPCs do not collide with these composited blocks. Native depth
-visual acceptance and third-person Steve remain unfinished.
-Elytra still needs faster/3D collision admission, not just raised speed limits.
-
-## Prior foundations — preserve, do not redo
-
-- Sustained saves and movement, Blocks, Explore, Chat and Flight: docs/GAMEPLAY_SESSION.md.
-- Flight double-Space, Space/Shift, WASD/Ctrl uses vanilla abilities; 18m feet
-  ceiling above original capture origin, captured heightfield/owned stone only.
-  Actual-Minecraft paired save/reopen PASS:
-  gameplay-flight-20261105-202840-dbf5c73f022645229d03dd00213087c4.
-  Native takeoff/ascent/hover/inventory/landing PASS:
-  gameplay-kcd-20261105-203016-5755cf27bbf549a3a956968e384a247a.
-- Falling checkpoint captures current server state/fall distance on cleanup.
-  Reopen respects vanilla 60-tick join invulnerability. PASS:
-  gameplay-flight-fall-20261105-203651-2903172718104064b8ae261d787ddf7d.
-- Native typed /gamemode survival and hearts/hunger PASS:
-  gameplay-kcd-20261105-201229-cf98ac724f5f4ce2a7b84e588b1f4bee.
-- Explore uses additive 8x8 tiles, max64/offsets[-8,8], fixed origin, persisted
-  coverage; both MC collision owners install before ACK. Paired MC PASS:
-  gameplay-terrain-20261105-191017-ee2686489a414ba49e3ab306887d2b3e.
-  Live capture PASS gameplay-terrain-capture-20261105-191937-77679be45b4d4619be9b208946fca580.
-  Native coupled frontier crossing remains unverified.
-- Console dispatch splits only between complete calls at 2000 encoded path chars,
-  including flush overhead; KCD truncates longer requests.
-- Native gameplay accepts one session per KCD process; bounded repeat labs differ.
-
-## Environment / deployment
+Java assemble passed: HUD input 353, gameplay wire 205, blocks 300, movement 37.
+Native input 397 and gameplay-chat 1,729 checks pass. Lua movement 26 cases and the
+other focused lifecycle suites pass.
+PowerShell 7 Test-GameplayMovementHost.ps1 passes 29 groups, including legacy
+transport, schema 3 eye/render separation, requests 0/1/2, buffered ACK and cleanup failures.
+Protocol/session documentation and launcher F5 text are updated. Exact native
+visual/input acceptance is limited to the observations recorded above.
 
 Branch codex/initial-import; public github.com/gabrielpery/minecraft-kcd2.
 JDK C:/Program Files/Java/jdk-24; offline Gradle cache minecraft/.gradle-user-home.
-Both games closed; WorldBlocks native world saved with no remaining owned blocks.
-The pre-fix buried slab was removed through a local Minecraft command. The new
-raised/merged slab was mined normally. Slot3 contains oak slab.
-Prior renderer restored:
-`runtime/evidence/gameplay-hud-restore-20261106-154102-5c8f3fda52834d8799461c59f58415ce`.
-Bundle runtime/hud-gameplay-native-depth-r3-20261106 is restored; do not reuse its receipt.
-Use a fresh BundleDirectory after changes. Assets/runtimes/saves stay out of Git.
-Exact official tools1.5.5 exe SHA256:
-a32d077e6b54e5cd0c5a5f3194f473779706ff266a711e4745ccdb598843340a.
-Native addon413696bytes SHA256:
-11f132a8502adee7a8a27cb27266aa727871c7f77904070ec301f10fcb3bc9ca.
-Native effect4696bytes SHA256:
-54e4bbd996d25e17fdb8e654fa7d0ffdbe453000ba557c3b635a8ed64ac59c81.
-Pinned config config/hud-gameplay-chat-profile-v5.json. Retail unsupported.
+Use the bundled PowerShell7 path from existing launcher scripts; no admin needed.
+Pinned config: config/hud-gameplay-chat-profile-v5.json. Addon SHA256 now
+4ae823f4fcf1076de33210b806a148223fbfdebff102fabb477f70d3f8fe6ed0 (414,208 bytes).
+Proxy remains f0552e7cc1ea8f1490e2953d562639843e13c478502ab40eb2c315beb1ecfeab.
+The exact official tools 1.5.5 guard remains unchanged; retail is unsupported.
+Use a fresh prepared bundle after changes; don't reuse an old install receipt.
+Assets, runtimes and saves stay out of Git. These sources and docs are delivered
+together; check git status/log before resuming rather than rebuilding old edits.
+
+Historical completed milestones and detailed evidence are in docs/PROGRESS.md;
+launch/profile instructions are in docs/GAMEPLAY_SESSION.md. Do not restart from
+old checkpoints that still described native F5 as unimplemented.

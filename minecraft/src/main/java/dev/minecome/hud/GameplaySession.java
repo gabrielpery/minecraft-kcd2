@@ -59,6 +59,8 @@ public final class GameplaySession {
     private GameplayMovementFixture movementFixture;
     private GameplayBlocks blocks;
     private GameplayAimReader aimReader;
+    private GameplayAimReader.RenderSample admittedNativeView; private volatile int desiredPerspective;
+    private boolean nativePerspectiveObserved; private int lastAcknowledgedPerspective;
     private GameplayBlocksFixture blocksFixture;
     private GameplayTerrainFixture terrainFixture;
     private GameplayChatFixture chatFixture;
@@ -140,6 +142,13 @@ public final class GameplaySession {
     public static boolean preserveBlockBreaking(){var s=active;var client=MinecraftClient.getInstance();return s!=null&&s.blocks!=null&&s.owns(client)&&s.blocks.needsVanillaBreakPreserved(client);}
     public static boolean suppressWorld(){var s=active;return s!=null&&(!s.standalone||s.handsMode)&&s.owns(MinecraftClient.getInstance());}
     public static boolean handsEnabled(){var s=active;return s!=null&&s.handsMode&&s.owns(MinecraftClient.getInstance());}
+    /** Request only; actual perspective changes after the matching native camera sample arrives. */
+    public static boolean requestPerspective(){
+        var s=active;var client=MinecraftClient.getInstance();
+        if(s==null||s.standalone||!s.worldBlocksMode||!client.isOnThread()||!s.owns(client)||client.currentScreen!=null)return false;
+        s.desiredPerspective=(s.desiredPerspective+1)%3;return true;
+    }
+    public static int requestedPerspective(){var s=active;return s==null?0:s.desiredPerspective;}
     public static boolean transparentFrame(){var s=active;return s!=null&&s.frameTransparent&&s.owns(MinecraftClient.getInstance());}
     public static Double virtualMouseX(){var s=active;var c=MinecraftClient.getInstance();return s!=null&&s.ui!=null&&s.owns(c)?s.ui.windowX(c):null;}
     public static Double virtualMouseY(){var s=active;var c=MinecraftClient.getInstance();return s!=null&&s.ui!=null&&s.owns(c)?s.ui.windowY(c):null;}
@@ -261,8 +270,19 @@ public final class GameplaySession {
                 if(!standalone)ui=new HudVanillaUiAdapter(client,true);
             }
             if(movement!=null)movement.afterTick(client,System.nanoTime());
+            // Admit once on the client thread, before click dispatch. Projection,
+            // player visibility and interaction use this same native observation.
+            if(aimReader!=null&&!stopping){
+                if(aimReader.failure()!=null)throw new IllegalStateException("Native aim: "+aimReader.failure());
+                if(worldBlocksMode){admittedNativeView=aimReader.worldSample();
+                    if(admittedNativeView!=null){
+                        GameplayPerspective.select(client,GameplayPerspective.acknowledged(admittedNativeView.perspective()));
+                        if(admittedNativeView.schema()==3){nativePerspectiveObserved=true;lastAcknowledgedPerspective=admittedNativeView.perspective();}
+                    }
+                    blocks.aim(admittedNativeView==null?null:admittedNativeView.aim());
+                }else blocks.aim(aimReader.current());
+            }
             if(!standalone)inputTick(client);
-            if(aimReader!=null&&!stopping){if(aimReader.failure()!=null)throw new IllegalStateException("Native aim: "+aimReader.failure());blocks.aim(aimReader.current());}
             if(blocksFixture!=null&&!stopping)blocksFixture.tick(client);
             if(terrainFixture!=null&&!stopping)terrainFixture.tick(client);
             if(chatFixture!=null&&!stopping)chatFixture.tick(client);
@@ -412,7 +432,7 @@ public final class GameplaySession {
         else if(s.shapeWalkingFixture!=null){view=s.shapeWalkingFixture.view();ray=s.shapeWalkingFixture.renderAim();}
         else if(s.shapesFixture!=null){view=s.shapesFixture.view();ray=s.shapesFixture.renderAim();}
         else if(s.worldBlocksFixture!=null){view=s.worldBlocksFixture.view();ray=s.worldBlocksFixture.renderAim();}
-        else{var sample=s.aimReader==null?null:s.aimReader.worldSample();if(sample==null)return null;view=sample.view();ray=sample.aim();}
+        else{var sample=s.admittedNativeView;if(sample==null||!sample.fresh()||s.aimReader==null||s.aimReader.failure()!=null)return null;view=sample.view();ray=sample.aim();}
         // A valid rendering view does not require a hover ray. Fixtures and
         // ordinary denied/missed targets deliberately omit the outline ray.
         if(view==null)return null;
@@ -510,7 +530,8 @@ public final class GameplaySession {
         e.addProperty("chat_enabled",chatMode);
         e.addProperty("flight_enabled",flightMode);
         e.addProperty("world_blocks_enabled",worldBlocksMode);e.addProperty("world_block_render_frames",worldBlockFrames);e.addProperty("world_outline_render_frames",worldOutlineFrames);e.addProperty("hands_enabled",handsMode);e.addProperty("hand_render_starts",handRenderStarts);e.addProperty("hand_render_passes",handRenderPasses);e.addProperty("hand_captured_frames",handCapturedFrames);
-        e.addProperty("player_render_frames",playerRenderFrames);e.addProperty("native_perspective_connected",false);
+        e.addProperty("player_render_frames",playerRenderFrames);e.addProperty("native_perspective_connected",nativePerspectiveObserved);
+        e.addProperty("native_perspective_requested",desiredPerspective);if(nativePerspectiveObserved)e.addProperty("native_perspective_last_acknowledged",lastAcknowledgedPerspective);
         e.addProperty("inventory_prepared_before_input",uiWarmupComplete);e.addProperty("inventory_preparation_frames",uiWarmupFrames);
         if(worldBlocksMode)e.addProperty("terrain_depth_render_frames",terrainDepthFrames);
         if(ui!=null&&chatMode)e.add("chat_input",ui.chatDiagnostics());

@@ -1,6 +1,84 @@
-# MineCome progress — 2026-11-06
+# MineCome progress — 2026-11-08
 
-## Steve body/equipment rendering and native camera capability
+## Native third-person Steve, mouse look and aimed building
+
+WorldBlocks now connects F5 perspective requests to the native camera and waits
+for its acknowledgement before changing Minecraft's view. Schema 3 keeps the
+player-eye interaction ray separate from the displaced render camera; reach,
+mining and placement retain their existing checks. Native camera clipping uses
+bounded scene raycasts. Henry's character slot 0 is hidden only while the
+third-person override owns a known visible baseline; cleanup restores that
+baseline without hiding the entity or disabling its physics.
+
+Automated Computer Use acceptance in KCD2 passed for the back view: F5 displayed
+Steve with Henry suppressed; mouse yaw/pitch worked; an oak slab was placed and
+mined through the eye-based targeting path. The 243,069ms session recorded one
+placement, two breaks, zero rejections, 11,072 player-render frames and 4,267
+captures, then saved and exited normally. The second break removed one cell of
+the disposable magenta wall during a Computer Use drag; this was an actual
+mining input, not unexplained block loss. Evidence:
+`runtime/evidence/gameplay-kcd-20261108-115405-eeaa84ce4ed44b948e9fb9b8b0bb3e65/verification.json`
+and its `gameplay-session.json` / `capture/stream-result.json`.
+
+Native cleanup returned `explicit_stop`, `camera_restored=true`,
+`body_restore_dispatched=true` and `body_hidden=false`:
+`runtime/evidence/gameplay-movement-20261108-115432-4def0261e48b421fba1b1fdfbf78b8d8/verification.json`.
+The host now rejects failed terminal results or missing/failed camera/body
+restoration proof, while retaining an earlier session failure as the primary
+reason. This is restoration of an owned visible baseline, not a getter-backed
+claim that arbitrary prior slot flags were recovered.
+If bounded restoration fails, a later native Begin refuses
+`prior_cleanup_incomplete` while the terminal state still owns the camera or body
+restore obligation. It cannot silently adopt a broken prior view as a baseline.
+
+Automated Java assemble and focused suites pass (353 HUD-input, 205 gameplay-wire,
+300 block and 37 movement checks). Native input/chat suites pass (397 and 1,729
+checks); Lua camera lifecycle tests and 26 movement cases pass. The host worker test passes
+29 groups, including legacy behavior, all three perspective requests, independent
+eye/render data and failed-cleanup cases. No input ABI or ReShade proxy change
+was needed; the rebuilt Chat addon hash is pinned in the existing profile.
+
+Third-person selection now rejects targets hidden by owned Minecraft geometry
+between the render camera and eye-ray hit. The shared hover/client/server check
+uses real voxel shapes, preserving slab/fence gaps and the 4.5m eye reach.
+It does not yet clip the orbit camera against owned Minecraft blocks.
+
+A subsequent native run verified front Steve, yaw/pitch and inventory mouse
+suppression, but returning to first person exposed a buffered-log ACK failure:
+`runtime/evidence/gameplay-kcd-20261108-120524-886c73ecc4424c8cab9a3bab93d87985/native-perspective-observation.json`.
+Native mode 0 was emitted within 120ms; the host missed its unterminated log tail.
+Flush-only requests during the existing 300ms wait now expose delayed receipts
+without resampling, renewing their timestamp or extending the deadline. The
+worker regression reproduced the failure and passes after the fix.
+
+The final native run observed the full F5 cycle 0→1→2→0. Fresh schema 3 receipts
+confirmed each requested mode, and the first-person hand, white crosshair and
+hotbar remained visible after return. It recorded 2,481 player-render frames,
+3,963 completed captures and no session/host failure; normal shutdown restored
+the camera and Henry's visible baseline. Evidence:
+`runtime/evidence/gameplay-kcd-20261108-121206-2ea48f96077f4763a45f489df5863e51/native-perspective-observation.json`
+and its saved `back-view-aim.json`, `front-view-aim.json`,
+`first-person-return-aim.json` and `host-movement.json`.
+The agent requested stop at 226,920ms after the visual check; the launcher's
+240,000ms duration assertion therefore failed. That original failure receipt is
+preserved. This is perspective-transition acceptance, not a passed 240s smoke.
+
+Sustained native third-person walking remains unverified: Computer Use's brief W
+taps recorded zero movement events. The separate actual-Minecraft player fixture
+passed nine stages/18 PNGs, including 1.2915m matching client/server walking:
+`runtime/evidence/gameplay-player-20261108-114203-c9f9e299830e417bbfc3a41b776a8ca4/verification.json`.
+Owned Minecraft blocks still do not clip the orbit camera. The WorldBlocks/chat
+addon permits one accepted arm per KCD process; a same-process retry did not arm
+and was stopped normally. Use a fresh KCD process for this profile.
+
+Both games are now closed and the renderer baseline was restored:
+`runtime/evidence/gameplay-hud-restore-20261108-121748-7a1474e0745449b7adc531ebdfc6fd63`.
+The disposable fixture instance and original failed receipts are retained locally.
+Broader host collision, full block coverage, Survival/NPC combat and Elytra remain
+unfinished. Prior feature evidence below remains valid; do not repeat completed
+acceptance sequences without a related change.
+
+## 6 November: Steve body/equipment rendering and native camera capability
 
 Implemented and compiled the real local-player renderer in WorldBlocks' separate
 world/depth layer. It uses vanilla pose interpolation, limb animation, armor and
@@ -28,11 +106,9 @@ and `runtime/evidence/perspective-probe-20261106-185915-1383a49e9aca47fab5e38ab2
 The new probe has 23 Lua lifecycle cases and four offline runner scenarios; its
 registered CTest passes. KCD was closed normally after restoration.
 
-This does **not** establish third-person Steve gameplay in KCD. Native F5 remains
-disabled pending independent mouse-look and render-camera/player-eye aim handling,
-camera collision and native body visibility. The existing native session remains
-first-person; its prior guest perspective is restored on exit. Both clients are
-closed and the previous renderer restoration remains intact.
+At this earlier checkpoint, native F5 and integrated third-person gameplay were
+still pending. The 8 November milestone above supersedes that limitation; these
+standalone/camera-only receipts retain their original narrower scope.
 
 ## Connected fences/walls and actual partial-shape walking
 

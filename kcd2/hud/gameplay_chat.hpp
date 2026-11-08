@@ -6,6 +6,16 @@ namespace minecome::hud::input {
 // Chat uses a distinct ACK screen; the frozen HUD schema still renders any
 // actual Minecraft screen as 1. No invented third texture screen is accepted.
 constexpr std::uint32_t chat_render_screen(std::uint32_t screen) noexcept { return screen==2?1:screen; }
+// Keep world UI controls before movement controls. Chat openers are identified
+// by their virtual keys, never by an index range that would swallow F5.
+inline constexpr std::size_t gameplay_ui_key_count=14;
+inline constexpr std::array<std::uint32_t,21> gameplay_capture_keys{
+    0x31,0x32,0x33,0x34,0x35,0x36,0x37,0x38,0x39,0x45,0x1b,0x54,0xbf,0x74,
+    0x57,0x41,0x53,0x44,0x20,0x10,0x11};
+constexpr bool chat_opener(std::uint32_t key) noexcept {return key==0x54||key==0xbf;}
+constexpr bool perspective_key(std::uint32_t key) noexcept {return key==0x74;}
+constexpr bool world_one_shot(std::uint32_t key) noexcept {return chat_opener(key)||perspective_key(key);}
+constexpr bool perspective_allowed(std::uint32_t format,std::uint32_t screen) noexcept {return format==2&&screen==0;}
 using ChatKeyState=std::array<std::uint8_t,256>;
 // ReShade v6.8.0 overwrites down 0x88 with released 0x08. A fresh release
 // between two continuously eligible up samples proves a missed short press.

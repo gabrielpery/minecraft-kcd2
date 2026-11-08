@@ -55,7 +55,8 @@ and chat suppression, landing and airborne save/reopen. An automated live KCD2
 check also passes native takeoff, ascent, hovering, inventory and landing with the
 HUD visible. Flight currently uses captured terrain and owned stone collision,
 with an 18m height ceiling above the original capture origin. Complete host
-collision, third-person Steve, cross-game combat and Elytra remain unfinished.
+collision, cross-game combat and Elytra remain unfinished. The WorldBlocks
+profile adds third-person Steve as described below.
 Bounded labs remain available.
 
 The [`-Hands` profile](docs/GAMEPLAY_SESSION.md#minecraft-hands-and-held-items)
@@ -64,15 +65,22 @@ rendering to the HUD stream. A real-Minecraft automated check captures empty han
 stone, sword, swing and inventory transitions with transparent world pixels and
 normal cleanup. An automated live KCD2 check also shows the arm and held stone,
 hides them in chat/inventory, and restores the stone after inventory closes.
-This uses the player's vanilla skin and item models; third-person Steve and NPC
-combat remain separate work.
+This profile uses the player's vanilla skin and item models; WorldBlocks adds
+Steve's full body. NPC combat remains separate work.
 
 The WorldBlocks renderer now also supports classic Steve's full body, armor and
 held items in its separate world/depth layer. Automated actual-Minecraft checks
 verify front/back views, equipment, walking animation, camera follow, inventory
 suppression and restoration of first-person hands.
-KCD2's bounded camera offset/reset checks pass, but native perspective controls,
-mouse-look alignment and third-person camera collision are not connected yet.
+In KCD2, **F5** now requests first person → back → front → first person;
+Minecraft follows the acknowledged native camera. Automated live checks pass
+visible Steve, back/front mouse look, inventory look suppression, placement,
+two mined blocks and the full F5 cycle back to first-person hands with the HUD
+still visible. Sustained native third-person walking remains unverified: the
+automated key taps recorded no movement events. Block reach stays anchored to
+the player's eye, and an owned-block visibility check rejects hidden targets.
+The camera clips against native scenery and Henry's body is hidden while Steve
+is shown; camera clipping against owned Minecraft blocks remains follow-up work.
 See [player rendering and perspective](docs/GAMEPLAY_SESSION.md#player-rendering-and-perspective).
 
 The [`-WorldBlocks` profile](docs/GAMEPLAY_SESSION.md#minecraft-world-blocks) adds
@@ -179,7 +187,8 @@ deviation during landing; it is not counted as a passing walking check.
 | Minecraft stone in KCD2 | Actual Minecraft-derived stone appears and disappears in the official KCD2 development world after vanilla placement/breaking. |
 | Hotbar and Creative inventory | Minecraft's real UI is composited inside KCD2. Physical slot selection, inventory opening/closing, clicks, dragging and scrolling have passed live tests. |
 | Creative flight | Native KCD2 takeoff, ascent, hover, inventory and landing pass an automated live check with the HUD visible. Actual-Minecraft fixtures also verify descent, horizontal/sprint flight and airborne save/reopen. Limited to captured terrain/owned stone collision and an 18m ceiling; no Elytra yet. |
-| First-person hands and held items | The `-Hands` profile renders the actual vanilla arm, selected item and swing animation in the transparent stream. Seven actual-Minecraft image checks pass. An automated live KCD2 check passes arm/held stone and chat/inventory hiding/restoration. No third-person character yet. |
+| First-person hands and held items | The `-Hands` profile renders the actual vanilla arm, selected item and swing animation in the transparent stream. Seven actual-Minecraft image checks pass. An automated live KCD2 check passes arm/held stone and chat/inventory hiding/restoration. |
+| Third-person Steve | WorldBlocks connects F5 to KCD2's acknowledged camera. Live checks pass Steve, back/front mouse look, inventory look suppression, placement/mining and the full return to first-person hands with the HUD visible. Sustained native third-person walking remains unverified; camera clipping against owned Minecraft blocks is not implemented yet. |
 | Additional world blocks | `-WorldBlocks` renders actual opaque Minecraft block models. A two-launch Minecraft fixture passes dirt/planks/bricks/oriented-log placement, model pixels, inventory, saved-state restoration and mining. Automated live KCD2 checks pass dirt/bricks placement, reopening, inventory and aimed removal; no host depth occlusion or unrestricted block support. |
 | Camera and block controls together | KCD camera look works outside inventory and stays still inside it. Right-click/place and left-click/break work in one fixed nearby cell during a bounded live session. |
 | Minecraft aiming | After fixing KCD's default stone rotation, a live right-click places on the original block's top face and the next two clicks break both blocks, with matching Minecraft/KCD records and user confirmation. The standalone actual-Minecraft lab passes 28 targeting/control scenarios with synthetic host rays, including hotbar changes while an action finishes. |
@@ -223,7 +232,7 @@ Live checks above use the **official KCD2 1.5.5 development build**. The native
 **retail 1.5.6 route remains blocked** by its verified address-library/loader
 prerequisites. A successful development-world test does not establish retail support.
 
-General block rendering, full host collision, Steve, cross-game survival/combat,
+Unrestricted block rendering, full host collision, cross-game survival/combat,
 Elytra and multiplayer remain unfinished. KCD's own HUD
 and health systems still exist; selective widget replacement and health-system
 integration are separate work. Sessions remain isolated, experimental single-player

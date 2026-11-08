@@ -49,15 +49,20 @@ final class HudVanillaUiAdapter {
             return;
         }
         if(event.kind()<=2){
-            int glfw=event.code()==0x1b?256:event.code();
+            int glfw=event.code()==0x1b?256:event.code()==0x74?294:event.code();
             if(screen==ownedChat && ownedChat!=null){if(event.kind()==2)keys.remove(glfw);return;}
             if(event.kind()==2){keys.remove(glfw);if(screen!=null)screen.keyReleased(glfw,0,0);return;}
             keys.add(glfw);
             if(commandsAllowed&&GameplayChatInput.opens(event.code())){if(screen==null){ownedChat=new OwnedChatScreen(event.code()==0xbf?"/":"");client.setScreen(ownedChat);chatOpenCalls++;}}
             else if(event.code()==0x45){if(screen==null)client.setScreen(new InventoryScreen(client.player));else closeInventory(screen);}
             else if(event.code()==0x1b){if(screen!=null)closeInventory(screen);}
+            // F5 requests host camera authority; it must not change the local
+            // perspective ahead of the matching native camera acknowledgement.
+            // Consume it in other profiles/screens instead of corrupting slot 67.
+            else if(event.code()==0x74){if(commandsAllowed&&screen==null)GameplaySession.requestPerspective();}
             else if(screen!=null)screen.keyPressed(glfw,0,0);
-            else client.player.getInventory().selectedSlot=event.code()-0x31;
+            else if(event.code()>=0x31&&event.code()<=0x39)client.player.getInventory().selectedSlot=event.code()-0x31;
+            else throw new IllegalArgumentException("Unexpected world UI key");
             return;
         }
         if(!mouseAllowed)throw new IllegalStateException("Live mouse forwarding is disabled");

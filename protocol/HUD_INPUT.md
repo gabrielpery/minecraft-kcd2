@@ -121,3 +121,21 @@ including the closed inventory: **KCD camera movement is intentionally frozen**.
 The target remains the verified nearby cell; this is not crosshair targeting.
 Gamepad input, normal mouse look, host physics and arbitrary block types remain
 outside this bounded check. The frozen mouse-only profile remains available.
+
+## Gameplay profile 6 perspective request
+
+The sustained Chat/WorldBlocks profile uses `MCHUDI06` and the same 40-byte
+records. It accepts F5 (`VK 0x74`) as kinds 1/2; profiles 1–5 reject it. The Chat
+addon dispatches one paired down/up only with layered frame format 2 and guest
+screen 0. Inventory/chat and screen transitions suppress it. A held F5 does not
+repeat, open chat, alter the selected slot or shift the movement-key mapping.
+The existing full-keyboard lease remains unchanged.
+
+On the owned Minecraft client thread, F5 cycles the **requested** perspective
+0 → 1 → 2 → 0 (first person, back, front). The request travels in the WorldBlocks
+pose file; the local Minecraft perspective changes only when a fresh native
+schema 3 aim/camera sample acknowledges its actual perspective. Rendering and
+interaction use that same admitted sample. See the
+[gameplay camera snapshots](HUD_STREAM.md#gameplay-pose-and-camera-snapshots).
+This path is implemented and covered by automated contracts; integrated native
+perspective/input acceptance is recorded in `docs/PROGRESS.md`.

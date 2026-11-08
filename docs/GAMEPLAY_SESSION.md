@@ -22,9 +22,10 @@ terrain tiles and persists the admitted coverage, using the same blocks bundle.
 The separate `-Chat` profile adds Minecraft's real chat editor and commands to
 walking and blocks; it can also be combined with `-Explore`.
 The additional `-Flight`, `-Hands` and `-WorldBlocks` profiles described below add
-Creative flight, first-person hands/items and a bounded palette of Minecraft
-models. Third-person Steve, unrestricted blocks, cross-game health/combat and
-Elytra remain unfinished. Existing bounded gameplay labs remain separate.
+Creative flight, first-person hands/items, a bounded palette of Minecraft models
+and native perspective control with Steve. Unrestricted blocks, cross-game
+health/combat and Elytra remain unfinished. Existing bounded gameplay labs remain
+separate.
 
 ## Run the standalone guest
 
@@ -342,7 +343,7 @@ This profile disables the older native stone-only mirror to avoid double renderi
 Looking at an owned block within reach draws Minecraft's black selection outline.
 The border follows the actual block outline shape and uses the same native ray,
 reach, ownership and obstruction checks as mining. Camera projection and target
-come from one sample. Inventory/chat, hidden HUD, third person, stale aim and a
+come from one sample. Inventory/chat, hidden HUD, stale aim and a
 closer native obstruction suppress it. It shares the models' depth buffer, but
 does not add KCD scenery depth to the transparent layer.
 
@@ -433,7 +434,8 @@ so the actual hands and HUD remain visible. The immutable surface updates with
 admitted terrain coverage. This is finite sampled-ground occlusion, not the
 native scene depth buffer. An unsampled ground area or native object can still
 be drawn behind a Minecraft block. Minecraft supplies model lighting; native
-lighting/shadows, unrestricted building and third-person Steve remain unfinished.
+lighting/shadows and unrestricted building remain unfinished. Steve uses this
+same world/depth layer in the perspective modes described below.
 
 The native shader can additionally compare world depth with ReShade's selected
 KCD2 depth buffer, leaving hands/UI untouched. It requires the exact executable
@@ -516,23 +518,75 @@ The automated check runs in a new isolated save:
 It exercises vanilla front/back cameras, armor and a held sword obtained through
 actual chat commands, third-person walking, inventory suppression and return to
 first person. Captures include separate world pixels and float-depth coverage.
-This is actual Minecraft verification, not integrated KCD third-person gameplay.
+This fixture verifies actual Minecraft rendering independently of the native
+integration check below.
 The passing run contains nine stages/18 PNGs, matching 1.2915m client/server
 walking, animated limbs and camera follow:
 `runtime/evidence/gameplay-player-20261106-190337-1d5bd07bc530461584c97e10925786ab/verification.json`.
 
-The native camera-only check uses the documented `CryAction.SetViewCamera` and
+The earlier native camera-only check used the documented `CryAction.SetViewCamera` and
 `CryAction.ResetToNormalCamera` pair behind the existing exact-tools guard.
 Back 0.25m/300ms and front 2.5m/1000ms probes passed camera readback, unchanged
 player feet and restoration. Their receipts are under
 `runtime/evidence/perspective-probe-20261106-185859-488f32f8b87542a89f4f7334c3cc3e5d`
 and `runtime/evidence/perspective-probe-20261106-185915-1383a49e9aca47fab5e38ab2d389201b`.
 
-Native sessions still start in first person and restore the guest's prior
-perspective afterward. F5 is not forwarded yet. Third-person integration must
-separate the displaced render camera from player-eye interaction reach, retain
-an independent mouse-look source, and handle camera collision/native player
-visibility. Moving the Minecraft model alone does not establish those behaviors.
+Native sessions start in first person and restore the guest's prior perspective
+afterward. The implemented WorldBlocks input path uses **F5** to request first
+person → back → front → first person while inventory/chat are closed. Minecraft
+changes perspective only after receiving the native camera acknowledgement;
+holding F5 does not repeat or change the selected hotbar slot.
+
+The WorldBlocks pose includes `perspective_request` 0/1/2. Aim schema 3 carries
+separate player-eye interaction and displaced render-camera data, admitted as one
+sample. Block reach remains measured from the eye while Steve, blocks and their
+depth use the actual camera. See the [snapshot contract](../protocol/HUD_STREAM.md#gameplay-pose-and-camera-snapshots).
+Native mouse look uses the player's independent head position/direction, so the
+displaced camera does not feed its own previous view back into aiming. The native
+camera follows that look and clips its 2.5m offset against physical KCD scenery.
+This clipping does not yet include owned Minecraft blocks. Block interactions
+retain eye-based reach while the body, blocks, outline and scene depth use the
+acknowledged render view.
+Selection additionally checks actual owned voxel shapes from the render camera
+to the eye-ray hit. A nearer visible block rejects a hidden target; slab and
+fence gaps remain usable. This visibility check does not extend reach or move
+the orbit camera around Minecraft blocks.
+
+While a third-person view is active, the bridge suppresses Henry's slot-0 body
+with the documented render-only `DrawSlot` binding. This owned WorldBlocks path
+explicitly establishes a visible slot-0 baseline and restores it on first-person
+return or session cleanup. It does not preserve arbitrary hidden slot flags set
+by another mod: no slot draw-flag getter is available. The player entity and its
+physics are not hidden or disabled. Camera release is checked against the current
+native head view; body draw restoration is recorded separately from visual
+acceptance.
+
+An automated live KCD2 back-view session passes visible Steve, native mouse yaw
+and pitch, one block placement, two mined blocks and clean camera/body
+restoration:
+`runtime/evidence/gameplay-kcd-20261108-115405-eeaa84ce4ed44b948e9fb9b8b0bb3e65`.
+The next native session observed front-view mouse look and inventory look
+suppression. Its first-person return reached native camera acknowledgement but
+exposed a delayed log-flush timeout; the host now flushes while waiting for that
+receipt. Evidence:
+`runtime/evidence/gameplay-kcd-20261108-120524-886c73ecc4424c8cab9a3bab93d87985`.
+
+The repaired native session completed first person → back → front → first
+person, with a fresh schema-3 acknowledgement of mode 0 and visible Minecraft
+hand, hotbar and crosshair afterward. It stopped normally with no host or guest
+failure and restored the native camera/body:
+`runtime/evidence/gameplay-kcd-20261108-121206-2ea48f96077f4763a45f489df5863e51`.
+It was manually stopped after those observations at 226.9 seconds. The launcher's
+verification failed only the requested 240-second duration assertion; the full
+duration smoke remains incomplete.
+Sustained native third-person walking remains unverified: Computer Use key taps
+recorded zero movement events and held ticks. Camera clipping against owned
+Minecraft blocks also remains pending; the target-visibility rejection above is
+implemented. Input, pose, camera admission and cleanup have automated
+contract/lifecycle coverage. These native checks are separate from the
+older static probes and standalone Steve fixture above. F5 applies only to
+WorldBlocks; legacy `-Hands` and flat-stream profiles keep their first-person
+behavior.
 
 ## Minecraft hands and held items
 
