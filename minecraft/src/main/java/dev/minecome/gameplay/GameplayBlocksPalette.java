@@ -2,7 +2,7 @@ package dev.minecome.gameplay;
 
 import java.util.*;
 
-/** Bounded world-rendered palette: solid cubes and dry slabs/stairs/fences/walls.
+/** Bounded world-rendered palette: solid cubes, crafting tables and dry slabs/stairs/fences/walls.
  * State names are canonical and validated without initializing Minecraft registries,
  * so saved ownership validation also runs in the offline protocol tests.
  */
@@ -25,7 +25,7 @@ public final class GameplayBlocksPalette {
                 "cut_sandstone","chiseled_sandstone","smooth_sandstone","red_sandstone","cut_red_sandstone",
                 "chiseled_red_sandstone","smooth_red_sandstone","iron_block","gold_block","diamond_block",
                 "emerald_block","lapis_block","coal_block","netherite_block","quartz_block",
-                "chiseled_quartz_block","smooth_quartz","obsidian"))plain.add("minecraft:"+name);
+                "chiseled_quartz_block","smooth_quartz","obsidian","crafting_table"))plain.add("minecraft:"+name);
         for(var wood:List.of("oak","spruce","birch","jungle","acacia","dark_oak","mangrove","cherry",
                 "bamboo","crimson","warped"))plain.add("minecraft:"+wood+"_planks");
         for(var color:List.of("white","orange","magenta","light_blue","yellow","lime","pink","gray",

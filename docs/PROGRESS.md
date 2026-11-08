@@ -1,5 +1,45 @@
 # MineCome progress — 2026-11-08
 
+## Vanilla inventory and crafting-table recipes
+
+The sustained WorldBlocks session now accepts the real 2×2 inventory crafting
+grid and server-opened 3×3 CraftingScreen. Crafting tables join the supported
+palette, render/collide/save as ordinary owned blocks, and open through the
+existing aimed right-click controller. Table use retains reach, obstruction,
+ownership and vanilla sneaking rules, takes precedence over food, and does not
+change the construction ledger. Mouse clicks route through the existing UI
+adapter; Minecraft owns recipes, slot synchronization and result consumption.
+Closing through E/Escape returns unused ingredients through the vanilla handler.
+Movement is suppressed while crafting. Other containers/furnaces/enchanting and
+recipe-search text/modifier shortcuts are not newly implemented or verified.
+
+Actual-Minecraft crafting/save/reopen PASS:
+`runtime/evidence/gameplay-crafting-20261108-185511-4a0d8c55afe64ef6b62f1a7fd1b2c3db/verification.json`.
+Using 34 actual UI click/release pairs, three logs became twelve planks, one table,
+four sticks and one wooden pickaxe. Production placement/right-click opened the
+table; a spare plank returned on closing. Reopening retained the placed table,
+pickaxe, three planks, two sticks and exact crafting statistics, then reopened
+the same table. Both launches saved and closed normally. Setup uses vanilla
+command packets; recipes are not auto-filled and inventory/world state is not
+written directly. Captured UI shows the actual 2×2/3×3 recipes and result slots.
+
+Coupled KCD2 automated PASS:
+`runtime/evidence/gameplay-kcd-20261108-185158-2e27daa4e86a44c385f317e63dae89ae/native-crafting-verification.json`.
+The same sequence used live captured terrain and the acknowledged native camera
+without fixture camera writes. Native composition/reprojection advanced 158
+frames over 5,002ms within the 11-second table-screen dwell. Actual crafting UI
+pixels, input suppression, normal save, body restoration and resource cleanup
+passed. These are scripted guest clicks through the production UI adapter, not
+a new physical native-mouse or post-composite screenshot acceptance claim.
+
+`Test-GameplayCrafting.ps1` repeats both Minecraft launches. `Test-KcdCrafting.ps1`
+runs the coupled check or validates saved receipts with -VerifyEvidenceDirectory.
+Assemble and 328 focused block-policy checks pass. KCD2 closed normally and the
+temporary installation was restored; nothing remains armed. Restore receipt:
+`runtime/evidence/gameplay-hud-restore-20261108-185502-f342a2d808184e869c16e79a1d916f78`.
+Native binaries and compatibility pins are unchanged. KCD health/stamina widget
+suppression remains pending, as do NPC combat, death/respawn and Elytra.
+
 ## Dropped items, timed mining and walking pickup
 
 WorldBlocks now submits tracked vanilla ItemEntity models to the existing world

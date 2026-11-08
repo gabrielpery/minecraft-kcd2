@@ -17,7 +17,8 @@ capturing Minecraft's actual HUD and inventory pixels for display in the host re
 The [product target](docs/PRODUCT.md) includes Minecraft's Steve, hands and equipment,
 Survival health/hunger and combat with KCD2 NPCs, general building/mining, crafting,
 commands such as `/gamemode survival`, Creative flight and Elytra flight. These are
-required goals; the current prototype has not implemented most of them yet.
+required goals. Several core systems now work in the prototype; NPC combat,
+Elytra, complete host collision and the wider Minecraft systems remain unfinished.
 
 **Status: experimental development prototype.** Several bounded two-game tests
 work, but this is not yet a complete playable mod or a ready-to-install release.
@@ -77,6 +78,16 @@ pickup and native world composition using the real camera and scripted guest
 controls. Physical mining input was not repeated for this increment.
 See [dropped items and automation](docs/GAMEPLAY_SESSION.md#dropped-items-and-survival-pickup).
 
+Crafting now uses Minecraft's actual recipes, inventory slots and server handlers.
+Use the inventory's 2×2 grid, then place a crafting table and right-click it for
+the 3×3 grid in KCD2. An automated Minecraft check crafts logs into planks, sticks,
+a table and a wooden pickaxe, then verifies the table and resulting inventory
+after reopening the save. A coupled KCD2 check passes the same recipe chain with
+the actual crafting screen streamed through the native renderer. These checks
+use scripted guest controls; physical mouse crafting was not newly verified.
+Other containers, furnaces and enchanting remain separate work.
+See [crafting controls and automation](docs/GAMEPLAY_SESSION.md#crafting).
+
 KCD2's health/stamina bars still need session-scoped suppression so Minecraft's
 HUD is the gameplay display. The existing whole-HUD toggle needs further work to
 preserve dialogue/subtitles and restore the original state on exit; this is
@@ -117,8 +128,9 @@ See [player rendering and perspective](docs/GAMEPLAY_SESSION.md#player-rendering
 
 The [`-WorldBlocks` profile](docs/GAMEPLAY_SESSION.md#minecraft-world-blocks) adds
 an initial palette of solid blocks, including planks, oriented logs, wool,
-concrete, masonry, dry slabs/stairs, fences and walls. Minecraft renders their actual state models into a
-transparent layer aligned to KCD2's camera; it also owns placement, collision,
+concrete, masonry, crafting tables, dry slabs/stairs, fences and walls. Minecraft
+renders their actual state models into a transparent layer aligned to KCD2's
+camera; it also owns placement, collision,
 mining and saved block states. Hovered blocks use Minecraft's black shape outline,
 with the same targeting checks as mining. An automated two-launch Minecraft check places
 dirt, planks, bricks and a sideways log, verifies fourteen model/outline/UI images, reopens

@@ -156,12 +156,13 @@ public final class GameplayBlocksTests {
         reject(()->new GameplayBlocks.Aim(1,1,eye,new Vec3d(1,0,0),4.5001,true,-1,false,camera),"Displaced cameras cannot extend eye reach beyond4.5m");
     }
     private static void worldBlockStateTests(Path root)throws Exception{
-        for(var state:List.of("minecraft:stone","minecraft:dirt","minecraft:oak_planks","minecraft:bricks",
+        for(var state:List.of("minecraft:stone","minecraft:dirt","minecraft:oak_planks","minecraft:bricks","minecraft:crafting_table",
                 "minecraft:red_concrete","minecraft:blue_wool","minecraft:oak_log[axis=x]","minecraft:oak_log[axis=y]","minecraft:oak_log[axis=z]"))
             check(GameplayBlocksPalette.supportsState(state),"Supported canonical world block state: "+state);
         for(var state:List.of("minecraft:air","minecraft:water","minecraft:sand","minecraft:glass","minecraft:grass_block",
                 "minecraft:oak_stairs[facing=north]","minecraft:oak_log","minecraft:oak_log[axis=q]","minecraft:oak_log[axis=X]",
-                "minecraft:oak_log[axis=x,axis=y]","minecraft:dirt[snowy=false]","minecraft:stone ","stone","foreign:stone"))
+                "minecraft:oak_log[axis=x,axis=y]","minecraft:dirt[snowy=false]","minecraft:crafting_table[facing=north]",
+                "minecraft:chest[facing=north,type=single,waterlogged=false]","minecraft:stone ","stone","foreign:stone"))
             check(!GameplayBlocksPalette.supportsState(state),"Unsupported or noncanonical world state rejected: "+state);
         check(GameplayBlocksPalette.supportsBlock("minecraft:oak_log")&&!GameplayBlocksPalette.supportsBlock("minecraft:oak_log[axis=x]"),"Block item policy distinguishes registry ID from placed state");
         for(var type:List.of("bottom","top","double"))for(var material:List.of("oak","brick"))
@@ -247,6 +248,9 @@ public final class GameplayBlocksTests {
         check(new GameplayBlocksLedger(save,SURFACE,true).initialStates.equals(neighborChanged),"Neighbor-driven connection/post changes persist without changing cell ownership");
         reject(()->connectedLedger.persist(8,Map.of(a,fence.replace("waterlogged=false","waterlogged=true"))),"Connected checkpoint rejects wet fence");
         reject(()->connectedLedger.persist(8,Map.of(b,wall.replace("waterlogged=false","waterlogged=true"))),"Connected checkpoint rejects wet wall");
+        connectedLedger.persist(8,Map.of(c,"minecraft:crafting_table"));
+        check(new GameplayBlocksLedger(save,SURFACE,true).initialStates.equals(Map.of(c,"minecraft:crafting_table")),"Crafting table ownership persists for vanilla handler use after reload");
+        reject(()->new GameplayBlocksLedger(save,SURFACE),"Legacy stone renderer cannot adopt crafting table ownership");
     }
     private static void terrainLedgerTests(Path root)throws Exception{
         var seed=GameplayTerrain.initial(tile(0));var grown=seed.admit(1,0,tile(1));

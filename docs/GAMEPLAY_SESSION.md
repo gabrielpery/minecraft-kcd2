@@ -792,7 +792,41 @@ Its hotbar was visible in KCD and cleanup passed. No native input events were
 recorded, so this does not prove physical walking in the new sustained profile.
 The previous renderer installation was restored after the check.
 
+## Crafting
+
+The WorldBlocks gameplay profile uses Minecraft's actual recipes and crafting
+handlers. Press **E** for Survival's 2×2 inventory grid. Craft a table from four
+planks, select it and right-click captured ground to place it. Aim at the placed
+table and right-click to open its 3×3 grid inside KCD2. Use the normal inventory
+mouse controls to arrange ingredients and take the result; **E** or **Escape**
+closes the screen and returns unused ingredients through the vanilla server.
+
+Right-click uses a table before attempting placement or eating. Sneak with an
+item held to place against it instead, following Minecraft's ordinary rule.
+Ownership, reach and obstruction checks still apply. Movement, camera look and
+world mouse actions pause while the crafting screen owns input. The placed table
+and crafted inventory are saved in the existing persistent world.
+
+This enables the inventory/table crafting workflow; furnaces, storage containers,
+enchanting and other block-entity systems remain separate features. Recipes and
+ingredient/result updates are not reimplemented or replaced with item grants.
+
+Automated checks use isolated worlds and real GUI clicks:
+
+```powershell
+& './scripts/Test-GameplayCrafting.ps1'
+```
+
+The check crafts logs into planks, a table, sticks and a wooden pickaxe, verifies
+unused ingredients return when the table closes, and reopens the same save.
+`Test-KcdCrafting.ps1` performs the corresponding connected check with scripted
+guest inputs in a fresh supported tools world. It also accepts
+`-VerifyEvidenceDirectory` to inspect saved receipts without rerunning a game.
+
 ## Dropped items and Survival pickup
+
+The WorldBlocks profile also supports crafting tables; see
+[crafting controls](#crafting) for the inventory and table workflow.
 
 WorldBlocks now draws real tracked Minecraft item entities in the same world
 colour/depth layer as blocks and Steve. Minecraft supplies the stack model,

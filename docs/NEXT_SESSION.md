@@ -1,6 +1,42 @@
 # Resume checkpoint — 8 November 2026
 
-## Latest gameplay milestone: dropped items and Survival pickup
+## Latest gameplay milestone: inventory and table crafting
+
+WorldBlocks now supports actual vanilla 2×2 inventory crafting, placed/saved
+crafting tables and server-opened 3×3 crafting through aimed right-click.
+HudVanillaUiAdapter accepts the real CraftingScreen, preserves mouse routing and
+movement suppression, checks handler ownership and closes through vanilla so
+unused inputs return. Table use takes precedence over food, follows vanilla
+sneaking rules and preserves ledger ownership/revision. Native binaries/pins
+unchanged. Preserve the prior mining/drop/pickup/food path.
+
+Automated actual-Minecraft two-launch PASS:
+`runtime/evidence/gameplay-crafting-20261108-185511-4a0d8c55afe64ef6b62f1a7fd1b2c3db/verification.json`.
+Three logs → twelve planks → table/four sticks → wooden pickaxe using 34 real UI
+click pairs. Placement/opening, leftover return, suppression, saved table/items/
+crafting statistics, reopening table and normal save all passed.
+
+Coupled KCD2 PASS:
+`runtime/evidence/gameplay-kcd-20261108-185158-2e27daa4e86a44c385f317e63dae89ae/native-crafting-verification.json`.
+Real native terrain/camera, same recipe sequence, actual CraftingScreen pixels,
+158 composed/reprojected frames during a 5,002ms sample inside the 11s screen
+dwell, body restore and cleanup. Scripted guest inputs, no physical native mouse
+or new post-composite screenshot claim. Avoid UI capture during strict leases.
+
+Repeat scripts/Test-GameplayCrafting.ps1 for standalone+resume, or
+scripts/Test-KcdCrafting.ps1 for live / -VerifyEvidenceDirectory for saved proof.
+KCD2 closed normally; runtime/hud-crafting-20261108-a restored, nothing armed:
+`runtime/evidence/gameplay-hud-restore-20261108-185502-f342a2d808184e869c16e79a1d916f78`.
+Assemble and 328 focused block-policy checks pass. Other containers/furnaces,
+enchanting and recipe-search text/modifier shortcuts remain outside this increment.
+
+Next: continue integrated Survival gameplay (combat/death/respawn or required
+host NPC interactions), preserving crafting/mining/food. KCD health/stamina bars
+still need session-scoped suppression/restoration; selective widgets and
+dialogue/subtitle behavior need verification before enabling. Elytra and wider
+host collision also remain required. No reason to repeat manual control microtests.
+
+## Previous milestone: dropped items and Survival pickup
 
 WorldBlocks now renders actual tracked ItemEntity models with vanilla bob/spin
 and stack copies into the shared world colour/depth layer. Collection is bounded
@@ -40,8 +76,8 @@ restored; nothing armed. Restore receipt:
 `runtime/evidence/gameplay-hud-restore-20261108-184144-3bf33b9ba0184d81911c225bcdb3c1e5`.
 Native binaries/pins unchanged. Source details and evidence are in PROGRESS.md.
 
-Next integrated Survival feature: crafting, retaining actual vanilla inventory
-and recipes; NPC combat, death/respawn and Elytra remain required. User explicitly
+Crafting is now implemented above; NPC combat, death/respawn and Elytra remain
+required. User explicitly
 reminded us that KCD health/stamina widgets still overlap Minecraft's HUD. Track
 session-scoped hiding/restoration. wh_ui_ShowHud only verifies a whole-HUD toggle;
 selective widget IDs or sustained leases/dialogue/subtitle/compass behavior need
