@@ -4,6 +4,7 @@
 . (Join-Path $PSScriptRoot 'KcdToolsProbeHelpers.ps1')
 . (Join-Path $PSScriptRoot 'HudGroundMovement.ps1')
 . (Join-Path $PSScriptRoot 'GameplayProjectilesHost.ps1')
+. (Join-Path $PSScriptRoot 'GameplayBlastsHost.ps1')
 
 function Test-GameplayCombatNumber($Value){$Value -is [ValueType] -and $Value -isnot [bool] -and [double]::IsFinite([double]$Value)}
 function Test-GameplayCombatInteger($Value,[long]$Min,[long]$Max){(Test-GameplayCombatNumber $Value) -and $Value -eq [Math]::Floor([double]$Value) -and $Value -ge $Min -and $Value -le $Max}
@@ -48,7 +49,7 @@ function New-GameplayCombatState($Identity,[string]$Directory,[long]$ExpiresUtcM
     if($Identity.Run -cnotmatch '^[0-9a-f]{32}$' -or $Identity.WorldId -cnotmatch '^[0-9a-f-]{36}$' -or $Identity.PatchRun -cnotmatch '^[0-9a-f]{32}$' -or $Identity.PatchHash -cnotmatch '^[0-9a-f]{64}$' -or
         -not(Test-GameplayCombatInteger $Identity.Pid 1 2147483647) -or $Identity.Start -isnot [string] -or $Identity.Start -cnotmatch '^[0-9]{16,20}$' -or $ExpiresUtcMs-$now -lt 1000 -or $ExpiresUtcMs-$now -gt 86400000){throw 'Combat identity/expiry invalid.'}
     [pscustomobject]@{Identity=$Identity;Directory=$Directory;SnapshotFile=(Join-Path $Directory 'combat.json');HostFile=(Join-Path $Directory 'host-combat.json');ExpiresUtcMs=$ExpiresUtcMs;StartedUtcMs=$now;Probe=$null;
-        BeginSent=$false;Begin=$null;Terminal=$null;Failure=$null;Stopping=$false;LastSendUtcMs=0L;Sequence=0L;PublishedSequence=0L;LastSampleUtcMs=0L;SampleTimes=@{};Actors=@();Projectiles=(New-GameplayProjectilesState $Identity $Directory);
+        BeginSent=$false;Begin=$null;Terminal=$null;Failure=$null;Stopping=$false;LastSendUtcMs=0L;Sequence=0L;PublishedSequence=0L;LastSampleUtcMs=0L;SampleTimes=@{};Actors=@();Projectiles=(New-GameplayProjectilesState $Identity $Directory);Blasts=(New-GameplayBlastsState $Identity $Directory);
         GuestSequence=0L;GuestUtcMs=0L;GuestCanonical='';LastGuestUtcMs=0L;HitAck=0L;PendingHit=$null;PendingSinceUtcMs=0L;LastHit=$null;HitCount=0L;DamageCount=0L;RejectedCount=0L;LastPublicationUtcMs=0L;TemporaryClean=$true}
 }
 function New-GameplayCombatHost {
@@ -129,11 +130,14 @@ function Get-GameplayCombatUrgentCommands($State,[long]$Now){
     # console owner's camera-ACK wait. Do not advance melee/sample cadence here.
     if($State.Failure){throw $State.Failure};if($State.Stopping){return ''};if($Now -ge $State.ExpiresUtcMs){throw 'Combat identity expired.'}
     if(-not $State.Begin){return ''}
-    return Get-GameplayProjectileCommands $State.Projectiles $Now
+    $blast=Get-GameplayBlastCommands $State.Blasts $Now
+    $projectile=Get-GameplayProjectileCommands $State.Projectiles $Now
+    return (@($blast,$projectile)|Where-Object {$_}) -join ';'
 }
 function Accept-GameplayCombatReceipt($State,$Receipt,[long]$Now){
     if(-not(Test-GameplayCombatInteger $Receipt.schema 1 1) -or $Receipt.run -cne $State.Identity.Run){throw 'Combat receipt identity differs.'}
     if($Receipt.event -cin @('projectile_trace','projectile_impact')){Accept-GameplayProjectileReceipt $State.Projectiles $Receipt $Now;return}
+    if($Receipt.event -cin @('blast_prepare','blast_commit')){Accept-GameplayBlastReceipt $State.Blasts $Receipt $Now;return}
     switch -CaseSensitive ($Receipt.event){
         'begin'{if($State.Begin -or $Receipt.result -cne 'ready' -or $Receipt.active -ne $true -or $Receipt.lock_policy_active -isnot [bool] -or $Receipt.lock_policy_active -ne $true){throw 'Combat begin differs.'};$State.Begin=$Receipt}
         'sample'{
@@ -161,8 +165,8 @@ function Accept-GameplayCombatReceipt($State,$Receipt,[long]$Now){
         default{throw 'Unknown combat receipt event.'}
     }
 }
-function Get-GameplayCombatStopCommand($State){$State.Stopping=$true;Remove-GameplayCombatTemporary $State;Stop-GameplayProjectilesHost $State.Projectiles;return "MineCome.GameplayCombatEnd('$($State.Identity.Run)')"}
+function Get-GameplayCombatStopCommand($State){$State.Stopping=$true;Remove-GameplayCombatTemporary $State;Stop-GameplayProjectilesHost $State.Projectiles;Stop-GameplayBlastsHost $State.Blasts;return "MineCome.GameplayCombatEnd('$($State.Identity.Run)')"}
 function Get-GameplayCombatHostState($State){
     [pscustomobject]@{Run=$State.Identity.Run;Begin=$State.Begin;Terminal=$State.Terminal;Failure=$State.Failure;Samples=$State.PublishedSequence;Actors=@($State.Actors).Count;Hits=$State.HitCount;Damaged=$State.DamageCount;Rejected=$State.RejectedCount;HitAck=$State.HitAck;LastHit=$State.LastHit;
-        Projectiles=(Get-GameplayProjectilesHostState $State.Projectiles);IncomingDamageImplemented=$false;TemporaryClean=$State.TemporaryClean;CleanupComplete=($State.TemporaryClean -and (Get-GameplayProjectilesHostState $State.Projectiles).CleanupComplete -and (-not $State.BeginSent -or ($State.Terminal -and $State.Terminal.result -ceq 'explicit_stop' -and $State.Terminal.timers_cancelled -eq $true -and $State.Terminal.lock_policy_restored -is [bool] -and $State.Terminal.lock_policy_restored -eq $true)))}
+        Projectiles=(Get-GameplayProjectilesHostState $State.Projectiles);Blasts=(Get-GameplayBlastsHostState $State.Blasts);IncomingDamageImplemented=$false;TemporaryClean=$State.TemporaryClean;CleanupComplete=($State.TemporaryClean -and (Get-GameplayProjectilesHostState $State.Projectiles).CleanupComplete -and (Get-GameplayBlastsHostState $State.Blasts).CleanupComplete -and (-not $State.BeginSent -or ($State.Terminal -and $State.Terminal.result -ceq 'explicit_stop' -and $State.Terminal.timers_cancelled -eq $true -and $State.Terminal.lock_policy_restored -is [bool] -and $State.Terminal.lock_policy_restored -eq $true)))}
 }

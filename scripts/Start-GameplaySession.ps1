@@ -1,7 +1,7 @@
 # Sustained HUD/inventory, with an explicit Minecraft walking profile.
 [CmdletBinding()]
 param([string]$BundleDirectory,[string]$InstanceDirectory,[string]$JavaHome='C:/Program Files/Java/jdk-24',
- [ValidateRange(0,300)][int]$SmokeSeconds=0,[switch]$PreflightOnly,[switch]$Movement,[switch]$Blocks,[switch]$Explore,[switch]$Chat,[switch]$Flight,[switch]$Hands,[switch]$WorldBlocks,[switch]$Combat,[switch]$CombatCheck,[switch]$ProjectileCheck,[string]$CombatFixtureRun,[string]$GroundPatchFile,[switch]$ThirdPersonWalkingCheck,[switch]$DropsCheck,[switch]$CraftingCheck,[switch]$FurnaceCheck,[switch]$TntCheck,[switch]$RespawnCheck,[ValidateRange(0,1)][int]$InitialTerrainRadius=0)
+ [ValidateRange(0,300)][int]$SmokeSeconds=0,[switch]$PreflightOnly,[switch]$Movement,[switch]$Blocks,[switch]$Explore,[switch]$Chat,[switch]$Flight,[switch]$Hands,[switch]$WorldBlocks,[switch]$Combat,[switch]$CombatCheck,[switch]$ProjectileCheck,[string]$CombatFixtureRun,[string]$GroundPatchFile,[switch]$ThirdPersonWalkingCheck,[switch]$DropsCheck,[switch]$CraftingCheck,[switch]$FurnaceCheck,[switch]$TntCheck,[switch]$TntCombatCheck,[switch]$RespawnCheck,[ValidateRange(0,1)][int]$InitialTerrainRadius=0)
 . (Join-Path $PSScriptRoot 'powershell7.ps1')
 if($PSVersionTable.PSVersion.Major -lt 7){
  $code=Invoke-MineComePowerShell7 -ScriptPath $PSCommandPath -BoundParameters $PSBoundParameters
@@ -13,11 +13,12 @@ $root=[IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
 . (Join-Path $PSScriptRoot 'KcdToolsProbeHelpers.ps1')
 . (Join-Path $PSScriptRoot 'GameplayMovementHost.ps1')
 . (Join-Path $PSScriptRoot 'GameplayHudSessionGuard.ps1')
+if($TntCombatCheck){$TntCheck=$true;$Combat=$true;$InitialTerrainRadius=1}
 if($RespawnCheck){$InitialTerrainRadius=1}
 if($InitialTerrainRadius -eq 1){$Explore=$true}
 if($ProjectileCheck -and -not $CombatCheck){throw 'ProjectileCheck requires the owned CombatCheck.'}
-if($CombatCheck){if($CombatFixtureRun -cnotmatch '^[0-9a-f]{32}$'){throw 'Use Test-KcdCombat.ps1 to own the isolated NPC lifecycle.'};$Combat=$true}
-elseif($CombatFixtureRun){throw 'CombatFixtureRun requires the owned automated combat check.'}
+if($CombatCheck -or $TntCombatCheck){if($CombatFixtureRun -cnotmatch '^[0-9a-f]{32}$'){throw 'Use Test-KcdCombat.ps1 or Test-KcdTntCombat.ps1 to own the isolated NPC lifecycle.'};$Combat=$true}
+elseif($CombatFixtureRun){throw 'CombatFixtureRun requires the owned automated combat or TNT combat check.'}
 if($Combat){$WorldBlocks=$true};if($WorldBlocks){$Hands=$true};if($Hands){$Flight=$true};if($Flight){$Chat=$true}
 if($Explore -or $Chat){$Blocks=$true};if($Blocks){$Movement=$true}
 if($CombatCheck -and ($SmokeSeconds -ne 0 -or $ThirdPersonWalkingCheck -or $DropsCheck -or $CraftingCheck -or $FurnaceCheck -or $RespawnCheck)){throw 'CombatCheck owns its bounded session; omit other checks/SmokeSeconds.'}
@@ -86,6 +87,7 @@ try{
  if($CombatCheck){$arguments+='-CombatCheck'};if($ProjectileCheck){$arguments+='-ProjectileCheck'}
  if($RespawnCheck){$arguments+='-RespawnCheck'}
  if($TntCheck){$arguments+='-TntCheck'}
+ if($TntCombatCheck){$arguments+='-TntCombatCheck'}
  if($FurnaceCheck){$arguments+='-FurnaceCheck'}
  if($CraftingCheck){$arguments+='-CraftingCheck'}
  if($DropsCheck){$arguments+='-DropsCheck'}
@@ -108,6 +110,18 @@ try{
  Assert-MineComeProbeContext $context
  if($Movement){
   $guest=Read-MineComeGameplayJson (Join-Path $directory 'gameplay-ready.json')
+  if($TntCombatCheck){
+   $fixtureOffset=(Get-Item -LiteralPath $context.GameLog).Length
+   Invoke-MineComeProbeConsole $context ("#local ok,why=MineCome.GameplayTntCombatFixtureBegin('$CombatFixtureRun',120000);System.LogAlways('[MineComeTntCombatFixtureCall] $CombatFixtureRun '..tostring(ok)..' '..tostring(why))")
+   $fixtureUntil=[DateTime]::UtcNow.AddSeconds(2);$fixtureSpawned=$false
+   do{
+    Invoke-MineComeProbeConsole $context ("#System.LogAlways('[MineComeTntCombatFixtureFlush] $CombatFixtureRun')")
+    $fixtureReceipts=@(Get-MineComeProbeReceipts (Read-MineComeProbeLog $context $fixtureOffset) 'MineComeTntCombatFixture' $CombatFixtureRun)
+    $fixtureSpawned=@($fixtureReceipts|Where-Object {$_.event -ceq 'begin' -and $_.result -ceq 'spawned' -and @($_.actors).Count -eq 2}).Count -eq 1
+    if($fixtureSpawned){break};Start-Sleep -Milliseconds 25
+   }while([DateTime]::UtcNow -lt $fixtureUntil)
+   if(-not $fixtureSpawned){throw 'The isolated TNT NPCs were not confirmed; combat was not armed.'}
+  }
   if($CombatCheck){
    # The official test NPC's behaviour eventually despawns it. Create it only
    # after Minecraft has loaded, keeping the real attack inside its lifetime.
@@ -217,7 +231,7 @@ try{
  if($TntCheck){
   if(-not $session.PSObject.Properties['fixture']){throw "Native TNT check ended before completion: stop_reason=$($session.stop_reason). Inspect native-hud.log and gameplay-session.json."}
   $f=$session.fixture
-  if($f.kind -cne 'minecome_gameplay_tnt_fixture_v1' -or $f.mode -cne 'tnt-native' -or $f.result -cne 'passed' -or $f.failure -or
+  if($f.kind -cne 'minecome_gameplay_tnt_fixture_v1' -or $f.mode -cne $(if($TntCombatCheck){'tnt-combat-native'}else{'tnt-native'}) -or $f.result -cne 'passed' -or $f.failure -or
    -not $f.actual_minecraft -or $f.standalone_scripted -or $f.native_input_verified -or $f.position_writes_used){throw 'Native TNT fixture identity/scope differs.'}
   foreach($flag in @('tnt_placement_verified','ignition_verified','fuse_verified','chain_reaction_verified','fragile_destruction_verified','resistant_preservation_verified','tool_durability_verified','ledger_removal_verified','render_pixels_verified')){
    if($f.$flag -ne $true){throw "Native TNT capability missing: $flag"}
@@ -275,7 +289,7 @@ finally{
  }
  [ordered]@{schema=1;kind='minecome_gameplay_kcd_session_v1';run=$run;result=$(if($passed){'passed'}else{'failed'});failure=$failure;
   target_pid=$context.GamePid;target_start_filetime=$targetStart;instance=$InstanceDirectory;smoke_seconds=$SmokeSeconds;
-  minecraft_movement_connected=[bool]($Movement -and $passed);movement_profile=[bool]$Movement;blocks_profile=[bool]$Blocks;explore_profile=[bool]$Explore;chat_profile=[bool]$Chat;flight_profile=[bool]$Flight;hands_profile=[bool]$Hands;world_blocks_profile=[bool]$WorldBlocks;drops_check=[bool]$DropsCheck;crafting_check=[bool]$CraftingCheck;furnace_check=[bool]$FurnaceCheck;tnt_check=[bool]$TntCheck;respawn_check=[bool]$RespawnCheck;combat_profile=[bool]$Combat;combat_check=[bool]$CombatCheck;host_command_typing_verified=$false;normal_client_exit=($helper -and $helper.HasExited -and $helper.ExitCode -eq 0)}|
+  minecraft_movement_connected=[bool]($Movement -and $passed);movement_profile=[bool]$Movement;blocks_profile=[bool]$Blocks;explore_profile=[bool]$Explore;chat_profile=[bool]$Chat;flight_profile=[bool]$Flight;hands_profile=[bool]$Hands;world_blocks_profile=[bool]$WorldBlocks;drops_check=[bool]$DropsCheck;crafting_check=[bool]$CraftingCheck;furnace_check=[bool]$FurnaceCheck;tnt_check=[bool]$TntCheck;tnt_combat_check=[bool]$TntCombatCheck;respawn_check=[bool]$RespawnCheck;combat_profile=[bool]$Combat;combat_check=[bool]$CombatCheck;host_command_typing_verified=$false;normal_client_exit=($helper -and $helper.HasExited -and $helper.ExitCode -eq 0)}|
   ConvertTo-Json|Set-Content -LiteralPath (Join-Path $directory 'verification.json') -Encoding utf8NoBOM
 }
 if(-not $passed){throw $failure}

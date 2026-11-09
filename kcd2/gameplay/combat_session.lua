@@ -89,7 +89,7 @@ local function stop(p,why)
  if p.timer then local ok,v=pcall(Script.KillTimer,p.timer);if ok and v~=false then p.timer=nil else p.reason='timer_cleanup_failed'end end
  if not restore_lock_policy(p)then p.reason='lock_policy_cleanup_unconfirmed'end
  p.cleanup_complete=p.timer==nil and p.lock_policy_restored==true
- p.timer_data=nil;p.projectiles={};p.projectile_last=nil;state.active=nil;state.last=p
+ p.timer_data=nil;p.projectiles={};p.projectile_last=nil;p.blasts={};p.blast_last=nil;state.active=nil;state.last=p
  emit(p,'terminal',p.reason);return p.cleanup_complete
 end
 local function valid(p)
@@ -135,7 +135,7 @@ function MineCome.GameplayCombatBegin(run,duration_ms,radius,max_actors)
  if not System or type(System.GetEntitiesInSphere)~='function' or type(System.GetCurrTime)~='function' or type(System.LogAlways)~='function' or not Script or type(Script.SetTimerForFunction)~='function' or type(Script.KillTimer)~='function' or not Physics or type(Physics.RayWorldIntersection)~='function' or not integer(ent_all,1,2147483647) then return false,'api_unavailable'end
  if type(player)~='table' or not player.id or not wuid(player) or type(player.soul)~='table' or read(player.actor,'IsDead')~=false then return false,'player_unavailable'end
  local t=clock();if not t then return false,'clock_unavailable'end
- local p={run=run,deadline=t+duration_ms/1000,received=t,last_clock=t,player=player,player_id=player.id,player_wuid=wuid(player),player_soul=player.soul,radius=radius,max_actors=max_actors,next_token=1,actors={},samples={},sequence=0,hit_ack=0,projectiles={},projectile_count=0,projectile_ack=0}
+ local p={run=run,deadline=t+duration_ms/1000,received=t,last_clock=t,player=player,player_id=player.id,player_wuid=wuid(player),player_soul=player.soul,radius=radius,max_actors=max_actors,next_token=1,actors={},samples={},sequence=0,hit_ack=0,projectiles={},projectile_count=0,projectile_ack=0,blasts={},blast_count=0,blast_ack=0}
  if not prepare_lock_policy(p)then return false,'lock_policy_baseline_unavailable'end
  state.active=p;if not schedule(p)then state.active=nil;return false,'timer_unavailable'end
  if not apply_lock_policy(p)then stop(p,'lock_policy_setup_failed');return false,'lock_policy_setup_failed'end
@@ -391,6 +391,128 @@ function MineCome.GameplayProjectileImpact(run,sequence,id,segment,actor_token,f
  if not applied or not finite(after) or after<0 or after>before+.01 then return projectile_reply(p,request,'rejected','damage_unconfirmed',point,normal,again,before,after)end
  again.health=after;again.alive=after>0 and read(again.entity.actor,'IsDead')==false
  return projectile_reply(p,request,after<before and 'damaged' or 'no_damage','',point,normal,again,before,after)
+end
+-- Owned vanilla TNT uses its explosion centre, never the current melee eye.
+-- Prepare freezes a native actor/exposure grant for at most one second. Commit
+-- checks the same actor generations before damage. Scenery exposure belongs to
+-- the detonation snapshot too; later collider movement cannot undo that event.
+-- Hit reactions may animate bounds during transport; damage belongs to the
+-- frozen detonation volume, not the actor's later pose or position.
+-- This separate grant does not extend the existing .3s melee/arrow snapshots.
+local function blast_reply(p,request,result,reason,actors,outcomes)
+ local prepare=request[2]=='blast_prepare' and request[1] or request[5]
+ local extra=',"seq":'..request[1]..',"explosion":"'..request[3]..'","owner":"'..request[4]..'","prepare_seq":'..prepare..',"center":'..point_json({x=request[6],y=request[7],z=request[8]})..',"power":'..request[9]..',"reason":"'..(reason or '')..'","actors":['..table.concat(actors or {},',')..'],"outcomes":['..table.concat(outcomes or {},',')..']'
+ p.blast_last={request=request,event=request[2],result=result,extra=extra}
+ if not emit(p,request[2],result,extra)then stop(p,'log_failed');return false,'log_failed'end
+ return true,result
+end
+local function blast_request(run,request)
+ local p=state.active;if not p or p.run~=run then return nil,'session_missing'end
+ local t,why=valid(p);if not t then stop(p,why);return nil,why end
+ if not integer(request[1],1,10000000) or not token(request[3]) or not token(request[4]) or not integer(request[5],0,10000000) or
+  not vector({x=request[6],y=request[7],z=request[8]}) or request[9]~=4 or type(request[10])~='string' or #request[10]>512 then return nil,'invalid_blast'end
+ if p.blast_owner and p.blast_owner~=request[4]then return nil,'owner_changed'end
+ if request[1]==p.blast_ack and p.blast_last then
+  local old=p.blast_last;for i=1,10 do if request[i]~=old.request[i]then return nil,'request_changed'end end
+  emit(p,old.event,old.result,old.extra);return nil,'duplicate'
+ end
+ if request[1]~=p.blast_ack+1 then return nil,'replayed_request'end
+ p.blast_ack=request[1];p.blast_owner=request[4];p.received=t;return p,t
+end
+local function float32(v)
+ -- Proxy dimensions are Java floats. Round positive normal doubles to nearest
+ -- even IEEE754 binary32 without depending on unavailable Lua5.3 pack APIs.
+ local m,e=math.frexp(v);local scaled=m*16777216;local n=math.floor(scaled);local tail=scaled-n
+ if tail>.5 or tail==.5 and n%2==1 then n=n+1 end
+ return math.ldexp(n,e-24)
+end
+local function blast_exposure(p,a,center)
+ local width,height=float32(a.width),float32(a.height)
+ local dx,dy=1/(2*width+1),1/(2*height+1);local offset=(1-math.floor(1/dx)*dx)/2
+ local samples={};local x=0
+ while x<=1 do local y=0;while y<=1 do local z=0;while z<=1 do
+  if #samples>=128 then return nil,'exposure_capacity'end
+  -- Pinned Explosion.getExposure iterates MC X,Y,Z; native axes are X,-Z,Y.
+  local point={x=a.x-width/2+x*width+offset,y=a.y+width/2-z*width-offset,z=a.z+y*height}
+  local length=distance(point,center);local visible=true
+  if length>.000001 then
+   local direction={x=(center.x-point.x)/length,y=(center.y-point.y)/length,z=(center.z-point.z)/length}
+   local ok,hit=projectile_scenery(p,point,direction,length,a.id);if not ok then return nil,'scenery_unknown'end
+   visible=not hit or hit.dist>=length-.001
+  end
+  samples[#samples+1]=visible and '1' or '0';z=z+dx
+ end;y=y+dy end;x=x+dx end
+ return table.concat(samples)
+end
+local function blast_current(old)
+ if not old or type(System.GetEntity)~='function'then return nil end
+ local ok,entity=pcall(System.GetEntity,old.id)
+ if not ok or entity~=old.entity then return nil end
+ local current=actor(entity);return same(old,current) and current.alive and current or nil
+end
+function MineCome.GameplayBlastPrepare(run,sequence,id,owner,cx,cy,cz,power)
+ local request={sequence,'blast_prepare',id,owner,0,cx,cy,cz,power,''}
+ local p,t=blast_request(run,request);if not p then return t=='duplicate',t end
+ if p.blasts[id]then return blast_reply(p,request,'rejected','explosion_reused')end
+ if p.blast_count>=4096 then return blast_reply(p,request,'rejected','explosion_capacity')end
+ local active=0;for _,grant in pairs(p.blasts)do if not grant.done then if t-grant.time>1 then grant.done=true;grant.actors={}else active=active+1 end end end
+ if active>=16 then return blast_reply(p,request,'rejected','explosion_capacity')end
+ local center={x=cx,y=cy,z=cz};local grant={time=t,done=true,owner=owner,sequence=sequence,center=center,actors={}}
+ p.blasts[id]=grant;p.blast_count=p.blast_count+1
+ local ok,entities=pcall(System.GetEntitiesInSphere,copy(center),8);if not ok or type(entities)~='table'then return blast_reply(p,request,'rejected','actors_unknown')end
+ local list,seen={},{};local count=0
+ for _,entity in pairs(entities)do count=count+1;if count>128 then return blast_reply(p,request,'rejected','actors_unknown')end
+  local a=actor(entity);if a and a.alive and not seen[entity] and distance(center,{x=a.x,y=a.y,z=a.z})<=8 then seen[entity]=true;list[#list+1]=a end
+ end
+ if #list>8 then return blast_reply(p,request,'rejected','actor_capacity')end
+ table.sort(list,function(a,b)return a.raw<b.raw end);local rows={}
+ for _,a in ipairs(list)do
+  local mask,why=blast_exposure(p,a,center);if not mask then return blast_reply(p,request,'rejected',why)end
+  local current=blast_current(a);if not current then return blast_reply(p,request,'rejected','target_changed')end
+  local found;for old_token,old in pairs(p.actors)do if same(old,current)then found=old_token;break end end
+  if not found then if p.next_token>256 then return blast_reply(p,request,'rejected','actor_capacity')end;found=p.next_token;p.next_token=p.next_token+1;p.actors[found]=current end
+  a.token=found;a.exposure=mask;grant.actors[found]=a
+  rows[#rows+1]=actor_json(a):sub(1,-2)..',"exposure":"'..mask..'"}'
+ end
+ local ended,why=valid(p);if not ended then stop(p,why);return false,why end
+ if ended-t>.25 then return blast_reply(p,request,'rejected','prepare_expired')end
+ grant.done=false -- Age starts at the original prepare clock, including ray work.
+ return blast_reply(p,request,'prepared','',rows)
+end
+function MineCome.GameplayBlastCommit(run,sequence,id,owner,prepare,cx,cy,cz,power,packed)
+ local request={sequence,'blast_commit',id,owner,prepare,cx,cy,cz,power,packed}
+ local p,t=blast_request(run,request);if not p then return t=='duplicate',t end
+ local grant=p.blasts[id]
+ if not grant or grant.done or grant.sequence~=prepare or grant.owner~=owner or t-grant.time>1 or distance(grant.center,{x=cx,y=cy,z=cz})>.000001 then return blast_reply(p,request,'rejected','stale_explosion')end
+ grant.done=true -- Consume the entire UUID before any setter, even on failure.
+ local targets,seen={},{}
+ if packed~='' then
+  for row in (packed..';'):gmatch('(.-);')do
+   local a,b=row:match('^(%d+):([%d%.eE%+%-]+)$');a,b=tonumber(a),tonumber(b)
+   if not integer(a,1,256) or not finite(b) or b<=0 or b>50 or seen[a] or #targets>=8 then grant.actors={};return blast_reply(p,request,'rejected','invalid_targets')end
+   seen[a]=true;targets[#targets+1]={token=a,fraction=b}
+  end
+ end
+ local outcomes={}
+ for _,target in ipairs(targets)do
+  local old=grant.actors[target.token];local current=blast_current(old);local reason
+  if not current or not same(p.actors[target.token],current)then reason='target_changed'
+  elseif not old.exposure:find('1',1,true)then reason='occluded'end
+  local ended,why=valid(p);if not ended then stop(p,why);return false,why end
+  if ended-grant.time>1 then reason='stale_explosion'end
+  local again=blast_current(old)
+  if not reason and not same(current,again)then reason='target_changed'end
+  local result,before,after='rejected',nil,nil
+  if not reason then
+   before=again.health;local damage=math.min(before,target.fraction*old.max_health)
+   local applied=pcall(again.soul.DealDamage,again.soul,0,damage,p.player_wuid,false)
+   after=read(again.soul,'GetState','health')
+   if not applied or not finite(after) or after<0 or after>before+.01 then reason='damage_unconfirmed'
+   else result=after<before and 'damaged' or 'no_damage';reason=''end
+  end
+  outcomes[#outcomes+1]='{"actor_token":'..target.token..',"result":"'..result..'","reason":"'..reason..'","before":'..number(before)..',"after":'..number(after)..'}'
+ end
+ grant.actors={};return blast_reply(p,request,'applied','',nil,outcomes)
 end
 function MineCome.GameplayCombatEnd(run)
  local p=state.active

@@ -21,9 +21,11 @@ $native=Get-Content -LiteralPath (Join-Path $saved 'verification.json') -Raw|Con
 $ready=Get-Content -LiteralPath (Join-Path $saved 'capture/stream-ready.json') -Raw|ConvertFrom-Json
 $aim=Get-Content -LiteralPath (Join-Path $saved 'gameplay-aim.json') -Raw|ConvertFrom-Json
 $f=$s.fixture;$m=$s.movement;$b=$s.blocks;$t=$b.tnt
+$combatCheck=$native.PSObject.Properties['tnt_combat_check'] -and $native.tnt_combat_check -eq $true
+$expectedMode=if($combatCheck){'tnt-combat-native'}else{'tnt-native'}
 if($native.kind -cne 'minecome_gameplay_kcd_session_v1' -or -not $native.tnt_check -or
  $native.run -cne $s.run -or $hostProof.Terminal.run -cne $s.run -or $f.world_id -cne $s.world_id -or
- $f.kind -cne 'minecome_gameplay_tnt_fixture_v1' -or $f.mode -cne 'tnt-native' -or $f.result -cne 'passed' -or $f.failure){throw 'Native TNT receipt identity/result differs.'}
+ $f.kind -cne 'minecome_gameplay_tnt_fixture_v1' -or $f.mode -cne $expectedMode -or $f.result -cne 'passed' -or $f.failure){throw 'Native TNT receipt identity/result differs.'}
 if($ready.run -cne $s.run -or $ready.target_pid -ne $native.target_pid -or $ready.target_start_filetime -cne $native.target_start_filetime -or
  $aim.run -cne $s.run -or $aim.world_id -cne $s.world_id -or $aim.target_pid -ne $native.target_pid -or $aim.target_start_filetime -cne $native.target_start_filetime -or
  $aim.patch_run -cne $m.patch_run -or $aim.patch_sha256 -cne $m.patch_sha256 -or $m.run -cne $s.run -or $m.world_id -cne $s.world_id){throw 'Native TNT renderer/camera process, world or terrain identity differs.'}

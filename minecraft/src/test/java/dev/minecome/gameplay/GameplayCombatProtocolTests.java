@@ -75,6 +75,7 @@ public final class GameplayCombatProtocolTests {
         for(String text:List.of("","null","[]","{}",valid+"{}","/*comment*/"+valid," ".repeat(131073)))reject(text,"Malformed/bounded document");
         projectileReplies();snapshotFiles();
         checks+=GameplayProjectileInterpolationTests.run();
+        checks+=GameplayBlastTests.run();
         System.out.println("GameplayCombatProtocolTests: "+checks+" checks passed; no games");
     }
     private static void projectileReplies(){

@@ -1,5 +1,52 @@
 # MineCome progress — 2026-11-09
 
+## TNT now damages native KCD2 NPCs
+
+`-Combat` connects player-owned vanilla TNT and chain explosions to native NPC
+health. Minecraft computes actual explosion damage using its own collider rays
+combined with native scenery visibility sampled at detonation. The immutable
+blast records its source UUID, owner, actor generations, volume and exposure;
+native damage is applied once within the original one-second grant. Later hit
+animations or moving cover do not reinterpret an explosion that already happened.
+Native health scales the actual Minecraft damage by maximum health / 20, clamps
+at zero, and attributes the hit to the player with native reactions enabled.
+
+**Coupled automatic PASS:**
+`runtime/evidence/gameplay-kcd-20261109-121518-ec83927a36cc4bd0b892fd1263b9ee10/native-tnt-combat-verification.json`.
+Two real owned TNT explosions reduced the isolated native NPC's health
+**100 → 43.3303833008 → 0**. A second NPC outside the blast radius stayed at100.
+Both bursts prepared and committed once with zero rejection; actual vanilla
+damage totalled31.0536499 and native damage clamped to100. Independent native
+sampling recorded119 health observations per NPC. The test also preserved
+obsidian, destroyed wool/TNT, captured96,296 TNT colour/depth pixels, and kept
+native composition/reprojection advancing by186 during the11.261-second
+post-explosion dwell. Normal save/exit, both test-actor removals, timer/path/
+combat-policy cleanup and body restoration passed. No physical input or manual
+visual judgment was required or claimed.
+
+Compilation/assemble,379 combat checks,387 block checks,50 blast transport
+checks and the Lua combat/fixture lifecycle suites passed. Regressions include
+full/partial cover, target replacement, movement/recoil after detonation,
+duplicate requests, original expiry, queued source timestamps and exact native
+float32 centre conversion. The official passive dummy despawns automatically;
+the fixture verifies fresh live near/control snapshots immediately after both
+commits, independently samples health until removal, then checks HUD continuity.
+It does not treat disappeared NPCs as unchanged health.
+
+Both game clients closed normally. The temporary installation is restored and
+unarmed: `runtime/evidence/gameplay-hud-restore-20261109-121643-88c2def920c642c38d74f39da5faa9c5`.
+`Test-KcdTntCombat.ps1 -VerifyEvidenceDirectory <evidence>` rechecks the saved
+acceptance without launching either game.
+
+Remaining limits: no destruction of native buildings/terrain or native blast
+knockback; no dedicated live wall-cover acceptance. Fully blocked and partial
+cover cases have simulated binding tests. Full-reload TNT without its original
+vanilla causing entity does not invent native player attribution. Large
+simultaneous TNT bursts are bounded but were not live acceptance-tested.
+Reciprocal native NPC attacks and arrow transport latency remain separate work.
+The previous TNT-only checkpoint below is historical; its native-damage gap is
+superseded by this section.
+
 ## TNT ignition, chain explosions and persistent block destruction
 
 WorldBlocks now admits player-ignited vanilla TNT, renders its actual tracked

@@ -24,6 +24,7 @@ end
 player=npc(99,0);player.pos={x=0,y=0,z=0}
 ent_all=7
 System={GetCurrTime=function()return clock end,LogAlways=function(s)logs[#logs+1]=s end,GetEntitiesInSphere=function()return entities end}
+System.GetEntity=function(id)for _,e in pairs(entities)do if e.id==id then return e end end end
 System.GetCVar=function(name)return cvars[name]end
 System.SetCVar=function(name,value)
  require_true(cvars[name]~=nil,'unknown/non-player CVar written');writes[#writes+1]={name=name,value=value}
@@ -233,4 +234,91 @@ require_true(MineCome.GameplayProjectileTrace(run,1,arrow,1,0/0,0,1.6,0,3,1.6),'
 entities={};start();for i=1,16 do require_true(trace(i,string.format('%032x',i),1,0,1),'bounded arrow admission failed')end
 trace(17,string.format('%032x',17),1,0,1);require_true(projectile_receipt('projectile_trace','rejected'):match('projectile_capacity'),'active projectile bound ignored');finish()
 require_true(next(MineCome._gameplay_combat.last.projectiles)==nil and MineCome._gameplay_combat.last.projectile_last==nil,'projectile refs retained after cleanup')
-print('PASS native combat lifecycle, normalization, replay, identity, occlusion, owned lock cleanup and projectile trace/impact (simulated engine)')
+-- TNT prepares native exposure around a remote centre, then commits actual
+-- vanilla damage. Neither phase may consult the player's current melee eye.
+local explosion,owner=string.rep('b',32),string.rep('c',32)
+local function prepare(seq,id)return MineCome.GameplayBlastPrepare(run,seq or 1,id or explosion,owner,0,100,.5,4)end
+local function commit(seq,rows,id)return MineCome.GameplayBlastCommit(run,seq or 2,id or explosion,owner,1,0,100,.5,4,rows or '1:0.25')end
+local function blast_receipt(event,result)
+ local line=logs[#logs];require_true(line:match('"event":"'..event..'"') and line:match('"result":"'..result..'"'),'blast receipt differs: '..line);return line
+end
+local saved_ray=Physics.RayWorldIntersection;local rays,wall=0,'clear'
+local blast_points={}
+Physics.RayWorldIntersection=function(origin,direction,count,mask,skip1,skip2,out)
+ rays=rays+1;require_true(skip1==player.id and skip2~=player.id,'blast ray excluded wrong actor')
+ blast_points[#blast_points+1]={x=origin.x,y=origin.y,z=origin.z}
+ if on_ray then on_ray()end
+ if wall=='invalid'then return 16 end
+ if wall=='blocked' or wall=='partial' and origin.z<.9 then
+  local length=math.sqrt(direction.x^2+direction.y^2+direction.z^2);local d=length*.5
+  out[1]={dist=d,pos={x=origin.x+direction.x*.5,y=origin.y+direction.y*.5,z=origin.z+direction.z*.5},normal={x=-direction.x/length,y=-direction.y/length,z=-direction.z/length}};return 1
+ end
+ return 0
+end
+view_get=MineCome.GameplayMovementCombatView;MineCome.GameplayMovementCombatView=function()error('remote TNT used current melee eye')end
+a=npc(1,102);local other=npc(2,104);other.max_health=500;other.health=500;local control=npc(3,111);entities={a,other,control};start();before=damage_calls
+require_true(prepare(),'remote blast prepare failed');local line=blast_receipt('blast_prepare','prepared')
+require_true(#line:match('"exposure":"([01]+)"')==45 and not line:match('"token":3'),'pinned45sample lattice or8m radius differs')
+local first_rays=rays;require_true(prepare() and rays==first_rays,'duplicate prepare resampled or failed')
+require_true(not MineCome.GameplayBlastPrepare(run,1,explosion,owner,0,100.1,.5,4),'changed duplicate prepare admitted')
+clock=clock+.5 -- This explicit1s grant is independent of .3s melee snapshots.
+require_true(commit(2,'1:0.25;2:0.1'),'multi-target commit failed');blast_receipt('blast_commit','applied')
+require_true(a.health==75 and other.health==450 and control.health==100 and damage_calls==before+2,'blast attribution/radius/maxHP normalization failed')
+require_true(commit(2,'1:0.25;2:0.1') and damage_calls==before+2,'duplicate blast damaged twice')
+require_true(not commit(2,'1:0.5;2:0.1'),'changed duplicate commit admitted');commit(3);require_true(blast_receipt('blast_commit','rejected'):match('stale_explosion'),'committed UUID reused');finish()
+for _,mode in ipairs({'blocked','partial','invalid'})do
+ wall=mode;a=npc(1,102);entities={a};start();before=damage_calls;prepare()
+ if mode=='invalid'then require_true(blast_receipt('blast_prepare','rejected'):match('scenery_unknown'),'malformed native rays admitted')
+ else
+  line=blast_receipt('blast_prepare','prepared');local exposure=line:match('"exposure":"([01]+)"')
+  require_true(exposure:find('0') and (mode=='blocked' or exposure:find('1')),'partial/full native exposure lost')
+  wall='clear' -- Later scenery cannot change captured partial/full occlusion.
+  commit();line=blast_receipt('blast_commit','applied')
+  if mode=='blocked'then require_true(a.health==100 and damage_calls==before and line:match('occluded'),'fully blocked TNT applied vanilla floor damage')
+  else require_true(a.health==75 and damage_calls==before+1,'unchanged partial native exposure refused')end
+ end
+ finish()
+end
+wall='clear'
+-- A delayed chain hit belongs to its prepared volume, even after recoil changes
+-- the live bounds or movement carries the same actor outside the blast sphere.
+for _,change in ipairs({'movement','reaction','scenery'})do
+ a=npc(1,102);entities={a};start();blast_points={};prepare();before=damage_calls
+ local prepared_points=blast_points;blast_points={};clock=clock+.2
+ if change=='movement'then a.pos.y=112
+ elseif change=='reaction'then function a:GetWorldBBox()return{x=-.55,y=101.45,z=.1},{x=.55,y=102.55,z=1.6}end
+ else wall='blocked'end
+ commit();line=blast_receipt('blast_commit','applied')
+ require_true(a.health==75 and damage_calls==before+1 and #prepared_points==45 and #blast_points==0,'commit reinterpreted the prepared actor/exposure snapshot')
+ commit();require_true(damage_calls==before+1,'delayed moving actor damage replayed');wall='clear';finish()
+end
+-- Preparation time is part of the original1s grant, never added onto it.
+a=npc(1,102);entities={a};start();local prepared_at=clock;on_ray=function()clock=clock+.005 end;prepare();on_ray=nil
+blast_receipt('blast_prepare','prepared');require_true(MineCome._gameplay_combat.active.blasts[explosion].time==prepared_at,'prepare renewed original grant time')
+clock=clock+.8;before=damage_calls;commit();require_true(blast_receipt('blast_commit','rejected'):match('stale_explosion') and a.health==100 and damage_calls==before,'ray duration extended blast expiry');finish()
+a=npc(1,102);entities={a};start();on_ray=function()clock=clock+.006 end;prepare();on_ray=nil
+require_true(blast_receipt('blast_prepare','rejected'):match('prepare_expired'),'native preparation exceeded250ms budget');finish()
+for _,fault in ipairs({'replacement','replacement_before_setter','dead','expiry','duplicate_target','owner','setter'})do
+ a=npc(1,102);entities={a};start();prepare();before=damage_calls
+ local saved_entity=System.GetEntity
+ if fault=='replacement'then entities={npc(1,102)}
+ elseif fault=='replacement_before_setter'then local reads=0;System.GetEntity=function(id)reads=reads+1;if reads==2 then entities={npc(1,102)}end;return saved_entity(id)end
+ elseif fault=='dead'then a.dead=true
+ elseif fault=='expiry'then clock=clock+1.001
+ elseif fault=='setter'then function a.soul:DealDamage(_,amount)damage_calls=damage_calls+1;a.health=a.health-amount;error('changed then failed')end end
+ if fault=='owner'then require_true(not MineCome.GameplayBlastCommit(run,2,explosion,string.rep('d',32),1,0,100,.5,4,'1:0.25'),'changed blast owner accepted')
+ else
+  commit(2,fault=='duplicate_target' and '1:0.25;1:0.25' or nil);line=logs[#logs]
+  require_true(line:match('rejected'),'bad blast commit lacked rejection')
+  if fault=='setter'then require_true(line:match('damage_unconfirmed') and a.health==75 and damage_calls==before+1,'unknown blast setter result mislabeled');commit(2);commit(3);require_true(damage_calls==before+1,'ambiguous blast setter retried')
+  else require_true(a.health==100 and damage_calls==before,'invalid blast touched health')end
+ end
+ wall='clear';on_ray=nil;System.GetEntity=saved_entity;finish()
+end
+-- Oversized exposure and actor sets fail closed instead of truncating targets.
+a=npc(1,102);function a:GetWorldBBox()return{x=-2,y=100,z=0},{x=2,y=104,z=5}end;entities={a};start();prepare();require_true(blast_receipt('blast_prepare','rejected'):match('exposure_capacity'),'oversized exposure accepted');finish()
+entities={};for i=1,9 do entities[i]=npc(i,102+i*.1)end;start();prepare();require_true(blast_receipt('blast_prepare','rejected'):match('actor_capacity'),'actor overflow silently truncated');finish()
+entities={};for i=1,8 do entities[i]=npc(i,102+i*.1)end;start();prepare();require_true(#blast_receipt('blast_prepare','prepared')<4000,'blast receipt exceeds native log ceiling');commit(2,'');finish()
+require_true(next(MineCome._gameplay_combat.last.blasts)==nil and MineCome._gameplay_combat.last.blast_last==nil,'blast grants retained after cleanup')
+Physics.RayWorldIntersection=saved_ray;MineCome.GameplayMovementCombatView=view_get
+print('PASS native combat lifecycle, normalization, replay, identity, occlusion, owned lock cleanup, projectile and TNT blast prepare/commit (simulated engine)')

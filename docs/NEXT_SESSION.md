@@ -1,6 +1,52 @@
 # Resume checkpoint — 9 November 2026
 
-## Latest work: TNT gameplay verified in both games
+## Latest work: TNT damages native NPCs, automatically verified
+
+Preserve the connected `-Combat` TNT path. `GameplayBlasts` pauses an owned TNT
+at its real detonation tail, prepares native NPC exposure, invokes unchanged
+vanilla explosion code, and commits its actual damage through the existing
+guarded console worker. Native scenery exposure and actor volume are immutable
+detonation snapshots; later recoil/movement/cover changes cannot cancel or
+reinterpret that event. Commit still requires the exact live entity/soul/raw
+generation, original one-second grant and one-use explosion UUID. Keep native
+float32 coordinate validation and immutable per-source timestamps; different
+queued TNT sources need not have globally monotonic creation times.
+
+**Actual two-game automatic PASS:**
+`runtime/evidence/gameplay-kcd-20261109-121518-ec83927a36cc4bd0b892fd1263b9ee10/native-tnt-combat-verification.json`.
+Primary plus chain explosion: native NPC100→43.3303833008→0; out-of-radius
+control100 unchanged;2 preparations/2 commits/0 rejections. Vanilla damage
+31.0536499, native damage clamped100. Independent Lua health sampler119 reads
+per NPC. TNT/wool destruction, obsidian survival,96,296 TNT pixels,186 native
+composition/reprojection advances across11.261s, save/normal exit and complete
+NPC/path/timer/combat-policy/body cleanup passed. No manual test is needed to
+repeat this milestone. Saved evidence can be reverified with:
+
+```powershell
+& './scripts/Test-KcdTntCombat.ps1' -VerifyEvidenceDirectory 'runtime/evidence/gameplay-kcd-20261109-121518-ec83927a36cc4bd0b892fd1263b9ee10'
+```
+
+Compilation/assemble,379 combat,387 block and50 blast-host checks passed, plus
+Lua combat and fixture lifecycle regressions. The native dummy automatically
+despawns after its initial wait/move plus ten seconds: verify fresh alive
+near/control snapshots immediately after commits, retain independently sampled
+health, then run the HUD dwell. Do not extend NPC lifetime or silently accept
+missing actors. Fixture input actions wait for their own admitted confirmation.
+
+Both game clients are closed; temporary WorldBlocks installation restored,
+`armed=false`: `runtime/evidence/gameplay-hud-restore-20261109-121643-88c2def920c642c38d74f39da5faa9c5`.
+The successful runner used `runtime/hud-tnt-combat-20261109`, isolated instance
+`runtime/gameplay/tnt-combat-native-20261109-e`; these runtime assets stay ignored.
+
+Next gameplay work: reciprocal native NPC attacks remain the largest combat
+gap (see telemetry evidence below). Native geometry destruction, blast knockback
+and a dedicated live wall-cover check are unfinished; cover logic has automated
+simulated binding coverage. Full-reload ownerless TNT must not gain invented
+native attacker attribution. Large simultaneous burst throughput is unverified.
+Do not repeat the completed HUD/inventory/walking/TNT sequence without a relevant
+change. The following TNT-only checkpoint is historical, not current scope.
+
+## Previous work: TNT gameplay verified in both games
 
 Preserve the implemented TNT path: vanilla flint-and-steel ignition, tracked
 fuse/chain entities, actual vanilla rendering, captured-ground support and

@@ -6,6 +6,7 @@ import dev.minecome.terrain.*;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.entity.damage.DamageSource;
+import net.minecraft.entity.TntEntity;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.entity.projectile.PersistentProjectileEntity;
 import net.minecraft.registry.Registries;
@@ -36,6 +37,7 @@ public final class GameplayCombat implements GameplayActorEntity.DamageSink {
     private final AtomicReference<Plan> intent=new AtomicReference<>();private final AtomicReference<Hit> outgoing=new AtomicReference<>();private final AtomicReference<String> failure=new AtomicReference<>();
     private final Map<Integer,GameplayActorEntity> proxies=new HashMap<>();
     private final GameplayProjectiles projectiles;
+    private final GameplayBlasts blasts;
     /** Written only by the server's synchronous damage call, never the file/client threads. */
     private Accepted accepted;
     private volatile GameplayCombatProtocol.Snapshot snapshot;
@@ -49,6 +51,7 @@ public final class GameplayCombat implements GameplayActorEntity.DamageSink {
         save.verifyOwnership();var path=directory.toRealPath();hostFile=path.resolve("host-combat.json");guestFile=path.resolve("combat.json");temporary=path.resolve("combat.json.tmp");
         if(Files.exists(guestFile,LinkOption.NOFOLLOW_LINKS)||Files.exists(temporary,LinkOption.NOFOLLOW_LINKS))throw new IOException("Combat publication already exists");
         projectiles=new GameplayProjectiles(this,identity,save,surface,path,standalone);
+        blasts=new GameplayBlasts(this,identity,save,surface,path,standalone);
         var worker=new Thread(this::files,"MineComeCombatFiles");worker.setDaemon(true);worker.start();
     }
     public List<GameplayCombatProtocol.Actor> knownActors(){var s=snapshot;return s==null?List.of():s.actors();}
@@ -57,7 +60,7 @@ public final class GameplayCombat implements GameplayActorEntity.DamageSink {
         if(!closing&&next==before)return;
         if(closing||next==null||!before.run().equals(next.run())||!before.sha256().equals(next.sha256())||before.centerX()!=next.centerX()||before.centerY()!=next.centerY()||before.centerZ()!=next.centerZ()||
                 !(before instanceof GameplayTerrain old)||!(next instanceof GameplayTerrain grown)||(grown!=old&&!grown.isSuccessorOf(old)))throw new IllegalArgumentException("Combat terrain identity/coverage changed");
-        surface=next;projectiles.terrain(next);
+        surface=next;projectiles.terrain(next);blasts.terrain(next);
     }
     public boolean ready(){return ready&&!closing&&failure.get()==null;}
     public void tick(MinecraftClient c,boolean allow,GameplayBlocks.Aim ray,double blockDistance){
@@ -67,6 +70,7 @@ public final class GameplayCombat implements GameplayActorEntity.DamageSink {
         if(lastHostAt>0&&now-lastHostAt>2_000_000_000L)throw new IllegalStateException("Combat host snapshot expired");
         ready=serverPlayer!=null&&s!=null&&s.fresh(System.currentTimeMillis());enabled=allow&&ready&&c.player.isAlive()&&c.currentScreen==null&&c.getOverlay()==null&&!c.isPaused();
         projectiles.client(c,ready());
+        blasts.client(c,ready());
         aim=ray;blockingDistance=blockDistance;
         if(!enabled){suspend(c);return;}
         var p=intent.get();if(p!=null){
@@ -114,10 +118,11 @@ public final class GameplayCombat implements GameplayActorEntity.DamageSink {
         if(server==null||playerId==null)return;
         try{
             if(source!=server||!source.isOnThread()||!save.saveName().equals(source.getSaveProperties().getLevelName()))throw new IllegalStateException("Combat server ownership changed");
-            if(closing){projectiles.closeServer();removeAll();serverClosed=true;return;}
+            if(closing){projectiles.closeServer();blasts.closeServer();removeAll();serverClosed=true;return;}
             check();var player=source.getPlayerManager().getPlayer(playerId);if(player==null||player.getServerWorld()!=source.getOverworld())throw new IllegalStateException("Combat player/world unavailable");
             if(serverPlayer==null)serverPlayer=player;if(serverPlayer!=player)throw new IllegalStateException("Unreconciled combat player replacement");
             projectiles.observe(source,player);
+            blasts.observe(source,player);
             var s=snapshot;if(s==null||!s.fresh(System.currentTimeMillis())){removeAll();admitted=0;return;}
             if(s.hitAck()<hostAck||s.hitAck()>hits)throw new IllegalStateException("Combat hit acknowledgment replay/future");
             var out=outgoing.get();if(out!=null&&s.hitAck()==out.seq()){outgoing.compareAndSet(out,null);hostAck=s.hitAck();}
@@ -131,7 +136,7 @@ public final class GameplayCombat implements GameplayActorEntity.DamageSink {
                 tokens.add(a.token());var proxy=proxies.get(a.token());if(proxy==null){proxy=new GameplayActorEntity(GameplayActorEntity.TYPE,source.getOverworld());proxy.bind(a.token(),a.width(),a.height(),this);proxy.refreshPositionAndAngles(point.x,point.y,point.z,0,0);if(!source.getOverworld().spawnEntity(proxy))throw new IllegalStateException("Combat proxy spawn refused");proxies.put(a.token(),proxy);}
                 else{proxy.bind(a.token(),a.width(),a.height(),this);proxy.setPosition(point);}
             }
-            for(var token:new ArrayList<>(proxies.keySet()))if(!tokens.contains(token)&&!projectiles.retains(token)){proxies.remove(token).discard();}proxyCount=proxies.size();
+            for(var token:new ArrayList<>(proxies.keySet()))if(!tokens.contains(token)&&!projectiles.retains(token)&&!blasts.retains(token)){proxies.remove(token).discard();}proxyCount=proxies.size();
             for(var hurt:s.hurts()){
                 if(hurt.seq()<=hurtAck)continue;if(hurt.seq()!=hurtAck+1)throw new IllegalStateException("Combat incoming damage gap");
                 var attacker=proxies.get(hurt.attackerToken());if(attacker==null||attacker.getPos().distanceTo(player.getPos())>8)throw new IllegalStateException("Unowned/distant native melee attacker");
@@ -142,6 +147,7 @@ public final class GameplayCombat implements GameplayActorEntity.DamageSink {
     @Override public boolean accepts(GameplayActorEntity target,DamageSource source,float amount){
         accepted=null;
         if(source.getSource() instanceof PersistentProjectileEntity)return projectiles.accepts(target,source,amount);
+        if(source.getSource() instanceof TntEntity)return blasts.accepts(target,source,amount);
         var p=intent.get();var s=snapshot;
         if(server==null||!server.isOnThread()||p==null||source.getAttacker()!=serverPlayer||source.getSource()!=serverPlayer||target.token()!=p.token())return false;
         if(closing||failure.get()!=null)return reject("controller_unavailable",p);
@@ -164,6 +170,7 @@ public final class GameplayCombat implements GameplayActorEntity.DamageSink {
     }
     @Override public void applied(GameplayActorEntity target,DamageSource source,float amount){
         if(source.getSource() instanceof PersistentProjectileEntity){projectiles.applied(target,source,amount);return;}
+        if(source.getSource() instanceof TntEntity){blasts.applied(target,source,amount);return;}
         var p=intent.get();var selected=accepted;
         if(p==null||selected==null||selected.planId()!=p.id()||selected.token()!=target.token()||target!=proxies.get(selected.token())||!Float.isFinite(amount)||amount<=0||amount>1000||outgoing.get()!=null)throw new IllegalStateException("Combat damage publication ownership changed");
         // Forward the exact snapshot/contact accepted by vanilla damage on the
@@ -216,11 +223,12 @@ public final class GameplayCombat implements GameplayActorEntity.DamageSink {
             throw new IllegalStateException("Combat client respawn ownership changed");
         suspend(c);clientPlayer=c.player;clientRespawns=serverRespawns;
     }
-    public void close(MinecraftClient c){if(closing)return;suspend(c);projectiles.close();closing=true;if(server==null)serverClosed=true;else server.execute(()->{projectiles.closeServer();removeAll();serverClosed=true;});}
+    public void close(MinecraftClient c){if(closing)return;suspend(c);projectiles.close();blasts.close();closing=true;if(server==null)serverClosed=true;else server.execute(()->{projectiles.closeServer();blasts.closeServer();removeAll();serverClosed=true;});}
     public boolean cleanupComplete(){return closing&&serverClosed&&workerClosed;}
     public JsonObject evidence(MinecraftClient c){
         var j=new JsonObject();j.addProperty("enabled",true);j.addProperty("standalone",standalone);j.addProperty("ready",ready());j.addProperty("proxy_count",proxyCount);j.addProperty("attacks_dispatched",attacks);j.addProperty("outgoing_hits",hits);j.addProperty("hit_ack",hostAck);j.addProperty("hurt_ack",hurtAck);j.addProperty("incoming_hurts",hurts);j.addProperty("server_applied_damage",serverDamage);j.addProperty("player_damage_applied",playerDamage);j.addProperty("rejected",rejected.get());j.addProperty("server_rejected",serverRejected);j.addProperty("pending",intent.get()!=null||outgoing.get()!=null);j.addProperty("cleanup_complete",cleanupComplete());j.addProperty("controls_released",!leftConsumed);j.addProperty("server_respawns",serverRespawns);j.addProperty("client_respawns",clientRespawns);j.addProperty("host_sequence",snapshot==null?0:snapshot.seq());
         j.add("projectiles",projectiles.evidence());
+        j.add("blasts",blasts.evidence());
         var r=lastRejection;if(r!=null){var d=new JsonObject();d.addProperty("reason",r.reason());d.addProperty("plan_id",r.planId());d.addProperty("token",r.token());d.addProperty("utc_ms",r.utc());d.addProperty("plan_age_ms",r.planAgeMs());d.addProperty("aim_age_ms",r.aimAgeMs());d.addProperty("host_age_ms",r.hostAgeMs());d.addProperty("host_sequence",r.hostSequence());d.addProperty("proxy_count",r.proxies());d.add("ray_origin",point(r.rayOrigin()));d.add("ray_direction",point(r.rayDirection()));d.addProperty("native_obstruction_distance",r.obstruction());d.addProperty("ray_intersects_target",r.intersects());
             if(r.targetBox()!=null){var b=r.targetBox();var bounds=new JsonObject();bounds.add("min",point(new Vec3d(b.minX,b.minY,b.minZ)));bounds.add("max",point(new Vec3d(b.maxX,b.maxY,b.maxZ)));d.add("target_box",bounds);}j.add("last_rejection",d);}
         if(failure.get()!=null)j.addProperty("failure",failure.get());return j;
@@ -230,6 +238,7 @@ public final class GameplayCombat implements GameplayActorEntity.DamageSink {
         try{
             while(!closing){
                 projectiles.filesStep();
+                blasts.filesStep();
                 String text=GameplayCombatSnapshot.read(hostFile);
                 if(text!=null){
                     if(!text.equals(lastText)){
@@ -245,7 +254,7 @@ public final class GameplayCombat implements GameplayActorEntity.DamageSink {
                 Thread.sleep(20);
             }
         }catch(Exception e){if(!closing)failure.compareAndSet(null,e.toString());}
-        finally{projectiles.filesClosed();try{Files.deleteIfExists(temporary);}catch(IOException e){failure.compareAndSet(null,e.toString());}workerClosed=true;}
+        finally{projectiles.filesClosed();blasts.filesClosed();try{Files.deleteIfExists(temporary);}catch(IOException e){failure.compareAndSet(null,e.toString());}workerClosed=true;}
     }
     private static JsonObject point(Vec3d p){var j=new JsonObject();j.addProperty("x",p.x);j.addProperty("y",p.y);j.addProperty("z",p.z);return j;}
 }

@@ -996,20 +996,22 @@ chain priming and drops. Its registered TNT renderer supplies the flashing and
 swelling fuse model in the shared colour/depth pass. Destroyed owned blocks leave
 the rendering/collision ledger and stay destroyed after saving and reopening.
 
-Explosions currently affect Minecraft-owned construction. Native KCD buildings
-and terrain are unchanged, and native NPC blast damage is not connected yet.
+Explosions affect Minecraft-owned construction. `-Combat` also implements native
+NPC blast damage as described below. KCD2 buildings and terrain remain unchanged.
 Vanilla Minecraft damage/knockback remains active; the automatic fixture alone
 uses temporary Creative mode and a restored knockback-resistance attribute.
 The blast particle pass and collision against arbitrary native scenery remain
 unfinished; primed TNT currently uses captured terrain and Minecraft block collision.
 
-At most16 lit TNT entities are admitted. Excess chain candidates remain unprimed
+At most 16 lit TNT entities are admitted. Excess chain candidates remain unprimed
 blocks. A lit TNT fuse pauses if its footprint leaves captured coverage or its
 session stops. Vanilla saves its fuse/velocity, while a world/player ownership
 tag allows rebinding when that saved world and terrain are attached again. Vanilla
 does not save TNT's causing entity: durable ownership does not invent a player
-damage attribution on reload. Normal completed explosions and destruction reload
-are automatically checked; lit-fuse save/rebind still needs a dedicated live check.
+damage attribution on reload. Resumed TNT without that original causing entity
+continues its construction explosion but cannot damage native NPCs. Normal
+completed explosions and destruction reload are automatically checked; lit-fuse
+save/rebind still needs a dedicated live check.
 Redstone and command-only unstable TNT ignition are outside this first path.
 
 Automated checks use normal interaction packets and isolated saves:
@@ -1029,6 +1031,55 @@ pixels and complete cleanup. The standalone check reopens the same save; the
 native check requires continued HUD composition after the explosions. Scripted
 aiming is explicit and no human controls or subjective effects are claimed.
 
+### TNT damage to native NPCs
+
+Use the existing WorldBlocks bundle with the combat profile:
+
+```powershell
+& './scripts/Start-GameplaySession.ps1' -BundleDirectory $bundle -Combat
+```
+
+Player-owned TNT and its chain explosions use the actual detonation centre,
+regardless of the player's current view or melee reach. Before the vanilla
+explosion runs, the native adapter prepares up to eight NPCs within its eight-metre
+radius, with at most 128 visibility samples per actor. The samples follow Minecraft's exposure
+lattice; Minecraft combines them with its own block raycasts. Partial cover
+reduces exposure, and fully blocked actors receive no native damage. The actual
+vanilla damage is then divided by 20 and mapped onto each NPC's maximum health,
+attributed to the original native player with hit reactions requested.
+
+The prepare/commit handoff retains the exact TNT UUID, owner, world and process
+identity. Its native grant lasts at most one second from the original preparation
+time, including at most 250ms of native ray collection. Commit rechecks the actor's
+exact generation and alive state before applying damage once. The prepared volume,
+health scale and scenery exposure belong to the detonation snapshot; later
+movement, hit-reaction animation or changed cover does not reinterpret that event.
+Changed actors, stale grants and ambiguous native results fail closed without
+retrying damage. This does not require a fresh melee aim at the explosion.
+Native knockback and destruction of native geometry are not transferred.
+
+Focused automated source/transport checks cover partial and full native cover,
+multi-target damage, duplicate bursts, changed actors and cleanup. The connected
+NPC blast check now passes with two isolated native NPCs: primary and chain
+explosions reduced the nearby actor's health from 100 to 43.3303833008, then 0;
+the control beyond the radius stayed at 100. Both bursts committed once, with
+zero rejected outcomes. Actual vanilla damage totalled 31.0536499 Minecraft
+health points; native damage was clamped to the remaining 100 health.
+
+The same run verified TNT colour/depth pixels, 186 native composition/reprojection
+advances during an 11.261-second post-explosion interval, normal client exit and
+full cleanup. Receipt:
+`runtime/evidence/gameplay-kcd-20261109-121518-ec83927a36cc4bd0b892fd1263b9ee10/native-tnt-combat-verification.json`.
+The temporary renderer installation was restored afterward. These are scripted
+guest controls; a dedicated live native wall-cover case remains unverified.
+Run the check with a fresh loaded tools world:
+
+```powershell
+& './scripts/Test-KcdTntCombat.ps1' -BundleDirectory $bundle -InstanceDirectory $instance
+# Verify the same saved receipts without launching either game:
+& './scripts/Test-KcdTntCombat.ps1' -VerifyEvidenceDirectory $nativeCombatEvidence
+```
+
 ## NPC melee bridge
 
 `-Combat` adds the experimental NPC adapter to WorldBlocks. Aim and left-click
@@ -1038,7 +1089,7 @@ the resulting damage fraction onto the native NPC's maximum health. Native
 NPCs keep their identity, movement and AI. Block mining keeps its existing path
 when the crosshair does not select an NPC. Inventory and chat suppress attacks.
 
-This is an outgoing melee/bow increment, not complete combat. Native NPC
+The outgoing bridge covers melee, bows and the TNT path above. Native NPC
 attacks are not yet routed into Minecraft health. Crossbows, sweep damage,
 knockback and secondary enchantment effects are not transferred. Minecraft's
 incoming armor/hurt logic is implemented and tested with synthetic host events;

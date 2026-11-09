@@ -38,7 +38,7 @@ public final class GameplayTntFixture {
         final UUID id;final int first,firstTick;int last,lastTick,minimum;
         Fuse(Primed p,int tick){id=p.id();first=last=minimum=p.fuse();firstTick=lastTick=tick;}
     }
-    private final String mode;private final boolean nativeMode;
+    private final String mode;private final boolean nativeMode,combatCheck;private final GameplayCombat combat;
     private final long created=System.nanoTime();private final GameplayBlocks blocks;
     private final GameplayMovement movement;private final GameplayWorld save;
     private final HudInputProtocol.Identity identity;private final Path directory,witness;
@@ -57,15 +57,26 @@ public final class GameplayTntFixture {
     private volatile boolean closing,finished;private boolean terrainTarget;
     private boolean placed,ignited,fuseVerified,chainVerified,fragileDestroyed,resistantPreserved,durable,ledgerRemoved,rendered,resumed;
     private int stage,ticks,placementIndex,postExplosionTick;private long begun,stageAt,events,actionAt,viewWrites,nativeStartedUtc,nativeCompletedUtc;
+    private long lastActionAttempt,actionConfirmedAt,actionPlaces,actionIgnitions,actionRejections,actionCancellations;
+    private int unadmittedAttempts,scriptedActionAttempts,scriptedUnadmittedEdges;
     private double originalResistance;private boolean protectionCaptured,protectionRestored;
     private boolean protectionRestoreRequested,restoringFailure;private long restoreRequestedAt,restoreDeadline;private String failureToReport;
+    private GameplayCombatProtocol.Actor nearActor,controlActor,nearAfter,controlAfter;private JsonObject blastProof;
+    private boolean nativeDamageVerified,outOfRadiusVerified;private double nativeHealthAfter,vanillaBlastDamage;
+    private double minimumControlBlastDistance=Double.POSITIVE_INFINITY;
+    private long initialCombatSequence,committedCombatSequence,verifiedCombatSequence,combatVerifiedUtc;
 
     public GameplayTntFixture(String mode,GameplayBlocks blocks,GameplayMovement movement,GameplayWorld save,
                               HudInputProtocol.Identity identity,Path directory,Consumer<JsonObject> completed)throws IOException{
-        nativeMode=mode.equals("tnt-native");
-        if(!Set.of("tnt","tnt-resume","tnt-native").contains(mode)||!Boolean.getBoolean("minecome.gameplayWorldBlocks")||
+        this(mode,null,blocks,movement,save,identity,directory,completed);
+    }
+    public GameplayTntFixture(String mode,GameplayCombat combat,GameplayBlocks blocks,GameplayMovement movement,GameplayWorld save,
+                              HudInputProtocol.Identity identity,Path directory,Consumer<JsonObject> completed)throws IOException{
+        combatCheck=mode.equals("tnt-combat-native");nativeMode=mode.equals("tnt-native")||combatCheck;this.combat=combat;
+        if(!Set.of("tnt","tnt-resume","tnt-native","tnt-combat-native").contains(mode)||!Boolean.getBoolean("minecome.gameplayWorldBlocks")||
             (nativeMode?Boolean.getBoolean("minecome.gameplayStandalone")||!Boolean.getBoolean("minecome.gameplayTntCheck"):!Boolean.getBoolean("minecome.gameplayStandalone")))
             throw new IllegalArgumentException("Explicit WorldBlocks TNT fixture required");
+        if(combatCheck&&(combat==null||!Boolean.getBoolean("minecome.gameplayCombat")||!Boolean.getBoolean("minecome.gameplayTntCombatCheck")))throw new IllegalArgumentException("Explicit connected TNT combat fixture required");
         this.mode=mode;this.blocks=blocks;this.movement=movement;this.save=save;this.identity=identity;this.directory=directory.toRealPath();this.completed=completed;
         save.verifyOwnership();witness=save.directory().resolve(WITNESS);
         if(!nativeMode&&Files.exists(this.directory.resolve("host-view.json"))||Files.exists(this.directory.resolve("gameplay-tnt-fixture.json")))throw new IOException("TNT fixture output exists");
@@ -128,6 +139,7 @@ public final class GameplayTntFixture {
     private void create(MinecraftClient c,State s,long now)throws IOException{
         switch(stage){
             case 0->{
+                if(combatCheck&&!prepareCombat(c))return;
                 if(!s.mode().equals("creative")||s.tnt()!=0||s.fragile()!=0||s.obsidian()!=0||s.flint()!=0||!s.primed().isEmpty()||!blocks.ownedBlocks().isEmpty())throw new IllegalStateException("Unexpected new TNT world");
                 originalResistance=s.resistance();if(!Double.isFinite(originalResistance)||originalResistance<0||originalResistance>1)throw new IllegalStateException("Unknown blast protection baseline");protectionCaptured=true;
                 send(c,"gamemode survival");send(c,"item replace entity @s hotbar.0 with minecraft:tnt 2");send(c,"item replace entity @s hotbar.1 with minecraft:white_wool");send(c,"item replace entity @s hotbar.2 with minecraft:obsidian");send(c,"item replace entity @s hotbar.3 with minecraft:flint_and_steel");send(c,"attribute @s minecraft:generic.explosion_knockback_resistance base set 1");next(1,now);
@@ -136,20 +148,20 @@ public final class GameplayTntFixture {
             case 2->{if(placementIndex==PLACEMENT.size()){placed=true;key(c,'4');aimTarget=Vec3d.ofCenter(positions.get("primary"));terrainTarget=false;next(5,now);break;}key(c,'1'+slot(PLACEMENT.get(placementIndex)));next(3,now);}
             case 3->{
                 String label=PLACEMENT.get(placementIndex);if(s.selected()!=slot(label)||!c.player.getMainHandStack().isOf(item(label)))return;
-                var pos=positions.get(label);terrainTarget=true;aimTarget=new Vec3d(pos.getX()+.5,movement.surface().heightAt(pos.getX()+.5,pos.getZ()+.5),pos.getZ()+.5);refreshAim(c);edge(c,7);edge(c,8);actionAt=now;next(4,now);
+                var pos=positions.get(label);terrainTarget=true;aimTarget=new Vec3d(pos.getX()+.5,movement.surface().heightAt(pos.getX()+.5,pos.getZ()+.5),pos.getZ()+.5);refreshAim(c);if(dispatchRight(c,now))next(4,now);
             }
             case 4->{
-                if(s.at()<=actionAt||blocks.evidence(c).get("pending").getAsBoolean())return;
+                if(!confirmedAction(c,s,now,false))return;
                 String label=PLACEMENT.get(placementIndex);if(!placedState(s.states().get(label),label)||!blocks.ownedBlocks().contains(positions.get(label)))throw new IllegalStateException("TNT setup placement failed: "+label+" "+state(s));
                 placementIndex++;next(2,now);
             }
             case 5->{
                 if(s.selected()!=3||!c.player.getMainHandStack().isOf(Items.FLINT_AND_STEEL)||s.damage()!=0)return;
                 if(s.tnt()!=0||s.fragile()!=0||s.obsidian()!=0||blocks.ownedBlocks().size()!=4)throw new IllegalStateException("Survival TNT setup did not consume stacks");
-                refreshAim(c);edge(c,7);edge(c,8);actionAt=now;next(6,now);
+                refreshAim(c);if(dispatchRight(c,now))next(6,now);
             }
             case 6->{
-                if(s.at()<=actionAt||s.primed().size()!=1||s.damage()!=1||!s.states().get("primary").equals("minecraft:air"))return;
+                if(!confirmedAction(c,s,now,true)||s.primed().size()!=1||s.damage()!=1||!s.states().get("primary").equals("minecraft:air"))return;
                 var first=s.primed().getFirst();if(!first.owner().equals(playerId))throw new IllegalStateException("TNT ignition lost player attribution");tntId=first.id();ignited=true;durable=true;aimTarget=null;
                 send(c,"gamemode creative");next(7,now);
             }
@@ -160,6 +172,10 @@ public final class GameplayTntFixture {
                 var t=blocks.evidence(c).getAsJsonObject("tnt");if(t==null||t.get("explosions").getAsInt()<2||t.get("active").getAsInt()!=0)return;
                 var first=fuses.get(tntId);if(first==null||first.first<60||first.first>80||first.first-first.minimum<10||chainId==null)throw new IllegalStateException("Missing vanilla fuse or chain observations");
                 fuseVerified=true;chainVerified=true;fragileDestroyed=true;resistantPreserved=true;ledgerRemoved=true;validateImage("primed");rendered=true;
+                // The official passive fixture actors have a finite AI lifetime.
+                // Prove their health while they are still present, then keep the
+                // independent compositor observation running after that proof.
+                if(combatCheck&&!validateCombat(c))return;
                 postExplosionTick=s.tick();if(nativeMode)nativeStartedUtc=System.currentTimeMillis();next(9,now);
             }
             case 9->{
@@ -173,7 +189,8 @@ public final class GameplayTntFixture {
     }
     private void observeFuse(State s){
         for(var p:s.primed()){
-            if(!p.owner().equals(playerId)||p.fuse()<1||p.fuse()>80)throw new IllegalStateException("Unexpected TNT owner/fuse");
+            if(!p.owner().equals(playerId)||p.fuse()<(combatCheck?0:1)||p.fuse()>80)throw new IllegalStateException("Unexpected TNT owner/fuse");
+            if(combatCheck&&controlActor!=null){var control=actor(controlActor.token());if(control==null)throw new IllegalStateException("Native TNT control disappeared");minimumControlBlastDistance=Math.min(minimumControlBlastDistance,actorPosition(control).distanceTo(p.position()));if(minimumControlBlastDistance<=8)throw new IllegalStateException("Native TNT control entered actual blast radius");}
             var f=fuses.get(p.id());if(f==null){if(fuses.size()>=2)throw new IllegalStateException("Unexpected extra primed TNT");f=new Fuse(p,s.tick());fuses.put(p.id(),f);
                 if(tntId!=null&&!p.id().equals(tntId)){if(p.fuse()>29)throw new IllegalStateException("Chain TNT did not use vanilla shortened fuse");chainId=p.id();}
             }else if(s.tick()>f.lastTick){if(p.fuse()>f.last||f.last-p.fuse()>s.tick()-f.lastTick+1)throw new IllegalStateException("TNT fuse changed outside normal ticks");f.last=p.fuse();f.lastTick=s.tick();f.minimum=Math.min(f.minimum,p.fuse());}
@@ -186,10 +203,69 @@ public final class GameplayTntFixture {
         validateImage("resumed");resumed=true;fragileDestroyed=true;resistantPreserved=true;ledgerRemoved=true;rendered=true;protectionRestored=true;complete(c,true,null);
     }
     private boolean destroyed(State s){return s.states().get("primary").equals("minecraft:air")&&s.states().get("chain").equals("minecraft:air")&&s.states().get("fragile").equals("minecraft:air")&&s.states().get("resistant").equals("minecraft:obsidian");}
+    private Vec3d actorPosition(GameplayCombatProtocol.Actor actor){var p=GameplayCombatProtocol.toMinecraft(new GameplayCombatProtocol.Point(actor.x(),actor.y(),actor.z()),movement.surface());return new Vec3d(p.x(),p.y(),p.z());}
+    private GameplayCombatProtocol.Actor actor(int token){for(var value:combat.knownActors())if(value.token()==token)return value;return null;}
+    private boolean prepareCombat(MinecraftClient c){
+        if(!combat.ready())return false;var values=combat.knownActors();if(values.size()!=2)throw new IllegalStateException("TNT combat check requires exactly its two isolated native actors");
+        var center=Vec3d.ofCenter(positions.get("primary"));var ordered=new ArrayList<>(values);ordered.sort(Comparator.comparingDouble(value->actorPosition(value).squaredDistanceTo(center)));
+        var near=ordered.getFirst();var control=ordered.getLast();
+        if(!near.alive()||!control.alive()||near.health()!=near.maxHealth()||control.health()!=control.maxHealth())throw new IllegalStateException("Native TNT actors must begin alive at their observed full health");
+        if(actorPosition(near).distanceTo(center)>=7.5||actorPosition(control).distanceTo(center)<=8.5||actorPosition(control).distanceTo(Vec3d.ofCenter(positions.get("chain")))<=8.5)throw new IllegalStateException("Native TNT actor geometry lacks near and out-of-radius cases");
+        nearActor=near;controlActor=control;initialCombatSequence=combat.evidence(c).get("host_sequence").getAsLong();return true;
+    }
+    private boolean validateCombat(MinecraftClient c){
+        if(!combat.ready())return false;var combatEvidence=combat.evidence(c);var proof=combatEvidence.getAsJsonObject("blasts");if(proof==null||proof.get("pending").getAsBoolean()||proof.get("committed").getAsInt()!=2)return false;
+        long hostSequence=combatEvidence.get("host_sequence").getAsLong();
+        if(committedCombatSequence==0){committedCombatSequence=hostSequence;return false;}
+        if(hostSequence<=committedCombatSequence)return false;
+        if(proof.has("failure")&&!proof.get("failure").isJsonNull()||proof.get("prepared").getAsInt()!=2||proof.get("rejected").getAsInt()!=0)throw new IllegalStateException("Native TNT blast bridge did not commit both owned explosions: "+proof);
+        Set<String> expectedIds=Set.of(tntId.toString().replace("-",""),chainId.toString().replace("-",""));var ids=new HashSet<String>();
+        for(var entry:proof.getAsJsonArray("explosions")){var e=entry.getAsJsonObject();String id=e.get("explosion").getAsString();if(!expectedIds.contains(id)||!ids.add(id)||!e.get("prepared").getAsBoolean()||!e.get("committed").getAsBoolean())throw new IllegalStateException("Native TNT explosion UUID/replay differs");}
+        if(!ids.equals(expectedIds))throw new IllegalStateException("Native TNT committed explosion UUID missing");
+        double health=nearActor.health(),damage=0;int hits=0;var keys=new HashSet<String>();
+        for(var entry:proof.getAsJsonArray("receipts")){
+            var r=entry.getAsJsonObject();String id=r.get("explosion").getAsString();int token=r.get("actor_token").getAsInt();
+            if(!expectedIds.contains(id)||token!=nearActor.token()||!keys.add(id+":"+token)||!r.get("result").getAsString().equals("damaged"))throw new IllegalStateException("Native TNT hit ownership, control isolation or dedup differs: "+r);
+            double applied=r.get("damage_mc").getAsDouble(),fraction=r.get("damage_fraction").getAsDouble(),before=r.get("before").getAsDouble(),after=r.get("after").getAsDouble();
+            if(!Double.isFinite(applied)||applied<=0||applied>57||Math.abs(applied/20-fraction)>1e-6||Math.abs(before-health)>.02||Math.abs(after-Math.max(0,before-nearActor.maxHealth()*fraction))>.02||after>=before)throw new IllegalStateException("Native TNT HP delta differs from actual vanilla applied damage: "+r);
+            health=after;damage+=applied;hits++;
+        }
+        if(hits<1||hits>2||Math.abs(proof.get("damage_mc").getAsDouble()-damage)>.001)throw new IllegalStateException("Native TNT actual vanilla damage missing or duplicated");
+        var near=actor(nearActor.token());if(near==null)throw new IllegalStateException("Native near actor disappeared before post-blast verification");if(Math.abs(near.health()-health)>.02)return false;if(health>0&&!near.alive())throw new IllegalStateException("Native near actor liveness differs from actual health");
+        var control=actor(controlActor.token());if(control==null||!control.alive()||Math.abs(control.health()-controlActor.health())>.01||minimumControlBlastDistance<=8||!Double.isFinite(minimumControlBlastDistance))throw new IllegalStateException("Native out-of-radius control changed or was not observed");
+        nearAfter=near;controlAfter=control;verifiedCombatSequence=hostSequence;combatVerifiedUtc=System.currentTimeMillis();nativeHealthAfter=health;vanillaBlastDamage=damage;nativeDamageVerified=true;outOfRadiusVerified=true;blastProof=proof.deepCopy();return true;
+    }
+    private static JsonObject actorEvidence(GameplayCombatProtocol.Actor actor){
+        var j=new JsonObject();if(actor==null)return j;j.addProperty("token",actor.token());j.addProperty("x",actor.x());j.addProperty("y",actor.y());j.addProperty("z",actor.z());j.addProperty("health",actor.health());j.addProperty("max_health",actor.maxHealth());j.addProperty("alive",actor.alive());return j;
+    }
     private static int slot(String label){return label.equals("fragile")?1:label.equals("resistant")?2:0;}
     private static Item item(String label){return label.equals("fragile")?Items.WHITE_WOOL:label.equals("resistant")?Items.OBSIDIAN:Items.TNT;}
     private static boolean placedState(String name,String label){return label.equals("fragile")?name.equals("minecraft:white_wool"):label.equals("resistant")?name.equals("minecraft:obsidian"):name.startsWith("minecraft:tnt[");}
     private void refreshAim(MinecraftClient c){if(aimTarget==null||c.currentScreen!=null)return;var eye=c.player.getEyePos();var delta=aimTarget.subtract(eye);double range=delta.length();if(range<=0||range>4.5)throw new IllegalStateException("TNT target outside vanilla reach");blocks.aim(new GameplayBlocks.Aim(System.currentTimeMillis(),System.nanoTime(),eye,delta.normalize(),4.5,true,terrainTarget?range:-1,terrainTarget));}
+    private boolean dispatchRight(MinecraftClient c,long now){
+        // The fixture runs before the production controller refreshes authority.
+        // An unadmitted edge is not an action acknowledgment and may be retried;
+        // once a plan is pending, this fixture never repeats its packet.
+        if(lastActionAttempt!=0&&now-lastActionAttempt<250_000_000L)return false;
+        var before=blocks.evidence(c);if(before.get("pending").getAsBoolean())return false;
+        actionPlaces=before.get("places").getAsLong();actionIgnitions=before.get("tnt_ignitions").getAsLong();actionRejections=before.get("rejections").getAsLong();actionCancellations=before.get("cancellations").getAsLong();
+        if(actionPlaces!=placementIndex)throw new IllegalStateException("TNT prior placement counter differs");
+        lastActionAttempt=now;scriptedActionAttempts++;edge(c,7);edge(c,8);var after=blocks.evidence(c);
+        if(after.get("rejections").getAsLong()!=actionRejections||after.get("cancellations").getAsLong()!=actionCancellations)throw new IllegalStateException("TNT action was rejected: "+after);
+        if(!after.get("pending").getAsBoolean()){
+            if(after.get("places").getAsLong()!=actionPlaces||after.get("tnt_ignitions").getAsLong()!=actionIgnitions)throw new IllegalStateException("TNT action changed without an owned plan");
+            scriptedUnadmittedEdges++;if(++unadmittedAttempts>=8)throw new IllegalStateException("TNT action authority remained unavailable for eight bounded attempts");return false;
+        }
+        unadmittedAttempts=0;actionAt=now;actionConfirmedAt=0;return true;
+    }
+    private boolean confirmedAction(MinecraftClient c,State s,long now,boolean ignition){
+        var proof=blocks.evidence(c);
+        if(proof.get("rejections").getAsLong()!=actionRejections||proof.get("cancellations").getAsLong()!=actionCancellations)throw new IllegalStateException("Accepted TNT action failed: "+proof);
+        if(proof.get("pending").getAsBoolean())return false;
+        if(proof.get("places").getAsLong()!=actionPlaces+(ignition?0:1)||proof.get("tnt_ignitions").getAsLong()!=actionIgnitions+(ignition?1:0))throw new IllegalStateException("TNT confirmation did not advance its own action counter: "+proof);
+        if(actionConfirmedAt==0){actionConfirmedAt=now;return false;}
+        return s.at()>actionConfirmedAt&&s.at()>actionAt;
+    }
     private void owner(MinecraftClient c){if(!c.isOnThread()||c.world!=world||c.player!=player||c.getServer()!=server||!c.isIntegratedServerRunning())throw new IllegalStateException("TNT fixture owner changed");}
     private static int count(PlayerEntity p,Item item){int n=0;for(int i=0;i<p.getInventory().size();i++){var s=p.getInventory().getStack(i);if(s.isOf(item))n+=s.getCount();}return n;}
     private void observe(){if(!observing.compareAndSet(false,true))return;server.execute(()->{try{
@@ -251,6 +327,9 @@ public final class GameplayTntFixture {
         finished=true;try{movement.suspend(c);blocks.suspend(c);if(ui!=null)ui.releaseAndClose(c);}catch(Exception e){passed=false;error=e.toString();}
         var p=new JsonObject();p.addProperty("schema",1);p.addProperty("kind","minecome_gameplay_tnt_fixture_v1");p.addProperty("mode",mode);p.addProperty("result",passed?"passed":"failed");p.addProperty("failure",error);p.addProperty("world_id",save.id().toString());p.addProperty("actual_minecraft",true);p.addProperty("standalone_scripted",!nativeMode);p.addProperty("native_input_verified",false);p.addProperty("live_kcd_verified",false);p.addProperty("live_kcd_connected",nativeMode);p.addProperty("scripted_aiming",true);p.addProperty("scripted_mouse_input",true);p.addProperty("native_camera_preserved",nativeMode);p.addProperty("direct_world_inventory_entity_writes",false);p.addProperty("position_writes_used",false);p.addProperty("fuse_writes_used",false);p.addProperty("fixture_player_protection_commands",protectionCaptured);p.addProperty("protection_restored",protectionRestored);
         p.addProperty("protection_restore_requested",protectionRestoreRequested);p.addProperty("tnt_placement_verified",placed);p.addProperty("ignition_verified",ignited);p.addProperty("fuse_verified",fuseVerified);p.addProperty("chain_reaction_verified",chainVerified);p.addProperty("fragile_destruction_verified",fragileDestroyed);p.addProperty("resistant_preservation_verified",resistantPreserved);p.addProperty("tool_durability_verified",durable);p.addProperty("ledger_removal_verified",ledgerRemoved);p.addProperty("render_pixels_verified",rendered);p.addProperty("resume_verified",resumed);p.addProperty("scripted_view_writes",viewWrites);p.addProperty("elapsed_ms",begun==0?0:(System.nanoTime()-begun)/1_000_000);p.addProperty("last_stage",stage);p.addProperty("placement_count",placementIndex);p.addProperty("native_tnt_started_utc_ms",nativeStartedUtc);p.addProperty("native_tnt_completed_utc_ms",nativeCompletedUtc);p.addProperty("tnt_id",tntId==null?null:tntId.toString());p.addProperty("chain_tnt_id",chainId==null?null:chainId.toString());
+        p.addProperty("combat_check",combatCheck);p.addProperty("native_actor_damage_verified",nativeDamageVerified);p.addProperty("out_of_radius_verified",outOfRadiusVerified);
+        p.addProperty("scripted_action_attempts",scriptedActionAttempts);p.addProperty("scripted_unadmitted_edges",scriptedUnadmittedEdges);
+        if(combatCheck){p.add("native_near_before",actorEvidence(nearActor));p.add("native_control_before",actorEvidence(controlActor));p.add("native_near_after",actorEvidence(nearAfter));p.add("native_control_after",actorEvidence(controlAfter));p.addProperty("native_near_health_after",nativeHealthAfter);p.addProperty("vanilla_blast_damage",vanillaBlastDamage);p.addProperty("combat_initial_host_sequence",initialCombatSequence);p.addProperty("combat_committed_host_sequence",committedCombatSequence);p.addProperty("combat_verified_host_sequence",verifiedCombatSequence);p.addProperty("combat_verified_utc_ms",combatVerifiedUtc);if(Double.isFinite(minimumControlBlastDistance))p.addProperty("minimum_control_blast_distance",minimumControlBlastDistance);if(blastProof!=null)p.add("blast_proof",blastProof.deepCopy());p.add("combat",combat.evidence(c));}
         var seen=new JsonArray();for(var f:fuses.values()){var v=new JsonObject();v.addProperty("id",f.id.toString());v.addProperty("first_fuse",f.first);v.addProperty("minimum_fuse",f.minimum);v.addProperty("first_tick",f.firstTick);v.addProperty("last_tick",f.lastTick);seen.add(v);}p.add("observed_tnt",seen);var a=new JsonArray();commands.forEach(a::add);p.add("commands",a);a=new JsonArray();for(String label:List.of("primed","after","resumed"))if(images.containsKey(label))a.add(images.get(label).deepCopy());p.add("images",a);p.add("positions",positions());p.add("final_state",state(observation.get()));p.add("blocks",blocks.evidence(c));p.add("movement",movement.evidence(c));
         try{save.verifyOwnership();Files.writeString(directory.resolve("gameplay-tnt-fixture.json"),p.toString(),StandardCharsets.UTF_8,StandardOpenOption.CREATE_NEW);}catch(Exception e){p.addProperty("result","failed");p.addProperty("failure",e.toString());}completed.accept(p);
     }

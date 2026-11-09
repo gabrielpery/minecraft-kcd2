@@ -142,6 +142,11 @@ public final class GameplayTnt {
         // TntEntity.tick deliberately discards itself immediately BEFORE explode().
         var entry=entities.get(tnt.getUuid());return entry!=null&&entry.entity==tnt?entry:null;
     }
+    public static UUID explosionOwner(TntEntity tnt){
+        var s=active;if(s==null||s.closing||s.failure!=null||!s.ownsWorld(tnt.getWorld()))return null;
+        var entry=s.entities.get(tnt.getUuid());var owner=tagOwner(tnt);
+        return entry!=null&&entry.entity==tnt&&owner!=null&&owner.world().equals(s.save.id())&&owner.player().equals(entry.originalOwner)?entry.originalOwner:null;
+    }
     public static boolean renderAllowed(TntEntity tnt){
         var s=active;var c=MinecraftClient.getInstance();return s!=null&&!s.closing&&s.failure==null&&c.isOnThread()&&c.world==s.clientWorld&&tnt.getWorld()==c.world&&
             c.getServer()==s.server&&c.player!=null&&c.player.getUuid().equals(s.playerId)&&!tnt.isRemoved()&&s.visible.contains(tnt.getUuid());
@@ -160,7 +165,7 @@ public final class GameplayTnt {
     }
     private void fail(String reason){failure=reason;visible=Set.of();}
     public String failure(){return failure;}
-    public void close(){closing=true;if(server==null){visible=Set.of();serverClosed=true;}}
+    public void close(){closing=true;GameplayBlasts.ownershipStopped(save.id());if(server==null){visible=Set.of();serverClosed=true;}}
     public boolean cleanupComplete(){return closing&&serverClosed;}
     public JsonObject evidence(){var j=new JsonObject();j.addProperty("enabled",enabled);j.addProperty("primed",primed);j.addProperty("chain_primed",chainPrimed);j.addProperty("explosions",explosions);j.addProperty("active",visible.size());j.addProperty("paused_fuses",suspended.size());j.addProperty("resumed",resumed);j.addProperty("ownerless_resumed",ownerlessResumed);j.addProperty("frozen_on_stop",frozenOnStop);j.addProperty("ground_recoveries",groundRecoveries);j.addProperty("affected_owned_blocks",affectedOwnedBlocks);j.addProperty("cleanup_complete",cleanupComplete());j.addProperty("failure",failure);return j;}
 }

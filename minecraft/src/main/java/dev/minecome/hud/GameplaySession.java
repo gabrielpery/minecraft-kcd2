@@ -83,7 +83,8 @@ public final class GameplaySession {
     private GameplayRespawnFixture respawnFixture;
     private final boolean nativeRespawnCheck=Boolean.getBoolean("minecome.gameplayRespawnCheck");
     private GameplayTntFixture tntFixture;
-    private final boolean nativeTntCheck=Boolean.getBoolean("minecome.gameplayTntCheck");
+    private final boolean nativeTntCombatCheck=Boolean.getBoolean("minecome.gameplayTntCombatCheck");
+    private final boolean nativeTntCheck=Boolean.getBoolean("minecome.gameplayTntCheck")||nativeTntCombatCheck;
     private GameplayFurnaceFixture furnaceFixture;
     private final boolean nativeFurnaceCheck=Boolean.getBoolean("minecome.gameplayFurnaceCheck");
     private GameplayCraftingFixture craftingFixture;
@@ -128,6 +129,7 @@ public final class GameplaySession {
         stopFile=requested;
         if(!fixtureMode.isEmpty()&&!standalone)throw new IllegalArgumentException("Persistence fixture requires standalone gameplay");
         if(combatMode&&!worldBlocksMode)throw new IllegalArgumentException("Combat requires WorldBlocks");
+        if(nativeTntCombatCheck&&!combatMode)throw new IllegalArgumentException("TNT combat check requires native combat");
         if(nativeTntCheck&&(standalone||!worldBlocksMode||!fixtureMode.isEmpty()||nativeWalkingCheck||nativeDropsCheck||nativeCraftingCheck||nativeFurnaceCheck||nativeRespawnCheck||nativeCombatCheck))throw new IllegalArgumentException("Native TNT check requires connected WorldBlocks without another fixture");
         if(nativeCombatCheck&&(standalone||!combatMode||!fixtureMode.isEmpty()||nativeWalkingCheck||nativeDropsCheck||nativeCraftingCheck||nativeFurnaceCheck||nativeRespawnCheck))throw new IllegalArgumentException("Native combat check requires connected Combat without another fixture");
         if(nativeRespawnCheck&&(standalone||!worldBlocksMode||!fixtureMode.isEmpty()||nativeWalkingCheck||nativeDropsCheck||nativeCraftingCheck||nativeFurnaceCheck))throw new IllegalArgumentException("Native respawn check requires connected WorldBlocks without another fixture");
@@ -264,7 +266,7 @@ public final class GameplaySession {
                         if(nativeRespawnCheck||fixtureMode.startsWith("respawn"))respawnFixture=new GameplayRespawnFixture(nativeRespawnCheck?"respawn-native":fixtureMode,blocks,movement,save,wire,directory.getParent(),proof->{fixtureResult=proof.deepCopy();requestStop(MinecraftClient.getInstance(),"respawn_fixture_complete",proof.get("result").getAsString().equals("passed")?null:proof.toString());});
                         if(!standalone)aimReader=new GameplayAimReader(directory.getParent(),wire,movement.surface(),save.id().toString(),worldBlocksMode);
                         if(nativeWalkingCheck)nativeWalkingFixture=new GameplayNativeWalkingFixture(movement,save,directory.getParent(),proof->{fixtureResult=proof.deepCopy();requestStop(MinecraftClient.getInstance(),"native_walking_check_complete",proof.get("result").getAsString().equals("passed")?null:proof.toString());});
-                        if(nativeTntCheck||fixtureMode.startsWith("tnt"))tntFixture=new GameplayTntFixture(nativeTntCheck?"tnt-native":fixtureMode,blocks,movement,save,wire,directory.getParent(),proof->{fixtureResult=proof.deepCopy();requestStop(MinecraftClient.getInstance(),"tnt_fixture_complete",proof.get("result").getAsString().equals("passed")?null:proof.toString());});
+                        if(nativeTntCheck||fixtureMode.startsWith("tnt"))tntFixture=new GameplayTntFixture(nativeTntCombatCheck?"tnt-combat-native":nativeTntCheck?"tnt-native":fixtureMode,combat,blocks,movement,save,wire,directory.getParent(),proof->{fixtureResult=proof.deepCopy();requestStop(MinecraftClient.getInstance(),"tnt_fixture_complete",proof.get("result").getAsString().equals("passed")?null:proof.toString());});
                         if(nativeFurnaceCheck||fixtureMode.startsWith("furnace"))furnaceFixture=new GameplayFurnaceFixture(nativeFurnaceCheck?"furnace-native":fixtureMode,blocks,movement,save,wire,directory.getParent(),proof->{fixtureResult=proof.deepCopy();requestStop(MinecraftClient.getInstance(),"furnace_fixture_complete",proof.get("result").getAsString().equals("passed")?null:proof.toString());});
                         if(nativeCraftingCheck||fixtureMode.startsWith("crafting"))craftingFixture=new GameplayCraftingFixture(nativeCraftingCheck?"crafting-native":fixtureMode,blocks,movement,save,wire,directory.getParent(),proof->{fixtureResult=proof.deepCopy();requestStop(MinecraftClient.getInstance(),"crafting_fixture_complete",proof.get("result").getAsString().equals("passed")?null:proof.toString());});
                         if(nativeDropsCheck||fixtureMode.startsWith("drops"))dropsFixture=new GameplayDropsFixture(nativeDropsCheck?"drops-native":fixtureMode,blocks,movement,save,wire,directory.getParent(),proof->{fixtureResult=proof.deepCopy();requestStop(MinecraftClient.getInstance(),"drops_fixture_complete",proof.get("result").getAsString().equals("passed")?null:proof.toString());});
