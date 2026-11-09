@@ -76,7 +76,12 @@ if(BUILD_TESTING)
             --lua-library "${MINECOME_LUA_LIBRARY}"
             --module "${CMAKE_CURRENT_SOURCE_DIR}/gameplay/combat_reaction_probe.lua"
             --tests "${CMAKE_CURRENT_SOURCE_DIR}/tests/lua_combat_reaction_probe_tests.lua")
-        set_tests_properties(lua_gameplay_movement_lifecycle lua_gameplay_blocks_lifecycle lua_gameplay_terrain_lifecycle lua_gameplay_combat_lifecycle lua_gameplay_combat_fixture lua_combat_protection_probe lua_combat_reaction_probe lua_perspective_probe_lifecycle PROPERTIES TIMEOUT 15)
+        add_test(NAME lua_combat_retaliation_probe COMMAND "${MINECOME_TEST_PYTHON}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/tests/run_lua_sink_tests.py"
+            --lua-library "${MINECOME_LUA_LIBRARY}"
+            --module "${CMAKE_CURRENT_SOURCE_DIR}/gameplay/combat_retaliation_probe.lua"
+            --tests "${CMAKE_CURRENT_SOURCE_DIR}/tests/lua_combat_retaliation_probe_tests.lua")
+        set_tests_properties(lua_gameplay_movement_lifecycle lua_gameplay_blocks_lifecycle lua_gameplay_terrain_lifecycle lua_gameplay_combat_lifecycle lua_gameplay_combat_fixture lua_combat_protection_probe lua_combat_reaction_probe lua_combat_retaliation_probe lua_perspective_probe_lifecycle PROPERTIES TIMEOUT 15)
     endif()
     add_executable(stone_mirror_tests tests/stone_mirror_tests.cpp)
     target_link_libraries(stone_mirror_tests PRIVATE minecome_stone_mirror)

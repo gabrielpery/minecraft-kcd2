@@ -21,6 +21,8 @@ loom {
                     vmArgs "-Dminecome.gameplayFixture=${project.property('minecomeGameplayFixture')}"
                 if (project.hasProperty('minecomeGameplayCombat'))
                     vmArgs '-Dminecome.gameplayCombat=true'
+                if (project.hasProperty('minecomeGameplayBowFixture'))
+                    vmArgs '-Dminecome.gameplayBowFixture=true'
                 if (project.hasProperty('minecomeGameplayCombatCheck'))
                     vmArgs '-Dminecome.gameplayCombatCheck=true'
                 if (project.hasProperty('minecomeGameplayRespawnCheck'))

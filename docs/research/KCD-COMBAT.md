@@ -98,8 +98,8 @@ Minecraft's real diamond-sword packet produced 7 damage, native HP changed 100�
 one hit was acknowledged, and sword durability advanced once. Inventory held both
 players still; subsequent walking and native composition/reprojection continued.
 Normal save, timer cleanup, owned NPC removal and original path-function restoration
-were confirmed. The passive NPC's lock observations remained false; hostile lock
-suppression and native reciprocal damage remain unverified.
+were confirmed. The passive NPC's lock observations remained false; that check
+did not establish hostile lock suppression or native reciprocal damage.
 
 ## Native hit reactions
 
@@ -180,14 +180,65 @@ freshness and event identity. The owned path-follower NPC returned nil throughou
 both corrected-WUID reaction comparisons. Do not keep polling that fixture as
 though it supplied a damage event stream.
 
-`player:IsLockedToOpponent(entityId)` is documented as checking melee target
-lock. The adapter records optional `locked_before`/`locked_after` on real damage
-receipts. No supported direct unlock setter was found. Official
-`Scripts/Debug/CombatDebug.lua:1324-1339` lists player-specific lock CVars. Live
-read-only values were `wh_cs_playermaxopponentdistancetolock=4`,
-`wh_cs_playermaxopponentdistancetounlock=7`, `wh_cs_playerunlocktimeout=3`.
-Changing these to zero might disable locking, but that behavior has not been
-verified and is not enabled based on the names alone. A subsequent owned CVar
-policy must verify effectiveness, retain native NPC AI/attacks, and restore the
-exact prior values; the current adapter does not freeze NPCs or force native
-melee mode.
+## Hostile NPC and scoped target-lock policy (2026-11-09)
+
+The fixture's optional `hostile` mode uses the official `combatEnemy_3` soul,
+`d2a3c045-2d43-491c-80a4-96137fcb99de`, with its native `npc_basic` brain and enemy
+faction. The [official CombatDebug routine](https://github.com/muyuanjin/kcd2-mod-docs/blob/9cb067543245ec5cf4e27b3d21e32485a35db518/Scripts/Scripts/Debug/CombatDebug.lua#L539)
+supplies the soul; its novice profile and unarmed preset are applied only to the
+owned NPC. Unlike the passive fixture, this mode installs no path-follower
+wrapper and does not disable perception. Exact identity and deferred removal
+remain required.
+
+`Test-KcdRetaliation.ps1` observed actual native attacks reducing player health
+100→93.58099365, with `lock_seen=true`:
+`runtime/evidence/combat-retaliation-20261109-092231-dbc5b712a46c49bb866e59922dc844e1/result.json`.
+The preserved `Client.OnHit` observer received zero callbacks and the player's
+`hitReaction` brain variable stayed nil. Thus the receipt's callback-based
+`attack_observed=false` does not mean no attack occurred. The temporary player
+immortality instance was removed after confirmed hostile removal; no direct
+player damage, health refund or movement write was used.
+
+The production combat session now owns three settings listed by
+[CombatDebug.TestLock](https://github.com/muyuanjin/kcd2-mod-docs/blob/9cb067543245ec5cf4e27b3d21e32485a35db518/Scripts/Scripts/Debug/CombatDebug.lua#L1324):
+`wh_cs_playermaxopponentdistancetolock`,
+`wh_cs_playermaxopponentdistancetounlock`, and `wh_cs_playerunlocktimeout`.
+It captures all finite baselines before writes, sets them to0, verifies continued
+ownership, and restores exact prior values on stop/failure/lease expiry. Unknown
+or foreign values are not overwritten; unconfirmed cleanup blocks another session.
+
+The `-FreeAim` comparison retained native attacks (100→78.81308746HP) while
+`lock_seen=false`; original values4/7/3 were restored, with confirmed timer,
+callback, buff and NPC cleanup:
+`runtime/evidence/combat-retaliation-20261109-093152-cb6830f053b344efb5fdba6e6918683c/result.json`.
+This verifies the observed target-lock state while the NPC attacks. It does not
+establish physical mouse feel, unrestricted walking during hostile combat, or a
+coupled Minecraft HUD acceptance. Incoming Minecraft damage is still disabled.
+
+## Native combat telemetry candidate
+
+[CombatDebug.StartLog](https://github.com/muyuanjin/kcd2-mod-docs/blob/9cb067543245ec5cf4e27b3d21e32485a35db518/Scripts/Scripts/Debug/CombatDebug.lua#L1295)
+documents file logging through `wh_rpg_LogTarget`, `LogLevel`, `LogType`,
+`LogReasons`, `LogInterval`, `LogSize`, `TelemetryLimitedToPlayline` and
+`wh_rpg_ResetLogging`. A temporary owned comparison used raw GUID mode
+(`LogType=0`) and `LogInterval=0.125`. It captured five actual punch events with
+`cause.name='CombatHit'`, attacker/victim GUIDs, and `SoulState`/`HealthValue`
+health effects. Their deltas total21.18691, matching the observed native HP loss.
+Snapshots are in
+`runtime/evidence/combat-stream-watch-0ba69e97163c4ec9b8ce3e6d1e681160`;
+logging restoration and normal game exit are confirmed in
+`runtime/evidence/combat-telemetry-stream-20261109-093151-edf1a91bfc464a4b87bfe58776aee321/cleanup.json`.
+
+This is a promising event source, not production retaliation. Before connecting
+it to `hurts`, verify same-second file replacement/loss, duplicate delivery,
+damage representation at the immortality1HP clamp, and exact GUID-to-live-actor
+generation mapping. The0.125 setting alone does not prove125ms delivery latency.
+The native log reader must establish event identity and completeness rather than
+infer damage from polled player health.
+
+If telemetry cannot meet those requirements, the inspected retail SDK exposes
+`C_CombatActor::ConnectOnHitReceivedSignal` and raw `S_HitInfo.damage`; the
+Floating Damage example also observes `S_DamageEventData::Dispatch`. Those are
+retail1.5.6 APIs, not tools1.5.5 compatibility evidence. The installed retail
+build still lacks the verified KCSE address map and loader; see the
+[native backend prerequisites](KCD2.md#loader-and-the-immediate-blocker).

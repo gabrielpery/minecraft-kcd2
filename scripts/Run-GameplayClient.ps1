@@ -5,7 +5,7 @@ param([Parameter(Mandatory)][string]$EvidenceDirectory,[Parameter(Mandatory)][st
  [Parameter(Mandatory)][string]$Run,[Parameter(Mandatory)][int]$TargetPid,
  [Parameter(Mandatory)][string]$TargetStart,[Parameter(Mandatory)][long]$Expires,
  [Parameter(Mandatory)][string]$JavaHome,[ValidateSet('','create','resume','walking','walking-resume','blocks','blocks-resume','blocks-survival','food','food-resume','drops','drops-resume','crafting','crafting-resume','furnace','furnace-resume','respawn','respawn-resume','combat','terrain','terrain-resume','chat','chat-resume','flight','flight-resume','flight-fall','flight-fall-resume','hands','world-blocks','world-blocks-resume','shapes','shapes-resume','depth','connected','connected-resume','shape-walking','player')][string]$FixturePhase='',
- [switch]$Connected,[switch]$Movement,[switch]$Blocks,[switch]$Explore,[switch]$Chat,[switch]$Flight,[switch]$Hands,[switch]$WorldBlocks,[switch]$Combat,[switch]$CombatCheck,[string]$GroundPatchFile,[switch]$ThirdPersonWalkingCheck,[switch]$DropsCheck,[switch]$CraftingCheck,[switch]$FurnaceCheck,[switch]$RespawnCheck)
+ [switch]$Connected,[switch]$Movement,[switch]$Blocks,[switch]$Explore,[switch]$Chat,[switch]$Flight,[switch]$Hands,[switch]$WorldBlocks,[switch]$Combat,[switch]$BowCheck,[switch]$CombatCheck,[string]$GroundPatchFile,[switch]$ThirdPersonWalkingCheck,[switch]$DropsCheck,[switch]$CraftingCheck,[switch]$FurnaceCheck,[switch]$RespawnCheck)
 $ErrorActionPreference='Stop'
 if($Combat -or $FixturePhase -eq 'combat'){$Combat=$true;$WorldBlocks=$true};if($WorldBlocks){$Hands=$true};if($Hands){$Flight=$true};if($Flight){$Chat=$true}
 if($Explore -or $Chat){$Blocks=$true};if($Blocks){$Movement=$true}
@@ -19,6 +19,7 @@ $arguments=@('-p',(Join-Path $root 'minecraft'),'--offline','runClient','--conso
  "-PminecomeHudStreamTargetStart=$TargetStart","-PminecomeHudStreamExpiresUtcMs=$Expires")
 if(-not $Connected){$arguments+='-PminecomeGameplayStandalone'}
 if($FixturePhase){$arguments+="-PminecomeGameplayFixture=$FixturePhase"}
+if($BowCheck){if($Connected -or -not $Combat -or $FixturePhase -cne 'combat'){throw 'BowCheck requires isolated standalone combat.'};$arguments+='-PminecomeGameplayBowFixture'}
 if($CombatCheck){if(-not $Connected -or -not $Combat -or $FixturePhase -or $ThirdPersonWalkingCheck -or $DropsCheck -or $CraftingCheck -or $FurnaceCheck -or $RespawnCheck){throw 'Native combat check requires connected Combat without another fixture.'};$arguments+='-PminecomeGameplayCombatCheck'}
 if($RespawnCheck){if(-not $Connected -or -not $WorldBlocks -or $FixturePhase -or $ThirdPersonWalkingCheck -or $DropsCheck -or $CraftingCheck -or $FurnaceCheck){throw "Native respawn check requires connected WorldBlocks without another fixture."};$arguments+="-PminecomeGameplayRespawnCheck"}
 if($FurnaceCheck){if(-not $Connected -or -not $WorldBlocks -or $FixturePhase -or $ThirdPersonWalkingCheck -or $DropsCheck -or $CraftingCheck){throw "Native furnace check requires connected WorldBlocks without another fixture."};$arguments+="-PminecomeGameplayFurnaceCheck"}

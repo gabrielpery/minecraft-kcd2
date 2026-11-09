@@ -1,6 +1,6 @@
-# Actual vanilla primary melee/cooldown/durability and incoming armour damage; synthetic host only.
+# Actual vanilla melee/armour and optional bow use/rendering; synthetic host only.
 [CmdletBinding()]
-param([string]$JavaHome='C:/Program Files/Java/jdk-24',[string]$ReceiverPath)
+param([string]$JavaHome='C:/Program Files/Java/jdk-24',[string]$ReceiverPath,[switch]$BowCheck)
 . (Join-Path $PSScriptRoot 'powershell7.ps1')
 if($PSVersionTable.PSVersion.Major -lt 7){$code=Invoke-MineComePowerShell7 -ScriptPath $PSCommandPath -BoundParameters $PSBoundParameters;if($code -ne 0){throw "Combat check failed: $code"};return}
 $ErrorActionPreference='Stop';Set-StrictMode -Version Latest
@@ -15,6 +15,7 @@ $hash=(Get-FileHash -LiteralPath $patch).Hash.ToLowerInvariant();$passed=$false;
 try{
  $arguments=@{JavaHome=$JavaHome;InstanceDirectory=$instance;EvidenceDirectory=(Join-Path $directory 'combat');FixturePhase='combat';WorldBlocks=$true;Combat=$true;GroundPatchFile=$patch}
  if($ReceiverPath){$arguments.ReceiverPath=$ReceiverPath}
+ if($BowCheck){$arguments.BowCheck=$true}
  $result=@(& (Join-Path $PSScriptRoot 'Start-GameplayGuest.ps1') @arguments|ForEach-Object {if($_ -isnot [string] -and $_.PSObject.Properties['VerificationFile']){$_}else{Write-Host $_}})
  if($result.Count -ne 1){throw 'Missing combat result.'}
  $v=Get-Content -LiteralPath $result[0].VerificationFile -Raw|ConvertFrom-Json
@@ -31,10 +32,28 @@ try{
  if($m.failure -or -not $m.cleanup_complete -or -not $m.controls_released -or $m.patch_run -cne $run -or $m.patch_sha256 -cne $hash -or
   $b.failure -or $b.pending -or -not $b.cleanup_complete -or -not $b.controls_released -or ($c.PSObject.Properties['failure'] -and $c.failure) -or -not $c.cleanup_complete -or $c.pending -or
   $c.outgoing_hits -ne 4 -or $c.hit_ack -ne 4 -or $c.hurt_ack -ne 2 -or $c.incoming_hurts -ne 2){throw 'Combat ownership, confirmation or cleanup differs.'}
- if(($f.images.stage -join '|') -cne 'combat'){throw 'Missing actual combat HUD capture.'}
- foreach($capture in $f.images){if($capture.file -cne 'combat-combat.png' -or (Get-FileHash -LiteralPath (Join-Path $result[0].EvidenceDirectory $capture.file)).Hash.ToLowerInvariant() -cne $capture.sha256 -or
-  $capture.metadata.world_id -cne $session.world_id -or $capture.metadata.combat_fixture_stage -cne 'combat' -or -not $capture.metadata.PSObject.Properties['world_camera']){throw 'Combat capture bytes/identity differ.'}}
+ $expectedStages=if($BowCheck){'combat|bow'}else{'combat'}
+ if(($f.images.stage -join '|') -cne $expectedStages){throw 'Missing actual combat HUD capture.'}
+ foreach($capture in $f.images){if($capture.file -cne ('combat-'+$capture.stage+'.png') -or (Get-FileHash -LiteralPath (Join-Path $result[0].EvidenceDirectory $capture.file)).Hash.ToLowerInvariant() -cne $capture.sha256 -or
+  $capture.metadata.world_id -cne $session.world_id -or $capture.metadata.combat_fixture_stage -cne $capture.stage -or -not $capture.metadata.PSObject.Properties['world_camera']){throw 'Combat capture bytes/identity differ.'}}
+ if($BowCheck){
+  $bow=$f.bow
+  foreach($flag in @('experimental_fixture_only','inventory_cancel_verified','authority_cancel_verified','short_charge_verified','full_charge_verified','no_ammunition_verified','projectile_render_pixels_verified')){if($bow.$flag -isnot [bool] -or -not $bow.$flag){throw "Missing actual bow capability: $flag"}}
+  if($bow.native_projectile_collision_verified -isnot [bool] -or $bow.native_projectile_collision_verified -or
+   $bow.controller.starts -ne 4 -or $bow.controller.vanilla_releases -ne 2 -or $bow.controller.cancellations -ne 3 -or $bow.controller.rejected -ne 1 -or
+   $bow.controller.cancel_pending -or $bow.controller.held -or $bow.controller.active -or $bow.controller.synthetic_use_key -or $bow.controller.projectiles_created_directly -or
+   $bow.final_state.arrows -ne 0 -or $bow.final_state.held -cne 'minecraft:bow' -or $bow.final_state.held_damage -ne 2){throw 'Bow ownership, vanilla use or cleanup differs.'}
+  if($bow.shots.Count -ne 2 -or $bow.shots[0].critical -or -not $bow.shots[1].critical -or
+   $bow.shots[0].initial_speed -le .3 -or $bow.shots[0].initial_speed -ge 2.5 -or $bow.shots[1].initial_speed -lt 2.8 -or $bow.shots[1].initial_speed -gt 3.2 -or
+   $bow.shots[0].id -ceq $bow.shots[1].id -or $bow.shots[0].owner -cne $bow.shots[1].owner){throw 'Vanilla bow shots differ.'}
+  foreach($shot in $bow.shots){[void][guid]::Parse($shot.id);[void][guid]::Parse($shot.owner)}
+  $capture=$f.images[1];$meta=$capture.metadata
+  if($capture.world_file -cne 'combat-bow-world.png' -or (Get-FileHash -LiteralPath (Join-Path $result[0].EvidenceDirectory $capture.world_file)).Hash.ToLowerInvariant() -cne $capture.world_sha256 -or
+   $capture.world_pixels -lt 1 -or $capture.world_with_depth_pixels -lt 1 -or $meta.projectile_render_count -lt 1 -or $meta.projectiles.Count -ne $meta.projectile_render_count -or
+   $meta.rendered_world_blocks -ne 0 -or $meta.dropped_item_render_count -ne 0 -or $meta.player_pixels){throw 'Isolated real arrow pixels or depth missing.'}
+  foreach($projectile in $meta.projectiles){if($projectile.owner -cne $bow.shots[0].owner -or $projectile.id -cnotin $bow.shots.id){throw 'Rendered arrow is not an observed vanilla bow shot.'}}
+ }elseif($f.PSObject.Properties['bow']){throw 'Unexpected bow experiment in ordinary combat fixture.'}
  $passed=$true
 }catch{$failure=$_.Exception.Message;throw}
-finally{[ordered]@{schema=1;kind='minecome_gameplay_combat_verification_v1';run=$run;result=$(if($passed){'passed'}else{'failed'});failure=$failure;actual_minecraft=$true;synthetic_host=$true;scripted_guest_input=$true;native_input_verified=$false;kcd_connected=$false;instance=$instance;patch_sha256=$hash;session=$session}|ConvertTo-Json -Depth 30|Set-Content -LiteralPath (Join-Path $directory 'verification.json') -Encoding utf8NoBOM}
+finally{[ordered]@{schema=1;kind='minecome_gameplay_combat_verification_v1';run=$run;result=$(if($passed){'passed'}else{'failed'});failure=$failure;actual_minecraft=$true;synthetic_host=$true;bow_check=[bool]$BowCheck;scripted_guest_input=$true;native_input_verified=$false;kcd_connected=$false;instance=$instance;patch_sha256=$hash;session=$session}|ConvertTo-Json -Depth 30|Set-Content -LiteralPath (Join-Path $directory 'verification.json') -Encoding utf8NoBOM}
 Write-Output "GAMEPLAY_COMBAT_PASS evidence=$directory"

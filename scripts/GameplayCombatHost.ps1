@@ -125,7 +125,7 @@ function Get-GameplayCombatCommands($State,[long]$Now){
 function Accept-GameplayCombatReceipt($State,$Receipt,[long]$Now){
     if(-not(Test-GameplayCombatInteger $Receipt.schema 1 1) -or $Receipt.run -cne $State.Identity.Run){throw 'Combat receipt identity differs.'}
     switch -CaseSensitive ($Receipt.event){
-        'begin'{if($State.Begin -or $Receipt.result -cne 'ready' -or $Receipt.active -ne $true){throw 'Combat begin differs.'};$State.Begin=$Receipt}
+        'begin'{if($State.Begin -or $Receipt.result -cne 'ready' -or $Receipt.active -ne $true -or $Receipt.lock_policy_active -isnot [bool] -or $Receipt.lock_policy_active -ne $true){throw 'Combat begin differs.'};$State.Begin=$Receipt}
         'sample'{
             if($Receipt.result -cne 'sampled' -or $Receipt.active -ne $true -or -not(Test-GameplayCombatInteger $Receipt.seq ($State.PublishedSequence+1) $State.Sequence) -or @($Receipt.actors).Count -gt 8 -or -not(Test-GameplayCombatInteger $Receipt.hit_ack 0 $State.HitAck)){throw 'Combat sample differs.'}
             $seen=[Collections.Generic.HashSet[int]]::new();$actors=[Collections.Generic.List[object]]::new()
@@ -147,12 +147,12 @@ function Accept-GameplayCombatReceipt($State,$Receipt,[long]$Now){
             $State.HitAck=[long]$Receipt.seq;$State.LastHit=$Receipt;$State.PendingHit=$null;$State.HitCount++
             if($Receipt.result -ceq 'damaged'){$State.DamageCount++}elseif($Receipt.result -cne 'no_damage'){$State.RejectedCount++}
         }
-        'terminal'{$State.Terminal=$Receipt;Remove-GameplayCombatTemporary $State;if(-not $State.Stopping -or $Receipt.result -cne 'explicit_stop' -or $Receipt.timers_cancelled -ne $true){$State.Failure='Native combat stopped: '+$Receipt.result}}
+        'terminal'{$State.Terminal=$Receipt;Remove-GameplayCombatTemporary $State;if(-not $State.Stopping -or $Receipt.result -cne 'explicit_stop' -or $Receipt.timers_cancelled -ne $true -or $Receipt.lock_policy_restored -isnot [bool] -or $Receipt.lock_policy_restored -ne $true){$State.Failure='Native combat stopped or lock settings not restored: '+$Receipt.result}}
         default{throw 'Unknown combat receipt event.'}
     }
 }
 function Get-GameplayCombatStopCommand($State){$State.Stopping=$true;Remove-GameplayCombatTemporary $State;return "MineCome.GameplayCombatEnd('$($State.Identity.Run)')"}
 function Get-GameplayCombatHostState($State){
     [pscustomobject]@{Run=$State.Identity.Run;Begin=$State.Begin;Terminal=$State.Terminal;Failure=$State.Failure;Samples=$State.PublishedSequence;Actors=@($State.Actors).Count;Hits=$State.HitCount;Damaged=$State.DamageCount;Rejected=$State.RejectedCount;HitAck=$State.HitAck;LastHit=$State.LastHit;
-        IncomingDamageImplemented=$false;TemporaryClean=$State.TemporaryClean;CleanupComplete=($State.TemporaryClean -and (-not $State.BeginSent -or ($State.Terminal -and $State.Terminal.result -ceq 'explicit_stop' -and $State.Terminal.timers_cancelled -eq $true)))}
+        IncomingDamageImplemented=$false;TemporaryClean=$State.TemporaryClean;CleanupComplete=($State.TemporaryClean -and (-not $State.BeginSent -or ($State.Terminal -and $State.Terminal.result -ceq 'explicit_stop' -and $State.Terminal.timers_cancelled -eq $true -and $State.Terminal.lock_policy_restored -is [bool] -and $State.Terminal.lock_policy_restored -eq $true)))}
 }

@@ -24,10 +24,11 @@ public abstract class GameplayBlockBreakingMixin {
 
     // Cached Yarn1.21.1+build.3 handleInputEvents cancels item use when useKey
     // is up. Host mouse input belongs to our controller, not that key binding.
-    // Preserve only its fresh admitted food hold; do not synthesize useKey,
+    // Preserve only admitted food/bow holds; bow authority loss clears use without
+    // sending RELEASE_USE_ITEM (which would fire). Do not synthesize useKey,
     // which would let vanilla doItemUse interact with an unrelated crosshair.
     @Redirect(method="handleInputEvents",at=@At(value="INVOKE",target="Lnet/minecraft/client/network/ClientPlayerInteractionManager;stopUsingItem(Lnet/minecraft/entity/player/PlayerEntity;)V"))
-    private void minecome$preserveGameplayFood(ClientPlayerInteractionManager manager,PlayerEntity player){
-        if(!GameplaySession.preserveFoodUse())manager.stopUsingItem(player);
+    private void minecome$preserveGameplayItem(ClientPlayerInteractionManager manager,PlayerEntity player){
+        if(!GameplaySession.interceptVanillaItemStop())manager.stopUsingItem(player);
     }
 }

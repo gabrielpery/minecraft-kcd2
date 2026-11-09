@@ -16,6 +16,15 @@ public final class GameplayWorldTests {
         try{action.run();throw new AssertionError(message);}catch(IOException|IllegalArgumentException expected){checks++;}
     }
     public static void main(String[] args)throws Exception{
+        var profile=new java.util.Properties();profile.setProperty("minecome.gameplay","true");
+        check(!GameplayMode.bowFixtureEnabled(profile),"Ordinary gameplay cannot draw experimental bows");GameplayMode.requireExclusive(profile);
+        profile.setProperty("minecome.gameplayBowFixture","true");reject(()->GameplayMode.requireExclusive(profile),"Bow gate requires standalone combat fixture");
+        profile.setProperty("minecome.gameplayStandalone","true");profile.setProperty("minecome.gameplayCombat","true");profile.setProperty("minecome.gameplayWorldBlocks","true");profile.setProperty("minecome.gameplayFixture","combat");
+        check(GameplayMode.bowFixtureEnabled(profile),"Exact optional standalone combat bow profile admitted");GameplayMode.requireExclusive(profile);
+        for(String key:new String[]{"minecome.gameplayStandalone","minecome.gameplayCombat","minecome.gameplayWorldBlocks","minecome.gameplayFixture"}){
+            String previous=profile.getProperty(key);profile.remove(key);check(!GameplayMode.bowFixtureEnabled(profile),"Missing bow gate "+key);reject(()->GameplayMode.requireExclusive(profile),"Reject missing bow gate "+key);profile.setProperty(key,previous);
+        }
+        profile.setProperty("minecome.someOtherFixture","true");reject(()->GameplayMode.requireExclusive(profile),"Bow gate does not permit other diagnostic ownership");
         Path root=Files.createTempDirectory("minecome-gameplay-world-").toRealPath();
         Path saves=root.resolve("instance/saves");
         var fresh=GameplayWorld.prepare(saves,root);

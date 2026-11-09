@@ -1004,23 +1004,30 @@ a native pre-damage hook and safe ownership of the underlying player's health
 are still required. See [native binding evidence](research/KCD-COMBAT.md).
 
 The required combat model is free aiming and unrestricted movement. The adapter
-does not request native targeting or combat mode. Disabling native target lock
-under hostile NPC attacks still needs a verified policy; the current work does
-not claim that hostile combat is ready.
+owns three source-backed player lock settings during `-Combat`, restoring their
+exact baselines on stop or lease expiry. A native hostile-NPC comparison verified
+that target lock stayed off while attacks continued; the default settings locked
+onto the same enemy. This does not yet establish the combined hostile HUD/mouse
+experience or reciprocal Minecraft health. NPC AI and attacks remain enabled.
 
 The outgoing native call attributes damage using the player's native WUID and
 requests hit reactions (`suppressHitreaction=false`). A basic native recoil was
 visually observed on the owned test NPC; the suppressed control stayed upright.
-This does not establish every enemy animation or hostile retaliation. The next
-combat sequence is reciprocal NPC damage and free movement/aiming, then vanilla
-bow projectiles (including charge, ammunition and native target collisions),
-followed by crossbows and other ranged/secondary combat effects. Ranged items are
-not yet connected to native NPC damage; equipping one does not establish support.
+This does not establish every enemy animation. Bow hold/release and real arrow
+rendering are implemented behind a standalone combat-fixture flag. They preserve
+vanilla charge, ammunition and durability; inventory or lost authority cancel the
+draw without firing. Native scenery/target projectile collision is still needed
+before enabling bows in connected gameplay. Crossbows follow that shared impact
+path. Native incoming hit logging is a promising source, but delivery, duplicate
+handling and protection-clamp behavior remain unverified; native `hurts` stays
+empty. Ranged items are not yet connected to native NPC damage.
 
 Automated checks use isolated saves and require no manual attack sequence:
 
 ```powershell
 & './scripts/Test-GameplayCombat.ps1'
+# Adds vanilla bow charging/cancellation/ammunition and real arrow pixel checks:
+& './scripts/Test-GameplayCombat.ps1' -BowCheck
 # Installed WorldBlocks bundle and a fresh, loaded KCD2 tools world:
 & './scripts/Test-KcdCombat.ps1' -BundleDirectory $bundle
 ```

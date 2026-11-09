@@ -9,6 +9,10 @@ MineCome=MineCome or {}
 MineCome._gameplay_combat=MineCome._gameplay_combat or {}
 local state=MineCome._gameplay_combat
 local LEASE,FRESH=2,.3
+-- Official CombatDebug.TestLock (1324-1327) lists these player-only settings.
+-- Zero-distance/zero-timeout prevented native target lock during actual hostile
+-- attacks in the paired tools check. This is not a direct engine unlock API.
+local LOCK_CVARS={'wh_cs_playermaxopponentdistancetolock','wh_cs_playermaxopponentdistancetounlock','wh_cs_playerunlocktimeout'}
 local function finite(v)return type(v)=='number' and v==v and v>-math.huge and v<math.huge end
 local function integer(v,a,b)return finite(v) and v==math.floor(v) and v>=a and v<=b end
 local function token(v)return type(v)=='string' and #v==32 and v:match('^[0-9a-f]+$')~=nil end
@@ -28,21 +32,71 @@ local function wuid(e)
   if __null==nil or id~=__null then return id end
  end
 end
+local function lock_api(p)
+ return System==p.lock_system and System.GetCVar==p.lock_get and System.SetCVar==p.lock_set
+end
+local function lock_value(p,name)
+ if not lock_api(p)then return nil end
+ local ok,value=pcall(p.lock_get,name);if ok and finite(value)then return value end
+end
+local function prepare_lock_policy(p)
+ if type(System.GetCVar)~='function' or type(System.SetCVar)~='function'then return false end
+ p.lock_system=System;p.lock_get=System.GetCVar;p.lock_set=System.SetCVar;p.lock_entries={};p.lock_policy_restored=true
+ -- All baselines must be known before the first write.
+ for _,name in ipairs(LOCK_CVARS)do
+  local value=lock_value(p,name);if value==nil then return false end
+  p.lock_entries[#p.lock_entries+1]={name=name,before=value,applied=0}
+ end
+ return true
+end
+local function lock_policy_owned(p)
+ if not p.lock_policy_active or not lock_api(p)then return false end
+ for _,entry in ipairs(p.lock_entries)do if lock_value(p,entry.name)~=entry.applied then return false end end
+ return true
+end
+local function restore_lock_policy(p)
+ if not p.lock_entries then p.lock_policy_active=false;p.lock_policy_restored=true;return true end -- Older module had no CVar writes.
+ local restored=true
+ for index=#p.lock_entries,1,-1 do local entry=p.lock_entries[index]
+  if entry.attempted then
+   local value=lock_value(p,entry.name)
+   if value==entry.before then -- Already exactly restored, no setter needed.
+   elseif value==entry.applied then
+    local ok,result=pcall(p.lock_set,entry.name,entry.before)
+    if not ok or result==false or lock_value(p,entry.name)~=entry.before then restored=false end
+   else restored=false end -- Foreign/unknown value is never overwritten.
+  end
+ end
+ p.lock_policy_active=false;p.lock_policy_restored=restored;return restored
+end
+local function apply_lock_policy(p)
+ p.lock_policy_restored=false
+ for _,entry in ipairs(p.lock_entries)do
+  if lock_value(p,entry.name)~=entry.before then return false end
+  entry.attempted=true -- A throwing setter may already have changed its value.
+  local ok,result=pcall(p.lock_set,entry.name,entry.applied)
+  if not ok or result==false or lock_value(p,entry.name)~=entry.applied then return false end
+ end
+ p.lock_policy_active=true;return true
+end
 local function emit(p,event,result,extra)
- local s='[MineComeGameplayCombat] {"schema":1,"run":"'..p.run..'","event":"'..event..'","result":"'..result..'","active":'..tostring(state.active==p and not p.stopped)..',"timers_cancelled":'..tostring(p.timer==nil)..',"hit_ack":'..p.hit_ack..(extra or '')..'}'
+ local s='[MineComeGameplayCombat] {"schema":1,"run":"'..p.run..'","event":"'..event..'","result":"'..result..'","active":'..tostring(state.active==p and not p.stopped)..',"timers_cancelled":'..tostring(p.timer==nil)..',"lock_policy_active":'..boolean(p.lock_policy_active==true)..',"lock_policy_restored":'..boolean(p.lock_policy_restored)..',"hit_ack":'..p.hit_ack..(extra or '')..'}'
  if #s>4000 then return false end
  local ok,v=pcall(System.LogAlways,s);return ok and v~=false
 end
 local function stop(p,why)
- if p.stopped then return true end;p.stopped=true;p.reason=why
+ if p.stopped then return p.cleanup_complete==true end;p.stopped=true;p.reason=why
  if p.timer then local ok,v=pcall(Script.KillTimer,p.timer);if ok and v~=false then p.timer=nil else p.reason='timer_cleanup_failed'end end
+ if not restore_lock_policy(p)then p.reason='lock_policy_cleanup_unconfirmed'end
+ p.cleanup_complete=p.timer==nil and p.lock_policy_restored==true
  p.timer_data=nil;state.active=nil;state.last=p
- emit(p,'terminal',p.reason);return p.reason==why
+ emit(p,'terminal',p.reason);return p.cleanup_complete
 end
 local function valid(p)
  local t=clock();if not t or t<p.last_clock or t>=p.deadline or t-p.received>LEASE then return nil,'lease_expired'end
  if player~=p.player or player.id~=p.player_id or player.soul~=p.player_soul or wuid(player)~=p.player_wuid then return nil,'player_changed'end
  if read(player.actor,'IsDead')~=false then return nil,'player_unavailable'end
+ if not lock_policy_owned(p)then return nil,'lock_policy_changed'end
  p.last_clock=t;return t
 end
 local function schedule(p)
@@ -77,11 +131,14 @@ end
 function MineCome.GameplayCombatBegin(run,duration_ms,radius,max_actors)
  if not token(run) or not integer(duration_ms,1000,86400000) or not finite(radius) or radius<4 or radius>32 or not integer(max_actors,1,8) then return false,'invalid_begin'end
  if state.active then return false,'session_owned'end
+ if state.last and state.last.lock_policy_restored==false then return false,'lock_policy_cleanup_unconfirmed'end
  if not System or type(System.GetEntitiesInSphere)~='function' or type(System.GetCurrTime)~='function' or type(System.LogAlways)~='function' or not Script or type(Script.SetTimerForFunction)~='function' or type(Script.KillTimer)~='function' or not Physics or type(Physics.RayWorldIntersection)~='function' or not integer(ent_all,1,2147483647) then return false,'api_unavailable'end
  if type(player)~='table' or not player.id or not wuid(player) or type(player.soul)~='table' or read(player.actor,'IsDead')~=false then return false,'player_unavailable'end
  local t=clock();if not t then return false,'clock_unavailable'end
  local p={run=run,deadline=t+duration_ms/1000,received=t,last_clock=t,player=player,player_id=player.id,player_wuid=wuid(player),player_soul=player.soul,radius=radius,max_actors=max_actors,next_token=1,actors={},samples={},sequence=0,hit_ack=0}
+ if not prepare_lock_policy(p)then return false,'lock_policy_baseline_unavailable'end
  state.active=p;if not schedule(p)then state.active=nil;return false,'timer_unavailable'end
+ if not apply_lock_policy(p)then stop(p,'lock_policy_setup_failed');return false,'lock_policy_setup_failed'end
  emit(p,'begin','ready');return true
 end
 function MineCome.GameplayCombatSample(run,sequence)
@@ -158,11 +215,12 @@ function MineCome.GameplayCombatHit(run,sequence,actor_token,source_seq,fraction
   elseif h.dist<length-.05 then return reject(p,sequence,'occluded')end
  end
  if hits[17]~=nil then return reject(p,sequence,'occlusion_unknown')end
+ if not lock_policy_owned(p)then stop(p,'lock_policy_changed');return false,'lock_policy_changed'end
  local ended=clock();local again=actor(current.entity)
  if not ended or ended<t or ended-t>.1 or ended-sample.time>FRESH or not same(current,again) or not again.alive or player~=p.player or player.id~=p.player_id or wuid(player)~=p.player_wuid then return reject(p,sequence,'target_changed')end
  local before=again.health;local damage=math.min(before,fraction*again.max_health)
- -- Documented player-only observation, not a guessed unlock setter. Native
- -- combat lock/forced alignment remains a separate compatibility requirement.
+ -- Observe the real native lock state; the owned player-only CVar policy above
+ -- does not establish hostile free-camera behavior by itself.
  local locked_before=read(p.player.player,'IsLockedToOpponent',again.id)
  -- Official hostageSituation scripts attribute DealDamage to player.this.id
  -- (WUID). player.id is only the entity handle used by ray/view APIs above.
@@ -176,6 +234,6 @@ function MineCome.GameplayCombatHit(run,sequence,actor_token,source_seq,fraction
 end
 function MineCome.GameplayCombatEnd(run)
  local p=state.active
- if not p then if state.last and state.last.run==run then emit(state.last,'terminal',state.last.reason);return true end;return false,'session_missing'end
+ if not p then if state.last and state.last.run==run then emit(state.last,'terminal',state.last.reason);return state.last.cleanup_complete==true end;return false,'session_missing'end
  if p.run~=run then return false,'session_owned'end;return stop(p,'explicit_stop')
 end

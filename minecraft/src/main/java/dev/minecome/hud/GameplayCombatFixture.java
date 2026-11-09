@@ -6,6 +6,8 @@ import dev.minecome.terrain.GameplayMovement;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.screen.ingame.InventoryScreen;
 import net.minecraft.entity.EquipmentSlot;
+import net.minecraft.entity.projectile.PersistentProjectileEntity;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerEntityEvents;
 import net.minecraft.item.Items;
 import net.minecraft.block.Blocks;
 import net.minecraft.util.math.BlockPos;
@@ -27,7 +29,8 @@ import java.util.function.Consumer;
  */
 public final class GameplayCombatFixture {
     private record State(long at,int tick,UUID player,String mode,Vec3d position,float health,
-                         String held,int heldDamage,String chest,int chestDamage,int armor){}
+                         String held,int heldDamage,String chest,int chestDamage,int armor,int arrows,boolean using,int useTicks){}
+    private record Shot(UUID id,UUID owner,double speed,boolean critical){}
     private record Sample(String stage,HudReadback.Completed frame){}
     private final GameplayCombat combat;private final GameplayBlocks blocks;private final GameplayMovement movement;
     private final GameplayWorld save;private final HudInputProtocol.Identity identity;private final Path directory;
@@ -42,6 +45,10 @@ public final class GameplayCombatFixture {
     private long begun,stageAt,events;private double bareHit,woodHit,diamondHit,quickHit,bareHurt,armoredHurt;
     private boolean fistVerified,woodVerified,diamondVerified,cooldownVerified,durabilityVerified,inventoryVerified,inventoryAttackAttempted,occlusionVerified,incomingVerified,armorVerified,rendered;
     private float beforeHurt;private State finalState;
+    private final boolean bowCheck=GameplayRangedUse.enabled();
+    private final CopyOnWriteArrayList<Shot> shots=new CopyOnWriteArrayList<>();
+    private boolean bowInventoryCancel,bowAuthorityCancel,bowShortRelease,bowFullRelease,bowNoAmmo,bowRendered;
+    private BlockPos bowWall;
 
     public GameplayCombatFixture(String mode,GameplayCombat combat,GameplayBlocks blocks,GameplayMovement movement,
                                  GameplayWorld save,HudInputProtocol.Identity identity,Path directory,Consumer<JsonObject> completed)throws IOException{
@@ -49,10 +56,17 @@ public final class GameplayCombatFixture {
             throw new IllegalArgumentException("Explicit standalone WorldBlocks combat fixture required");
         this.combat=combat;this.blocks=blocks;this.movement=movement;this.save=save;this.identity=identity;this.directory=directory.toRealPath();this.completed=completed;
         save.verifyOwnership();if(!save.newlyCreated()||Files.exists(this.directory.resolve("host-combat.json"))||Files.exists(this.directory.resolve("gameplay-combat-fixture.json")))throw new IOException("Combat fixture needs a fresh owned save and transport");
+        if(bowCheck)ServerEntityEvents.ENTITY_LOAD.register((entity,world)->{
+            if(closing||finished||server==null||world!=server.getOverworld()||!(entity instanceof PersistentProjectileEntity arrow)||
+                arrow.getOwner()==null||!arrow.getOwner().getUuid().equals(playerId))return;
+            if(shots.size()>=4){failure.compareAndSet(null,"Unexpected extra fixture arrows");return;}
+            // Read actual vanilla spawn velocity before its first collision tick.
+            shots.add(new Shot(arrow.getUuid(),arrow.getOwner().getUuid(),arrow.getVelocity().length(),arrow.isCritical()));
+        });
         var worker=new Thread(this::writeLoop,"MineComeGameplayCombatFixture");worker.setDaemon(true);worker.start();
     }
     public void beforeTick(MinecraftClient c){if(closing||finished||begun==0)return;try{owner(c);movement.authority(c,System.nanoTime(),true);}catch(Exception e){complete(c,false,e.toString());}}
-    private Vec3d target(){return new Vec3d(2.2,64.9,targetToken==1?0:1.1);}
+    private Vec3d target(){return bowCheck&&stage>=20?MinecraftClient.getInstance().player.getEyePos().add(forward.multiply(3)):new Vec3d(2.2,64.9,targetToken==1?0:1.1);}
     public GameplayWorldRenderer.View view(){
         var c=MinecraftClient.getInstance();if(begun==0||closing||finished||c.player!=player)return null;
         var eye=c.player.getEyePos();var f=target().subtract(eye).normalize();var right=f.crossProduct(new Vec3d(0,1,0)).normalize();return new GameplayWorldRenderer.View(eye,f,right.crossProduct(f).normalize(),Math.toRadians(70));
@@ -83,10 +97,24 @@ public final class GameplayCombatFixture {
                 case 8->{if(!(c.currentScreen instanceof InventoryScreen))return;combat.tick(c,false,renderAim(),-1);if(!inventoryAttackAttempted){combat.event(c,event(7,0));combat.event(c,event(8,0));inventoryAttackAttempted=true;}if(s.tick()-actionTick<8)return;if(hits.size()!=4||hitAck!=4)throw new IllegalStateException("Inventory permitted a world attack");inventoryVerified=true;key(c,'E');targetToken=1;send(c,"fill 1 65 -1 1 65 1 minecraft:stone");next(12,now);}
                 case 9->{if(hurtAck<1||s.health()>=beforeHurt)return;bareHurt=beforeHurt-s.health();near(bareHurt,8,"Unarmored mobAttack damage");incomingVerified=true;send(c,"item replace entity @s armor.chest with minecraft:diamond_chestplate");send(c,"effect give @s minecraft:instant_health 1 4 true");actionTick=s.tick();next(10,now);}
                 case 10->{if(!s.chest().equals("minecraft:diamond_chestplate")||s.armor()<=0||s.health()!=20||s.tick()-actionTick<25)return;beforeHurt=s.health();requestedHurt=2;next(11,now);}
-                case 11->{if(hurtAck<2||s.health()>=beforeHurt||s.chestDamage()==0)return;armoredHurt=beforeHurt-s.health();if(armoredHurt<=0||armoredHurt>=bareHurt)throw new IllegalStateException("Minecraft armor did not reduce native damage");armorVerified=true;if(!images.containsKey("combat"))return;validateImage();rendered=true;finalState=s;complete(c,true,null);}
+                case 11->{if(hurtAck<2||s.health()>=beforeHurt||s.chestDamage()==0)return;armoredHurt=beforeHurt-s.health();if(armoredHurt<=0||armoredHurt>=bareHurt)throw new IllegalStateException("Minecraft armor did not reduce native damage");armorVerified=true;if(!images.containsKey("combat"))return;validateImage();rendered=true;finalState=s;if(bowCheck)next(20,now);else complete(c,true,null);}
                 case 12->{if(!c.world.getBlockState(new BlockPos(1,65,0)).isOf(Blocks.STONE))return;if(combat.aimedTargetDistance(c,renderAim())>=0||combat.event(c,event(7,0)))throw new IllegalStateException("Minecraft wall permitted actor attack");combat.event(c,event(8,0));actionTick=s.tick();next(13,now);}
                 case 13->{if(s.tick()-actionTick<5)return;if(hits.size()!=4||hitAck!=4)throw new IllegalStateException("Occluded actor attack changed host health");send(c,"fill 1 65 -1 1 65 1 minecraft:air");next(14,now);}
                 case 14->{if(!c.world.getBlockState(new BlockPos(1,65,0)).isAir()||combat.aimedTargetDistance(c,renderAim())<0)return;occlusionVerified=true;beforeHurt=s.health();requestedHurt=1;next(9,now);}
+                case 20->{if(!c.player.isOnGround()||c.player.getVelocity().horizontalLengthSquared()>.0001||!delay(s,10))return;forward=new Vec3d(s.position().x<0?1:-1,0,0);bowWall=BlockPos.ofFloored(s.position().add(forward.multiply(3)));if(!movement.surface().containsFeet(bowWall.getX()+.5,bowWall.getZ(),1.1))throw new IllegalStateException("Bow backstop outside captured coverage");send(c,"item replace entity @s hotbar.0 with minecraft:bow");send(c,"item replace entity @s hotbar.1 with minecraft:arrow 4");send(c,bowWallCommand("stone"));next(21,now);}
+                case 21->{if(!s.held().equals("minecraft:bow")||s.arrows()!=4||c.player.getInventory().count(Items.ARROW)!=4||!c.player.getMainHandStack().isOf(Items.BOW)||!delay(s,6))return;bowPress(c);next(22,now);}
+                case 22->{if(!s.using()||s.useTicks()<25)return;blocks.suspend(c);key(c,'E');actionTick=s.tick();next(23,now);}
+                case 23->{if(!(c.currentScreen instanceof InventoryScreen)||s.tick()-actionTick<6)return;unchangedBow(c,s);bowInventoryCancel=true;key(c,'E');next(24,now);}
+                case 24->{if(c.currentScreen!=null||!delay(s,3))return;bowPress(c);next(25,now);}
+                case 25->{if(!s.using()||s.useTicks()<25)return;blocks.beforeTick(c,false);actionTick=s.tick();next(26,now);}
+                case 26->{if(s.tick()-actionTick<6)return;unchangedBow(c,s);bowAuthorityCancel=true;bowPress(c);next(27,now);}
+                case 27->{if(!s.using()||s.useTicks()<5)return;bowRelease(c);next(28,now);}
+                case 28->{if(s.using()||s.arrows()!=3||s.heldDamage()!=1||c.player.getMainHandStack().getDamage()!=1||shots.size()!=1)return;var shot=shots.getFirst();if(shot.critical()||shot.speed()<=.3||shot.speed()>=2.5)throw new IllegalStateException("Short vanilla bow charge differs: "+shot);bowShortRelease=true;bowPress(c);next(29,now);}
+                case 29->{if(!s.using()||s.useTicks()<25)return;bowRelease(c);next(30,now);}
+                case 30->{if(s.using()||s.arrows()!=2||s.heldDamage()!=2||shots.size()!=2)return;var shot=shots.get(1);if(!shot.critical()||shot.speed()<2.8||shot.speed()>3.2||shot.speed()<=shots.getFirst().speed())throw new IllegalStateException("Full vanilla bow charge differs: "+shot);bowFullRelease=true;next(31,now);}
+                case 31->{if(!images.containsKey("bow"))return;validateBowImage();bowRendered=true;send(c,"clear @s minecraft:arrow");send(c,bowWallCommand("air"));next(32,now);}
+                case 32->{if(s.arrows()!=0||c.player.getInventory().count(Items.ARROW)!=0||!c.world.getBlockState(bowWall.up()).isAir()||!delay(s,3))return;blocks.tick(c,true);blocks.event(c,event(7,1));actionTick=s.tick();next(33,now);}
+                case 33->{if(s.tick()-actionTick<6)return;blocks.event(c,event(8,1));if(s.using()||c.player.isUsingItem()||shots.size()!=2||s.heldDamage()!=2)throw new IllegalStateException("Bow fired without ammunition");bowNoAmmo=true;complete(c,true,null);}
                 default->throw new IllegalStateException("Unknown combat fixture stage");
             }
         }catch(Exception e){complete(c,false,e.toString());}
@@ -101,22 +129,29 @@ public final class GameplayCombatFixture {
     private double damage(int index){return hits.get(index).get("damage_mc").getAsDouble();}
     private static void near(double value,double expected,String label){if(Math.abs(value-expected)>.01)throw new IllegalStateException(label+" differs: "+value);}
     private void attack(MinecraftClient c){combat.tick(c,true,renderAim(),-1);if(!combat.event(c,event(7,0)))throw new IllegalStateException("Combat controller did not consume aimed attack");combat.event(c,event(8,0));}
+    private void bowPress(MinecraftClient c){blocks.tick(c,true);blocks.event(c,event(7,1));if(!c.player.isUsingItem())throw new IllegalStateException("Bow draw did not start: "+blocks.evidence(c).get("ranged_use"));}
+    private void bowRelease(MinecraftClient c){blocks.event(c,event(8,1));}
+    private String bowWallCommand(String block){return "fill "+bowWall.getX()+" "+bowWall.getY()+" "+(bowWall.getZ()-1)+" "+bowWall.getX()+" "+(bowWall.getY()+4)+" "+(bowWall.getZ()+1)+" minecraft:"+block;}
+    private void unchangedBow(MinecraftClient c,State s){if(s.using()||c.player.isUsingItem()||s.arrows()!=4||s.heldDamage()!=0||!shots.isEmpty()||blocks.evidence(c).getAsJsonObject("ranged_use").get("cancel_pending").getAsBoolean())throw new IllegalStateException("Cancelled bow fired or retained draw: "+state(s));}
     private void owner(MinecraftClient c){if(!c.isOnThread()||c.world!=world||c.player!=player||c.getServer()!=server||!c.isIntegratedServerRunning())throw new IllegalStateException("Combat fixture owner changed");}
     private void observe(){if(!observing.compareAndSet(false,true))return;server.execute(()->{try{
         if(closing||finished)return;var p=server.getPlayerManager().getPlayer(playerId);if(!server.isOnThread()||p==null||p.getWorld()!=server.getOverworld()||!save.saveName().equals(server.getSaveProperties().getLevelName()))throw new IllegalStateException("Combat fixture server owner changed");
-        var held=p.getMainHandStack();var chest=p.getEquippedStack(EquipmentSlot.CHEST);observation.set(new State(System.nanoTime(),server.getTicks(),p.getUuid(),p.interactionManager.getGameMode().getName(),p.getPos(),p.getHealth(),Registries.ITEM.getId(held.getItem()).toString(),held.getDamage(),Registries.ITEM.getId(chest.getItem()).toString(),chest.getDamage(),p.getArmor()));
+        var held=p.getMainHandStack();var chest=p.getEquippedStack(EquipmentSlot.CHEST);observation.set(new State(System.nanoTime(),server.getTicks(),p.getUuid(),p.interactionManager.getGameMode().getName(),p.getPos(),p.getHealth(),Registries.ITEM.getId(held.getItem()).toString(),held.getDamage(),Registries.ITEM.getId(chest.getItem()).toString(),chest.getDamage(),p.getArmor(),p.getInventory().count(Items.ARROW),p.isUsingItem(),p.getItemUseTime()));
     }catch(Exception e){failure.compareAndSet(null,e.toString());}finally{observing.set(false);}});}
     private HudInputProtocol.Event event(int kind,int code){return new HudInputProtocol.Event(++events,System.currentTimeMillis(),kind,code,0,0,0);}
     private void key(MinecraftClient c,int code){ui.apply(c,event(1,code));ui.apply(c,event(2,code));}
     private void send(MinecraftClient c,String command){owner(c);c.getNetworkHandler().sendChatCommand(command);commands.add(command);}
     private void next(int value,long now){stage=value;stageAt=now;ticks=0;readyTick=-1;}
-    public String captureStage(){return !closing&&!finished&&stage==11&&armorVerified&&ticks>=5&&!queued.contains("combat")&&!images.containsKey("combat")?"combat":null;}
-    public void captured(HudReadback.Completed frame){if(closing||finished)return;var meta=JsonParser.parseString(frame.metadata()).getAsJsonObject();if(!meta.has("combat_fixture_stage")||!meta.get("combat_fixture_stage").getAsString().equals("combat")||!queued.add("combat"))return;if(!samples.offer(new Sample("combat",frame)))failure.compareAndSet(null,"Combat capture queue full");}
+    public String captureStage(){if(closing||finished)return null;String label=stage==11&&armorVerified&&ticks>=5?"combat":bowCheck&&stage==31&&bowFullRelease?"bow":null;return label!=null&&!queued.contains(label)&&!images.containsKey(label)?label:null;}
+    public void captured(HudReadback.Completed frame){if(closing||finished)return;var meta=JsonParser.parseString(frame.metadata()).getAsJsonObject();if(!meta.has("combat_fixture_stage"))return;String label=meta.get("combat_fixture_stage").getAsString();if(!Set.of("combat","bow").contains(label)||label.equals("bow")&&(!bowCheck||meta.get("projectile_render_count").getAsInt()<1)||!queued.add(label))return;if(!samples.offer(new Sample(label,frame)))failure.compareAndSet(null,"Combat capture queue full");}
     private void validateImage(){var image=images.get("combat");var m=image.getAsJsonObject("metadata");if(!m.get("screen_kind").getAsString().equals("none")||m.get("frame_format").getAsInt()!=2||!m.has("world_camera")||image.get("hud_pixels").getAsLong()<1000)throw new IllegalStateException("Combat HUD pixels/world view missing");}
+    private void validateBowImage(){var image=images.get("bow");var m=image.getAsJsonObject("metadata");if(image.get("world_pixels").getAsLong()<1||image.get("world_with_depth_pixels").getAsLong()<1||m.get("projectile_render_count").getAsInt()<1||m.get("rendered_world_blocks").getAsInt()!=0||m.get("dropped_item_render_count").getAsInt()!=0||m.get("player_pixels").getAsBoolean())throw new IllegalStateException("Isolated real arrow world/depth pixels missing");for(var entry:m.getAsJsonArray("projectiles")){var p=entry.getAsJsonObject();if(!p.get("owner").getAsString().equals(playerId.toString())||shots.stream().noneMatch(shot->shot.id().toString().equals(p.get("id").getAsString())))throw new IllegalStateException("Rendered projectile not an observed vanilla bow shot");}}
     private void writeSample(Sample sample)throws Exception{
         var f=sample.frame();byte[] layers=f.layersBottomUp();HudLayerPixels.require(layers,f.width(),f.height());int plane=HudPixels.byteSize(f.width(),f.height());long pixels=0;for(int i=3;i<plane;i+=4)if((layers[i]&255)>8)pixels++;
         byte[] png=HudPixels.png(HudPixels.straightTopLeft(Arrays.copyOfRange(layers,0,plane),f.width(),f.height()),f.width(),f.height());String file="combat-"+sample.stage()+".png";Files.write(directory.resolve(file),png,StandardOpenOption.CREATE_NEW);
-        var p=new JsonObject();p.addProperty("stage",sample.stage());p.addProperty("file",file);p.addProperty("sha256",HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(png)));p.addProperty("hud_pixels",pixels);p.add("metadata",JsonParser.parseString(f.metadata()));images.put(sample.stage(),p);
+        var p=new JsonObject();p.addProperty("stage",sample.stage());p.addProperty("file",file);p.addProperty("sha256",HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(png)));p.addProperty("hud_pixels",pixels);p.add("metadata",JsonParser.parseString(f.metadata()));
+        if(sample.stage().equals("bow")){long worldPixels=0,withDepth=0;var raw=java.nio.ByteBuffer.wrap(layers).order(java.nio.ByteOrder.LITTLE_ENDIAN);for(int i=0;i<plane;i+=4){float d=raw.getFloat(plane*2+i);if(!Float.isFinite(d)||d<0||d>1)throw new IllegalStateException("Invalid arrow frame depth");if((layers[plane+i+3]&255)>8){worldPixels++;if(d>0&&d<1)withDepth++;}}byte[] worldPng=HudPixels.png(HudPixels.straightTopLeft(Arrays.copyOfRange(layers,plane,plane*2),f.width(),f.height()),f.width(),f.height());String worldFile="combat-bow-world.png";Files.write(directory.resolve(worldFile),worldPng,StandardOpenOption.CREATE_NEW);p.addProperty("world_file",worldFile);p.addProperty("world_sha256",HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(worldPng)));p.addProperty("world_pixels",worldPixels);p.addProperty("world_with_depth_pixels",withDepth);images.put(sample.stage(),p);}
+        images.put(sample.stage(),p);
     }
     private JsonObject identity(String kind,long sequence){var p=new JsonObject();p.addProperty("schema",1);p.addProperty("kind",kind);p.addProperty("run",identity.run());p.addProperty("world_id",save.id().toString());p.addProperty("target_pid",identity.targetPid());p.addProperty("target_start_filetime",Long.toUnsignedString(identity.targetStart()));p.addProperty("patch_run",movement.surface().run());p.addProperty("patch_sha256",movement.surface().sha256());p.addProperty("seq",sequence);p.addProperty("utc_ms",System.currentTimeMillis());return p;}
     private void writeLoop(){long sequence=0;double[] health={100,100};try{while(!closing){
@@ -135,10 +170,11 @@ public final class GameplayCombatFixture {
     }}catch(Exception e){if(!closing)failure.compareAndSet(null,e.toString());}}
     private void write(String name,JsonObject value)throws IOException,InterruptedException{var temp=directory.resolve(name+"-combat-fixture.tmp");Files.writeString(temp,value.toString(),StandardCharsets.UTF_8,StandardOpenOption.CREATE,StandardOpenOption.TRUNCATE_EXISTING);HudFixtureCameraFiles.replace(temp,directory.resolve(name+".json"));}
     private static JsonObject vector(Vec3d v){var j=new JsonObject();j.addProperty("x",v.x);j.addProperty("y",v.y);j.addProperty("z",v.z);return j;}
-    private static JsonObject state(State s){var j=new JsonObject();if(s==null)return j;j.addProperty("player_id",s.player().toString());j.addProperty("mode",s.mode());j.addProperty("health",s.health());j.addProperty("held",s.held());j.addProperty("held_damage",s.heldDamage());j.addProperty("chest",s.chest());j.addProperty("chest_damage",s.chestDamage());j.addProperty("armor",s.armor());j.addProperty("server_tick",s.tick());j.add("position",vector(s.position()));return j;}
+    private static JsonObject state(State s){var j=new JsonObject();if(s==null)return j;j.addProperty("player_id",s.player().toString());j.addProperty("mode",s.mode());j.addProperty("health",s.health());j.addProperty("held",s.held());j.addProperty("held_damage",s.heldDamage());j.addProperty("chest",s.chest());j.addProperty("chest_damage",s.chestDamage());j.addProperty("armor",s.armor());j.addProperty("server_tick",s.tick());j.add("position",vector(s.position()));j.addProperty("arrows",s.arrows());j.addProperty("using",s.using());j.addProperty("use_ticks",s.useTicks());return j;}
     private void complete(MinecraftClient c,boolean passed,String error){
         if(finished)return;finished=true;try{combat.suspend(c);movement.suspend(c);blocks.suspend(c);if(ui!=null)ui.releaseAndClose(c);}catch(Exception e){passed=false;error=e.toString();}
         var p=new JsonObject();p.addProperty("schema",1);p.addProperty("kind","minecome_gameplay_combat_fixture_v1");p.addProperty("mode","combat");p.addProperty("result",passed?"passed":"failed");p.addProperty("failure",error);p.addProperty("world_id",save.id().toString());p.addProperty("actual_minecraft",true);p.addProperty("standalone_scripted",true);p.addProperty("synthetic_host",true);p.addProperty("native_input_verified",false);p.addProperty("live_kcd_verified",false);p.addProperty("position_writes_used",false);p.addProperty("direct_health_inventory_entity_writes",false);p.addProperty("fist_damage_verified",fistVerified);p.addProperty("wooden_sword_verified",woodVerified);p.addProperty("diamond_sword_verified",diamondVerified);p.addProperty("cooldown_verified",cooldownVerified);p.addProperty("durability_verified",durabilityVerified);p.addProperty("inventory_suppression_verified",inventoryVerified);p.addProperty("minecraft_block_occlusion_verified",occlusionVerified);p.addProperty("incoming_damage_verified",incomingVerified);p.addProperty("armor_verified",armorVerified);p.addProperty("render_pixels_verified",rendered);p.addProperty("barehand_damage",bareHit);p.addProperty("wooden_sword_damage",woodHit);p.addProperty("diamond_sword_damage",diamondHit);p.addProperty("rapid_diamond_damage",quickHit);p.addProperty("unarmored_hurt",bareHurt);p.addProperty("armored_hurt",armoredHurt);p.addProperty("host_writes",hostWrites);p.addProperty("scripted_view_writes",viewWrites);p.addProperty("last_stage",stage);p.addProperty("elapsed_ms",begun==0?0:(System.nanoTime()-begun)/1_000_000);var a=new JsonArray();commands.forEach(a::add);p.add("commands",a);a=new JsonArray();for(var h:hits)a.add(h.deepCopy());p.add("hits",a);a=new JsonArray();if(images.containsKey("combat"))a.add(images.get("combat").deepCopy());p.add("images",a);p.add("final_state",state(finalState==null?observation.get():finalState));p.add("combat",combat.evidence(c));
+        if(bowCheck){var bow=new JsonObject();bow.addProperty("experimental_fixture_only",true);bow.addProperty("inventory_cancel_verified",bowInventoryCancel);bow.addProperty("authority_cancel_verified",bowAuthorityCancel);bow.addProperty("short_charge_verified",bowShortRelease);bow.addProperty("full_charge_verified",bowFullRelease);bow.addProperty("no_ammunition_verified",bowNoAmmo);bow.addProperty("projectile_render_pixels_verified",bowRendered);bow.addProperty("native_projectile_collision_verified",false);bow.add("controller",blocks.evidence(c).get("ranged_use").deepCopy());bow.add("final_state",state(observation.get()));var arrows=new JsonArray();for(var shot:shots){var j=new JsonObject();j.addProperty("id",shot.id().toString());j.addProperty("owner",shot.owner().toString());j.addProperty("initial_speed",shot.speed());j.addProperty("critical",shot.critical());arrows.add(j);}bow.add("shots",arrows);p.add("bow",bow);if(images.containsKey("bow"))p.getAsJsonArray("images").add(images.get("bow").deepCopy());}
         try{save.verifyOwnership();Files.writeString(directory.resolve("gameplay-combat-fixture.json"),p.toString(),StandardCharsets.UTF_8,StandardOpenOption.CREATE_NEW);}catch(Exception e){p.addProperty("result","failed");p.addProperty("failure",e.toString());}completed.accept(p);
     }
     public void close(){if(closing)return;closing=true;var c=MinecraftClient.getInstance();if(c.isOnThread()&&c.player==player){combat.suspend(c);movement.suspend(c);blocks.suspend(c);if(ui!=null)ui.releaseAndClose(c);}}

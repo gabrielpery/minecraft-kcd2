@@ -90,6 +90,8 @@ public final class GameplaySession {
     private final boolean nativeDropsCheck=Boolean.getBoolean("minecome.gameplayDropsCheck");
     private int renderedDroppedItems; private long droppedItemRenderFrames;
     private java.util.List<GameplayDroppedItemRenderer.Item> renderedDropDetails=java.util.List.of();
+    private int renderedProjectiles;private long projectileRenderFrames;
+    private java.util.List<GameplayProjectileRenderer.Projectile> renderedProjectileDetails=java.util.List.of();
     private int renderedTerrainOccluders; private long terrainDepthFrames;
     private net.minecraft.util.math.BlockPos outlinedBlock;
     private boolean handFrameRendered;
@@ -178,11 +180,10 @@ public final class GameplaySession {
     }
     private boolean owns(MinecraftClient client){return ready&&!stopping&&client.world==world&&client.player==player&&client.getServer()==server&&client.isIntegratedServerRunning();}
     public static boolean preserveBlockBreaking(){var s=active;var client=MinecraftClient.getInstance();return s!=null&&s.blocks!=null&&s.owns(client)&&s.blocks.needsVanillaBreakPreserved(client);}
-    public static boolean preserveFoodUse(){
+    public static boolean interceptVanillaItemStop(){
         var s=active;var client=MinecraftClient.getInstance();
-        if(s==null||s.blocks==null||!s.owns(client))return false;
-        if(!s.blockAuthorityFresh()){s.blocks.beforeTick(client,false);return false;}
-        return s.blocks.needsVanillaFoodUsePreserved(client);
+        if(s==null||s.blocks==null)return false;
+        return s.blocks.interceptVanillaItemStop(client,s.owns(client)&&s.blockAuthorityFresh());
     }
     private boolean blockAuthorityFresh(){
         if(stopping||movement==null||movement.terrainTransition()||respawn!=null&&respawn.waiting())return false;
@@ -534,7 +535,7 @@ public final class GameplaySession {
         return new WorldFrame(view,s.blocks.ownedBlockStates(client),s.blocks.hoveredBlock(client,ray),s.depthFixture!=null?s.depthFixture.surface():s.movement.surface(),s.standalone?0:ray.capturedUtcMs());
     }
     public static void beforeWorldClear(){var s=active;if(worldBlocksEnabled()&&!s.frameTransparent)s.beginTransparentFrame(MinecraftClient.getInstance());}
-    public static void worldRenderCompleted(GameplayWorldRenderer.Result result){var s=active;if(worldBlocksEnabled()&&s.frameTransparent){s.playerFrameRendered=result.playerRendered();if(s.playerFrameRendered)s.playerRenderFrames++;s.renderedDroppedItems=result.droppedItems();s.renderedDropDetails=result.droppedItemDetails();if(result.droppedItems()>0)s.droppedItemRenderFrames++;s.renderedWorldBlocks=result.blocks();s.outlinedBlock=result.outlined();s.renderedTerrainOccluders=result.terrainOccluders();if(result.blocks()>0)s.worldBlockFrames++;if(s.outlinedBlock!=null)s.worldOutlineFrames++;if(result.terrainOccluders()>0)s.terrainDepthFrames++;}}
+    public static void worldRenderCompleted(GameplayWorldRenderer.Result result){var s=active;if(worldBlocksEnabled()&&s.frameTransparent){s.playerFrameRendered=result.playerRendered();if(s.playerFrameRendered)s.playerRenderFrames++;s.renderedDroppedItems=result.droppedItems();s.renderedDropDetails=result.droppedItemDetails();if(result.droppedItems()>0)s.droppedItemRenderFrames++;s.renderedProjectiles=result.projectiles();s.renderedProjectileDetails=result.projectileDetails();if(result.projectiles()>0)s.projectileRenderFrames++;s.renderedWorldBlocks=result.blocks();s.outlinedBlock=result.outlined();s.renderedTerrainOccluders=result.terrainOccluders();if(result.blocks()>0)s.worldBlockFrames++;if(s.outlinedBlock!=null)s.worldOutlineFrames++;if(result.terrainOccluders()>0)s.terrainDepthFrames++;}}
     public static void preserveWorldLayers(WorldFrame frame){
         var s=active;if(!worldBlocksEnabled()||!s.frameTransparent)return;
         // Snapshot the exact view submitted above, never a newer camera-reader tick.
@@ -551,7 +552,7 @@ public final class GameplaySession {
         return result;
     }
     private static JsonObject vector(double x,double y,double z){var value=new JsonObject();value.addProperty("x",x);value.addProperty("y",y);value.addProperty("z",z);return value;}
-    private boolean suppressWorldPixels(){return renderedWorldBlocks==0&&renderedDroppedItems==0&&!playerFrameRendered;}
+    private boolean suppressWorldPixels(){return renderedWorldBlocks==0&&renderedDroppedItems==0&&renderedProjectiles==0&&!playerFrameRendered;}
     public static void handRenderCompleted(){var s=active;if(s!=null&&s.handsMode&&s.frameTransparent&&s.owns(MinecraftClient.getInstance())){s.handFrameRendered=true;s.handRenderPasses++;}}
     private void beginTransparentFrame(MinecraftClient client){
         RenderSystem.assertOnRenderThread();
@@ -562,7 +563,7 @@ public final class GameplaySession {
         try{admitNativeView(client,true);}
         catch(Exception e){requestStop(client,"render_failure",e.toString());return;}
         priorBlend=new int[]{GL11.glGetInteger(GL14.GL_BLEND_SRC_RGB),GL11.glGetInteger(GL14.GL_BLEND_DST_RGB),GL11.glGetInteger(GL14.GL_BLEND_SRC_ALPHA),GL11.glGetInteger(GL14.GL_BLEND_DST_ALPHA)};
-        frameTransparent=true;handFrameRendered=false;playerFrameRendered=false;renderedDroppedItems=0;renderedDropDetails=java.util.List.of();renderedWorldBlocks=0;renderedTerrainOccluders=0;outlinedBlock=null;
+        frameTransparent=true;handFrameRendered=false;playerFrameRendered=false;renderedDroppedItems=0;renderedDropDetails=java.util.List.of();renderedProjectiles=0;renderedProjectileDetails=java.util.List.of();renderedWorldBlocks=0;renderedTerrainOccluders=0;outlinedBlock=null;
         frameWorldCamera=null;worldLayers.beginFrame();
         float[] color=new float[4];GL11.glGetFloatv(GL11.GL_COLOR_CLEAR_VALUE,color);
         var mask=org.lwjgl.BufferUtils.createByteBuffer(4);GL11.glGetBooleanv(GL11.GL_COLOR_WRITEMASK,mask);
@@ -579,7 +580,7 @@ public final class GameplaySession {
         catch(Exception e){s.requestStop(client,"render_failure",e.toString());}
         finally{s.restoreBlend();}
     }
-    private void restoreBlend(){nativeView.endFrame();frameTransparent=false;handFrameRendered=false;playerFrameRendered=false;renderedDroppedItems=0;renderedDropDetails=java.util.List.of();renderedWorldBlocks=0;renderedTerrainOccluders=0;outlinedBlock=null;if(priorBlend!=null){RenderSystem.blendFuncSeparate(priorBlend[0],priorBlend[1],priorBlend[2],priorBlend[3]);priorBlend=null;}}
+    private void restoreBlend(){nativeView.endFrame();frameTransparent=false;handFrameRendered=false;playerFrameRendered=false;renderedDroppedItems=0;renderedDropDetails=java.util.List.of();renderedProjectiles=0;renderedProjectileDetails=java.util.List.of();renderedWorldBlocks=0;renderedTerrainOccluders=0;outlinedBlock=null;if(priorBlend!=null){RenderSystem.blendFuncSeparate(priorBlend[0],priorBlend[1],priorBlend[2],priorBlend[3]);priorBlend=null;}}
     private void capture(MinecraftClient client){
         readback.poll(frame->{
             if(frame.id()<=lastReadbackId)return;lastReadbackId=frame.id();if(stopping||output==null)return;
@@ -610,6 +611,8 @@ public final class GameplaySession {
             if(worldLayers.framebuffer()==null)return;
             meta.addProperty("dropped_item_render_count",renderedDroppedItems);
             var drops=new com.google.gson.JsonArray();for(var item:renderedDropDetails.subList(0,Math.min(32,renderedDropDetails.size()))){var d=new JsonObject();d.addProperty("id",item.id().toString());d.addProperty("item",item.item());d.addProperty("count",item.count());d.addProperty("x",item.x());d.addProperty("y",item.y());d.addProperty("z",item.z());drops.add(d);}meta.add("dropped_items",drops);meta.addProperty("dropped_items_truncated",renderedDropDetails.size()>32);
+            meta.addProperty("projectile_render_count",renderedProjectiles);
+            var projectiles=new com.google.gson.JsonArray();for(var item:renderedProjectileDetails.subList(0,Math.min(32,renderedProjectileDetails.size()))){var d=new JsonObject();d.addProperty("id",item.id().toString());d.addProperty("type",item.type());d.addProperty("owner",item.owner().toString());d.addProperty("x",item.x());d.addProperty("y",item.y());d.addProperty("z",item.z());projectiles.add(d);}meta.add("projectiles",projectiles);meta.addProperty("projectiles_truncated",renderedProjectileDetails.size()>32);
             meta.addProperty("player_pixels",playerFrameRendered);meta.addProperty("perspective",client.options.getPerspective().name());
             meta.addProperty("frame_format",2);if(frameWorldCamera!=null)meta.add("world_camera",frameWorldCamera.deepCopy());
             meta.addProperty("world_block_pixels",renderedWorldBlocks>0);meta.addProperty("rendered_world_blocks",renderedWorldBlocks);meta.addProperty("world_block_outline",outlinedBlock!=null);
@@ -651,6 +654,7 @@ public final class GameplaySession {
         e.addProperty("flight_enabled",flightMode);
         e.addProperty("world_blocks_enabled",worldBlocksMode);e.addProperty("world_block_render_frames",worldBlockFrames);e.addProperty("world_outline_render_frames",worldOutlineFrames);e.addProperty("hands_enabled",handsMode);e.addProperty("hand_render_starts",handRenderStarts);e.addProperty("hand_render_passes",handRenderPasses);e.addProperty("hand_captured_frames",handCapturedFrames);
         e.addProperty("dropped_item_render_frames",droppedItemRenderFrames);
+        e.addProperty("projectile_render_frames",projectileRenderFrames);
         e.addProperty("player_render_frames",playerRenderFrames);e.addProperty("native_perspective_connected",nativePerspectiveObserved);
         e.addProperty("native_perspective_requested",desiredPerspective);if(nativePerspectiveObserved)e.addProperty("native_perspective_last_acknowledged",lastAcknowledgedPerspective);
         e.addProperty("inventory_prepared_before_input",uiWarmupComplete);e.addProperty("inventory_preparation_frames",uiWarmupFrames);

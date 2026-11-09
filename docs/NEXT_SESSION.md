@@ -1,106 +1,79 @@
-# Resume checkpoint — 8 November 2026
+# Resume checkpoint — 9 November 2026
 
-## Current work: NPC combat
+## Current work: free combat and bows
 
-Latest continuation corrected attacker identity to `player.this.id` (WUID),
-keeping `player.id` for entity/ray APIs. Missing/changed WUIDs reject before
-damage. Native production proof passed100→65HP, duplicate protection, zero
-movement writes and cleanup:
-`runtime/evidence/combat-native-20261108-221428-7cc1bb949525489495c705b993dece07/result.json`.
+Outgoing actual Minecraft primary melee → native NPC damage is already verified,
+as are native visible hit reactions. Preserve the WUID attribution fix:
+`player.this.id` for DealDamage, `player.id` for entity/ray APIs. Do not repeat
+passive dummy reaction or Lua callback experiments.
 
-Basic native hit reactions are now visibly observed: enabled reactions recoil,
-the suppressed control stays upright, and production's unspecified body part
-also recoils. Timed Computer Use screenshots required no user input. Each run's
-damage and cleanup receipts were verified; see
-`runtime/evidence/combat-reaction-20261108-221429-6f97fea063714c77a1f942e14b235b8c/visual-observation.json`.
-The animation getters stayed MotionIdle/nil and GetBrainVariable('hitReaction')
-returned nil. Do not mistake these getters for an event stream or repeat this
-passive-NPC observation as a hostile-combat check.
+This continuation adds owned player target-lock suppression to `-Combat`.
+Official CombatDebug.TestLock identifies three player CVars; the session reads
+all baselines before applying zero and restores exact owned values on stop/expiry.
+Foreign values are preserved and unconfirmed cleanup refuses another session.
+The host requires typed active/restored receipts. Native paired proof:
+- Baseline real hostile NPC: health100→93.58099365, target lock observed.
+  `runtime/evidence/combat-retaliation-20261109-092231-dbc5b712a46c49bb866e59922dc844e1/result.json`.
+- Production free-aim policy: health100→78.81308746, target lock never observed,
+  attacks continued; exact NPC/buff/callback/timer/CVar cleanup passed.
+  `runtime/evidence/combat-retaliation-20261109-093152-cb6830f053b344efb5fdba6e6918683c/result.json`.
+This proves native target-lock suppression, not the physical mouse or complete
+hostile HUD experience. Native player protection remains fixture-only.
 
-Owned-NPC protection now has live proof of100→90→1HP with survival and exact
-AddBuff-instance removal. No player buff/health mutation was made. Client.OnHit
-did not fire; legacy CreateHit/ServerHit also did not change health. Incoming
-native attacks and hostile target-lock suppression therefore remain open. See
-the specific evidence and source limits in `docs/research/KCD-COMBAT.md`.
-The final corrected-WUID protection run is
-`runtime/evidence/combat-protection-20261108-221837-f34ba64258f84048ba23c422e0c3bb50/result.json`;
-callbacks remained zero. Four registered Lua CTests and the native-float receipt
-regression passed. KCD2 was closed normally after exact native cleanup. This
-continuation did not install/arm a HUD bundle; the prior unarmed restoration
-below still applies. No manual test is needed for these verified changes.
+Real hostile attacks also produced zero Client.OnHit callbacks and a nil
+hitReaction brain variable. These routes are closed for incoming damage; no more
+passive probes. Native combat logging is promising: CombatDebug.StartLog with
+LogType0 exposes exact actor GUIDs and CombatHit/SoulState/HealthValue damage.
+A temporary .125s logging interval delivered five separate punches while active;
+all seven prior logging settings were restored and the game exited normally.
+Evidence: `runtime/evidence/combat-telemetry-stream-20261109-093151-edf1a91bfc464a4b87bfe58776aee321/cleanup.json`
+and `runtime/evidence/combat-stream-watch-0ba69e97163c4ec9b8ce3e6d1e681160`.
+Do not claim .125s delivery latency. Before production use, verify same-second
+filename overwrite/loss, duplicate/partial-write handling, exact native actor
+GUID mapping and raw damage at the immortality1HP clamp. IncomingDamageImplemented
+remains false. Runtime observer scripts are ignored experiments, not a deployed
+bridge. See `docs/research/KCD-COMBAT.md` for pinned sources and SDK limits.
 
-Next weapon milestone is ordinary bows, then crossbows. Reuse vanilla hold/release
-and the existing dropped-item render/depth pattern for real arrows. Projectile
-impacts need their own actual trajectory/contact validation: the current melee
-contract requires the player's current eye and cannot safely admit arrows that
-have flown elsewhere. Reuse the combat fixture; do not build another test stack.
-Concrete integration points: `GameplayRangedUse` beside `GameplayFoodUse`, admit
-hold/release through `GameplayBlocks` and the existing item-use redirect, render
-tracked `PersistentProjectileEntity` via its registered vanilla renderer in
-`GameplayWorldRenderer`, and add a projectile-specific combat impact contract.
-Use the actual arrow owner/weapon/trajectory; retain native scenery obstruction.
-Do not copy food cancellation blindly: stopping a charged bow use fires it.
+Bow hold/release and tracked real-arrow colour/depth rendering are implemented
+behind `-BowCheck` in the existing standalone combat fixture. No connected bow
+flag is admitted. Vanilla owns charge/ammo/durability; ordered custom cancellation
+clears use without RELEASE_USE_ITEM, which would fire a bow. Cancellation must
+retain suppression until acknowledged and clear exact-server pending entries on
+shutdown. Actual-Minecraft PASS:
+`runtime/evidence/gameplay-combat-20261109-094544-dfcbf0e9bcb441969e789aace246807f/verification.json`.
+Short/full charge, two real arrows, ammo/durability, inventory/authority cancel,
+no-ammo refusal and cleanup all passed. Isolated world PNG has6612 arrow pixels,
+all with depth; actual projectile UUIDs/owner match server spawn observations.
+The earlier render timeout was fixture geometry after vanilla knockback, fixed
+by waiting for settled position and aligning inward aim/backstop/camera. Do not
+relax renderer coverage/owner guards or teleport the player. The mode guard now
+admits only this exact standalone combat option. Focused Blocks350/Combat214 and
+World33 checks plus compilation passed; the real run includes melee regressions.
+Minecraft exited normally. No manual test is needed for these verified changes.
 
-The opt-in `-Combat` profile now sends actual Minecraft primary melee to native
-KCD2 NPCs. Preserve the existing HUD, walking, blocks, crafting and respawn paths.
-Minecraft owns damage/cooldown/durability; native code validates exact NPC identity,
-current aim, reach, the real AABB and a scenery ray before applying normalized HP
-loss. Inventory/chat suppress attacks. Native NPC movement/AI remains native.
+Next weapon work: actual projectile trajectory/contact validation against native
+scenery and actors, then enable connected bows and add crossbows. The melee
+contract requires the current player eye; never pass distant arrow impacts
+through it. Use the actual projectile owner/weapon and distinct impact identity.
+Reuse existing combat fixture/render/depth paths, not another test framework.
 
-Latest verified evidence:
-- Actual Minecraft standalone combat/armor/inventory/occlusion/cleanup:
-  `runtime/evidence/gameplay-combat-20261108-215206-2b9cb32bbcb94397a6b018e13b73083c/verification.json`.
-- Connected KCD2 automated PASS:
-  `runtime/evidence/gameplay-kcd-20261108-215647-d4359c30548545cbb27c6f5ccca282ba/native-combat-verification.json`.
-  Actual Minecraft sword damage 7, native HP 100→65, one ACK, zero rejected hits,
-  sword durability, inventory suppression in both games, 0.641m walking, continued
-  HUD composition/reprojection (+321 frames after walking), normal save and exact
-  native NPC/path-wrapper cleanup all passed. No human keys were needed.
-- Native-only damage/deduplication/cleanup:
-  `runtime/evidence/combat-native-20261108-204151-78f062aac0ca47669d56ed2a803c6f0f/result.json`.
+Latest earlier coupled melee proof:
+`runtime/evidence/gameplay-kcd-20261108-215647-d4359c30548545cbb27c6f5ccca282ba/native-combat-verification.json`:
+actual diamond-sword damage7, native100→65HP, durability, inventory suppression,
+walking, advancing HUD composition/reprojection and normal cleanup. Native visual
+reaction proof is `runtime/evidence/combat-reaction-20261108-221429-6f97fea063714c77a1f942e14b235b8c/visual-observation.json`.
+Preserve immediate validated attack dispatch and unchanged freshness deadlines.
+Windows sharing failures must not refresh stale snapshot timestamps.
 
-Preserve these fixes:
-- Dispatch the actual vanilla attack packet immediately from the validated click;
-  the synchronous server damage gate owns full revalidation. Two extra tick waits
-  used up the original camera sample's lifetime. Do not extend the freshness TTL.
-- Publish the exact NPC snapshot sequence/contact revalidated by the server,
-  rather than the earlier client-click snapshot. Reject once, never replay an
-  ambiguous native setter. Bounded rejection evidence records source ages/rays.
-- Atomic snapshot replacement on Windows can report missing/access-denied or a
-  generic sharing FileSystemException. Treat unavailable reads as unavailable,
-  without refreshing old source timestamps; reject invalid file content/types.
-- Spawn the official debug NPC AFTER Minecraft readiness. Its official AI waits,
-  moves, then self-despawns. The fixture-only FindDataTable wrapper directs only
-  that exact owned actor to its own spawn; cleanup restores the original function.
-  Other NPCs and global path data are untouched. Removal is deferred: request once
-  and confirm exact ID/name disappearance with bounded callbacks.
-- Connected acceptance now checks native horizontal stillness in inventory and
-  advancing native composition/reprojection counters during an 11-second post-walk
-  interval; pre-hit frame counters alone cannot pass.
-
-Final assemble and 214 focused checks passed, including the real generic Windows
-sharing violation, unchanged stale-source rejection and 500 concurrent replacements.
-KCD2 is closed. Temporary bundle `runtime/hud-combat-20261108-a` was restored to
-its previous installation, unarmed; restoration evidence:
+Both native test worlds closed normally. This continuation did not install/arm
+a HUD bundle. The earlier installation remains restored and unarmed:
 `runtime/evidence/gameplay-hud-restore-20261108-215807-3123a19ae7e44eb7a393c45889eaebe5`.
-Prepare a fresh owned bundle/install before another coupled check (do not assume
-that the previously restored bundle is still installed).
-
-For a relevant combat change, run `scripts/Test-KcdCombat.ps1 -BundleDirectory $bundle`
-with the newly prepared/installed bundle in a fresh loaded tools world.
-It captures terrain, starts an isolated guest, owns/spawns/removes the test NPC,
-attacks, checks inventory/walking/HUD, and saves normally. No human keys or F8
-countdown. One sustained HUD session per KCD process: restart normally after a
-consumed session. Avoid UI screenshots during strict leases. Check live process
-and installation receipts instead of assuming a PID or installed bundle.
-
-Remaining combat work: reciprocal native attacks into Minecraft health, hostile
-NPC target-lock suppression, ranged/sweep/native knockback/secondary effects.
-The user explicitly requires free aiming and walking, with native enemy AI active.
-Passive dummy lock=false observations do not prove hostile free-camera behavior.
-No player invulnerability or guessed lock CVars were changed. The owned-NPC
-immortality experiment above supersedes the earlier untested proposal. It is not
-enabled in gameplay and does not establish incoming event delivery.
+For a relevant coupled change, prepare/install a fresh owned WorldBlocks bundle
+and run `scripts/Test-KcdCombat.ps1 -BundleDirectory $bundle` in a fresh loaded
+tools world. It starts Minecraft, owns/spawns/removes its passive NPC, attacks,
+checks inventory/walking/HUD and saves normally without human input. Spawn the
+short-lived path-follower only AFTER Minecraft readiness. One sustained session
+per native process; verify receipts/PID rather than assuming an old installation.
 
 ## Latest gameplay milestone: death, respawn and preserved drops
 

@@ -18,7 +18,8 @@ try{
  $raw=($valid|ConvertTo-Json -Depth 8 -Compress).Replace('"token":1','"token":1,"token":2');[IO.File]::WriteAllText($file,$raw);Refuses {Read-GameplayCombatSnapshot $file $id $now}
  $state=New-GameplayCombatState $id $dir ($now+10000)
  Require ((Get-GameplayCombatCommands $state $now) -like '*Begin*') 'Begin missing.'
- Accept-GameplayCombatReceipt $state ([pscustomobject]@{schema=1;run=$id.Run;event='begin';result='ready';active=$true}) $now
+ foreach($policy in @($false,'True')){Refuses {Accept-GameplayCombatReceipt $state ([pscustomobject]@{schema=1;run=$id.Run;event='begin';result='ready';active=$true;lock_policy_active=$policy}) $now}}
+ Accept-GameplayCombatReceipt $state ([pscustomobject]@{schema=1;run=$id.Run;event='begin';result='ready';active=$true;lock_policy_active=$true}) $now
  [IO.File]::Delete($file)
  Require ((Get-GameplayCombatCommands $state ($now+100)) -like '*Sample*') 'Sample missing.'
  $actor=[pscustomobject]@{token=1;x=0.;y=2.;z=0.;width=.6;height=1.8;health=100.;max_health=100.;alive=$true}
@@ -34,8 +35,13 @@ try{
  $command=Get-GameplayCombatCommands $state ($now+450);Require ($command -notlike '*Hit*' -and $state.HitAck -eq 2) 'Stale source attacked.'
  $valid.seq=1;Write-Snapshot $valid;Refuses {Get-GameplayCombatCommands $state ($now+451)}
  Require ((Get-GameplayCombatStopCommand $state) -like '*End*') 'Missing stop.'
- Accept-GameplayCombatReceipt $state ([pscustomobject]@{schema=1;run=$id.Run;event='terminal';result='explicit_stop';timers_cancelled=$true}) ($now+460)
+ Accept-GameplayCombatReceipt $state ([pscustomobject]@{schema=1;run=$id.Run;event='terminal';result='explicit_stop';timers_cancelled=$true;lock_policy_restored=$true}) ($now+460)
  Require ((Get-GameplayCombatHostState $state).CleanupComplete) 'Combat cleanup failed.'
+ foreach($restored in @($false,'True')){
+  $badState=New-GameplayCombatState $id $dir ($now+10000);$badState.BeginSent=$true;$badState.Stopping=$true
+  Accept-GameplayCombatReceipt $badState ([pscustomobject]@{schema=1;run=$id.Run;event='terminal';result='explicit_stop';timers_cancelled=$true;lock_policy_restored=$restored}) ($now+461)
+  Require (-not (Get-GameplayCombatHostState $badState).CleanupComplete -and [bool]$badState.Failure) 'Unrestored or malformed lock cleanup accepted.'
+ }
  # Exercise a real Windows sharing conflict. The bounded failed attempt leaves
  # both old destination and original new bytes intact; retry only replaces bytes.
  $source=Join-Path $dir 'share.tmp';$destination=Join-Path $dir 'share.json'

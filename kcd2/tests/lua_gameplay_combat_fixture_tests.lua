@@ -1,5 +1,5 @@
 local entities,names,timers={}, {}, {};local spawn_mode='entity';local calls=0;local logs={};local defer_remove=false
-local run=string.rep('a',32);local last_entity
+local run=string.rep('a',32);local last_entity,last_params;local profiles,weapons,spawns=0,0,0;local profile_mode='normal'
 local function check(v,m)if not v then error(m,2)end end
 player={id=99,GetWorldPos=function()return{x=0,y=0,z=0}end,GetAngles=function()return{x=0,y=0,z=0}end}
 local original_find=function(id)return{Pos={x=id,y=88,z=99}}end
@@ -7,9 +7,16 @@ PathfindDebugUtils={FindDataTable=original_find,GetNPCSpeed=function()return 'wa
 System={GetEntity=function(id)check(type(id)=='number','invalid handle lookup');return entities[id]end,GetEntityByName=function(name)return names[name]end,RemoveEntity=function(id)calls=calls+1;if defer_remove then return end;local e=entities[id];if e then names[e.name]=nil;entities[id]=nil end end,LogAlways=function(s)logs[#logs+1]=s end}
 Script={SetTimerForFunction=function(_,_,data)timers[1]=data;return 1 end,KillTimer=function(id)timers[id]=nil end}
 XGenAIModule={SpawnEntity=function(params)
- check(params.ClassName=='NPC' and params.SharedSoulGuid=='88bee0ec-f164-4282-ae1e-6576a76b9bac','nonofficial test fixture')
- local e={id=1,name=params.Name,class='NPC',soul={},actor={},GetName=function(self)return self.name end};entities[1]=e;names[e.name]=e;last_entity=e
+ spawns=spawns+1;last_params=params
+ check(params.ClassName=='NPC' and (params.SharedSoulGuid=='88bee0ec-f164-4282-ae1e-6576a76b9bac' or params.SharedSoulGuid=='d2a3c045-2d43-491c-80a4-96137fcb99de'),'nonofficial test fixture')
+ local e={id=1,name=params.Name,class='NPC',soul={SetStatLevelDebug=function()end,SetSkillLevelDebug=function()end},actor={},GetName=function(self)return self.name end};entities[1]=e;names[e.name]=e;last_entity=e
+ e.actor.EquipWeaponPreset=function(_,preset)check(entities[1]==e and names[e.name]==e and e~=player,'unowned weapon mutation');check(preset=='10101010-c8cb-81dd-40f1-2f0554804f83','wrong hostile preset');weapons=weapons+1 end
+ if spawn_mode=='no_weapon' then e.actor.EquipWeaponPreset=nil end
  if spawn_mode=='nil' then return nil elseif spawn_mode=='false' then return false elseif spawn_mode=='throw' then error('native return failed')elseif spawn_mode=='invalid_actor' then e.class='Other';return false elseif spawn_mode=='handle'then return e.id end;return e
+end}
+CombatDebug={SetSkillProfile=function(e,level)
+ check(entities[e.id]==e and names[e.name]==e and e~=player,'unowned profile mutation');check(level==1,'hostile fixture not novice');profiles=profiles+1
+ if profile_mode=='throw' then error('profile setup failed')elseif profile_mode=='replace'then entities[e.id]={id=e.id,name=e.name,class='NPC',soul={},actor={}};names[e.name]=entities[e.id]end
 end}
 MineCome={};dofile(MINECOME_MODULE_PATH)
 for _,mode in ipairs({'entity','handle'})do
@@ -44,4 +51,34 @@ local other_find=function()return{Pos={x=77,y=77,z=77}}end;PathfindDebugUtils.Fi
 check(not MineCome.GameplayCombatFixtureEnd(run),'lost path ownership reported restored')
 check(PathfindDebugUtils.FindDataTable==other_find and logs[#logs]:match('"path_restored":false'),'third-party path function overwritten')
 PathfindDebugUtils.FindDataTable=original_find
-print('PASS owned native NPC fixture cleanup: returned handle/object, post-create failure, unknown ownership, replacement, expiry (simulated engine)')
+-- Hostile mode is explicit and uses the official basic-AI enemy, retaining
+-- perception and native AI while avoiding every path-follower override.
+local path_before=PathfindDebugUtils;PathfindDebugUtils=nil
+before=profiles;local before_weapons=weapons
+check(MineCome.GameplayCombatFixtureBegin(run,1000,0,2,0,'hostile'),'hostile fixture rejected without unrelated path API')
+check(last_params.SharedSoulGuid=='d2a3c045-2d43-491c-80a4-96137fcb99de' and last_params.PercepDestinationrObjectAI==nil and last_params.PerceptibleObjectAI==nil,'hostile perception disabled or wrong soul')
+check(last_params.Rot.x==0 and last_params.Rot.y==0 and math.abs(last_params.Rot.z-math.pi)<.00001,'hostile enemy not facing player')
+check(profiles==before+1 and weapons==before_weapons+1 and logs[#logs]:match('"mode":"hostile"'),'hostile setup/receipt incomplete')
+check(PathfindDebugUtils==nil,'hostile fixture installed path wrapper');check(MineCome.GameplayCombatFixtureEnd(run),'hostile cleanup failed')
+check(next(entities)==nil and next(timers)==nil and logs[#logs]:match('"path_restored":true'),'hostile resources leaked')
+PathfindDebugUtils=path_before
+local combat_before=CombatDebug;CombatDebug=nil;before=spawns
+check(not MineCome.GameplayCombatFixtureBegin(run,1000,0,2,0,'hostile'),'missing combat API admitted')
+check(spawns==before and next(timers)==nil,'missing API mutated state');CombatDebug=combat_before
+check(not MineCome.GameplayCombatFixtureBegin(run,1000,0,2,0,'unknown') and spawns==before,'invalid fixture mode mutated state')
+spawn_mode='no_weapon';before=profiles;before_weapons=weapons
+check(not MineCome.GameplayCombatFixtureBegin(run,1000,0,2,0,'hostile'),'missing owned weapon API admitted')
+check(profiles==before and weapons==before_weapons and next(entities)==nil and next(timers)==nil,'post-spawn API failure mutated profile or leaked fixture')
+spawn_mode='entity';profile_mode='throw';before_weapons=weapons
+check(not MineCome.GameplayCombatFixtureBegin(run,1000,0,2,0,'hostile'),'partial profile exception admitted')
+check(weapons==before_weapons and next(entities)==nil and next(timers)==nil,'profile failure continued setup or leaked fixture')
+profile_mode='replace';before_weapons=weapons;before=calls
+check(not MineCome.GameplayCombatFixtureBegin(run,1000,0,2,0,'hostile'),'replacement during profile admitted')
+check(weapons==before_weapons and calls==before and logs[#logs]:match('cleanup_unconfirmed'),'replacement mutated or deleted')
+entities={};names={};profile_mode='normal';check(MineCome.GameplayCombatFixtureEnd(run),'late hostile removal unconfirmed')
+-- Default remains passive; hostile configuration must not leak across runs.
+before=profiles;before_weapons=weapons
+check(MineCome.GameplayCombatFixtureBegin(run,1000,0,2,0),'passive regression after hostile mode')
+check(last_params.SharedSoulGuid=='88bee0ec-f164-4282-ae1e-6576a76b9bac' and last_params.PercepDestinationrObjectAI==false and last_params.PerceptibleObjectAI==false and profiles==before and weapons==before_weapons,'hostile configuration leaked to passive mode')
+check(MineCome.GameplayCombatFixtureEnd(run),'final passive cleanup failed')
+print('PASS owned native NPC passive/hostile fixture: official configuration, missing APIs, uncertain spawn, replacement, expiry and deferred cleanup (simulated engine)')

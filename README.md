@@ -25,9 +25,16 @@ adds a primary-melee bridge: Minecraft calculates weapon damage, cooldown and
 durability for attacks against native NPC proxies. A connected automated KCD2
 check passes a real sword hit on a native NPC, inventory suppression, subsequent
 walking, continued HUD composition and cleanup. Standalone Minecraft checks also
-cover weapons, armor, cooldowns and block occlusion. Native
-retaliation, hostile target-lock suppression, ranged attacks and secondary
-combat effects remain unfinished; this is not yet complete two-way combat.
+cover weapons, armor, cooldowns and block occlusion. A separate native hostile
+comparison verifies that the combat profile suppresses player target lock while
+enemy attacks continue, and restores the original settings afterward. Native
+attacks are not yet routed into Minecraft health. Connected ranged attacks and
+secondary combat effects remain unfinished; this is not yet complete two-way combat.
+
+Vanilla bow charging, ammunition, durability, nonfiring cancellation and real
+arrow colour/depth rendering now pass an automated Minecraft check. Bow input is
+limited to that standalone fixture until projectile impacts are connected to
+KCD2 scenery and NPCs; it is not enabled in ordinary gameplay yet.
 
 **Status: experimental development prototype.** Several bounded two-game tests
 work, but this is not yet a complete playable mod or a ready-to-install release.

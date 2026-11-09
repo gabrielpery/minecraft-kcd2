@@ -1,4 +1,58 @@
-# MineCome progress — 2026-11-08
+# MineCome progress — 2026-11-09
+
+## Vanilla bow use and real arrow rendering
+
+Implemented bow press/hold/release using vanilla item packets, with real tracked
+arrows rendered by Minecraft's registered model renderer in the existing world
+colour/depth pass. Inventory and lost authority use an ordered, nonfiring cancel;
+pending cancellation also suppresses late vanilla release. Exact-server shutdown
+clears pending owners. The new input remains limited to `-BowCheck` in the
+standalone combat fixture until native projectile collision is implemented.
+
+Actual-Minecraft PASS:
+`runtime/evidence/gameplay-combat-20261109-094544-dfcbf0e9bcb441969e789aace246807f/verification.json`.
+Partial/full charges generated two real owned arrows (speeds0.813/3.005, only
+the full charge critical), consumed two arrows and wore the bow twice. Inventory
+and authority-loss cancellations consumed nothing; no-ammo use produced no shot.
+Both real arrow UUIDs reached the renderer; the isolated PNG contains6612 arrow
+pixels, all with world depth, and was visually inspected. Existing melee, armor,
+inventory, occlusion, save and normal cleanup checks also passed in that run.
+No synthetic projectile entities or player position writes were used. The fixture
+waits for vanilla knockback to settle, then aligns its backstop and view with the
+actual player; it does not relax captured-terrain or renderer ownership checks.
+
+Build and focused Blocks350/Combat214/World33 checks passed. This is standalone
+Minecraft proof, not yet bow combat inside KCD2. Native scenery/NPC trajectory
+collision and an impact contract distinct from current-eye melee remain next;
+connected bows then crossbows can use that shared path.
+
+## Native hostile attacks without target lock
+
+The opt-in combat session now owns the three documented player lock CVars and
+restores their exact baselines on stop/lease expiry. Partial setup rolls back;
+foreign changes are not overwritten. Unconfirmed restoration refuses reuse, and
+the host requires typed active/restored receipts.
+
+The paired native comparison used a temporary hostile NPC with its
+AI and attacks enabled. Default settings produced native health 100→93.58099365
+and target lock. With the production policy active, attacks still landed
+(100→78.81308746), target lock stayed off, and NPC/buff/callback/timer/CVar cleanup
+passed. Evidence:
+`runtime/evidence/combat-retaliation-20261109-092231-dbc5b712a46c49bb866e59922dc844e1/result.json`
+and `runtime/evidence/combat-retaliation-20261109-093152-cb6830f053b344efb5fdba6e6918683c/result.json`.
+This is native lock suppression, not yet combined hostile HUD/physical-camera
+acceptance. The temporary native protection remains fixture-only.
+
+Real attacks again produced zero Lua OnHit callbacks and nil hitReaction state.
+Native combat logging did expose five actual punches with actor GUIDs and matching
+health deltas, delivered while the game remained active. Logging settings were
+restored. Before using this for Minecraft health, establish lossless delivery
+(filenames have second resolution), duplicate handling, exact actor mapping and
+damage behavior at the immortality clamp. Incoming native damage stays disabled.
+Sources and evidence: [native combat notes](research/KCD-COMBAT.md).
+
+Both native worlds were closed normally. No HUD bundle was installed or armed.
+Focused Lua lifecycle/fixture/retaliation and host restoration checks passed.
 
 ## Correct native attacker attribution and observed hit reactions
 
@@ -16,11 +70,12 @@ no user testing or forced animation was used. Evidence and scope are recorded in
 This is direct native visual proof, not a new full two-game visual acceptance.
 The documented animation getters stayed idle/nil even during the visible recoil.
 
-The owned-NPC protection experiment verified native immortality at1HP and exact
+The earlier owned-NPC protection experiment verified native immortality at1HP and exact
 buff removal. It did not establish a usable incoming hit callback. The legacy
 ServerHit route had no native damage effect, and the documented brain variable
 was nil on the dummy. Player protection/retaliation and hostile lock suppression
-remain disabled pending a real event source. The required next weapon milestone
+were still disabled at that checkpoint; the hostile comparison above supersedes
+the lock-policy status. The required next weapon milestone
 is vanilla bows (charge, ammunition, rendered arrows and native scenery/target
 collision), followed by crossbows. See [combat evidence](research/KCD-COMBAT.md).
 The final protection experiment used the corrected WUID and still produced zero
@@ -68,8 +123,8 @@ Lua movement 42 and new combat transport/lifecycle/owned-NPC tests also pass.
 
 Scope remains **primary outgoing melee**, not complete combat. Native incoming
 attacks need a proven pre-damage hook before they can safely use Minecraft health
-without killing the underlying KCD player. Player target-lock suppression under
-hostile attacks, ranged/sweep attacks, native knockback and secondary enchantment
+without killing the underlying KCD player. The later native hostile comparison
+above verifies target-lock suppression. Ranged/sweep attacks, native knockback and secondary enchantment
 effects remain open. Free aiming and unrestricted movement are explicit product
 requirements. Binding evidence and concrete blockers are in
 [research/KCD-COMBAT.md](research/KCD-COMBAT.md).

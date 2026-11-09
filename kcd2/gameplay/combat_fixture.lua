@@ -1,6 +1,9 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
 -- Optional isolated test actor. Exact official Scripts/Debug/PathfindDebugUtils
 -- 30-58 supplies the NPC shared soul and XGenAIModule.SpawnEntity schema.
+-- Hostile opt-in: CombatDebug.lua:539-544/987 (combatEnemy_3), 222-302
+-- (novice profile), 675/1088 (unarmed preset). Its npc_basic brain and hostile
+-- player faction are declared in soul__test.xml:381 / FactionTree__autotests.xml:19-24.
 -- Owns only the unique newly-created actor, never existing NPCs/player state.
 MineCome=MineCome or {}
 MineCome._gameplay_combat_fixture=MineCome._gameplay_combat_fixture or {}
@@ -9,7 +12,7 @@ local function finite(v)return type(v)=='number' and v==v and v>-math.huge and v
 local function vector(v)return type(v)=='table' and finite(v.x) and finite(v.y) and finite(v.z)end
 local function distance(a,b)return math.sqrt((a.x-b.x)^2+(a.y-b.y)^2+(a.z-b.z)^2)end
 local function emit(p,event,result)
- System.LogAlways('[MineComeCombatFixture] {"schema":1,"run":"'..p.run..'","event":"'..event..'","result":"'..result..'","active":'..tostring(state.active==p)..',"removed":'..tostring(p.removed==true)..',"path_restored":'..tostring(p.path_restored~=false)..'}')
+ System.LogAlways('[MineComeCombatFixture] {"schema":1,"run":"'..p.run..'","mode":"'..(p.mode or 'passive')..'","event":"'..event..'","result":"'..result..'","active":'..tostring(state.active==p)..',"removed":'..tostring(p.removed==true)..',"path_restored":'..tostring(p.path_restored~=false)..'}')
 end
 local function owned(p)
  return p.entity and System.GetEntity(p.id)==p.entity and System.GetEntityByName(p.name)==p.entity and p.entity.id==p.id and p.entity.soul==p.soul
@@ -60,18 +63,32 @@ end
 function MineCome_CombatFixtureExpire(data)
  local p=type(data)=='table' and data.owner;if p and state.active==p and p.timer_data==data then p.timer=nil;stop(p,'expired')end
 end
-function MineCome.GameplayCombatFixtureBegin(run,duration_ms,x,y,z)
+function MineCome.GameplayCombatFixtureBegin(run,duration_ms,x,y,z,mode)
+ if mode==nil then mode='passive'end
+ if mode~='passive' and mode~='hostile' then return false,'invalid_fixture_mode'end
  if type(run)~='string' or #run~=32 or not run:match('^[0-9a-f]+$') or not finite(duration_ms) or duration_ms~=math.floor(duration_ms) or duration_ms<1000 or duration_ms>120000 or not vector({x=x,y=y,z=z}) then return false,'invalid_fixture'end
  if state.active then return false,'fixture_owned'end
- if not player or not player.GetWorldPos or not XGenAIModule or type(XGenAIModule.SpawnEntity)~='function' or not System or type(System.GetEntity)~='function' or type(System.GetEntityByName)~='function' or type(System.RemoveEntity)~='function' or not Script or type(Script.SetTimerForFunction)~='function' or type(Script.KillTimer)~='function' then return false,'fixture_api_missing'end
- if type(PathfindDebugUtils)~='table' or type(PathfindDebugUtils.FindDataTable)~='function' or type(PathfindDebugUtils.GetNPCSpeed)~='function' then return false,'fixture_path_api_missing'end
+ if not player or type(player.GetWorldPos)~='function' or type(player.GetAngles)~='function' or not XGenAIModule or type(XGenAIModule.SpawnEntity)~='function' or not System or type(System.GetEntity)~='function' or type(System.GetEntityByName)~='function' or type(System.RemoveEntity)~='function' or not Script or type(Script.SetTimerForFunction)~='function' or type(Script.KillTimer)~='function' then return false,'fixture_api_missing'end
+ if mode=='passive' and (type(PathfindDebugUtils)~='table' or type(PathfindDebugUtils.FindDataTable)~='function' or type(PathfindDebugUtils.GetNPCSpeed)~='function') then return false,'fixture_path_api_missing'end
+ if mode=='hostile' and (type(CombatDebug)~='table' or type(CombatDebug.SetSkillProfile)~='function')then return false,'fixture_combat_api_missing'end
  local position={x=x,y=y,z=z};local feet=player:GetWorldPos()
  if not vector(feet) or distance(position,feet)>5 then return false,'fixture_too_far'end
- local p={run=run,name='MineComeCombat_'..run..'_fixture',path_table=PathfindDebugUtils,path_original=PathfindDebugUtils.FindDataTable,position=position,rotation=player:GetAngles()}
+ local rotation=player:GetAngles();if not vector(rotation)then return false,'fixture_rotation_invalid'end
+ local p={run=run,mode=mode,name='MineComeCombat_'..run..'_fixture',position=position,rotation=rotation}
+ if mode=='passive' then p.path_table=PathfindDebugUtils;p.path_original=PathfindDebugUtils.FindDataTable
+ else p.combat_table=CombatDebug;p.set_profile=CombatDebug.SetSkillProfile end
  if System.GetEntityByName(p.name)then return false,'fixture_name_occupied'end
  state.active=p;local data={owner=p};local ok,timer=pcall(Script.SetTimerForFunction,duration_ms,'MineCome_CombatFixtureExpire',data,true)
  if not ok or timer==nil or timer==false then state.active=nil;return false,'fixture_timer_missing'end;p.timer=timer;p.timer_data=data
- local spawned,result=pcall(XGenAIModule.SpawnEntity,{ClassName='NPC',Name=p.name,SharedSoulGuid='88bee0ec-f164-4282-ae1e-6576a76b9bac',Properties={},PercepDestinationrObjectAI=false,PerceptibleObjectAI=false,Pos=position,Rot=player:GetAngles()})
+ local params={ClassName='NPC',Name=p.name,Properties={},Pos=position,Rot=rotation}
+ if mode=='passive' then
+  params.SharedSoulGuid='88bee0ec-f164-4282-ae1e-6576a76b9bac';params.PercepDestinationrObjectAI=false;params.PerceptibleObjectAI=false
+ else
+  params.SharedSoulGuid='d2a3c045-2d43-491c-80a4-96137fcb99de'
+  -- Official CombatDebug faces new enemies toward the player (1004-1007).
+  params.Rot={x=0,y=0,z=rotation.z+math.pi}
+ end
+ local spawned,result=pcall(XGenAIModule.SpawnEntity,params)
  local entity=spawned and type(result)=='table' and result or nil
  if spawned and (type(result)=='userdata' or (finite(result) and result>0 and result==math.floor(result)))then entity=System.GetEntity(result)end
  local named=System.GetEntityByName(p.name)
@@ -86,6 +103,20 @@ function MineCome.GameplayCombatFixtureBegin(run,duration_ms,x,y,z)
  end
  p.entity=entity;p.id=entity.id;p.soul=entity.soul
  if type(p.soul)~='table' or type(entity.actor)~='table' then stop(p,'actor_unavailable');return false,'actor_unavailable'end
+ if mode=='hostile' then
+  if not owned(p) or CombatDebug~=p.combat_table or p.combat_table.SetSkillProfile~=p.set_profile or type(p.soul.SetStatLevelDebug)~='function' or type(p.soul.SetSkillLevelDebug)~='function' or type(entity.actor.EquipWeaponPreset)~='function' then
+   stop(p,'fixture_combat_api_missing');return false,'fixture_combat_api_missing'
+  end
+  local configured=pcall(function()
+   p.set_profile(entity,1)
+   if not owned(p)then error('fixture_owner_changed')end
+   entity.actor:EquipWeaponPreset('10101010-c8cb-81dd-40f1-2f0554804f83')
+  end)
+  if not configured or not owned(p)then stop(p,'fixture_combat_setup_failed');return false,'fixture_combat_setup_failed'end
+  -- Native npc_basic perception/combat remains active. No path override or
+  -- forced attack is installed; actual retaliation must be observed separately.
+  emit(p,'begin','spawned');return true
+ end
  if PathfindDebugUtils~=p.path_table or p.path_table.FindDataTable~=p.path_original then stop(p,'fixture_path_changed');return false,'fixture_path_changed'end
  -- Official test_pathfollower_dummy.xml asks this Lua function for its Move
  -- destination after3s. Pin only our fixture's destination to its own spawn;
