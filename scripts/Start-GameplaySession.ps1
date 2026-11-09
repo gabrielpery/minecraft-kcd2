@@ -1,7 +1,7 @@
 # Sustained HUD/inventory, with an explicit Minecraft walking profile.
 [CmdletBinding()]
 param([string]$BundleDirectory,[string]$InstanceDirectory,[string]$JavaHome='C:/Program Files/Java/jdk-24',
- [ValidateRange(0,300)][int]$SmokeSeconds=0,[switch]$PreflightOnly,[switch]$Movement,[switch]$Blocks,[switch]$Explore,[switch]$Chat,[switch]$Flight,[switch]$Hands,[switch]$WorldBlocks,[switch]$Combat,[switch]$CombatCheck,[switch]$IncomingCombatCheck,[switch]$ProjectileCheck,[string]$CombatFixtureRun,[string]$GroundPatchFile,[switch]$ThirdPersonWalkingCheck,[switch]$DropsCheck,[switch]$CraftingCheck,[switch]$FurnaceCheck,[switch]$TntCheck,[switch]$TntCombatCheck,[switch]$RespawnCheck,[ValidateRange(0,1)][int]$InitialTerrainRadius=0)
+ [ValidateRange(0,300)][int]$SmokeSeconds=0,[switch]$PreflightOnly,[switch]$Movement,[switch]$Blocks,[switch]$Explore,[switch]$Chat,[switch]$Flight,[switch]$Hands,[switch]$WorldBlocks,[switch]$Combat,[switch]$CombatCheck,[switch]$IncomingCombatCheck,[ValidateSet('unarmed','sword','bow','crossbow')][string]$IncomingWeapon='unarmed',[switch]$ProjectileCheck,[string]$CombatFixtureRun,[string]$GroundPatchFile,[switch]$ThirdPersonWalkingCheck,[switch]$DropsCheck,[switch]$CraftingCheck,[switch]$FurnaceCheck,[switch]$TntCheck,[switch]$TntCombatCheck,[switch]$RespawnCheck,[ValidateRange(0,1)][int]$InitialTerrainRadius=0)
 . (Join-Path $PSScriptRoot 'powershell7.ps1')
 if($PSVersionTable.PSVersion.Major -lt 7){
  $code=Invoke-MineComePowerShell7 -ScriptPath $PSCommandPath -BoundParameters $PSBoundParameters
@@ -15,6 +15,7 @@ $root=[IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
 . (Join-Path $PSScriptRoot 'GameplayHudSessionGuard.ps1')
 if($TntCombatCheck){$TntCheck=$true;$Combat=$true;$InitialTerrainRadius=1}
 if($IncomingCombatCheck){$InitialTerrainRadius=1}
+elseif($IncomingWeapon -cne 'unarmed'){throw 'IncomingWeapon requires IncomingCombatCheck.'}
 if($RespawnCheck){$InitialTerrainRadius=1}
 if($InitialTerrainRadius -eq 1){$Explore=$true}
 if($ProjectileCheck -and -not $CombatCheck){throw 'ProjectileCheck requires the owned CombatCheck.'}
@@ -102,7 +103,7 @@ try{
  if($Flight){$arguments+='-Flight'}
  if($Hands){$arguments+='-Hands'};if($WorldBlocks){$arguments+='-WorldBlocks'};if($Combat){$arguments+='-Combat'}
  if($CombatCheck){$arguments+='-CombatCheck'};if($ProjectileCheck){$arguments+='-ProjectileCheck'}
- if($IncomingCombatCheck){$arguments+='-IncomingCombatCheck'}
+ if($IncomingCombatCheck){$arguments+=@('-IncomingCombatCheck','-IncomingWeapon',$IncomingWeapon)}
  if($RespawnCheck){$arguments+='-RespawnCheck'}
  if($TntCheck){$arguments+='-TntCheck'}
  if($TntCombatCheck){$arguments+='-TntCombatCheck'}
@@ -192,12 +193,14 @@ try{
    $incomingState=Get-GameplayMovementHostState $hostFollower
    if($incomingState.Combat -and $incomingState.Combat.Incoming -and $incomingState.Combat.Incoming.Begin){
     $incomingFixtureStarted=$true
-    Invoke-MineComeProbeConsole $context "#local p=player:GetWorldPos();local d=player.actor:GetHeadDir();local len=math.sqrt(d.x*d.x+d.y*d.y);if len>.1 then local ok,why=MineCome.GameplayCombatFixtureBegin('$CombatFixtureRun',60000,p.x+d.x/len*2,p.y+d.y/len*2,p.z,'hostile');System.LogAlways('[MineComeIncomingFixtureSpawn] '..tostring(ok)..' '..tostring(why)) end"|Out-Null
+    $incomingMode=if($IncomingWeapon -ceq 'unarmed'){'hostile'}else{'hostile_'+$IncomingWeapon}
+    $incomingDistance=if($IncomingWeapon -cin @('bow','crossbow')){6}else{2}
+    Invoke-MineComeProbeConsole $context "#local p=player:GetWorldPos();local d=player.actor:GetHeadDir();local len=math.sqrt(d.x*d.x+d.y*d.y);if len>.1 then local ok,why=MineCome.GameplayCombatFixtureBegin('$CombatFixtureRun',60000,p.x+d.x/len*$incomingDistance,p.y+d.y/len*$incomingDistance,p.z,'$incomingMode');System.LogAlways('[MineComeIncomingFixtureSpawn] '..tostring(ok)..' '..tostring(why)) end"|Out-Null
     $spawnDeadline=[DateTime]::UtcNow.AddSeconds(2);$spawned=$false
     do{
      Invoke-MineComeProbeConsole $context "#System.LogAlways('[MineComeIncomingFixtureReady] $CombatFixtureRun')"|Out-Null
      $spawnReceipts=@(Get-MineComeProbeReceipts (Read-MineComeProbeLog $context $incomingFixtureProbe.Offset) 'MineComeCombatFixture' $CombatFixtureRun)
-     $spawned=@($spawnReceipts|Where-Object {$_.event -ceq 'begin' -and $_.mode -ceq 'hostile' -and $_.active -eq $true}).Count -eq 1
+     $spawned=@($spawnReceipts|Where-Object {$_.event -ceq 'begin' -and $_.mode -ceq $incomingMode -and $_.active -eq $true}).Count -eq 1
      if(-not $spawned){Start-Sleep -Milliseconds 50}
     }while(-not $spawned -and [DateTime]::UtcNow -lt $spawnDeadline)
     if(-not $spawned){throw 'Incoming hostile spawn was not confirmed; use a horizontal native view.'}

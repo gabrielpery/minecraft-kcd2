@@ -21,8 +21,12 @@ Each native sample binds a unique runtime name to its existing exact
 entity/soul/generation token and first-observed native clock. The reader matches
 that name, rejects pre-generation events, then pins the telemetry GUID. Nearby
 duplicate names, including the player's name, cannot be used for attribution.
-Only the source-backed unarmed attack types4/5/6/7/9 with damageType4 are admitted
-initially. Armed and ranged native attacks require their own mapping/acceptance.
+Melee admission includes the official weapon-table pairs stab0→4/5,
+slash1→5/6, smash2→4 and unarmed4/5/6/7/9→4. Actual longsword captures
+corroborate slash1/6 and stab0/5. Unknown classifications remain unsupported.
+Native projectile admission remains disabled until a real ranged event establishes
+its cause/effect schema. The Minecraft adapter is ready, but native ranged combat
+has not passed an integrated check.
 
 ## Damage and native health
 
@@ -39,6 +43,23 @@ identities remain owned. The actual normalized hit is native loss/native maximum
 times20; native armor already participates in that native loss, and Minecraft
 armor then processes the translated hit. This is an initial damage balance,
 not a claim of exact vanilla weapon parity or complete native status-effect sync.
+
+Armed native hits also need session-owned injury protection. Without it, a
+successful sword check left native bleeding running after the health guard ended.
+The official nonpersistent `bleeding_protection` buff sets `hin=0`
+(`Inter_HitInjury`), separately from `hlh` (`Inter_HealthLossHit`). The adapter
+requires an absent baseline, owns the returned buff instance and removes that
+exact instance on cleanup. It never clears pre-existing injuries. Its effect on
+actual hit telemetry and post-session health is checked separately from presence.
+
+Incoming damage carries an immutable `melee` or `projectile` kind through its
+queue. Minecraft uses its normal mob-attack source for melee and its actual
+`DamageSources.arrow` source for admitted native projectiles. The latter uses a
+short-lived, unspawned arrow solely for source attribution; it never flies or
+renders a duplicate native arrow. A `finally` block discards it. This preserves
+vanilla projectile tags, armor and Projectile Protection. An actual Minecraft
+fixture measured6.464 armored damage versus4.396 with Projectile Protection IV
+for the same8-point hit, with two adapters created/removed and none left active.
 
 ## Transport and replay
 
@@ -58,6 +79,10 @@ retry; stale first admission fails. Pending hits retain
 their attacker snapshot until Minecraft acknowledges them. Minecraft preserves
 source intervals without resetting vanilla hurt cooldowns and discards old-life
 hits across respawn.
+
+Native actor discovery covers32m, with the existing eight-actor limit. Ranged
+NPCs can retreat beyond the old16m radius before firing. Enlarging discovery
+does not increase melee reach or permit damage from an unidentified attacker.
 
 Native health upkeep may generate empty-cause healing records. They are ignored;
 only attributed CombatHit health losses can produce Minecraft damage.
@@ -87,6 +112,27 @@ initial seed contract and native camera settings remain unchanged.
 
 Runtime evidence stays outside Git:
 
+- **Final sword acceptance with injury protection PASS:**
+  `gameplay-kcd-20261109-150004-56894fe8881d4de883f7197ce853ef65`:
+  Minecraft health20→17.45866,11.25 seconds of post-hit HUD composition,
+  144 composition/reprojection advances, normal save/exit and both protection
+  instances, health, logging, NPC and movement restored.
+- **Native injury prevention PASS:**
+  `armed-capture-20261109-144045-340a9b993c8e40829232d71cfe04ae52`:
+  actual sword losses8.92498/8.88051/7.94642, no new native injuries, HP100
+  stable for five seconds after both guards were removed.
+- **Actual Minecraft projectile regression PASS:**
+  `gameplay-combat-20261109-143250-0ec06c3e506f411baa67018b07048563`:
+  four incoming hits, projectile protection, adapter cleanup and outgoing bow
+  flight/scenery/NPC impact checks. Incoming host events are explicitly synthetic.
+- **Sword coupled acceptance PASS:**
+  `gameplay-kcd-20261109-142935-aef9646234a34d53bf99504bb695c23a`:
+  an actual native longsword slash caused8.92364 native damage and1.784728
+  Minecraft damage, health20→18.215271. The native HUD continued composing
+  for11.25 seconds after removal, with202 composition/reprojection advances.
+  Save/exit and native health, buff, logging, NPC and movement cleanup passed.
+- `armed-capture-20261109-142738-5b495f41eaee4d0c887b21f20187361e`:
+  nine actual native sword hits, slash1/6 and stab0/5, with complete cleanup.
 - **Coupled acceptance PASS:**
   `gameplay-kcd-20261109-141001-8462b86ec10c4c6cafb563d0467dccd7`:
   two real native hits6.342/3.2095, Minecraft20→18.7316→18.0897, ACK2;
@@ -109,5 +155,20 @@ Runtime evidence stays outside Git:
 
 Use `Test-KcdIncomingCombat.ps1` for the connected acceptance check and its
 `-VerifyEvidenceDirectory` option to recheck saved evidence without starting
-either game. The fixture waits for real hostile attacks, verifies another hit in
-inventory, removes its NPC and checks continued HUD composition afterward.
+either game. Default `-IncomingWeapon unarmed` waits for two real hostile attacks,
+including a hit in inventory. `-IncomingWeapon sword` needs one real armed hit,
+then removes the attacker and checks continuing HUD composition; requiring another
+armed hit could kill the test player. Verification binds the observation to the
+original source event, acknowledged damage and authoritative Minecraft health.
+
+`bow` and `crossbow` are unfinished diagnostic modes. Native fixtures equipped
+real weapons/ammunition, but neither consumed ammunition nor produced a shot.
+Bow loading overflowed native animation queues. Crossbow actors faced the player
+with weapons drawn, retreated to about26m and sometimes reached a loaded
+animation. Grounded placement, foreground operation, courage30, explicit ammo
+equipping, backup-weapon removal and45-second capture did not establish a hit.
+Offense/defence/forced-melee context checks were false. Final evidence:
+`armed-capture-20261109-145735-53c9c8c3bed341158e10fff49b448157`.
+Lua and observed REST metadata exposed no documented per-actor context setter or
+direct shot method. A real configured archer/behavior and actual projectile
+telemetry are still required; do not infer a schema from equipment alone.

@@ -1092,16 +1092,21 @@ NPCs keep their identity, movement and AI. Block mining keeps its existing path
 when the crosshair does not select an NPC. Inventory and chat suppress attacks.
 
 The outgoing bridge covers melee, bows and the TNT path above. Incoming native
-unarmed attacks now reduce real Minecraft health, including during inventory.
+unarmed and sword attacks now reduce real Minecraft health; unarmed hits are also
+verified during inventory.
 The adapter reads attributed native hit records, normalizes native health loss
 to Minecraft's20-health scale and invokes vanilla damage. Minecraft applies
 armor, hurt cooldowns, Creative immunity and its own knockback. Native health is
 temporarily maintained as a proxy, with its original health and owned protection
 restored on stop. Use `-Combat -Explore` for room to move under knockback.
-Native armed/ranged attacks, crossbows, outgoing sweep/knockback and secondary
+Native ranged attacks, crossbows, outgoing sweep/knockback and secondary
 enchantment effects remain unfinished. Native incoming damage still includes
 native armor before Minecraft armor; this is an initial balance, not exact
 vanilla weapon parity. See [incoming source and limits](research/INCOMING-COMBAT.md).
+The automated sword check now also verifies owned injury protection, preventing
+new native bleeding from continuing after Minecraft stops. Minecraft's projectile
+damage/Projectile Protection path is tested separately; the native archer fixture
+has not yet fired, so this does not enable incoming native arrows.
 
 The required combat model is free aiming and unrestricted movement. The adapter
 owns three source-backed player lock settings during `-Combat`, restoring their

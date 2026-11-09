@@ -26,18 +26,21 @@ try{
   $f.kind -cne 'minecome_gameplay_combat_fixture_v1' -or $f.mode -cne 'combat' -or $f.result -cne 'passed' -or $f.failure -or
   -not $f.actual_minecraft -or -not $f.standalone_scripted -or -not $f.synthetic_host -or $f.native_input_verified -or $f.live_kcd_verified -or $f.position_writes_used -or $f.direct_health_inventory_entity_writes -or
   $f.world_id -cne $session.world_id -or $session.kcd_movement_connected -or $session.host_command_typing_verified){throw 'Combat verification scope differs.'}
- foreach($flag in @('fist_damage_verified','wooden_sword_verified','diamond_sword_verified','cooldown_verified','durability_verified','inventory_suppression_verified','minecraft_block_occlusion_verified','incoming_damage_verified','armor_verified','render_pixels_verified')){if($f.$flag -ne $true){throw "Missing actual combat capability: $flag"}}
+ foreach($flag in @('fist_damage_verified','wooden_sword_verified','diamond_sword_verified','cooldown_verified','durability_verified','inventory_suppression_verified','minecraft_block_occlusion_verified','incoming_damage_verified','armor_verified','incoming_projectile_verified','projectile_protection_verified','render_pixels_verified')){if($f.$flag -ne $true){throw "Missing actual combat capability: $flag"}}
  if($f.hits.Count -ne 4 -or $f.barehand_damage -ne 1 -or $f.wooden_sword_damage -ne 4 -or $f.diamond_sword_damage -ne 7 -or
   $f.rapid_diamond_damage -le 0 -or $f.rapid_diamond_damage -ge $f.diamond_sword_damage -or $f.unarmored_hurt -ne 8 -or $f.armored_hurt -le 0 -or $f.armored_hurt -ge 8 -or
-  $f.final_state.held_damage -ne 2 -or $f.final_state.chest_damage -le 0){throw 'Vanilla weapons/cooldown/armour evidence differs.'}
+  $f.final_state.held_damage -ne 2 -or $f.final_state.chest_damage -le 0 -or -not $f.final_state.chest_enchanted -or
+  [Math]::Abs($f.projectile_hurt-$f.armored_hurt) -gt .001 -or [Math]::Abs($f.projectile_protected_hurt-$f.projectile_hurt*.68) -gt .001){throw 'Vanilla weapons/cooldown/armour/projectile protection evidence differs.'}
  if($m.failure -or -not $m.cleanup_complete -or -not $m.controls_released -or $m.patch_run -cne $run -or $m.patch_sha256 -cne $hash -or
   $b.failure -or $b.pending -or -not $b.cleanup_complete -or -not $b.controls_released -or ($c.PSObject.Properties['failure'] -and $c.failure) -or -not $c.cleanup_complete -or $c.pending -or
-  $c.outgoing_hits -ne 4 -or $c.hit_ack -ne 4 -or $c.hurt_ack -ne 2 -or $c.incoming_hurts -ne 2){throw 'Combat ownership, confirmation or cleanup differs.'}
- if($c.incoming_pending -ne 0 -or $c.incoming_creative_skipped -ne 0 -or $c.incoming_old_life_skipped -ne 0 -or $c.incoming_receipts.Count -ne 2){throw 'Incoming damage queue/receipts did not drain exactly once.'}
- for($i=0;$i -lt 2;$i++){
-  $hurt=$c.incoming_receipts[$i];$expectedDamage=if($i -eq 0){$f.unarmored_hurt}else{$f.armored_hurt}
+  $c.outgoing_hits -ne 4 -or $c.hit_ack -ne 4 -or $c.hurt_ack -ne 4 -or $c.incoming_hurts -ne 4){throw 'Combat ownership, confirmation or cleanup differs.'}
+ if($c.incoming_pending -ne 0 -or $c.incoming_creative_skipped -ne 0 -or $c.incoming_old_life_skipped -ne 0 -or $c.incoming_receipts.Count -ne 4 -or
+  $c.incoming_arrow_adapters_created -ne 2 -or $c.incoming_arrow_adapters_removed -ne 2 -or $c.incoming_arrow_adapters_active -ne 0){throw 'Incoming damage queue/arrow adapter receipts did not drain exactly once.'}
+ $damages=@($f.unarmored_hurt,$f.armored_hurt,$f.projectile_hurt,$f.projectile_protected_hurt)
+ for($i=0;$i -lt 4;$i++){
+  $hurt=$c.incoming_receipts[$i];$expectedDamage=$damages[$i];$kind=if($i -lt 2){'melee'}else{'projectile'};$type=if($i -lt 2){'minecraft:mob_attack'}else{'minecraft:arrow'}
   if($hurt.seq -ne ($i+1) -or $hurt.attacker_token -ne 1 -or $hurt.requested_damage -ne 8 -or $hurt.result -cne 'damaged' -or -not $hurt.vanilla_accepted -or
-   $hurt.life -ne 0 -or $hurt.source_utc_ms -le 0 -or $hurt.applied_utc_ms -lt ($hurt.source_utc_ms-50) -or
+   $hurt.life -ne 0 -or $hurt.kind -cne $kind -or $hurt.damage_type -cne $type -or $hurt.projectile_tag -ne ($i -ge 2) -or $hurt.source_utc_ms -le 0 -or $hurt.applied_utc_ms -lt ($hurt.source_utc_ms-50) -or
    [Math]::Abs(($hurt.health_before-$hurt.health_after)-$expectedDamage) -gt .001){throw 'Incoming source receipt differs from actual vanilla health/armour result.'}
  }
  $expectedStages=if($BowCheck){'combat|bow'}else{'combat'}

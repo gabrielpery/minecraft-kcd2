@@ -1,5 +1,37 @@
 # MineCome progress — 2026-11-09
 
+## Armed incoming damage verified; ranged native source still blocked
+
+The final automatic coupled sword check passes real native damage into Minecraft:
+health20→17.45866, continued HUD composition, normal save/exit and complete
+session cleanup. Evidence:
+`runtime/evidence/gameplay-kcd-20261109-150004-56894fe8881d4de883f7197ce853ef65/native-incoming-combat-verification.json`.
+The11.25-second post-hit window includes144 native composition/reprojection
+advances. Stab/slash/smash mappings use official tables; actual longsword captures
+confirm stab0/5 and slash1/6. Native discovery covers32m; melee reach is unchanged.
+
+Fixed residual native bleeding: the session owns the official injury-protection
+buff separately from death protection, preserves earlier injuries, and removes
+only its own instances. A live three-hit sword capture retains positive health
+damage while leaving no new injuries and stable HP100 after cleanup.
+
+Minecraft's incoming projectile adapter uses actual vanilla arrow damage tags
+and Projectile Protection. An automated real-Minecraft regression passes
+armored damage6.464 and protected damage4.396 for identical8-point inputs,
+four acknowledged hits, two adapters removed, and outgoing bow/collision tests.
+Build,413 combat checks, host and Lua incoming/outgoing regressions pass.
+
+**Native ranged acceptance is not complete.** The native bow/crossbow fixtures
+did not fire or consume ammunition; no ranged cause schema has been assumed.
+Details and failed-trial evidence are in [NEXT_SESSION.md](NEXT_SESSION.md) and
+[INCOMING-COMBAT.md](research/INCOMING-COMBAT.md). No manual test was requested.
+
+Physical Escape stopped Computer Use during final window cleanup. Minecraft
+exited normally; KCD2 remains open with ended gameplay leases. The temporary
+`runtime/hud-armed-incoming-20261109` installation is unarmed and awaits a normal
+KCD2 close before restoration. The requested Play runner and native HUD cleanup
+are the next usability milestone, not delivered by this combat change.
+
 ## Native unarmed attacks now damage Minecraft health
 
 **Implemented, compiled and automatically verified in both games.** The `-Combat`

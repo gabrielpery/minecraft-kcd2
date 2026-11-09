@@ -7,7 +7,7 @@ public final class GameplayIncomingDamageTests {
     private static final long UTC=1_800_000_000_000L,NANO=10_000_000_000L;
     private static final GameplayCombatProtocol.Actor ACTOR=new GameplayCombatProtocol.Actor(1,1,2,3,.6f,1.8f,100,100,true);
     private static int checks;
-    private static GameplayCombatProtocol.Hurt hurt(long seq,long utc){return new GameplayCombatProtocol.Hurt(seq,1,8,utc);}
+    private static GameplayCombatProtocol.Hurt hurt(long seq,long utc){return new GameplayCombatProtocol.Hurt(seq,1,8,utc,"melee");}
     private static void check(boolean ok,String reason){checks++;if(!ok)throw new AssertionError(reason);}
     private static void reject(Runnable action,String reason){try{action.run();throw new AssertionError(reason);}catch(IllegalStateException expected){checks++;}}
     public static int run(){
@@ -18,7 +18,11 @@ public final class GameplayIncomingDamageTests {
         entry=q.due(NANO+600_000_000L);check(entry!=null&&entry.hurt().equals(second),"Second source becomes due without retimestamping");
         q.retire(entry,NANO+600_000_000L);q.admit(List.of(first,second),List.of(),UTC+10000,NANO+10_000_000_000L);
         check(q.pending()==0&&q.ack()==2,"Acknowledged unchanged republishing cannot replay or refresh damage");
-        reject(()->q.admit(List.of(new GameplayCombatProtocol.Hurt(2,1,9,UTC-900)),List.of(ACTOR),UTC,NANO),"Same sequence changed damage rejected");
+        reject(()->q.admit(List.of(new GameplayCombatProtocol.Hurt(2,1,9,UTC-900,"melee")),List.of(ACTOR),UTC,NANO),"Same sequence changed damage rejected");
+        reject(()->q.admit(List.of(new GameplayCombatProtocol.Hurt(2,1,8,UTC-900,"projectile")),List.of(ACTOR),UTC,NANO),"Same sequence changed native damage classification rejected");
+        reject(()->new GameplayIncomingDamage().admit(List.of(new GameplayCombatProtocol.Hurt(1,1,8,UTC,"unknown")),List.of(ACTOR),UTC,NANO),"Unknown native damage classification rejected");
+        var projectile=new GameplayIncomingDamage();var arrow=new GameplayCombatProtocol.Hurt(1,1,8,UTC,"projectile");projectile.admit(List.of(arrow),List.of(ACTOR),UTC,NANO);
+        check(projectile.due(NANO).hurt().kind().equals("projectile"),"Native projectile classification remains immutable through admission");
         reject(()->q.admit(List.of(hurt(2,UTC)),List.of(ACTOR),UTC,NANO),"Same sequence changed source time rejected");
         reject(()->q.admit(List.of(hurt(4,UTC)),List.of(ACTOR),UTC,NANO),"Gap rejected");
         for(long source:List.of(UTC-2001,UTC+51))reject(()->new GameplayIncomingDamage().admit(List.of(hurt(1,source)),List.of(ACTOR),UTC,NANO),"First admission rejects expired/future original source");

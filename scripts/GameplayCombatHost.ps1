@@ -102,7 +102,9 @@ function Write-GameplayCombatSnapshot($State,[long]$Now){
 function Get-GameplayCombatCommands($State,[long]$Now,[switch]$DeferApplied){
     if($State.Failure){throw $State.Failure};if($State.Stopping){return ''};if($Now -ge $State.ExpiresUtcMs){throw 'Combat identity expired.'}
     $run=$State.Identity.Run
-    if(-not $State.BeginSent){$State.BeginSent=$true;$State.LastSendUtcMs=$Now;return "MineCome.GameplayCombatBegin('$run',$([Math]::Min(86400000,$State.ExpiresUtcMs-$Now)),16,8)"}
+    # Native archers retreat beyond 16m. Keep their exact generation observable
+    # within the native module's existing 32m bound; melee reach remains separate.
+    if(-not $State.BeginSent){$State.BeginSent=$true;$State.LastSendUtcMs=$Now;return "MineCome.GameplayCombatBegin('$run',$([Math]::Min(86400000,$State.ExpiresUtcMs-$Now)),32,8)"}
     if(-not $State.Begin){if($Now-$State.LastSendUtcMs -gt 1500){throw 'Native combat begin unacknowledged.'};return ''}
     if($State.PendingHit -and $Now-$State.PendingSinceUtcMs -gt 1500){throw 'Native combat damage acknowledgement missing; attack will not be retried.'}
     $snapshot=Read-GameplayCombatGuest $State $Now

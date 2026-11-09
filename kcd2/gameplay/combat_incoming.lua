@@ -4,10 +4,15 @@
 -- Official Soul.SetState + FeatureTests/player.xml:611 supplies native upkeep;
 -- buff.xml:150 supplies the nonpersistent death guard. No event is synthesized
 -- from health polling, and native entity GUIDs are NOT soul telemetry GUIDs.
+-- buff.xml:310 supplies nonpersistent bleeding_protection (hin=0); the official
+-- Stats and skills table identifies hin as Inter_HitInjury, distinct from
+-- hlh (Inter_HealthLossHit). Never remove existing injuries or use a guessed
+-- intermediate-stat getter; verify buff presence and actual hit telemetry.
 MineCome=MineCome or {}
 MineCome._gameplay_incoming=MineCome._gameplay_incoming or {}
 local state=MineCome._gameplay_incoming
 local BUFF='44e1ccc9-9252-48a9-922d-2ae4523c69a3'
+local INJURY_BUFF='a2088337-e015-4c28-8ab2-043f6925c087'
 local function finite(v)return type(v)=='number' and v==v and v>-math.huge and v<math.huge end
 local function integer(v,a,b)return finite(v) and v==math.floor(v) and v>=a and v<=b end
 local function token(v)return type(v)=='string' and #v==32 and v:match('^[0-9a-f]+$')~=nil end
@@ -38,6 +43,9 @@ local function settings_owned(p)
 end
 local function buff_owned(p)
  return p.buff_instance~=nil and p.soul.AddBuff==p.add_buff and p.soul.RemoveBuff==p.remove_buff and p.soul.HasBuffDebug==p.has_buff and read(p.soul,'HasBuffDebug',BUFF)==true
+end
+local function injury_owned(p)
+ return p.injury_instance~=nil and p.soul.AddBuff==p.add_buff and p.soul.RemoveBuff==p.remove_buff and p.soul.HasBuffDebug==p.has_buff and read(p.soul,'HasBuffDebug',INJURY_BUFF)==true
 end
 local function emit(p,event,extra)
  local line='[MineComeGameplayIncoming] {"schema":1,"run":'..quote(p.run)..',"event":'..quote(event)..(extra or '')..'}'
@@ -88,6 +96,14 @@ local function stop(p,why)
   local hp=read(p.soul,'GetState','health')
   health_restored=finite(hp) and hp>0 and hp<=p.maximum and (math.abs(hp-p.original_health)<.001 or health_write(p,p.original_health))
  end
+ local injury_restored=not p.injury_attempted
+ if p.injury_attempted and owned and p.soul.RemoveBuff==p.remove_buff and p.soul.HasBuffDebug==p.has_buff then
+  if read(p.soul,'HasBuffDebug',INJURY_BUFF)==false then injury_restored=true
+  elseif p.injury_instance then
+   p.injury_remove_attempted=true;local ok,result=pcall(p.remove_buff,p.soul,p.injury_instance)
+   injury_restored=ok and result~=false and read(p.soul,'HasBuffDebug',INJURY_BUFF)==false
+  end
+ end
  local buff_restored=not p.buff_attempted
  if p.buff_instance and owned and p.soul.RemoveBuff==p.remove_buff and p.soul.HasBuffDebug==p.has_buff then
   if read(p.soul,'HasBuffDebug',BUFF)==false then buff_restored=true
@@ -97,9 +113,9 @@ local function stop(p,why)
   end
  end
  local settings_restored=restore_settings(p)
- p.restored=p.timer==nil and health_restored and buff_restored and settings_restored
+ p.restored=p.timer==nil and health_restored and buff_restored and injury_restored and settings_restored
  state.active=nil;state.last=p
- emit(p,'terminal',',"reason":'..quote(why)..',"sequence":'..(p.epoch+1)..',"closed_path":'..quote(p.path)..',"native_clock_ms":'..number((clock(p)or 0)*1000)..',"restored":'..tostring(p.restored)..',"cvars_restored":'..tostring(settings_restored)..',"buff_restored":'..tostring(buff_restored)..',"health_restored":'..tostring(health_restored)..',"health_writes":'..p.health_writes)
+ emit(p,'terminal',',"reason":'..quote(why)..',"sequence":'..(p.epoch+1)..',"closed_path":'..quote(p.path)..',"native_clock_ms":'..number((clock(p)or 0)*1000)..',"restored":'..tostring(p.restored)..',"cvars_restored":'..tostring(settings_restored)..',"buff_restored":'..tostring(buff_restored and injury_restored)..',"death_protection_restored":'..tostring(buff_restored)..',"bleeding_protection_restored":'..tostring(injury_restored)..',"health_restored":'..tostring(health_restored)..',"health_writes":'..p.health_writes)
  return p.restored
 end
 local function valid(p)
@@ -109,6 +125,7 @@ local function valid(p)
  if not player_owned(p)then return nil,'player_changed'end
  if not settings_owned(p)then return nil,'logging_changed'end
  if not buff_owned(p)then return nil,'protection_changed'end
+ if not injury_owned(p)then return nil,'injury_protection_changed'end
  p.last_clock=t;return t
 end
 local function schedule(p)
@@ -182,7 +199,7 @@ function MineCome.GameplayCombatIncomingBegin(run,path)
  local s=player.soul;local a=player.actor
  for _,key in ipairs({'GetId','GetState','SetState','AddBuff','RemoveBuff','HasBuffDebug'})do if type(s[key])~='function'then return false,'soul_api_missing'end end
  local p={run=run,combat=c,player=player,player_id=player.id,player_this=player.this,player_wuid=player.this.id,soul=s,actor=a,soul_id=read(s,'GetId'),player_name=entity_name(player),system=System,get=System.GetCVar,set=System.SetCVar,command=System.ExecuteCommand,entity=System.GetEntity,named=System.GetEntityByName,now=System.GetCurrTime,health_set=s.SetState,health_get=s.GetState,health_max=a.GetMaxHealth,soul_getid=s.GetId,add_buff=s.AddBuff,remove_buff=s.RemoveBuff,has_buff=s.HasBuffDebug,maximum=read(a,'GetMaxHealth'),original_health=read(s,'GetState','health'),entries={},path=path,prefix=path:sub(1,-8),epoch=0,identities={},health_writes=0}
- if not p.player_name or not p.soul_id or not finite(p.maximum) or p.maximum<=0 or p.maximum>1000000 or not finite(p.original_health) or p.original_health<=0 or p.original_health>p.maximum or not player_owned(p) or read(s,'HasBuffDebug',BUFF)~=false then return false,'player_baseline_missing'end
+ if not p.player_name or not p.soul_id or not finite(p.maximum) or p.maximum<=0 or p.maximum>1000000 or not finite(p.original_health) or p.original_health<=0 or p.original_health>p.maximum or not player_owned(p) or read(s,'HasBuffDebug',BUFF)~=false or read(s,'HasBuffDebug',INJURY_BUFF)~=false then return false,'player_baseline_missing'end
  local now=clock(p);if not now or now<c.last_clock or now>=c.deadline or now-c.received>2 then return false,'lease_expired'end;p.started=now;p.last_clock=now
  local values={{'wh_rpg_LogFilepath',path},{'wh_rpg_LogCompression',0},{'wh_rpg_LogLevel',1},{'wh_rpg_LogType',2},{'wh_rpg_LogReasons',0},{'wh_rpg_LogInterval',100000},{'wh_rpg_LogSize',100000000},{'wh_rpg_TelemetryLimitedToPlayline',0},{'wh_rpg_LogTarget',2}}
  for _,v in ipairs(values)do local ok,before=pcall(p.get,v[1]);if not ok or type(before)~=type(v[2]) or type(before)=='number' and not finite(before)then return false,'logging_baseline_missing'end;p.entries[#p.entries+1]={name=v[1],value=v[2],before=before}end
@@ -190,13 +207,16 @@ function MineCome.GameplayCombatIncomingBegin(run,path)
  p.buff_attempted=true;local buff_ok,instance=pcall(p.add_buff,p.soul,BUFF)
  if buff_ok and (type(instance)=='userdata' or type(instance)=='string' and #instance>0 or finite(instance) and instance>0)then p.buff_instance=instance end
  if not buff_ok or not buff_owned(p)then stop(p,'protection_setup_failed');return false,'protection_setup_failed'end
+ p.injury_attempted=true;local injury_ok,injury_instance=pcall(p.add_buff,p.soul,INJURY_BUFF)
+ if injury_ok and (type(injury_instance)=='userdata' or type(injury_instance)=='string' and #injury_instance>0 or finite(injury_instance) and injury_instance>0)then p.injury_instance=injury_instance end
+ if not injury_ok or not injury_owned(p)then stop(p,'injury_protection_setup_failed');return false,'injury_protection_setup_failed'end
  for _,e in ipairs(p.entries)do e.attempted=true;local ok,result=pcall(p.set,e.name,e.value);local got,current=pcall(p.get,e.name)
   if not ok or result==false or not got or current~=e.value then stop(p,'logging_setup_failed');return false,'logging_setup_failed'end
  end
  p.reset_attempted=true;local reset_ok,result=pcall(p.command,'wh_rpg_ResetLogging')
  if not reset_ok or result==false then stop(p,'logging_reset_failed');return false,'logging_reset_failed'end
  if p.original_health<p.maximum and not health_write(p,p.maximum)then stop(p,'health_setup_failed');return false,'health_setup_failed'end
- if not emit(p,'begin',',"player_name":'..quote(p.player_name)..',"native_clock_ms":'..number(now*1000)..',"native_maximum":'..number(p.maximum)..',"path":'..quote(path))then stop(p,'log_failed');return false,'log_failed'end
+ if not emit(p,'begin',',"player_name":'..quote(p.player_name)..',"native_clock_ms":'..number(now*1000)..',"native_maximum":'..number(p.maximum)..',"path":'..quote(path)..',"bleeding_protection_original":false,"bleeding_protection_active":'..tostring(injury_owned(p)))then stop(p,'log_failed');return false,'log_failed'end
  return true
 end
 function MineCome.GameplayCombatIncomingSample(run,seq,nearby_actors)

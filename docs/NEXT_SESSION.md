@@ -1,6 +1,66 @@
 # Resume checkpoint — 9 November 2026
 
-## Latest verified milestone: native incoming combat
+## Latest verified milestone: armed native damage and injury cleanup
+
+**Automatic two-game sword PASS on the final code:**
+`runtime/evidence/gameplay-kcd-20261109-150004-56894fe8881d4de883f7197ce853ef65/native-incoming-combat-verification.json`.
+A real native slash reduced Minecraft health from20 to17.45866; the HUD continued
+for11.25 seconds after NPC removal with144 native composition/reprojection
+advances. Normal Minecraft save/exit, actor removal, health, both owned buffs,
+logging, movement and camera cleanup passed. No manual acceptance is needed.
+
+Melee admission now covers source-backed stab0→4/5, slash1→5/6, smash2→4 and
+the existing unarmed pairs. Actual sword telemetry corroborates stab0/5 and
+slash1/6. Discovery is32m with the existing eight-actor limit; reach is unchanged.
+
+Native sword injuries previously caused bleeding after the health lease ended.
+An exact owned nonpersistent `bleeding_protection` buff (`hin=0`) now prevents
+new injuries without suppressing hit damage or clearing pre-existing injuries.
+Native proof `armed-capture-20261109-144045-340a9b993c8e40829232d71cfe04ae52`
+contains three positive sword hits, no new injuries and stable native HP100 for
+five seconds after both guards were removed.
+
+**Ranged native attacks remain unfinished.** Minecraft's immutable projectile
+kind, actual arrow damage source, armor/Projectile Protection and adapter cleanup
+are implemented. Actual Minecraft regression
+`gameplay-combat-20261109-143250-0ec06c3e506f411baa67018b07048563` passes four
+incoming hits plus outgoing bows/projectile collision. Its incoming sources are
+synthetic; it does not prove a native arrow hit.
+
+The native archer fixtures never fired or consumed ammunition. Bow animation
+queues overflowed; crossbow NPCs retreated to about26m despite facing the player
+with weapons drawn. Grounded spawning, courage30, equipped ammunition, backup
+weapon removal, foreground operation and45-second observation did not produce
+projectile telemetry. Latest capture:
+`armed-capture-20261109-145735-53c9c8c3bed341158e10fff49b448157`.
+Offense suppression, defensive mode and forced-melee contexts read false.
+The official Lua/REST schemas expose no confirmed per-actor context setter or
+direct shooting method. Do not repeat these loadout trials or invent a ranged
+event mapping. Next source investigation should establish the actor's actual
+CombatSoul.Target/HasMissileWeapon state or use a correctly configured native
+archer/test behavior. `IncomingWeapon bow/crossbow` are diagnostic modes, not
+passing acceptance checks. See [incoming design](research/INCOMING-COMBAT.md).
+
+**Current machine state:** Minecraft closed normally. KCD2 PID36308 remains
+open because physical Escape stopped Computer Use during final window cleanup.
+Do not treat this as a crash or an approval-policy failure. All gameplay leases
+are ended and the renderer is unarmed. Temporary bundle
+`runtime/hud-armed-incoming-20261109` is still installed, not restored.
+After KCD2 closes normally, restore with
+`scripts/Install-GameplayHud.ps1 -BundleDirectory runtime/hud-armed-incoming-20261109 -WorldBlocks -Restore`.
+This KCD process has consumed its HUD session and needs a normal restart before
+another connected session. Never bypass the deployment/session receipt guards.
+
+The user also requested clear priorities for removing native health/stamina
+widgets and independently launching MineCome. The next usability milestone is
+a simple Play runner for the existing sustained `-Combat -Explore` path and
+session-owned HUD suppression/restoration. Reuse the persistent save, automatic
+activation and F8 stop/save. Whole-HUD `wh_ui_ShowHud` is verified; selective
+widgets and dialogue/subtitle compatibility still need implementation. This is
+not yet a delivered runner or hidden native HUD. Preserve outgoing bows/TNT and
+the proven unarmed inventory acceptance; no repeat manual tests are needed.
+
+## Prior verified milestone: unarmed native incoming combat
 
 Incoming combat now has production native logging/health ownership, exact actor
 name/generation attribution with pinned telemetry GUIDs, immutable event delivery,
@@ -37,14 +97,10 @@ was restored, armed=false:
 `runtime/evidence/gameplay-hud-restore-20261109-141156-caec5e4176bd4df8b266a51c74e14c89`.
 The successful isolated instance was `runtime/gameplay/incoming-native-20261109-g`.
 
-Next extend incoming native melee beyond the admitted unarmed types4/5/6/7/9
-(damageType4), then native ranged attacks. Official tables also describe
-stab0→4/5, slash1→5/6, smash2→4 and bite8→1; corroborate actual weapon telemetry
-before enabling those pairs. Preserve passed outgoing swords/bows/TNT. Current
-incoming transport adds roughly0.6–1s; native armor precedes Minecraft armor, so
-balancing and latency remain limitations. No general poison/bleeding or other
-native status-effect synchronization is claimed. Native scenery destruction
-remains deferred; do not revive its archived patch.
+Armed work and the remaining ranged blocker are summarized above. Incoming
+transport still adds roughly0.6–1s; native armor precedes Minecraft armor.
+General poison/bleeding synchronization and optional native scenery destruction
+remain deferred.
 
 ## Latest decision: defer native environmental explosion destruction
 

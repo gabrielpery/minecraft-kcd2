@@ -19,7 +19,7 @@ public final class GameplayIncomingDamage {
             if(hurt.seq()!=highest+1||hurt.seq()>10_000_000)throw new IllegalStateException("Native damage source gap/replay");
             if(hurt.sourceUtc()<1||hurt.sourceUtc()>nowUtc+50||nowUtc-hurt.sourceUtc()>2000||hurt.sourceUtc()<lastSourceUtc)
                 throw new IllegalStateException("Native damage original source expired/regressed");
-            if(!Float.isFinite(hurt.damage())||hurt.damage()<.001f||hurt.damage()>1000||hurt.attackerToken()<1||hurt.attackerToken()>256)
+            if(!Float.isFinite(hurt.damage())||hurt.damage()<.001f||hurt.damage()>1000||hurt.attackerToken()<1||hurt.attackerToken()>256||!"melee".equals(hurt.kind())&&!"projectile".equals(hurt.kind()))
                 throw new IllegalStateException("Native damage bounds differ");
             GameplayCombatProtocol.Actor actor=null;
             for(var candidate:actors)if(candidate.token()==hurt.attackerToken()){if(actor!=null)throw new IllegalStateException("Native damage actor duplicated");actor=candidate;}

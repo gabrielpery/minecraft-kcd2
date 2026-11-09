@@ -70,7 +70,8 @@ public final class GameplayCombatProtocolTests {
         altered=valid.deepCopy();altered.getAsJsonArray("actors").get(0).getAsJsonObject().addProperty("extra",true);reject(altered,"Unknown actor property");
         altered=valid.deepCopy();for(int i=1;i<33;i++)altered.getAsJsonArray("actors").add(actor.deepCopy());reject(altered,"Actor capacity bound");
         altered=valid.deepCopy();altered.getAsJsonArray("hurts").add(altered.getAsJsonArray("hurts").get(0).deepCopy());reject(altered,"Repeated hurt sequence");
-        altered=valid.deepCopy();altered.getAsJsonArray("hurts").get(0).getAsJsonObject().addProperty("kind","projectile");reject(altered,"Unimplemented damage kind rejected");
+        altered=valid.deepCopy();altered.getAsJsonArray("hurts").get(0).getAsJsonObject().addProperty("kind","projectile");check(parse(altered.toString()).hurts().getFirst().kind().equals("projectile"),"Native projectile damage kind retained");
+        altered=valid.deepCopy();altered.getAsJsonArray("hurts").get(0).getAsJsonObject().addProperty("kind","explosion");reject(altered,"Unimplemented damage kind rejected");
         altered=valid.deepCopy();altered.getAsJsonArray("hurts").get(0).getAsJsonObject().addProperty("damage",1001);reject(altered,"Damage bound");
         altered=valid.deepCopy();altered.getAsJsonArray("hurts").get(0).getAsJsonObject().remove("source_utc_ms");reject(altered,"Original native damage source time required");
         for(String raw:List.of("0","-1","1.0","\"1\"","true","null","9223372036854775808"))

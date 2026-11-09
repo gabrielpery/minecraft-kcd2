@@ -22,7 +22,10 @@ import java.util.function.Consumer;
 public final class GameplayIncomingCombatFixture implements AutoCloseable {
     private record State(long at,int tick,UUID player,String mode,float health,boolean regeneration,Vec3d position){}
     private record Frame(String stage,HudReadback.Completed frame){}
-    private static final List<String> CAPTURES=List.of("before","inventory","after");
+    private final String weapon=System.getProperty("minecome.gameplayIncomingWeapon","unarmed");
+    private final boolean armedWeapon=!weapon.equals("unarmed");
+    private final boolean projectileWeapon=Set.of("bow","crossbow").contains(weapon);
+    private final List<String> CAPTURES=armedWeapon?List.of("before","after"):List.of("before","inventory","after");
     private final GameplayCombat combat;private final GameplayMovement movement;private final GameplayWorld save;private final Path directory;private final Consumer<JsonObject> completed;
     private final AtomicReference<State> observed=new AtomicReference<>();private final AtomicBoolean observing=new AtomicBoolean();private final AtomicReference<String> failure=new AtomicReference<>();
     private final ArrayBlockingQueue<Frame> frames=new ArrayBlockingQueue<>(3);private final Map<String,JsonObject> images=new ConcurrentHashMap<>();private final Set<String> queued=new HashSet<>();
@@ -33,6 +36,7 @@ public final class GameplayIncomingCombatFixture implements AutoCloseable {
 
     public GameplayIncomingCombatFixture(GameplayCombat combat,GameplayMovement movement,GameplayWorld save,Path directory,Consumer<JsonObject> completed)throws IOException{
         if(Boolean.getBoolean("minecome.gameplayStandalone")||!Boolean.getBoolean("minecome.gameplayCombat")||!Boolean.getBoolean("minecome.gameplayIncomingCombatCheck"))throw new IllegalArgumentException("Explicit connected incoming combat check required");
+        if(!Set.of("unarmed","sword","bow","crossbow").contains(weapon))throw new IllegalArgumentException("Unsupported native incoming fixture weapon");
         this.combat=Objects.requireNonNull(combat);this.movement=Objects.requireNonNull(movement);this.save=save;this.directory=directory.toRealPath();this.completed=completed;
         save.verifyOwnership();if(!save.newlyCreated())throw new IOException("Incoming native check requires a fresh owned save");
         for(String name:List.of("gameplay-incoming-combat-fixture.json","incoming-fixture-ready.json","incoming-fixture-remove.json","incoming-fixture-removed.json"))
@@ -62,6 +66,13 @@ public final class GameplayIncomingCombatFixture implements AutoCloseable {
             }
             case 2->{
                 var damage=validateReceipts(receipts);if(damage.isEmpty())return;firstReceipt=damage.getFirst().deepCopy();
+                if(armedWeapon){
+                    // One actual armed hit is sufficient for this source-specific
+                    // check. Repeated inventory damage already has its unarmed
+                    // acceptance; do not require a second potentially lethal hit.
+                    if(!sameHealth(c,s)||Math.abs(s.health()-receipts.get(receipts.size()-1).getAsJsonObject().get("health_after").getAsFloat())>.01)return;
+                    point("armed_hit",c,s);finalHealth=s.health();send(c,"gamemode creative");stage=4;return;
+                }
                 point("first_hit",c,s);inventoryPosition=c.player.getPos();inventoryHeldTicks=movement.evidence(c).get("held_ticks").getAsLong();
                 inventoryOpenedUtc=System.currentTimeMillis();key(c,'E');if(!(c.currentScreen instanceof InventoryScreen))throw new IllegalStateException("Vanilla inventory did not open");stage=3;
             }
@@ -117,6 +128,9 @@ public final class GameplayIncomingCombatFixture implements AutoCloseable {
     private List<JsonObject> validateReceipts(JsonArray receipts){
         var damage=new ArrayList<JsonObject>();double health=initialHealth;int sequence=0,beforeInventory=0;
         for(var element:receipts){var value=element.getAsJsonObject();double before=value.get("health_before").getAsDouble(),after=value.get("health_after").getAsDouble();String result=value.get("result").getAsString();
+            String expectedKind=projectileWeapon?"projectile":"melee";
+            if(!value.get("kind").getAsString().equals(expectedKind)||value.get("projectile_tag").getAsBoolean()!=projectileWeapon||
+                    !value.get("damage_type").getAsString().equals(projectileWeapon?"minecraft:arrow":"minecraft:mob_attack"))throw new IllegalStateException("Native weapon used the wrong vanilla damage source: "+value);
             if(value.get("seq").getAsLong()!=++sequence||value.get("attacker_token").getAsInt()!=1||value.get("life").getAsLong()!=0||!Double.isFinite(before)||!Double.isFinite(after)||after<=0||after>before||!Set.of("damaged","absorbed","vanilla_rejected").contains(result))throw new IllegalStateException("Native Survival receipt identity/health differs: "+value);
             near(before,health,"Every native receipt must preserve health continuity");health=after;
             if(after<before){if(!result.equals("damaged")||!value.get("vanilla_accepted").getAsBoolean())throw new IllegalStateException("Native health loss lacks vanilla damage acceptance");damage.add(value);
@@ -139,6 +153,7 @@ public final class GameplayIncomingCombatFixture implements AutoCloseable {
     }}catch(Exception e){if(!closed)failure.compareAndSet(null,e.toString());}}
     private void finish(MinecraftClient c,boolean passed,String why){if(finished)return;finished=true;try{combat.suspend(c);movement.suspend(c);if(ui!=null)ui.releaseAndClose(c);}catch(Exception e){passed=false;why=e.toString();}
         var p=new JsonObject();p.addProperty("schema",1);p.addProperty("kind","minecome_native_incoming_combat_fixture_v1");p.addProperty("result",passed?"passed":"failed");p.addProperty("failure",why);p.addProperty("world_id",save.id().toString());p.addProperty("actual_minecraft",true);p.addProperty("synthetic_host",false);p.addProperty("scripted_guest_input",true);p.addProperty("physical_native_keys_verified",false);p.addProperty("direct_health_inventory_entity_writes",false);p.addProperty("position_writes_used",false);p.addProperty("velocity_writes_used",false);p.addProperty("camera_writes_used",false);p.addProperty("readiness_published",readinessWritten);p.addProperty("two_native_hits_verified",positiveDamageReceipts>=2&&hitInInventory);p.addProperty("native_hit_in_inventory_verified",hitInInventory);p.addProperty("positive_damage_receipts",positiveDamageReceipts);p.addProperty("pre_inventory_damage_receipts",preInventoryDamageReceipts);p.addProperty("inventory_hit_sequence",inventoryReceipt==null?0:inventoryReceipt.get("seq").getAsLong());p.addProperty("inventory_walking_input_absent",hitInInventory);p.addProperty("inventory_position_drift_including_knockback",inventoryDrift);p.addProperty("native_attacker_removed",nativeRemoved);p.addProperty("render_pixels_verified",renderVerified);p.addProperty("initial_health",initialHealth);p.addProperty("final_health",finalHealth);p.addProperty("inventory_opened_utc_ms",inventoryOpenedUtc);p.addProperty("native_composition_window_started_utc_ms",compositionStartUtc);p.addProperty("native_composition_window_completed_utc_ms",compositionEndUtc);p.addProperty("hud_frames_during_dwell",capturedFrames-compositionFrames);p.addProperty("elapsed_ms",began==0?0:(System.nanoTime()-began)/1_000_000L);p.addProperty("stage",stage);p.add("points",points.deepCopy());p.add("combat",combat.evidence(c));if(firstReceipt!=null)p.add("first_receipt",firstReceipt);if(inventoryReceipt!=null)p.add("inventory_receipt",inventoryReceipt);
+        p.addProperty("weapon",weapon);p.addProperty("armed_native_hit_verified",armedWeapon&&positiveDamageReceipts>=1);
         var list=new JsonArray();commands.forEach(list::add);p.add("commands",list);var captures=new JsonArray();for(var name:CAPTURES)if(images.containsKey(name))captures.add(images.get(name).deepCopy());p.add("images",captures);
         try{save.verifyOwnership();Files.writeString(directory.resolve("gameplay-incoming-combat-fixture.json"),p.toString(),StandardCharsets.UTF_8,StandardOpenOption.CREATE_NEW);}catch(Exception e){p.addProperty("result","failed");p.addProperty("failure",e.toString());}completed.accept(p);
     }

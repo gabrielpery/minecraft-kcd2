@@ -107,7 +107,7 @@ function ConvertFrom-GameplayIncomingTelemetry([string]$Text,[string]$VictimGuid
                 # at native HP1 reported HealthValue0 under immortality.
             }
             $hash=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($entry.GetRawText()))).ToLowerInvariant()
-            $result.Add([pscustomobject]@{Index=$entryIndex;GameMs=[long]$gameMs;PlayTime=$playTime;LoggedWallTime=$wallTime;AttackerGuid=$attacker;VictimGuid=$victim;
+            $result.Add([pscustomobject]@{Index=$entryIndex;CauseName=$causeName;GameMs=[long]$gameMs;PlayTime=$playTime;LoggedWallTime=$wallTime;AttackerGuid=$attacker;VictimGuid=$victim;
                 AttackType=[int]$attackType;DamageType=[int]$damageType;AttackerName=$attackerNameValue;VictimName=$victimNameValue;AttributedDamage=$attributed;AppliedDamage=$applied;Before=$before;After=$after;SoulStateValue=$stateValue;EventSha256=$hash})
         }
         return [pscustomobject]@{TotalEvents=$root.GetArrayLength();Hits=$result.ToArray()}
@@ -309,6 +309,16 @@ function Read-GameplayIncomingClosedFiles([string]$Path){
     }
     return $files.ToArray()
 }
+function Get-GameplayIncomingDamageKind($Hit){
+    # Pinned official Libs/Tables/combat/combat_attack_type.xml supplies the
+    # base melee pairs; combat_damage_type_mapping.xml supplies weapon overrides
+    # stab0->smash4 and slash1->stab5. Unknown telemetry is never guessed ranged.
+    if($Hit.CauseName -cne 'CombatHit'){return ''}
+    if(($Hit.AttackType -eq 0 -and $Hit.DamageType -in @(4,5)) -or
+       ($Hit.AttackType -eq 1 -and $Hit.DamageType -in @(5,6)) -or
+       ($Hit.AttackType -in @(2,4,5,6,7,9) -and $Hit.DamageType -eq 4)){return 'melee'}
+    return ''
+}
 function Update-GameplayIncomingEpochs($State,[long]$Now){
     $i=$State.Incoming
     while($i.Closed.Count){
@@ -330,9 +340,8 @@ function Update-GameplayIncomingEpochs($State,[long]$Now){
         while($i.Audits.Count -gt 8){$null=$i.Audits.Dequeue()}
         foreach($file in $files){$i.SourceFiles.Enqueue([pscustomobject]@{epoch=($r.sequence-1).ToString('D6');file=$file.Name;hash=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($file.Text))).ToLowerInvariant()});while($i.SourceFiles.Count -gt 128){$null=$i.SourceFiles.Dequeue()}}
         foreach($hit in $hits){
-            # Pinned combat_attack_type.xml identifies these unarmed attacks as
-            # damage type4. Do not label unknown ranged attacks as mob melee.
-            if($hit.AttackType -notin @(4,5,6,7,9) -or $hit.DamageType -ne 4){$i.UnsupportedEvents++;continue}
+            $kind=Get-GameplayIncomingDamageKind $hit
+            if(-not $kind){$i.UnsupportedEvents++;continue}
             if($i.PlayerGuid -and $i.PlayerGuid -cne $hit.VictimGuid){throw 'Native player GUID changed within incoming lease.'}
             $matches=@($i.Identities.Values|Where-Object {$_.Name -ceq $hit.AttackerName -and $_.FirstSeenMs -le $hit.GameMs}|Sort-Object FirstSeenMs -Descending)
             if(-not $matches.Count -or ($matches.Count -gt 1 -and $matches[0].FirstSeenMs -eq $matches[1].FirstSeenMs)){throw 'Incoming attacker has no unique proven generation.'}
@@ -342,8 +351,8 @@ function Update-GameplayIncomingEpochs($State,[long]$Now){
             if($damage -lt .001 -or $damage -gt 1000 -or $i.Pending.Count -ge 32 -or $hit.SourceUtcMs -lt $i.LastSourceUtcMs){throw 'Incoming native damage/queue/source ordering invalid.'}
             $i.PlayerGuid=$hit.VictimGuid;$source.Guid=$hit.AttackerGuid;$i.HurtSequence++
             $i.LastSourceUtcMs=$hit.SourceUtcMs
-            $hurt=[pscustomobject]@{seq=$i.HurtSequence;attacker_token=$source.Token;damage=$damage;kind='melee';source_utc_ms=$hit.SourceUtcMs}
-            $record=[pscustomobject]@{seq=$i.HurtSequence;source_utc_ms=$hit.SourceUtcMs;attacker_token=$source.Token;damage_mc=$damage;maximum=$i.Begin.native_maximum;source=$hit}
+            $hurt=[pscustomobject]@{seq=$i.HurtSequence;attacker_token=$source.Token;damage=$damage;kind=$kind;source_utc_ms=$hit.SourceUtcMs}
+            $record=[pscustomobject]@{seq=$i.HurtSequence;source_utc_ms=$hit.SourceUtcMs;attacker_token=$source.Token;kind=$kind;damage_mc=$damage;maximum=$i.Begin.native_maximum;source=$hit}
             $i.Pending.Add([pscustomobject]@{Hurt=$hurt;Actor=$source.Actor;AdmittedUtcMs=$Now});$i.Events++;$i.AttributedDamage+=$hit.AttributedDamage;$i.MaxAdmissionAgeMs=[Math]::Max($i.MaxAdmissionAgeMs,$Now-$hit.SourceUtcMs)
             $i.Receipts.Enqueue($record);while($i.Receipts.Count -gt 64){$null=$i.Receipts.Dequeue()}
             [IO.File]::AppendAllText($i.EvidenceFile,($record|ConvertTo-Json -Depth 8 -Compress)+"`n",[Text.UTF8Encoding]::new($false))

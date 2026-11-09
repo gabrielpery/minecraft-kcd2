@@ -4,15 +4,32 @@
 -- Hostile opt-in: CombatDebug.lua:539-544/987 (combatEnemy_3), 222-302
 -- (novice profile), 675/1088 (unarmed preset). Its npc_basic brain and hostile
 -- player faction are declared in soul__test.xml:381 / FactionTree__autotests.xml:19-24.
+-- Armed presets: CombatDebug.lua:663-675, weapon_preset.xml:1371-1376/2500-2502.
+-- Ranged selection/draw: CombatDebug.lua:1119-1130; inventory readback follows
+-- Scripts/Utils/ItemUtils.lua:118. Bow stat22 values follow skill profile4,
+-- exceeding the official bow_d item's strength19/agility14 requirements.
 -- Owns only the unique newly-created actor, never existing NPCs/player state.
 MineCome=MineCome or {}
 MineCome._gameplay_combat_fixture=MineCome._gameplay_combat_fixture or {}
 local state=MineCome._gameplay_combat_fixture
+local configurations={
+ hostile={preset='10101010-c8cb-81dd-40f1-2f0554804f83',max_distance=5},
+ hostile_sword={preset='9b042396-e438-4a79-ab9d-138c12cda0a6',weapon='9e31a288-7de0-4c0d-81cd-5cf00548d2d5',max_distance=5},
+ hostile_bow={preset='540bab62-09ea-41a9-bc44-e30a8cf98d56',weapon='b4a0b9c9-bf92-4cce-ad43-f20f57c892b9',ammo='ad6f0f01-aec4-44d1-982c-1210eb01b74a',melee={'65a211bd-2c7e-40a8-984f-66c8730444e4','55f81ddb-7c17-41c5-a17c-c9948766c1c8'},min_distance=5.5,max_distance=8},
+ -- CombatDebug.lua:676 and weapon_preset.xml:426-431: crossbow +65 bolts.
+ hostile_crossbow={preset='1a5e4d64-f240-4596-b0c6-49e11c047468',weapon='b77f912a-042b-47ca-8f42-5fddbcad3763',ammo='166b4c7b-5e17-48db-bf0d-02f24eacdcbf',melee={'9aa773b1-ede0-4ff5-bbd8-2595b36c8a1a','a8eb10aa-84eb-416f-8ed2-46d909a26552'},min_distance=5.5,max_distance=8}
+}
 local function finite(v)return type(v)=='number' and v==v and v>-math.huge and v<math.huge end
 local function vector(v)return type(v)=='table' and finite(v.x) and finite(v.y) and finite(v.z)end
 local function distance(a,b)return math.sqrt((a.x-b.x)^2+(a.y-b.y)^2+(a.z-b.z)^2)end
 local function emit(p,event,result)
- System.LogAlways('[MineComeCombatFixture] {"schema":1,"run":"'..p.run..'","mode":"'..(p.mode or 'passive')..'","event":"'..event..'","result":"'..result..'","active":'..tostring(state.active==p)..',"removed":'..tostring(p.removed==true)..',"path_restored":'..tostring(p.path_restored~=false)..'}')
+ local equipment=''
+ if p.configuration then
+  equipment=',"weapon_preset":"'..p.configuration.preset..'"'
+  if p.configuration.weapon then equipment=equipment..',"weapon_item":"'..p.configuration.weapon..'","weapon_count":'..tostring(p.weapon_count or 0) end
+  if p.configuration.ammo then equipment=equipment..',"ammo_item":"'..p.configuration.ammo..'","ammo_count":'..tostring(p.ammo_count or 0)..',"ammo_equip_requested":'..tostring(p.ammo_equip_requested==true)..',"ranged_set_requested":'..tostring(p.ranged_set_requested==true)..',"melee_items_removed":'..tostring(p.melee_items_removed==true) end
+ end
+ System.LogAlways('[MineComeCombatFixture] {"schema":1,"run":"'..p.run..'","mode":"'..(p.mode or 'passive')..'","event":"'..event..'","result":"'..result..'","active":'..tostring(state.active==p)..',"removed":'..tostring(p.removed==true)..',"path_restored":'..tostring(p.path_restored~=false)..equipment..'}')
 end
 local function owned(p)
  return p.entity and System.GetEntity(p.id)==p.entity and System.GetEntityByName(p.name)==p.entity and p.entity.id==p.id and p.entity.soul==p.soul
@@ -65,16 +82,18 @@ function MineCome_CombatFixtureExpire(data)
 end
 function MineCome.GameplayCombatFixtureBegin(run,duration_ms,x,y,z,mode)
  if mode==nil then mode='passive'end
- if mode~='passive' and mode~='hostile' then return false,'invalid_fixture_mode'end
+ local configuration=configurations[mode]
+ if mode~='passive' and not configuration then return false,'invalid_fixture_mode'end
  if type(run)~='string' or #run~=32 or not run:match('^[0-9a-f]+$') or not finite(duration_ms) or duration_ms~=math.floor(duration_ms) or duration_ms<1000 or duration_ms>120000 or not vector({x=x,y=y,z=z}) then return false,'invalid_fixture'end
  if state.active then return false,'fixture_owned'end
  if not player or type(player.GetWorldPos)~='function' or type(player.GetAngles)~='function' or not XGenAIModule or type(XGenAIModule.SpawnEntity)~='function' or not System or type(System.GetEntity)~='function' or type(System.GetEntityByName)~='function' or type(System.RemoveEntity)~='function' or not Script or type(Script.SetTimerForFunction)~='function' or type(Script.KillTimer)~='function' then return false,'fixture_api_missing'end
  if mode=='passive' and (type(PathfindDebugUtils)~='table' or type(PathfindDebugUtils.FindDataTable)~='function' or type(PathfindDebugUtils.GetNPCSpeed)~='function') then return false,'fixture_path_api_missing'end
- if mode=='hostile' and (type(CombatDebug)~='table' or type(CombatDebug.SetSkillProfile)~='function')then return false,'fixture_combat_api_missing'end
+ if configuration and (type(CombatDebug)~='table' or type(CombatDebug.SetSkillProfile)~='function')then return false,'fixture_combat_api_missing'end
  local position={x=x,y=y,z=z};local feet=player:GetWorldPos()
- if not vector(feet) or distance(position,feet)>5 then return false,'fixture_too_far'end
+ if not vector(feet) or distance(position,feet)>(configuration and configuration.max_distance or 5) then return false,'fixture_too_far'end
+ if configuration and configuration.min_distance and distance(position,feet)<configuration.min_distance then return false,'fixture_too_close'end
  local rotation=player:GetAngles();if not vector(rotation)then return false,'fixture_rotation_invalid'end
- local p={run=run,mode=mode,name='MineComeCombat_'..run..'_fixture',position=position,rotation=rotation}
+ local p={run=run,mode=mode,configuration=configuration,name='MineComeCombat_'..run..'_fixture',position=position,rotation=rotation}
  if mode=='passive' then p.path_table=PathfindDebugUtils;p.path_original=PathfindDebugUtils.FindDataTable
  else p.combat_table=CombatDebug;p.set_profile=CombatDebug.SetSkillProfile end
  if System.GetEntityByName(p.name)then return false,'fixture_name_occupied'end
@@ -103,14 +122,51 @@ function MineCome.GameplayCombatFixtureBegin(run,duration_ms,x,y,z,mode)
  end
  p.entity=entity;p.id=entity.id;p.soul=entity.soul
  if type(p.soul)~='table' or type(entity.actor)~='table' then stop(p,'actor_unavailable');return false,'actor_unavailable'end
- if mode=='hostile' then
+ if configuration then
   if not owned(p) or CombatDebug~=p.combat_table or p.combat_table.SetSkillProfile~=p.set_profile or type(p.soul.SetStatLevelDebug)~='function' or type(p.soul.SetSkillLevelDebug)~='function' or type(entity.actor.EquipWeaponPreset)~='function' then
    stop(p,'fixture_combat_api_missing');return false,'fixture_combat_api_missing'
+  end
+  if configuration.weapon and (type(entity.inventory)~='table' or type(entity.inventory.GetCountOfClass)~='function' or type(entity.human)~='table' or type(entity.human.DrawWeapon)~='function' or (configuration.ammo and (type(entity.human.ToggleWeaponSet)~='function' or type(entity.inventory.DeleteItemOfClass)~='function' or type(entity.inventory.FindItem)~='function' or type(entity.actor.EquipInventoryItem)~='function')))then
+   stop(p,'fixture_weapon_api_missing');return false,'fixture_weapon_api_missing'
   end
   local configured=pcall(function()
    p.set_profile(entity,1)
    if not owned(p)then error('fixture_owner_changed')end
-   entity.actor:EquipWeaponPreset('10101010-c8cb-81dd-40f1-2f0554804f83')
+   if configuration.ammo then
+    p.soul:SetStatLevelDebug('strength',22);p.soul:SetStatLevelDebug('agility',22);p.soul:SetSkillLevelDebug('marksmanship',22)
+    -- CombatDebug.lua:1096 uses courage30 for its explicit brave NPC option.
+    p.soul:SetStatLevelDebug('courage',30)
+   end
+   entity.actor:EquipWeaponPreset(configuration.preset)
+   if not owned(p)then error('fixture_owner_changed')end
+   if configuration.weapon then
+    p.weapon_count=entity.inventory:GetCountOfClass(configuration.weapon)
+    if not finite(p.weapon_count) or p.weapon_count<1 or p.weapon_count>1000 then p.weapon_count=nil;error('fixture_weapon_missing')end
+    if configuration.ammo then
+     p.ammo_count=entity.inventory:GetCountOfClass(configuration.ammo)
+     if not finite(p.ammo_count) or p.ammo_count<1 or p.ammo_count>1000 then p.ammo_count=nil;error('fixture_ammo_missing')end
+     -- Official ranged presets also supply a melee weapon and shield. Remove those
+     -- two newly-created items only, so native weapon automation cannot choose
+     -- melee instead of the ranged attack this fixture is intended to verify.
+     -- Official C_ScriptBindInventory::DeleteItemOfClass(classIdText,count).
+     for _,class in ipairs(configuration.melee)do
+      if not owned(p)then error('fixture_owner_changed')end
+      local count=entity.inventory:GetCountOfClass(class)
+      if not finite(count) or count<0 or count>1 then error('fixture_melee_count_invalid')end
+      if count>0 then entity.inventory:DeleteItemOfClass(class,count)end
+      if entity.inventory:GetCountOfClass(class)~=0 then error('fixture_melee_removal_failed')end
+     end
+     p.melee_items_removed=true
+     -- Explicit ammo equip follows CombatDebug.lua:73-79. Inventory.FindItem
+     -- resolves the exact stack supplied by our own preset (official SDK).
+     local ammo=entity.inventory:FindItem(configuration.ammo)
+     if ammo==nil or ammo==false or ammo==0 or __null~=nil and ammo==__null then error('fixture_ammo_instance_missing')end
+     entity.actor:EquipInventoryItem(ammo);p.ammo_equip_requested=true
+     entity.human:ToggleWeaponSet(1);p.ranged_set_requested=true
+    end
+    if not owned(p)then error('fixture_owner_changed')end
+    entity.human:DrawWeapon()
+   end
   end)
   if not configured or not owned(p)then stop(p,'fixture_combat_setup_failed');return false,'fixture_combat_setup_failed'end
   -- Native npc_basic perception/combat remains active. No path override or

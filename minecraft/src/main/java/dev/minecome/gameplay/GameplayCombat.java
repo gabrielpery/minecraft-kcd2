@@ -6,10 +6,14 @@ import dev.minecome.terrain.*;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.network.ClientPlayerEntity;
 import net.minecraft.entity.damage.DamageSource;
+import net.minecraft.entity.damage.DamageTypes;
+import net.minecraft.entity.EntityType;
 import net.minecraft.entity.TntEntity;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.entity.projectile.PersistentProjectileEntity;
+import net.minecraft.entity.projectile.ArrowEntity;
 import net.minecraft.registry.Registries;
+import net.minecraft.registry.tag.DamageTypeTags;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.util.Hand;
@@ -33,7 +37,8 @@ public final class GameplayCombat implements GameplayActorEntity.DamageSink {
     private record Accepted(long planId,int token,long sourceSeq,Vec3d point){}
     private record Hit(long seq,long sourceSeq,int token,float damage,String weapon,Vec3d origin,Vec3d target){}
     private record Rejection(String reason,long planId,int token,long utc,long planAgeMs,long aimAgeMs,long hostAgeMs,long hostSequence,int proxies,Vec3d rayOrigin,Vec3d rayDirection,double obstruction,Box targetBox,boolean intersects){}
-    private record HurtReceipt(long seq,int token,long sourceUtc,long utc,float requested,float before,float after,boolean accepted,String result,long life){}
+    private record HurtReceipt(long seq,int token,long sourceUtc,long utc,float requested,float before,float after,boolean accepted,String result,long life,String kind,String damageType,boolean projectileTag){}
+    private record NativeDamage(boolean accepted,String type,boolean projectileTag){}
     private final HudInputProtocol.Identity identity;private final GameplayWorld save;private volatile GroundSurface surface;private final Path hostFile,guestFile,temporary;private final boolean standalone;
     private final AtomicReference<Plan> intent=new AtomicReference<>();private final AtomicReference<Hit> outgoing=new AtomicReference<>();private final AtomicReference<String> failure=new AtomicReference<>();
     private final Map<Integer,GameplayActorEntity> proxies=new HashMap<>();
@@ -41,6 +46,7 @@ public final class GameplayCombat implements GameplayActorEntity.DamageSink {
     private final GameplayBlasts blasts;
     private final GameplayIncomingDamage incoming=new GameplayIncomingDamage();
     private volatile List<HurtReceipt> hurtReceipts=List.of();private volatile int incomingPending;private volatile long creativeHurts,oldLifeHurts;
+    private volatile long incomingArrowsCreated,incomingArrowsRemoved;private volatile int incomingArrowsActive;
     /** Written only by the server's synchronous damage call, never the file/client threads. */
     private Accepted accepted;
     private volatile GameplayCombatProtocol.Snapshot snapshot;
@@ -149,21 +155,41 @@ public final class GameplayCombat implements GameplayActorEntity.DamageSink {
     }
     private void applyIncoming(MinecraftServer source,ServerPlayerEntity player){
         for(var entry=incoming.due(System.nanoTime());entry!=null;entry=incoming.due(System.nanoTime())){
-            var hurt=entry.hurt();float before=player.getHealth();boolean applied=false;String result;
+            var hurt=entry.hurt();float before=player.getHealth();boolean applied=false;String result,damageType="not_applied";boolean projectileTag=false;
             if(incoming.oldLife(entry)){result="old_life";oldLifeHurts++;}
             else{
                 // The native hit already happened. Its captured attacker is valid
                 // until ACK even if it has since died or moved beyond current reach.
-                var attacker=actorProxy(entry.actor());applied=player.damage(source.getOverworld().getDamageSources().mobAttack(attacker),hurt.damage());
+                var outcome=applyNativeDamage(source,player,actorProxy(entry.actor()),hurt);applied=outcome.accepted();damageType=outcome.type();projectileTag=outcome.projectileTag();
                 result=player.isCreative()?"creative":player.getHealth()<before?"damaged":applied?"absorbed":"vanilla_rejected";
                 if(result.equals("creative"))creativeHurts++;
             }
-            float after=player.getHealth();playerDamage+=Math.max(0,before-after);recordHurt(entry,before,after,applied,result,serverRespawns);
+            float after=player.getHealth();playerDamage+=Math.max(0,before-after);recordHurt(entry,before,after,applied,result,serverRespawns,damageType,projectileTag);
             incoming.retire(entry,System.nanoTime());hurtAck=incoming.ack();hurts++;incomingPending=incoming.pending();
         }
     }
-    private void recordHurt(GameplayIncomingDamage.Entry entry,float before,float after,boolean accepted,String result,long life){
-        var values=new ArrayList<>(hurtReceipts);var hurt=entry.hurt();values.add(new HurtReceipt(hurt.seq(),hurt.attackerToken(),hurt.sourceUtc(),System.currentTimeMillis(),hurt.damage(),before,after,accepted,result,life));
+    private NativeDamage applyNativeDamage(MinecraftServer server,ServerPlayerEntity player,GameplayActorEntity attacker,GameplayCombatProtocol.Hurt hurt){
+        if(hurt.kind().equals("melee")){var source=server.getOverworld().getDamageSources().mobAttack(attacker);return new NativeDamage(player.damage(source,hurt.damage()),"minecraft:mob_attack",source.isIn(DamageTypeTags.IS_PROJECTILE));}
+        if(!hurt.kind().equals("projectile"))throw new IllegalStateException("Unknown incoming damage kind");
+        // Inspected pinned1.21.1 DamageSources.arrow and PersistentProjectileEntity
+        // onEntityHit: ARROW uses the projectile as direct source and its owner as
+        // attacker. This adapter only attributes an already-observed native hit;
+        // it never spawns, ticks, renders, or simulates a second projectile.
+        // Source: runtime/evidence/incoming-projectile-source-20261109.
+        var arrow=new ArrowEntity(EntityType.ARROW,server.getOverworld());incomingArrowsCreated++;incomingArrowsActive++;
+        try{
+            arrow.setOwner(attacker);arrow.setPosition(attacker.getPos());
+            if(arrow.getOwner()!=attacker||server.getOverworld().getEntityById(arrow.getId())!=null)throw new IllegalStateException("Incoming arrow adapter unexpectedly registered");
+            var source=server.getOverworld().getDamageSources().arrow(arrow,attacker);
+            if(!source.isOf(DamageTypes.ARROW)||!source.isIn(DamageTypeTags.IS_PROJECTILE)||source.getSource()!=arrow||source.getAttacker()!=attacker)throw new IllegalStateException("Vanilla projectile damage attribution differs");
+            return new NativeDamage(player.damage(source,hurt.damage()),"minecraft:arrow",true);
+        }finally{
+            arrow.discard();incomingArrowsActive--;
+            if(!arrow.isRemoved()||server.getOverworld().getEntityById(arrow.getId())!=null)throw new IllegalStateException("Incoming arrow adapter cleanup failed");incomingArrowsRemoved++;
+        }
+    }
+    private void recordHurt(GameplayIncomingDamage.Entry entry,float before,float after,boolean accepted,String result,long life,String damageType,boolean projectileTag){
+        var values=new ArrayList<>(hurtReceipts);var hurt=entry.hurt();values.add(new HurtReceipt(hurt.seq(),hurt.attackerToken(),hurt.sourceUtc(),System.currentTimeMillis(),hurt.damage(),before,after,accepted,result,life,hurt.kind(),damageType,projectileTag));
         if(values.size()>64)values.removeFirst();hurtReceipts=List.copyOf(values);
     }
     private void closeIncoming(){incoming.close();incomingPending=0;}
@@ -240,7 +266,7 @@ public final class GameplayCombat implements GameplayActorEntity.DamageSink {
                 !oldPlayer.getUuid().equals(playerId)||!next.getUuid().equals(playerId)||oldPlayer.getServer()!=server||next.getServer()!=server||
                 oldPlayer.getWorld()!=server.getOverworld()||next.getWorld()!=server.getOverworld()||oldPlayer.networkHandler!=next.networkHandler||serverRespawns!=clientRespawns)
             throw new IllegalStateException("Combat server respawn ownership changed");
-        for(var entry:incoming.newLife(System.currentTimeMillis())){recordHurt(entry,next.getHealth(),next.getHealth(),false,"old_life",serverRespawns+1);oldLifeHurts++;hurts++;}
+        for(var entry:incoming.newLife(System.currentTimeMillis())){recordHurt(entry,next.getHealth(),next.getHealth(),false,"old_life",serverRespawns+1,"not_applied",false);oldLifeHurts++;hurts++;}
         hurtAck=incoming.ack();incomingPending=0;
         projectiles.respawn();intent.set(null);admitted=dispatched=0;serverPlayer=next;serverRespawns++;
     }
@@ -259,7 +285,8 @@ public final class GameplayCombat implements GameplayActorEntity.DamageSink {
         j.add("projectiles",projectiles.evidence());
         j.add("blasts",blasts.evidence());
         j.addProperty("incoming_pending",incomingPending);j.addProperty("incoming_creative_skipped",creativeHurts);j.addProperty("incoming_old_life_skipped",oldLifeHurts);j.addProperty("pending",intent.get()!=null||outgoing.get()!=null||incomingPending!=0);
-        var receipts=new JsonArray();for(var r:hurtReceipts){var v=new JsonObject();v.addProperty("seq",r.seq());v.addProperty("attacker_token",r.token());v.addProperty("source_utc_ms",r.sourceUtc());v.addProperty("applied_utc_ms",r.utc());v.addProperty("requested_damage",r.requested());v.addProperty("health_before",r.before());v.addProperty("health_after",r.after());v.addProperty("vanilla_accepted",r.accepted());v.addProperty("result",r.result());v.addProperty("life",r.life());receipts.add(v);}j.add("incoming_receipts",receipts);
+        j.addProperty("incoming_arrow_adapters_created",incomingArrowsCreated);j.addProperty("incoming_arrow_adapters_removed",incomingArrowsRemoved);j.addProperty("incoming_arrow_adapters_active",incomingArrowsActive);
+        var receipts=new JsonArray();for(var r:hurtReceipts){var v=new JsonObject();v.addProperty("seq",r.seq());v.addProperty("attacker_token",r.token());v.addProperty("source_utc_ms",r.sourceUtc());v.addProperty("applied_utc_ms",r.utc());v.addProperty("requested_damage",r.requested());v.addProperty("health_before",r.before());v.addProperty("health_after",r.after());v.addProperty("vanilla_accepted",r.accepted());v.addProperty("result",r.result());v.addProperty("life",r.life());v.addProperty("kind",r.kind());v.addProperty("damage_type",r.damageType());v.addProperty("projectile_tag",r.projectileTag());receipts.add(v);}j.add("incoming_receipts",receipts);
         var r=lastRejection;if(r!=null){var d=new JsonObject();d.addProperty("reason",r.reason());d.addProperty("plan_id",r.planId());d.addProperty("token",r.token());d.addProperty("utc_ms",r.utc());d.addProperty("plan_age_ms",r.planAgeMs());d.addProperty("aim_age_ms",r.aimAgeMs());d.addProperty("host_age_ms",r.hostAgeMs());d.addProperty("host_sequence",r.hostSequence());d.addProperty("proxy_count",r.proxies());d.add("ray_origin",point(r.rayOrigin()));d.add("ray_direction",point(r.rayDirection()));d.addProperty("native_obstruction_distance",r.obstruction());d.addProperty("ray_intersects_target",r.intersects());
             if(r.targetBox()!=null){var b=r.targetBox();var bounds=new JsonObject();bounds.add("min",point(new Vec3d(b.minX,b.minY,b.minZ)));bounds.add("max",point(new Vec3d(b.maxX,b.maxY,b.maxZ)));d.add("target_box",bounds);}j.add("last_rejection",d);}
         if(failure.get()!=null)j.addProperty("failure",failure.get());return j;

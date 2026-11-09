@@ -17,7 +17,7 @@ try{
  $hit.token=257;Write-Snapshot $valid;Refuses {Read-GameplayCombatSnapshot $file $id $now};$hit.token=1
  $raw=($valid|ConvertTo-Json -Depth 8 -Compress).Replace('"token":1','"token":1,"token":2');[IO.File]::WriteAllText($file,$raw);Refuses {Read-GameplayCombatSnapshot $file $id $now}
  $state=New-GameplayCombatState $id $dir ($now+10000)
- Require ((Get-GameplayCombatCommands $state $now) -like '*Begin*') 'Begin missing.'
+ Require ((Get-GameplayCombatCommands $state $now) -cmatch '^MineCome\.GameplayCombatBegin\(''[0-9a-f]{32}'',10000,32,8\)$') 'Combat discovery must cover retreating ranged NPCs while retaining the eight-actor bound.'
  foreach($policy in @($false,'True')){Refuses {Accept-GameplayCombatReceipt $state ([pscustomobject]@{schema=1;run=$id.Run;event='begin';result='ready';active=$true;lock_policy_active=$policy}) $now}}
  Accept-GameplayCombatReceipt $state ([pscustomobject]@{schema=1;run=$id.Run;event='begin';result='ready';active=$true;lock_policy_active=$true}) $now
  [IO.File]::Delete($file)
@@ -76,7 +76,7 @@ try{
  Accept-GameplayIncomingReceipt $incoming ([pscustomobject]@{schema=1;run=$id.Run;event='identity';seq=2;player_name='Dude';native_clock_ms=1500.;actors=@()}) ($now+510)
  Accept-GameplayCombatReceipt $incoming ([pscustomobject]@{schema=1;run=$id.Run;event='sample';result='sampled';active=$true;seq=2;actors=@();hit_ack=0}) ($now+510)
  $packet=Get-Content -LiteralPath $incoming.HostFile -Raw|ConvertFrom-Json
- Require ($packet.hurts.Count -eq 1 -and $packet.actors.Count -eq 1 -and $packet.actors[0].token -eq 1) 'Pending hurt lost its captured attacker.'
+ Require ($packet.hurts.Count -eq 1 -and $packet.hurts[0].kind -ceq 'melee' -and $packet.actors.Count -eq 1 -and $packet.actors[0].token -eq 1) 'Pending hurt lost its original kind or captured attacker.'
  Refuses {Accept-GameplayIncomingAck $incoming 2}
  Accept-GameplayIncomingAck $incoming 1
  Require ($incoming.Incoming.Pending.Count -eq 0 -and $incoming.Incoming.HurtAck -eq 1) 'Incoming hurt was not retired by original ACK.'

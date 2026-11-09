@@ -28,11 +28,11 @@ walking, continued HUD composition and cleanup. Standalone Minecraft checks also
 cover weapons, armor, cooldowns and block occlusion. A separate native hostile
 comparison verifies that the combat profile suppresses player target lock while
 enemy attacks continue, and restores the original settings afterward. The incoming
-adapter now routes native unarmed attacks into real Minecraft health, including
-hits received while inventory is open. Minecraft applies armor, hurt cooldowns
+adapter now routes native unarmed and sword attacks into real Minecraft health,
+with inventory damage verified for unarmed hits. Minecraft applies armor, hurt cooldowns
 and Creative immunity. Native health is maintained as an owned proxy and restored
 on stop; see [incoming combat design and limits](docs/research/INCOMING-COMBAT.md).
-Native armed/ranged attacks, crossbows and secondary combat effects remain unfinished.
+Native ranged attacks, crossbows and secondary combat effects remain unfinished.
 An automatic two-game check passed two real native hits, inventory damage,
 continued HUD rendering and full cleanup; no manual attack sequence was needed.
 
@@ -150,6 +150,8 @@ KCD2's health/stamina bars still need session-scoped suppression so Minecraft's
 HUD is the gameplay display. The existing whole-HUD toggle needs further work to
 preserve dialogue/subtitles and restore the original state on exit; this is
 tracked [UI integration work](docs/GAMEPLAY_SESSION.md#native-healthstamina-hud).
+The next usability milestone pairs this with a simple Play runner for starting
+and resuming the sustained gameplay session without the timed test commands.
 
 The [`-Hands` profile](docs/GAMEPLAY_SESSION.md#minecraft-hands-and-held-items)
 includes those controls and adds Minecraft's actual first-person arm and held-item

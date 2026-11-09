@@ -3,6 +3,7 @@
 param([Parameter(Mandatory,ParameterSetName='Live')][string]$BundleDirectory,
  [Parameter(ParameterSetName='Live')][string]$InstanceDirectory,[Parameter(ParameterSetName='Live')][string]$GroundPatchFile,
  [Parameter(Mandatory,ParameterSetName='Verify')][string]$VerifyEvidenceDirectory,
+ [ValidateSet('unarmed','sword','bow','crossbow')][string]$IncomingWeapon='unarmed',
  [string]$JavaHome='C:/Program Files/Java/jdk-24')
 . (Join-Path $PSScriptRoot 'powershell7.ps1')
 if($PSVersionTable.PSVersion.Major -lt 7){$code=Invoke-MineComePowerShell7 -ScriptPath $PSCommandPath -BoundParameters $PSBoundParameters;if($code -ne 0){throw "Native incoming combat check failed: $code"};return}
@@ -23,7 +24,7 @@ else{
   if($capture.Count -ne 1){throw 'Incoming combat requires one actual terrain capture.'};$GroundPatchFile=$capture[0].GroundPatchFile
  }
  # The session owns readiness, hostile NPC spawning/removal, and its finally cleanup.
- & (Join-Path $PSScriptRoot 'Start-GameplaySession.ps1') -BundleDirectory $BundleDirectory -InstanceDirectory $InstanceDirectory -JavaHome $JavaHome -GroundPatchFile $GroundPatchFile -Combat -IncomingCombatCheck -CombatFixtureRun $run | ForEach-Object {
+ & (Join-Path $PSScriptRoot 'Start-GameplaySession.ps1') -BundleDirectory $BundleDirectory -InstanceDirectory $InstanceDirectory -JavaHome $JavaHome -GroundPatchFile $GroundPatchFile -Combat -IncomingCombatCheck -IncomingWeapon $IncomingWeapon -CombatFixtureRun $run | ForEach-Object {
   if($_ -is [string] -and $_.StartsWith('GAMEPLAY_SESSION_SAVED evidence=')){$saved=$_.Substring('GAMEPLAY_SESSION_SAVED evidence='.Length)}
   Write-Host $_
  }
@@ -61,14 +62,30 @@ if($v.result -cne 'passed' -or -not $v.normal_client_exit -or $h.Failure -or -no
  ($c.PSObject.Properties['failure'] -and $c.failure)){throw 'Incoming combat normal shutdown/cleanup failed.'}
 if($f.kind -cne 'minecome_native_incoming_combat_fixture_v1' -or $f.result -cne 'passed' -or $f.failure -or $f.world_id -cne $s.world_id -or
  -not $f.actual_minecraft -or $f.synthetic_host -or -not $f.scripted_guest_input -or $f.physical_native_keys_verified -or $f.position_writes_used -or $f.velocity_writes_used -or $f.camera_writes_used -or $f.direct_health_inventory_entity_writes){throw 'Incoming native fixture scope/identity differs.'}
-foreach($flag in @('readiness_published','two_native_hits_verified','native_hit_in_inventory_verified','inventory_walking_input_absent','native_attacker_removed','render_pixels_verified')){Assert-IncomingTrue $f.$flag $flag}
+# Older saved unarmed evidence predates the explicit weapon field.
+$weapon=if($f.PSObject.Properties['weapon']){[string]$f.weapon}else{'unarmed'}
+if($weapon -cnotin @('unarmed','sword','bow','crossbow')){throw 'Unsupported incoming fixture weapon.'}
+if($PSCmdlet.ParameterSetName -ceq 'Live' -and $weapon -cne $IncomingWeapon){throw 'Connected fixture ran a different weapon profile than requested.'}
+$armedWeapon=$weapon -cne 'unarmed';$minimumHits=if($armedWeapon){1}else{2};$nativeMode=if($armedWeapon){'hostile_'+$weapon}else{'hostile'}
+$expectedKind=if($weapon -cin @('bow','crossbow')){'projectile'}else{'melee'}
+if($armedWeapon){Assert-IncomingTrue $f.armed_native_hit_verified 'armed native hit'}
+else{foreach($flag in @('two_native_hits_verified','native_hit_in_inventory_verified','inventory_walking_input_absent')){Assert-IncomingTrue $f.$flag $flag}}
+foreach($flag in @('readiness_published','native_attacker_removed','render_pixels_verified')){Assert-IncomingTrue $f.$flag $flag}
 if($nativeFixture.schema -ne 1 -or $nativeFixture.run -cnotmatch '^[0-9a-f]{32}$' -or -not $nativeFixture.started -or -not $nativeFixture.removed){throw 'Owned hostile fixture lifecycle differs.'}
-$fixtureBegin=@($nativeFixture.receipts|Where-Object {$_.event -ceq 'begin' -and $_.mode -ceq 'hostile' -and $_.active -eq $true})
-$fixtureEnd=@($nativeFixture.receipts|Where-Object {$_.event -ceq 'terminal' -and $_.mode -ceq 'hostile' -and $_.removed -eq $true -and $_.path_restored -eq $true -and $_.active -eq $false})
+$fixtureBegin=@($nativeFixture.receipts|Where-Object {$_.event -ceq 'begin' -and $_.mode -ceq $nativeMode -and $_.active -eq $true})
+$fixtureEnd=@($nativeFixture.receipts|Where-Object {$_.event -ceq 'terminal' -and $_.mode -ceq $nativeMode -and $_.removed -eq $true -and $_.path_restored -eq $true -and $_.active -eq $false})
 if($fixtureBegin.Count -ne 1 -or $fixtureEnd.Count -lt 1 -or @($nativeFixture.receipts|Where-Object {$_.run -cne $nativeFixture.run}).Count -gt 0){throw 'Actual hostile native begin/removal receipts missing.'}
+if($armedWeapon){
+ if($fixtureBegin[0].weapon_count -lt 1 -or -not $fixtureBegin[0].weapon_preset){throw 'Native armed fixture weapon readback missing.'}
+ if($weapon -cin @('bow','crossbow') -and ($fixtureBegin[0].ammo_count -lt 1 -or -not $fixtureBegin[0].ranged_set_requested)){throw 'Native ranged fixture ammo/set readback missing.'}
+}
 foreach($name in @('incoming-fixture-ready.json','incoming-fixture-remove.json','incoming-fixture-removed.json')){$marker=Read-IncomingProof $name;if($marker.schema -ne 1 -or $marker.world_id -cne $s.world_id){throw 'Incoming fixture marker identity differs.'}}
 $guestReceipts=@($c.incoming_receipts)
-if($guestReceipts.Count -lt 2 -or $c.hurt_ack -ne $guestReceipts.Count -or $c.incoming_hurts -ne $guestReceipts.Count -or $c.incoming_old_life_skipped -ne 0 -or $c.outgoing_hits -ne 0 -or $c.hit_ack -ne 0){throw 'Incoming guest receipt/ACK ownership differs.'}
+if($guestReceipts.Count -lt $minimumHits -or $c.hurt_ack -ne $guestReceipts.Count -or $c.incoming_hurts -ne $guestReceipts.Count -or $c.incoming_old_life_skipped -ne 0 -or $c.outgoing_hits -ne 0 -or $c.hit_ack -ne 0){throw 'Incoming guest receipt/ACK ownership differs.'}
+if($armedWeapon){
+ $arrows=if($weapon -cin @('bow','crossbow')){$guestReceipts.Count}else{0}
+ if($c.incoming_arrow_adapters_created -ne $arrows -or $c.incoming_arrow_adapters_removed -ne $arrows -or $c.incoming_arrow_adapters_active -ne 0){throw 'Native incoming arrow adapters did not clean up exactly once.'}
+}
 $previousHealth=[double]$f.initial_health;$applied=0.;$creative=0;$positive=@()
 for($i=0;$i -lt $guestReceipts.Count;$i++){
  $hurt=$guestReceipts[$i]
@@ -83,8 +100,9 @@ for($i=0;$i -lt $guestReceipts.Count;$i++){
  $applied+=$delta;$previousHealth=[double]$hurt.health_after
 }
 if($c.incoming_creative_skipped -ne $creative){throw 'Creative receipt accounting differs.'}
-if($positive.Count -lt 2 -or $f.positive_damage_receipts -lt 2 -or $f.positive_damage_receipts -gt $positive.Count){throw 'At least two real native attacks must reduce Minecraft health.'}
+if($positive.Count -lt $minimumHits -or $f.positive_damage_receipts -lt $minimumHits -or $f.positive_damage_receipts -gt $positive.Count){throw 'Required real native attacks did not reduce Minecraft health.'}
 Assert-IncomingNear $f.initial_health 20 'fresh Survival health';Assert-IncomingNear $previousHealth $f.final_health 'final fixture health';Assert-IncomingNear $applied $c.player_damage_applied 'vanilla damage total'
+if(-not $armedWeapon){
 $inventoryHit=@($positive|Where-Object {$_.seq -eq $f.inventory_hit_sequence})
 if($inventoryHit.Count -ne 1 -or $inventoryHit[0].seq -le $positive[0].seq -or $f.inventory_receipt.seq -ne $inventoryHit[0].seq -or
  $f.first_receipt.seq -ne $positive[0].seq -or $inventoryHit[0].source_utc_ms -lt $f.inventory_opened_utc_ms-50 -or $inventoryHit[0].applied_utc_ms -lt $f.inventory_opened_utc_ms -or
@@ -94,6 +112,18 @@ $inventoryPoint=@($f.points|Where-Object stage -CEQ 'inventory_hit');$afterPoint
 if($inventoryPoint.Count -ne 1 -or $afterPoint.Count -ne 1 -or $inventoryPoint[0].screen -cne 'InventoryScreen' -or $afterPoint[0].screen -cne 'none' -or $afterPoint[0].mode -cne 'creative'){throw 'Actual inventory/after observations missing.'}
 foreach($point in @($inventoryPoint[0],$afterPoint[0])){Assert-IncomingNear $point.client_health $point.server_health 'client/server health'}
 if(($f.images.stage -join '|') -cne 'before|inventory|after'){throw 'Incoming HUD capture sequence incomplete.'}
+}else{
+ $hitPoint=@($f.points|Where-Object stage -CEQ 'armed_hit');$afterPoint=@($f.points|Where-Object stage -CEQ 'after')
+ if($hitPoint.Count -ne 1 -or $afterPoint.Count -ne 1 -or $afterPoint[0].mode -cne 'creative' -or $afterPoint[0].screen -cne 'none' -or ($f.images.stage -join '|') -cne 'before|after'){throw 'Armed hit/after observations missing.'}
+ $observedHits=@($positive|Where-Object {$_.applied_utc_ms -le $hitPoint[0].utc_ms -and [Math]::Abs($_.health_after-$hitPoint[0].server_health) -lt .01})
+ if($hitPoint[0].mode -cne 'survival' -or $hitPoint[0].screen -cne 'none' -or $hitPoint[0].server_health -ge $f.initial_health -or $observedHits.Count -eq 0){throw 'Armed hit observation does not match real Survival damage.'}
+ Assert-IncomingNear $afterPoint[0].server_health $f.final_health 'final observed health'
+ foreach($point in @($hitPoint[0],$afterPoint[0])){Assert-IncomingNear $point.client_health $point.server_health 'client/server health'}
+ foreach($hurt in $guestReceipts){
+  if($hurt.kind -cne $expectedKind){throw 'Native weapon mapped to wrong damage kind.'}
+  if($hurt.result -cne 'creative' -and ($hurt.damage_type -cne $(if($weapon -cin @('bow','crossbow')){'minecraft:arrow'}else{'minecraft:mob_attack'}) -or $hurt.projectile_tag -ne ($weapon -cin @('bow','crossbow')))){throw 'Native weapon mapped to wrong vanilla source.'}
+ }
+}
 foreach($capture in $f.images){
  if($capture.file -cne ('incoming-combat-'+$capture.stage+'.png') -or $capture.sha256 -cnotmatch '^[0-9a-f]{64}$' -or
   (Get-FileHash -LiteralPath (Join-Path $saved $capture.file)).Hash.ToLowerInvariant() -cne $capture.sha256 -or $capture.hud_pixels -lt 1000 -or
@@ -102,7 +132,7 @@ foreach($capture in $f.images){
 }
 $windowStart=[long]$f.native_composition_window_started_utc_ms;$windowEnd=[long]$f.native_composition_window_completed_utc_ms
 if($windowStart -le 0 -or $windowEnd-$windowStart -lt 11000 -or $windowEnd-$windowStart -gt 14000 -or $f.hud_frames_during_dwell -lt 2){throw 'Incoming post-hit composition observation window differs.'}
-if($f.images[1].metadata.captured_utc_ms -gt $windowStart -or $f.images[2].metadata.captured_utc_ms -lt $windowEnd){throw 'Incoming composition window does not follow the real inventory capture.'}
+if($f.images[$f.images.Count-2].metadata.captured_utc_ms -gt $windowStart -or $f.images[-1].metadata.captured_utc_ms -lt $windowEnd){throw 'Incoming composition window does not follow the real inventory capture.'}
 # Same local-clock/day anchoring as Test-KcdCombat, independently read from ReShade.
 $anchor=[DateTimeOffset]::FromUnixTimeMilliseconds($windowStart).ToLocalTime()
 $depth=@(foreach($line in [IO.File]::ReadLines((Join-Path $saved 'native-hud.log'))){
@@ -125,6 +155,12 @@ if(-not $incoming.Enabled -or -not $incoming.CleanupComplete -or $incoming.Failu
  $incoming.HurtAck -ne $guestReceipts.Count -or $incoming.HurtSequence -ne $guestReceipts.Count -or $incoming.Events -ne $guestReceipts.Count -or
  $incoming.MaxAdmissionAgeMs -gt 2000 -or -not $incoming.Begin -or -not $incoming.Terminal){throw 'Native incoming delivery/lifecycle accounting differs.'}
 foreach($flag in @('restored','cvars_restored','buff_restored','health_restored')){Assert-IncomingTrue $incoming.Terminal.$flag ('native '+$flag)}
+if($incoming.Begin.PSObject.Properties['bleeding_protection_active']){
+ Assert-IncomingTrue $incoming.Begin.bleeding_protection_active 'native injury protection active'
+ if($incoming.Begin.bleeding_protection_original -ne $false){throw 'Native injury protection did not have an owned absent baseline.'}
+ Assert-IncomingTrue $incoming.Terminal.bleeding_protection_restored 'native injury protection restored'
+ Assert-IncomingTrue $incoming.Terminal.death_protection_restored 'native death protection restored'
+}elseif($PSCmdlet.ParameterSetName -ceq 'Live'){throw 'Live incoming fixture lacks native injury protection.'}
 if($incoming.Begin.run -cne $s.run -or $incoming.Terminal.run -cne $s.run -or $incoming.Begin.native_maximum -le 0 -or -not $incoming.Begin.player_name){throw 'Native incoming baseline identity differs.'}
 $hostReceipts=@($incoming.Receipts)
 if($hostReceipts.Count -ne $guestReceipts.Count){throw 'Native and Minecraft incoming receipt counts differ.'}
@@ -135,6 +171,7 @@ if(-not(Test-Path -LiteralPath $epochRoot -PathType Container)){$epochRoot=[IO.P
 $sources=[Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal);$parsedFiles=@{};$sourceProof=[Collections.Generic.List[object]]::new();$nativeDamage=0.
 for($i=0;$i -lt $hostReceipts.Count;$i++){
  $hostHit=$hostReceipts[$i];$guestHit=$guestReceipts[$i];$source=$hostHit.source;$row=$nativeLines[$i]
+ if($armedWeapon -and ($hostHit.kind -cne $expectedKind -or $row.kind -cne $expectedKind -or $guestHit.kind -cne $expectedKind)){throw 'Native source damage kind changed in transit.'}
  if($hostHit.seq -ne $guestHit.seq -or $row.seq -ne $hostHit.seq -or $hostHit.attacker_token -ne $guestHit.attacker_token -or
   $hostHit.source_utc_ms -ne $guestHit.source_utc_ms -or $row.source_utc_ms -ne $hostHit.source_utc_ms -or $row.source.EventSha256 -cne $source.EventSha256 -or
   $source.AttackerName -cne ('MineComeCombat_'+$nativeFixture.run+'_fixture') -or $source.VictimName -cne $incoming.Begin.player_name -or
@@ -160,6 +197,8 @@ for($i=0;$i -lt $hostReceipts.Count;$i++){
  $actual=@($parsedFiles[$key].Hits|Where-Object Index -EQ $index)
  if($actual.Count -ne 1 -or $actual[0].EventSha256 -cne $source.EventSha256 -or $actual[0].GameMs -ne $source.GameMs -or
   $actual[0].AttackerGuid -cne $source.AttackerGuid -or $actual[0].VictimGuid -cne $source.VictimGuid -or $actual[0].AttackerName -cne $source.AttackerName){throw 'Raw native CombatHit does not match the forwarded event.'}
+ if($armedWeapon -and (Get-GameplayIncomingDamageKind $actual[0]) -cne $expectedKind){throw 'Raw native event is not the requested armed/ranged attack.'}
+ if($weapon -ceq 'sword' -and $actual[0].AttackType -notin @(0,1,2)){throw 'Sword fixture damaged with an unarmed action.'}
  Assert-IncomingNear $actual[0].AttributedDamage $source.AttributedDamage 'raw native attributed damage'
  Assert-IncomingNear $actual[0].Before $source.Before 'raw native prior health';Assert-IncomingNear $actual[0].After $source.After 'raw native resulting health'
  $nativeDamage+=$source.AttributedDamage
@@ -168,7 +207,7 @@ for($i=0;$i -lt $hostReceipts.Count;$i++){
 Assert-IncomingNear $nativeDamage $incoming.AttributedDamage 'native cumulative attributed damage'
 [ordered]@{schema=1;kind='minecome_native_incoming_combat_verification_v1';result='passed';run=$s.run;world_id=$s.world_id;fixture_run=$nativeFixture.run;
  actual_minecraft=$true;actual_native_npc=$true;scripted_guest_input=$true;physical_native_input_verified=$false;reciprocal_native_damage_verified=$true;
- native_events=$sourceProof.ToArray();minecraft_health_before=$f.initial_health;minecraft_health_after=$f.final_health;minecraft_damage=$applied;native_hit_in_inventory_verified=$true;inventory_hit_sequence=$f.inventory_hit_sequence;positive_damage_receipts=$positive.Count;
+ native_events=$sourceProof.ToArray();minecraft_health_before=$f.initial_health;minecraft_health_after=$f.final_health;minecraft_damage=$applied;weapon=$weapon;armed_native_hit_verified=$armedWeapon;native_hit_in_inventory_verified=[bool]$f.native_hit_in_inventory_verified;inventory_hit_sequence=$f.inventory_hit_sequence;positive_damage_receipts=$positive.Count;
  native_attacker_removed=$true;native_proxy_health_writes=$incoming.Terminal.health_writes;native_proxy_health_restored=$incoming.Terminal.health_restored;
  minecraft_direct_health_writes=$false;native_cleanup_complete=$incoming.CleanupComplete;native_post_hit_composited_frames=$compositedDelta;native_post_hit_reprojected_frames=$reprojectedDelta;
  native_post_hit_counter_samples=$window;native_source_files_verified=$parsedFiles.Count}|

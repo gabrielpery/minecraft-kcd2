@@ -15,6 +15,15 @@ try{
  $e=Event;$json=Json @($e);$batch=ConvertFrom-GameplayIncomingTelemetry $json $victim
  Require ($batch.TotalEvents -eq 1 -and $batch.Hits.Count -eq 1 -and $batch.Hits[0].AttributedDamage -eq 3.2 -and [Math]::Abs($batch.Hits[0].AppliedDamage-3.2) -lt .000001) 'Attributed/applied native damage differs.'
  Require ($batch.Hits[0].GameMs -eq 1000 -and $batch.Hits[0].LoggedWallTime -ceq '2026-11-09T09:31:56' -and $batch.Hits[0].AttackerGuid -ceq $attacker) 'Native source time/identity changed.'
+ foreach($pair in @(@(0,4),@(0,5),@(1,5),@(1,6),@(2,4),@(4,4),@(5,4),@(6,4),@(7,4),@(9,4))){
+  $e=Event;$e.cause.attackType=$pair[0];$e.cause.damageType=$pair[1]
+  $classified=(ConvertFrom-GameplayIncomingTelemetry (Json @($e)) $victim).Hits[0]
+  Require ((Get-GameplayIncomingDamageKind $classified) -ceq 'melee') 'Official melee base/weapon-override pair not classified.'
+ }
+ foreach($pair in @(@(0,6),@(1,4),@(2,5),@(3,4),@(8,1),@(6,5),@(99,4))){
+  Require ((Get-GameplayIncomingDamageKind ([pscustomobject]@{CauseName='CombatHit';AttackType=$pair[0];DamageType=$pair[1]})) -ceq '') 'Unsupported attack pair was guessed.'
+ }
+ Require ((Get-GameplayIncomingDamageKind ([pscustomobject]@{CauseName='ProjectileHit';AttackType=6;DamageType=4})) -ceq '') 'Unverified projectile source became melee.'
  Require ((ConvertFrom-GameplayIncomingTelemetry '[]' $victim).Hits.Count -eq 0) 'Empty native batch produced damage.'
  Refuses {ConvertFrom-GameplayIncomingTelemetry '{}' $victim}
  Refuses {ConvertFrom-GameplayIncomingTelemetry '[{}]' $victim}

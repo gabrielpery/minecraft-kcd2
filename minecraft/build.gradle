@@ -31,6 +31,8 @@ loom {
                     vmArgs '-Dminecome.gameplayCombatCheck=true'
                 if (project.hasProperty('minecomeGameplayIncomingCombatCheck'))
                     vmArgs '-Dminecome.gameplayIncomingCombatCheck=true'
+                if (project.hasProperty('minecomeGameplayIncomingWeapon'))
+                    vmArgs "-Dminecome.gameplayIncomingWeapon=${project.property('minecomeGameplayIncomingWeapon')}"
                 if (project.hasProperty('minecomeGameplayRespawnCheck'))
                     vmArgs '-Dminecome.gameplayRespawnCheck=true'
                 if (project.hasProperty('minecomeGameplayTntCheck'))
