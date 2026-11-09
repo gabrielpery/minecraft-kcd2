@@ -1,7 +1,7 @@
 # Sustained HUD/inventory, with an explicit Minecraft walking profile.
 [CmdletBinding()]
 param([string]$BundleDirectory,[string]$InstanceDirectory,[string]$JavaHome='C:/Program Files/Java/jdk-24',
- [ValidateRange(0,300)][int]$SmokeSeconds=0,[switch]$PreflightOnly,[switch]$Movement,[switch]$Blocks,[switch]$Explore,[switch]$Chat,[switch]$Flight,[switch]$Hands,[switch]$WorldBlocks,[switch]$Combat,[switch]$CombatCheck,[switch]$ProjectileCheck,[string]$CombatFixtureRun,[string]$GroundPatchFile,[switch]$ThirdPersonWalkingCheck,[switch]$DropsCheck,[switch]$CraftingCheck,[switch]$FurnaceCheck,[switch]$TntCheck,[switch]$TntCombatCheck,[switch]$RespawnCheck,[ValidateRange(0,1)][int]$InitialTerrainRadius=0)
+ [ValidateRange(0,300)][int]$SmokeSeconds=0,[switch]$PreflightOnly,[switch]$Movement,[switch]$Blocks,[switch]$Explore,[switch]$Chat,[switch]$Flight,[switch]$Hands,[switch]$WorldBlocks,[switch]$Combat,[switch]$CombatCheck,[switch]$IncomingCombatCheck,[switch]$ProjectileCheck,[string]$CombatFixtureRun,[string]$GroundPatchFile,[switch]$ThirdPersonWalkingCheck,[switch]$DropsCheck,[switch]$CraftingCheck,[switch]$FurnaceCheck,[switch]$TntCheck,[switch]$TntCombatCheck,[switch]$RespawnCheck,[ValidateRange(0,1)][int]$InitialTerrainRadius=0)
 . (Join-Path $PSScriptRoot 'powershell7.ps1')
 if($PSVersionTable.PSVersion.Major -lt 7){
  $code=Invoke-MineComePowerShell7 -ScriptPath $PSCommandPath -BoundParameters $PSBoundParameters
@@ -14,13 +14,15 @@ $root=[IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
 . (Join-Path $PSScriptRoot 'GameplayMovementHost.ps1')
 . (Join-Path $PSScriptRoot 'GameplayHudSessionGuard.ps1')
 if($TntCombatCheck){$TntCheck=$true;$Combat=$true;$InitialTerrainRadius=1}
+if($IncomingCombatCheck){$InitialTerrainRadius=1}
 if($RespawnCheck){$InitialTerrainRadius=1}
 if($InitialTerrainRadius -eq 1){$Explore=$true}
 if($ProjectileCheck -and -not $CombatCheck){throw 'ProjectileCheck requires the owned CombatCheck.'}
-if($CombatCheck -or $TntCombatCheck){if($CombatFixtureRun -cnotmatch '^[0-9a-f]{32}$'){throw 'Use Test-KcdCombat.ps1 or Test-KcdTntCombat.ps1 to own the isolated NPC lifecycle.'};$Combat=$true}
+if($CombatCheck -or $TntCombatCheck -or $IncomingCombatCheck){if($CombatFixtureRun -cnotmatch '^[0-9a-f]{32}$'){throw 'Use the Test-Kcd combat wrapper to own the isolated NPC lifecycle.'};$Combat=$true}
 elseif($CombatFixtureRun){throw 'CombatFixtureRun requires the owned automated combat or TNT combat check.'}
 if($Combat){$WorldBlocks=$true};if($WorldBlocks){$Hands=$true};if($Hands){$Flight=$true};if($Flight){$Chat=$true}
 if($Explore -or $Chat){$Blocks=$true};if($Blocks){$Movement=$true}
+if($IncomingCombatCheck -and ($SmokeSeconds -ne 0 -or $CombatCheck -or $ProjectileCheck -or $TntCheck -or $TntCombatCheck -or $ThirdPersonWalkingCheck -or $DropsCheck -or $CraftingCheck -or $FurnaceCheck -or $RespawnCheck)){throw 'IncomingCombatCheck owns its bounded session; omit other checks/SmokeSeconds.'}
 if($CombatCheck -and ($SmokeSeconds -ne 0 -or $ThirdPersonWalkingCheck -or $DropsCheck -or $CraftingCheck -or $FurnaceCheck -or $RespawnCheck)){throw 'CombatCheck owns its bounded session; omit other checks/SmokeSeconds.'}
 if($RespawnCheck -and (-not $WorldBlocks -or $SmokeSeconds -ne 0 -or $ThirdPersonWalkingCheck -or $DropsCheck -or $CraftingCheck -or $FurnaceCheck)){throw 'RespawnCheck requires WorldBlocks and owns its bounded duration; omit other checks/SmokeSeconds.'}
 if($TntCheck -and (-not $WorldBlocks -or $SmokeSeconds -ne 0 -or $ThirdPersonWalkingCheck -or $DropsCheck -or $CraftingCheck -or $FurnaceCheck -or $RespawnCheck -or $CombatCheck)){throw 'TntCheck requires WorldBlocks and owns its bounded duration; omit other checks/SmokeSeconds.'}
@@ -51,7 +53,22 @@ $renderLog=Join-Path $installation.ToolsBin 'ReShade.log'
 $logOffset=if(Test-Path -LiteralPath $renderLog){(Get-Item -LiteralPath $renderLog).Length}else{0L}
 $helper=$null;$armText=$null;$armWritten=$false;$passed=$false;$failure=$null;$smokeStop=$false
 $hostFollower=$null;$hostProof=$null;$patch=$null
+$incomingFixtureProbe=$null;$incomingFixtureStarted=$false;$incomingFixtureRemoved=$false
+function Stop-IncomingCombatFixture {
+ if(-not $incomingFixtureStarted -or $script:incomingFixtureRemoved){return}
+ Invoke-MineComeProbeConsole $context "#MineCome.GameplayCombatFixtureEnd('$CombatFixtureRun')"|Out-Null
+ $until=[DateTime]::UtcNow.AddSeconds(3)
+ do{
+  Invoke-MineComeProbeConsole $context "#System.LogAlways('[MineComeIncomingFixtureCleanup] $CombatFixtureRun')"|Out-Null
+  $records=@(Get-MineComeProbeReceipts (Read-MineComeProbeLog $context $incomingFixtureProbe.Offset) 'MineComeCombatFixture' $CombatFixtureRun)
+  $script:incomingFixtureRemoved=@($records|Where-Object {$_.event -ceq 'terminal' -and $_.removed -eq $true -and $_.path_restored -eq $true -and $_.active -eq $false}).Count -gt 0
+  if(-not $script:incomingFixtureRemoved){Start-Sleep -Milliseconds 50}
+ }while(-not $script:incomingFixtureRemoved -and [DateTime]::UtcNow -lt $until)
+ [ordered]@{schema=1;run=$CombatFixtureRun;started=$incomingFixtureStarted;removed=$script:incomingFixtureRemoved;receipts=$records}|ConvertTo-Json -Depth 8|Set-Content -LiteralPath (Join-Path $directory 'incoming-fixture-native.json') -Encoding utf8NoBOM
+ if(-not $script:incomingFixtureRemoved){throw 'Incoming combat fixture removal was not confirmed.'}
+}
 try{
+ if($IncomingCombatCheck){$incomingFixtureProbe=New-MineComeProbeRun $context 'incoming-combat-fixture' (Join-Path $root 'kcd2/gameplay/combat_fixture.lua') 'GameplayCombatFixtureBegin'}
  if($Movement){
   $bindingDirectory=Join-Path $InstanceDirectory 'saves/MineCome-Gameplay/minecome-terrain'
   $cached=Join-Path $bindingDirectory 'ground-patch.json'
@@ -85,6 +102,7 @@ try{
  if($Flight){$arguments+='-Flight'}
  if($Hands){$arguments+='-Hands'};if($WorldBlocks){$arguments+='-WorldBlocks'};if($Combat){$arguments+='-Combat'}
  if($CombatCheck){$arguments+='-CombatCheck'};if($ProjectileCheck){$arguments+='-ProjectileCheck'}
+ if($IncomingCombatCheck){$arguments+='-IncomingCombatCheck'}
  if($RespawnCheck){$arguments+='-RespawnCheck'}
  if($TntCheck){$arguments+='-TntCheck'}
  if($TntCombatCheck){$arguments+='-TntCombatCheck'}
@@ -167,6 +185,32 @@ try{
  Write-Output $(if($WorldBlocks){'Minecraft models render owned solid blocks. Right-click places supported held blocks; left-click mines. E opens inventory; F8 saves. Captured ground occludes blocks. Native scenery depth is used when camera/projection checks match.'}elseif($Blocks){'Focus KCD2 with controls released. Walking, HUD and stone controls activate automatically: right-click places held stone, left-click mines owned stone. E opens inventory; F8 stops and saves. Terrain coverage and owned stone capacity are bounded.'}elseif($Movement){'Focus KCD2 with controls released. Minecraft walking and HUD activate automatically. F8 stops and saves at the last safe position. Walking is limited to the captured terrain; blocks, commands and flight are not connected in this path yet.'}else{'Focus KCD2 with controls released. HUD activates automatically; F8 stops and saves. KCD owns walking; Minecraft commands/flight are not connected yet.'})
  $smokeDeadline=[DateTime]::UtcNow.AddSeconds($SmokeSeconds);$projectileFixtureRemoved=$false
  while(-not $helper.HasExited){
+  if($IncomingCombatCheck -and -not $incomingFixtureStarted -and (Test-Path -LiteralPath (Join-Path $directory 'incoming-fixture-ready.json'))){
+   $readyFixture=Read-MineComeGameplayJson (Join-Path $directory 'incoming-fixture-ready.json')
+   Assert-GameplayCombatKeys $readyFixture @('schema','kind','world_id')
+   if($readyFixture.schema -ne 1 -or $readyFixture.kind -cne 'minecome_native_incoming_fixture_ready_v1' -or $readyFixture.world_id -cne $guest.world_id){throw 'Incoming fixture readiness identity differs.'}
+   $incomingState=Get-GameplayMovementHostState $hostFollower
+   if($incomingState.Combat -and $incomingState.Combat.Incoming -and $incomingState.Combat.Incoming.Begin){
+    $incomingFixtureStarted=$true
+    Invoke-MineComeProbeConsole $context "#local p=player:GetWorldPos();local d=player.actor:GetHeadDir();local len=math.sqrt(d.x*d.x+d.y*d.y);if len>.1 then local ok,why=MineCome.GameplayCombatFixtureBegin('$CombatFixtureRun',60000,p.x+d.x/len*2,p.y+d.y/len*2,p.z,'hostile');System.LogAlways('[MineComeIncomingFixtureSpawn] '..tostring(ok)..' '..tostring(why)) end"|Out-Null
+    $spawnDeadline=[DateTime]::UtcNow.AddSeconds(2);$spawned=$false
+    do{
+     Invoke-MineComeProbeConsole $context "#System.LogAlways('[MineComeIncomingFixtureReady] $CombatFixtureRun')"|Out-Null
+     $spawnReceipts=@(Get-MineComeProbeReceipts (Read-MineComeProbeLog $context $incomingFixtureProbe.Offset) 'MineComeCombatFixture' $CombatFixtureRun)
+     $spawned=@($spawnReceipts|Where-Object {$_.event -ceq 'begin' -and $_.mode -ceq 'hostile' -and $_.active -eq $true}).Count -eq 1
+     if(-not $spawned){Start-Sleep -Milliseconds 50}
+    }while(-not $spawned -and [DateTime]::UtcNow -lt $spawnDeadline)
+    if(-not $spawned){throw 'Incoming hostile spawn was not confirmed; use a horizontal native view.'}
+   }
+  }
+  if($IncomingCombatCheck -and $incomingFixtureStarted -and -not $incomingFixtureRemoved -and (Test-Path -LiteralPath (Join-Path $directory 'incoming-fixture-remove.json'))){
+   $remove=Read-MineComeGameplayJson (Join-Path $directory 'incoming-fixture-remove.json')
+   Assert-GameplayCombatKeys $remove @('schema','kind','world_id')
+   if($remove.schema -ne 1 -or $remove.kind -cne 'minecome_native_incoming_fixture_remove_v1' -or $remove.world_id -cne $guest.world_id){throw 'Incoming fixture removal identity differs.'}
+   Stop-IncomingCombatFixture
+   $text=[ordered]@{schema=1;world_id=$guest.world_id;removed=$true}|ConvertTo-Json -Compress
+   $temporary=Join-Path $directory 'incoming-fixture-removed.tmp';[IO.File]::WriteAllText($temporary,$text);[IO.File]::Move($temporary,(Join-Path $directory 'incoming-fixture-removed.json'),$false)
+  }
   if($ProjectileCheck -and -not $projectileFixtureRemoved -and (Test-Path -LiteralPath (Join-Path $directory 'projectile-fixture-remove.json'))){
    $remove=Read-MineComeGameplayJson (Join-Path $directory 'projectile-fixture-remove.json')
    Assert-GameplayCombatKeys $remove @('schema','kind','world_id','actor_token')
@@ -190,6 +234,7 @@ try{
    if(-not $hostFollower.Final -and (Test-Path -LiteralPath $stoppingPath)){
     $stopping=Read-MineComeGameplayJson $stoppingPath
     if($stopping.schema -ne 1 -or $stopping.kind -cne 'minecome_gameplay_stopping_v1' -or $stopping.run -cne $run){throw 'Gameplay stop notice identity differs.'}
+    if($IncomingCombatCheck){Stop-IncomingCombatFixture}
     $hostProof=Stop-GameplayMovementHost $hostFollower
    }
    $state=Get-GameplayMovementHostState $hostFollower
@@ -265,6 +310,7 @@ try{
  $passed=$true
 }catch{$failure=$_.Exception.Message;throw}
 finally{
+ if($IncomingCombatCheck){try{Stop-IncomingCombatFixture}catch{$passed=$false;$failure=$_.Exception.Message}}
  if($helper -and -not $helper.HasExited){[IO.File]::WriteAllText((Join-Path $directory 'session.stop'),'launcher cleanup');[void]$helper.WaitForExit(10000)}
  if($hostFollower){
   try{

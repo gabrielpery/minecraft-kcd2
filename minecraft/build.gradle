@@ -29,6 +29,8 @@ loom {
                     vmArgs '-Dminecome.gameplayProjectileCheck=true'
                 if (project.hasProperty('minecomeGameplayCombatCheck'))
                     vmArgs '-Dminecome.gameplayCombatCheck=true'
+                if (project.hasProperty('minecomeGameplayIncomingCombatCheck'))
+                    vmArgs '-Dminecome.gameplayIncomingCombatCheck=true'
                 if (project.hasProperty('minecomeGameplayRespawnCheck'))
                     vmArgs '-Dminecome.gameplayRespawnCheck=true'
                 if (project.hasProperty('minecomeGameplayTntCheck'))

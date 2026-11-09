@@ -1,5 +1,51 @@
 # Resume checkpoint — 9 November 2026
 
+## Latest verified milestone: native incoming combat
+
+Incoming combat now has production native logging/health ownership, exact actor
+name/generation attribution with pinned telemetry GUIDs, immutable event delivery,
+real vanilla damage/armor handling, and an entirely automatic coupled fixture.
+See [INCOMING-COMBAT.md](research/INCOMING-COMBAT.md).
+
+**Automatic two-game PASS:**
+`runtime/evidence/gameplay-kcd-20261109-141001-8462b86ec10c4c6cafb563d0467dccd7/native-incoming-combat-verification.json`.
+Two actual native hits6.342/3.2095 mapped to Minecraft1.2684/0.6419:
+health20→18.7316→18.0897, ACK2. The second hit occurred in inventory.
+NPC removal, three HUD captures,11.25-second post-hit dwell,201 native
+composition/reprojection advances, normal save/exit and full native
+health/buff/CVar/body/timer cleanup passed. No human test is needed to repeat it.
+
+Already resolved: native HP1 produces zero attributed damage (use owned native
+health upkeep); runtime soul/entity IDs are not log GUIDs (LogType2 includes exact
+runtime names); live recoil roll must not use the initial teleport-seed1° guard
+(renderer already retains the full rolled basis); fixed native/Windows clock
+offset drifts (use bounded enclosing clock anchors, once per event).
+Native injury and delayed Minecraft knockback need separate bounded windows:
+500ms from native injury and750ms from a new consumed-hurt ACK. Send that ACK
+before the next movement pose; duplicate ACKs cannot renew the window. Physical
+velocity/position caps remain unchanged. The incoming fixture uses the existing
+nine-tile initial Explore coverage because two knockbacks can leave an8×8 patch.
+
+Reverify saved evidence without launching games:
+
+```powershell
+& './scripts/Test-KcdIncomingCombat.ps1' -VerifyEvidenceDirectory 'runtime/evidence/gameplay-kcd-20261109-141001-8462b86ec10c4c6cafb563d0467dccd7'
+```
+
+Both game clients are closed. Temporary bundle `runtime/hud-incoming-combat-20261109`
+was restored, armed=false:
+`runtime/evidence/gameplay-hud-restore-20261109-141156-caec5e4176bd4df8b266a51c74e14c89`.
+The successful isolated instance was `runtime/gameplay/incoming-native-20261109-g`.
+
+Next extend incoming native melee beyond the admitted unarmed types4/5/6/7/9
+(damageType4), then native ranged attacks. Official tables also describe
+stab0→4/5, slash1→5/6, smash2→4 and bite8→1; corroborate actual weapon telemetry
+before enabling those pairs. Preserve passed outgoing swords/bows/TNT. Current
+incoming transport adds roughly0.6–1s; native armor precedes Minecraft armor, so
+balancing and latency remain limitations. No general poison/bleeding or other
+native status-effect synchronization is claimed. Native scenery destruction
+remains deferred; do not revive its archived patch.
+
 ## Latest decision: defer native environmental explosion destruction
 
 The user allowed this feature to be omitted if costly. Inspection found that
@@ -11,7 +57,7 @@ Existing authored-world use of DestroyableObject was not established. Do not
 spend another iteration on this optional feature or claim a spawned barrel test
 proves destruction of arbitrary world scenery.
 
-Production code is restored exactly to the verified TNT/NPC implementation at
+Before the incoming-combat work above, production code was restored to the verified TNT/NPC implementation at
 `389854301efbc97dfab576bf1a19a23b8097cead`. Interrupted, unverified scenery changes
 are preserved outside the working tree at
 `runtime/deferred/tnt-scenery-20261109/work-in-progress.patch` (52,680 bytes,
@@ -22,9 +68,8 @@ Do not apply it automatically. Sources and design notes:
 The unused fresh test world was closed normally. No scenery fixture or explosion
 was run. Temporary installation restored and unarmed:
 `runtime/evidence/gameplay-hud-restore-20261109-130132-99393ab42bd547c99e6f3305ec43d827`.
-Resume the required gameplay work: reciprocal KCD2 NPC attacks damaging the real
-Minecraft player, using the existing native combat telemetry findings below.
-Preserve the passed TNT block/NPC milestone; no repeat manual test is needed.
+The incoming milestone above now connects unarmed native attacks. Preserve that
+work and the passed TNT block/NPC milestone; no repeat manual test is needed.
 
 ## Latest work: TNT damages native NPCs, automatically verified
 

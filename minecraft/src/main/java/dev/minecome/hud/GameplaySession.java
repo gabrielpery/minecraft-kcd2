@@ -78,6 +78,8 @@ public final class GameplaySession {
     private GameplayCombat combat;
     private GameplayCombatFixture combatFixture;
     private GameplayNativeCombatFixture nativeCombatFixture;
+    private GameplayIncomingCombatFixture incomingCombatFixture;
+    private final boolean incomingCombatCheck=Boolean.getBoolean("minecome.gameplayIncomingCombatCheck");
     private final boolean nativeCombatCheck=Boolean.getBoolean("minecome.gameplayCombatCheck");
     private GameplayRespawn respawn;
     private GameplayRespawnFixture respawnFixture;
@@ -129,6 +131,7 @@ public final class GameplaySession {
         stopFile=requested;
         if(!fixtureMode.isEmpty()&&!standalone)throw new IllegalArgumentException("Persistence fixture requires standalone gameplay");
         if(combatMode&&!worldBlocksMode)throw new IllegalArgumentException("Combat requires WorldBlocks");
+        if(incomingCombatCheck&&(standalone||!combatMode||!fixtureMode.isEmpty()||nativeCombatCheck||nativeWalkingCheck||nativeDropsCheck||nativeCraftingCheck||nativeFurnaceCheck||nativeRespawnCheck||nativeTntCheck))throw new IllegalArgumentException("Incoming combat check requires connected Combat without another fixture");
         if(nativeTntCombatCheck&&!combatMode)throw new IllegalArgumentException("TNT combat check requires native combat");
         if(nativeTntCheck&&(standalone||!worldBlocksMode||!fixtureMode.isEmpty()||nativeWalkingCheck||nativeDropsCheck||nativeCraftingCheck||nativeFurnaceCheck||nativeRespawnCheck||nativeCombatCheck))throw new IllegalArgumentException("Native TNT check requires connected WorldBlocks without another fixture");
         if(nativeCombatCheck&&(standalone||!combatMode||!fixtureMode.isEmpty()||nativeWalkingCheck||nativeDropsCheck||nativeCraftingCheck||nativeFurnaceCheck||nativeRespawnCheck))throw new IllegalArgumentException("Native combat check requires connected Combat without another fixture");
@@ -263,6 +266,7 @@ public final class GameplaySession {
                         respawn=new GameplayRespawn(movement,blocks,combat,save,wire,directory.getParent());
                         if(fixtureMode.equals("combat"))combatFixture=new GameplayCombatFixture(fixtureMode,combat,blocks,movement,save,wire,directory.getParent(),proof->{fixtureResult=proof.deepCopy();requestStop(MinecraftClient.getInstance(),"combat_fixture_complete",proof.get("result").getAsString().equals("passed")?null:proof.toString());});
                         if(nativeCombatCheck)nativeCombatFixture=new GameplayNativeCombatFixture(combat,blocks,movement,save,directory.getParent(),proof->{fixtureResult=proof.deepCopy();requestStop(MinecraftClient.getInstance(),"native_combat_fixture_complete",proof.get("result").getAsString().equals("passed")?null:proof.toString());});
+                        if(incomingCombatCheck)incomingCombatFixture=new GameplayIncomingCombatFixture(combat,movement,save,directory.getParent(),proof->{fixtureResult=proof.deepCopy();requestStop(MinecraftClient.getInstance(),"incoming_combat_fixture_complete",proof.get("result").getAsString().equals("passed")?null:proof.toString());});
                         if(nativeRespawnCheck||fixtureMode.startsWith("respawn"))respawnFixture=new GameplayRespawnFixture(nativeRespawnCheck?"respawn-native":fixtureMode,blocks,movement,save,wire,directory.getParent(),proof->{fixtureResult=proof.deepCopy();requestStop(MinecraftClient.getInstance(),"respawn_fixture_complete",proof.get("result").getAsString().equals("passed")?null:proof.toString());});
                         if(!standalone)aimReader=new GameplayAimReader(directory.getParent(),wire,movement.surface(),save.id().toString(),worldBlocksMode);
                         if(nativeWalkingCheck)nativeWalkingFixture=new GameplayNativeWalkingFixture(movement,save,directory.getParent(),proof->{fixtureResult=proof.deepCopy();requestStop(MinecraftClient.getInstance(),"native_walking_check_complete",proof.get("result").getAsString().equals("passed")?null:proof.toString());});
@@ -349,6 +353,7 @@ public final class GameplaySession {
             if(combatFixture!=null&&!stopping)combatFixture.tick(client);
             if(nativeWalkingFixture!=null&&!stopping)nativeWalkingFixture.tick(client,input!=null&&input.connected()&&input.hostState()==1,nativeView.current());
             if(nativeCombatFixture!=null&&!stopping)nativeCombatFixture.tick(client,input!=null&&input.connected()&&input.hostState()==1,nativeView.current());
+            if(incomingCombatFixture!=null&&!stopping)incomingCombatFixture.tick(client,input!=null&&input.connected()&&input.hostState()==1,nativeView.current());
             if(respawnFixture!=null&&!stopping){if(nativeRespawnCheck)respawnFixture.tick(client,input!=null&&input.connected()&&input.hostState()==1,nativeView.current());else respawnFixture.tick(client);}
             if(tntFixture!=null&&!stopping){if(nativeTntCheck)tntFixture.tick(client,input!=null&&input.connected()&&input.hostState()==1,nativeView.current());else tntFixture.tick(client);}
             if(furnaceFixture!=null&&!stopping){if(nativeFurnaceCheck)furnaceFixture.tick(client,input!=null&&input.connected()&&input.hostState()==1,nativeView.current());else furnaceFixture.tick(client);}
@@ -598,6 +603,7 @@ public final class GameplaySession {
             var meta=JsonParser.parseString(frame.metadata()).getAsJsonObject();
             if(combatFixture!=null)combatFixture.captured(frame);
             if(nativeCombatFixture!=null)nativeCombatFixture.captured(frame);
+            if(incomingCombatFixture!=null)incomingCombatFixture.captured(frame);
             if(respawnFixture!=null)respawnFixture.captured(frame);
             if(tntFixture!=null)tntFixture.captured(frame);
             if(furnaceFixture!=null)furnaceFixture.captured(frame);
@@ -640,6 +646,7 @@ public final class GameplaySession {
         if(nativeWalkingFixture!=null){var stage=nativeWalkingFixture.captureStage();if(stage!=null){meta.addProperty("native_walking_stage",stage);meta.add("native_walking_motion",nativeWalkingFixture.captureState(client));}}
         if(combatFixture!=null){var stage=combatFixture.captureStage();if(stage!=null)meta.addProperty("combat_fixture_stage",stage);}
         if(nativeCombatFixture!=null){var stage=nativeCombatFixture.captureStage();if(stage!=null)meta.addProperty("native_combat_stage",stage);}
+        if(incomingCombatFixture!=null){var stage=incomingCombatFixture.captureStage();if(stage!=null)meta.addProperty("incoming_combat_stage",stage);}
         if(respawnFixture!=null){var stage=respawnFixture.captureStage();if(stage!=null)meta.addProperty("respawn_fixture_stage",stage);}
         if(tntFixture!=null){var stage=tntFixture.captureStage();if(stage!=null)meta.addProperty("tnt_fixture_stage",stage);}
         if(furnaceFixture!=null){var stage=furnaceFixture.captureStage();if(stage!=null)meta.addProperty("furnace_fixture_stage",stage);}
@@ -690,6 +697,7 @@ public final class GameplaySession {
     private void requestStop(MinecraftClient client,String reason,String problem){
         if(stopping)return;stopReason=reason;failure=problem;
         if(nativeWalkingFixture!=null)nativeWalkingFixture.close();
+        if(incomingCombatFixture!=null)incomingCombatFixture.close();
         // End the host pose lease before draining asynchronous collision/input
         // cleanup. The final receipt can legitimately take longer than the lease.
         try{

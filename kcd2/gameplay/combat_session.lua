@@ -86,9 +86,11 @@ local function emit(p,event,result,extra)
 end
 local function stop(p,why)
  if p.stopped then return p.cleanup_complete==true end;p.stopped=true;p.reason=why
+ p.incoming_restored=true
+ if type(MineCome.GameplayCombatIncomingEnd)=='function'then local ok,result=pcall(MineCome.GameplayCombatIncomingEnd,p.run);p.incoming_restored=ok and result~=false end
  if p.timer then local ok,v=pcall(Script.KillTimer,p.timer);if ok and v~=false then p.timer=nil else p.reason='timer_cleanup_failed'end end
  if not restore_lock_policy(p)then p.reason='lock_policy_cleanup_unconfirmed'end
- p.cleanup_complete=p.timer==nil and p.lock_policy_restored==true
+ p.cleanup_complete=p.timer==nil and p.lock_policy_restored==true and p.incoming_restored
  p.timer_data=nil;p.projectiles={};p.projectile_last=nil;p.blasts={};p.blast_last=nil;state.active=nil;state.last=p
  emit(p,'terminal',p.reason);return p.cleanup_complete
 end
@@ -97,6 +99,7 @@ local function valid(p)
  if player~=p.player or player.id~=p.player_id or player.soul~=p.player_soul or wuid(player)~=p.player_wuid then return nil,'player_changed'end
  if read(player.actor,'IsDead')~=false then return nil,'player_unavailable'end
  if not lock_policy_owned(p)then return nil,'lock_policy_changed'end
+ if type(MineCome.GameplayCombatIncomingValidate)=='function' and not MineCome.GameplayCombatIncomingValidate(p.run)then return nil,'incoming_changed'end
  p.last_clock=t;return t
 end
 local function schedule(p)
@@ -132,6 +135,7 @@ function MineCome.GameplayCombatBegin(run,duration_ms,radius,max_actors)
  if not token(run) or not integer(duration_ms,1000,86400000) or not finite(radius) or radius<4 or radius>32 or not integer(max_actors,1,8) then return false,'invalid_begin'end
  if state.active then return false,'session_owned'end
  if state.last and state.last.lock_policy_restored==false then return false,'lock_policy_cleanup_unconfirmed'end
+ if state.last and state.last.incoming_restored==false then return false,'incoming_cleanup_unconfirmed'end
  if not System or type(System.GetEntitiesInSphere)~='function' or type(System.GetCurrTime)~='function' or type(System.LogAlways)~='function' or not Script or type(Script.SetTimerForFunction)~='function' or type(Script.KillTimer)~='function' or not Physics or type(Physics.RayWorldIntersection)~='function' or not integer(ent_all,1,2147483647) then return false,'api_unavailable'end
  if type(player)~='table' or not player.id or not wuid(player) or type(player.soul)~='table' or read(player.actor,'IsDead')~=false then return false,'player_unavailable'end
  local t=clock();if not t then return false,'clock_unavailable'end
@@ -151,12 +155,13 @@ function MineCome.GameplayCombatSample(run,sequence)
   for id,old in pairs(p.actors)do if same(old,a) then found=id;break end end
   if not found then
    if p.next_token>256 then stop(p,'generation_capacity');return false,'generation_capacity'end
-   found=p.next_token;p.next_token=p.next_token+1;p.actors[found]=a
+   found=p.next_token;p.next_token=p.next_token+1;a.first_seen=t;p.actors[found]=a
   end
   a.token=found;sample.actors[found]=a
   rows[#rows+1]='{"token":'..found..',"x":'..number(a.x)..',"y":'..number(a.y)..',"z":'..number(a.z)..',"width":'..number(a.width)..',"height":'..number(a.height)..',"health":'..number(a.health)..',"max_health":'..number(a.max_health)..',"alive":'..tostring(a.alive)..'}'
  end
  p.samples[sequence]=sample;for id,s in pairs(p.samples)do if t-s.time>FRESH or id<sequence-4 then p.samples[id]=nil end end
+ if type(MineCome.GameplayCombatIncomingSample)=='function' and not MineCome.GameplayCombatIncomingSample(run,sequence,list)then stop(p,'incoming_sample_failed');return false,'incoming_sample_failed'end
  if not emit(p,'sample','sampled',',"seq":'..sequence..',"actors":['..table.concat(rows,',')..']')then stop(p,'log_failed');return false,'log_failed'end
  return true
 end

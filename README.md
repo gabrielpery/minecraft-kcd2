@@ -27,9 +27,14 @@ check passes a real sword hit on a native NPC, inventory suppression, subsequent
 walking, continued HUD composition and cleanup. Standalone Minecraft checks also
 cover weapons, armor, cooldowns and block occlusion. A separate native hostile
 comparison verifies that the combat profile suppresses player target lock while
-enemy attacks continue, and restores the original settings afterward. Native
-attacks are not yet routed into Minecraft health. Crossbows and secondary combat
-effects remain unfinished; this is not yet complete two-way combat.
+enemy attacks continue, and restores the original settings afterward. The incoming
+adapter now routes native unarmed attacks into real Minecraft health, including
+hits received while inventory is open. Minecraft applies armor, hurt cooldowns
+and Creative immunity. Native health is maintained as an owned proxy and restored
+on stop; see [incoming combat design and limits](docs/research/INCOMING-COMBAT.md).
+Native armed/ranged attacks, crossbows and secondary combat effects remain unfinished.
+An automatic two-game check passed two real native hits, inventory damage,
+continued HUD rendering and full cleanup; no manual attack sequence was needed.
 
 The combat profile also connects Minecraft bows: hold right-click to draw and
 release to fire. Arrows test their actual flight segments against KCD2 scenery

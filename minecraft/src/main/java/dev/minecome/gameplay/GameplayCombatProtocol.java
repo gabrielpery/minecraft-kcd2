@@ -13,7 +13,7 @@ import java.util.*;
 public final class GameplayCombatProtocol {
     public record Point(double x,double y,double z){}
     public record Actor(int token,double x,double y,double z,float width,float height,double health,double maxHealth,boolean alive){}
-    public record Hurt(long seq,int attackerToken,float damage){}
+    public record Hurt(long seq,int attackerToken,float damage,long sourceUtc){}
     public record Snapshot(long seq,long utc,List<Actor> actors,List<Hurt> hurts,long hitAck){
         public boolean fresh(long now){return now>=utc-50&&now-utc<=500;}
     }
@@ -39,9 +39,10 @@ public final class GameplayCombatProtocol {
                 actors.add(new Actor(token,x,y,z,width,height,health,maximum,alive));
             }
             var hurts=new ArrayList<Hurt>();long previous=0;
-            for(var value:array(root,"hurts",32)){var h=value.getAsJsonObject();keys(h,Set.of("seq","attacker_token","damage","kind"));long number=integer(h,"seq",1,10_000_000);
+            for(var value:array(root,"hurts",32)){var h=value.getAsJsonObject();keys(h,Set.of("seq","attacker_token","damage","kind","source_utc_ms"));long number=integer(h,"seq",1,10_000_000);
                 if(number<=previous||!string(h,"kind").equals("melee"))throw new IOException("Invalid combat damage order/type");previous=number;
-                hurts.add(new Hurt(number,(int)integer(h,"attacker_token",1,256),(float)number(h,"damage",.001,1000)));
+                long sourceUtc=integer(h,"source_utc_ms",1,Long.MAX_VALUE);if(sourceUtc>utc&&sourceUtc-utc>50)throw new IOException("Combat damage source is in the future");
+                hurts.add(new Hurt(number,(int)integer(h,"attacker_token",1,256),(float)number(h,"damage",.001,1000),sourceUtc));
             }
             return new Snapshot(seq,utc,List.copyOf(actors),List.copyOf(hurts),ack);
         }catch(IOException|RuntimeException e){throw new IllegalArgumentException("Invalid combat snapshot",e);}

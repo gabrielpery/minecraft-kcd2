@@ -290,6 +290,17 @@ public final class HudPhysicalMovementTests {
         check(parsed.fresh(NOW+300) && !parsed.fresh(NOW+301),"camera lease anchored to source timestamp");
         check(!parsed.fresh(NOW-51),"camera cannot run before allowed clock skew");
         var v=view(2,NOW);v.add("forward",vector(1,0,0));check(parse(v).yaw()==-90,"fresh camera updates yaw basis");
+        for(double degrees:new double[]{-45,-2,2,45,90,180}){
+            var rolled=view(3,NOW);double angle=Math.toRadians(degrees);rolled.add("up",vector(Math.sin(angle),0,Math.cos(angle)));
+            var orientation=parse(rolled);check(orientation.yaw()==0&&orientation.pitch()==0,"Roll around forward leaves movement yaw/pitch unchanged: "+degrees);
+        }
+        // Exact final native vectors from the hostile recoil run684b91d6.
+        var nativeRecoil=view(4,NOW);nativeRecoil.add("forward",vector(-.1842726767063141,.9662338495254517,-.18009957671165466));
+        nativeRecoil.add("up",vector(-.04034275561571121,.17564751207828522,.983626127243042));
+        var recoil=parse(nativeRecoil);double recoilYaw=Math.toDegrees(Math.atan2(.1842726767063141,-.9662338495254517));
+        check(Math.abs(recoil.yaw()-recoilYaw)<.00001&&recoil.pitch()>10&&recoil.pitch()<11,"Actual native recoil basis preserves forward aim/movement");
+        nativeRecoil.add("up",vector(-.1679265,.1021249,.980502));
+        reject(()->parse(nativeRecoil),"Roll acceptance cannot admit a nonorthogonal basis");
         for(String field:List.of("schema","source_kind","run","patch_run","patch_sha256","target_pid","target_start_filetime","seq","utc_ms","forward","up")){
             var bad=view(1,NOW);bad.remove(field);reject(()->parse(bad),"missing view "+field);
         }
@@ -300,6 +311,9 @@ public final class HudPhysicalMovementTests {
         reject(()->parse(view(0,NOW)),"zero sequence");reject(()->parse(view(1,NOW+51)),"future source time");
         bad=view(1,NOW);bad.add("forward",vector(0,0,0));var zero=bad;reject(()->parse(zero),"zero camera direction");
         bad=view(1,NOW);bad.add("up",vector(0,-1,0));var parallel=bad;reject(()->parse(parallel),"parallel forward up");
+        bad=view(1,NOW);bad.add("forward",vector(0,0,1));bad.add("up",vector(1,0,0));var vertical=bad;reject(()->parse(vertical),"moving camera remains bounded away from vertical");
+        bad=view(1,NOW);bad.add("up",vector(0,0,2));var unscaled=bad;reject(()->parse(unscaled),"moving camera still rejects nonunit up");
+        bad=view(1,NOW);bad.getAsJsonObject("up").addProperty("extra",0);var extraAxis=bad;reject(()->parse(extraAxis),"moving camera vector keys remain exact");
         String duplicate=view(1,NOW).toString().replace("\"schema\":1","\"schema\":1,\"schema\":1");
         reject(()->HudMovementView.parse(duplicate.getBytes(StandardCharsets.UTF_8),ID,PATCH,HASH,NOW),"duplicate JSON field");
         reject(()->HudMovementView.parse(new byte[4097],ID,PATCH,HASH,NOW),"oversize camera");

@@ -72,10 +72,16 @@ public final class GameplayCombatProtocolTests {
         altered=valid.deepCopy();altered.getAsJsonArray("hurts").add(altered.getAsJsonArray("hurts").get(0).deepCopy());reject(altered,"Repeated hurt sequence");
         altered=valid.deepCopy();altered.getAsJsonArray("hurts").get(0).getAsJsonObject().addProperty("kind","projectile");reject(altered,"Unimplemented damage kind rejected");
         altered=valid.deepCopy();altered.getAsJsonArray("hurts").get(0).getAsJsonObject().addProperty("damage",1001);reject(altered,"Damage bound");
+        altered=valid.deepCopy();altered.getAsJsonArray("hurts").get(0).getAsJsonObject().remove("source_utc_ms");reject(altered,"Original native damage source time required");
+        for(String raw:List.of("0","-1","1.0","\"1\"","true","null","9223372036854775808"))
+            reject(valid.toString().replace("\"source_utc_ms\":"+NOW,"\"source_utc_ms\":"+raw),"Exact positive damage source time "+raw);
+        altered=valid.deepCopy();altered.getAsJsonArray("hurts").get(0).getAsJsonObject().addProperty("source_utc_ms",NOW+51);reject(altered,"Future native damage source rejected");
+        altered=valid.deepCopy();altered.getAsJsonArray("hurts").get(0).getAsJsonObject().addProperty("source_utc_ms",NOW-5000);check(parse(altered.toString()).hurts().getFirst().sourceUtc()==NOW-5000,"Parser retains pending source time; only first admission checks expiry");
         for(String text:List.of("","null","[]","{}",valid+"{}","/*comment*/"+valid," ".repeat(131073)))reject(text,"Malformed/bounded document");
         projectileReplies();snapshotFiles();
         checks+=GameplayProjectileInterpolationTests.run();
         checks+=GameplayBlastTests.run();
+        checks+=GameplayIncomingDamageTests.run();
         System.out.println("GameplayCombatProtocolTests: "+checks+" checks passed; no games");
     }
     private static void projectileReplies(){
@@ -174,6 +180,6 @@ public final class GameplayCombatProtocolTests {
     private static JsonObject snapshot(){
         var j=GameplayCombatProtocol.identity(ID,WORLD,SURFACE,"minecome_gameplay_combat_host_v1");j.addProperty("seq",1);j.addProperty("utc_ms",NOW);j.addProperty("hit_ack",0);
         var actors=new JsonArray();var a=new JsonObject();a.addProperty("token",1);a.addProperty("x",122.5);a.addProperty("y",2045.25);a.addProperty("z",56.75);a.addProperty("width",.6);a.addProperty("height",1.8);a.addProperty("health",100);a.addProperty("max_health",100);a.addProperty("alive",true);actors.add(a);j.add("actors",actors);
-        var hurts=new JsonArray();var h=new JsonObject();h.addProperty("seq",1);h.addProperty("attacker_token",1);h.addProperty("damage",4);h.addProperty("kind","melee");hurts.add(h);j.add("hurts",hurts);return j;
+        var hurts=new JsonArray();var h=new JsonObject();h.addProperty("seq",1);h.addProperty("attacker_token",1);h.addProperty("damage",4);h.addProperty("kind","melee");h.addProperty("source_utc_ms",NOW);hurts.add(h);j.add("hurts",hurts);return j;
     }
 }

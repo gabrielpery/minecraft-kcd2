@@ -257,6 +257,10 @@ function Get-GameplayMovementWorker {
                 if($ViewCall -and $request.Command.Contains($ViewCall)){
                     Set-Variable -Name requestedUtc -Value ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()) -Scope 1
                 }
+                if($CombatState -and $CombatState.Incoming.Enabled){
+                    if($request.Command.Contains('MineCome.GameplayCombatIncomingBegin(')){$CombatState.Incoming.BeginSentUtcMs=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()}
+                    if($request.Command.Contains('MineCome.GameplayCombatIncomingRotate(')){$CombatState.Incoming.RotationSentUtcMs=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()}
+                }
                 $httpStartedAt=$stopwatch.Elapsed.TotalMilliseconds
                 Invoke-MineComeToolsRequest -PathAndQuery $request.PathAndQuery -TimeoutMilliseconds 150|Out-Null
                 if($ViewCall -and $request.Command.Contains($ViewCall)){
@@ -281,7 +285,7 @@ function Get-GameplayMovementWorker {
             $result=[Collections.Generic.List[object]]::new()
             if($lf -ge 0){
                 $text=[Text.UTF8Encoding]::new($false,$true).GetString($bytes,0,$lf+1)
-                foreach($m in [regex]::Matches($text,'\[MineComeGameplay(Movement|Blocks|Terrain|Combat)\] (\{[^\r\n]*\})\r?\n')){
+                foreach($m in [regex]::Matches($text,'\[MineComeGameplay(Movement|Blocks|Terrain|Combat|Incoming)\] (\{[^\r\n]*\})\r?\n')){
                     if($m.Groups[2].Length -gt 4096){throw 'Gameplay native receipt exceeded bound.'}
                     $r=$m.Groups[2].Value|ConvertFrom-Json -Depth 6
                     if($pendingViewTiming){
@@ -292,6 +296,7 @@ function Get-GameplayMovementWorker {
                     if($m.Groups[1].Value -ceq 'Blocks'){if($BlocksState){Accept-GameplayBlocksReceipt $BlocksState $r};continue}
                     if($m.Groups[1].Value -ceq 'Terrain'){if($TerrainState){Accept-GameplayTerrainReceipt $TerrainState $r ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())};continue}
                     if($m.Groups[1].Value -ceq 'Combat'){if($CombatState){Accept-GameplayCombatReceipt $CombatState $r ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())};continue}
+                    if($m.Groups[1].Value -ceq 'Incoming'){if($CombatState){Accept-GameplayIncomingReceipt $CombatState $r ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())};continue}
                     $result.Add($r)
                 }
                 Set-Variable -Name position -Value ($position+$lf+1) -Scope 1
@@ -318,6 +323,13 @@ function Get-GameplayMovementWorker {
                 if($utc -ge $ExpiresUtcMs -or $elapsed -ge $limit){throw 'Gameplay host identity expired.'}
                 $pose=Read-GameplayMovementPose $PoseFile $Identity $Bounds $sequence $source $utc $WorldBlocks
                 $parts=[Collections.Generic.List[string]]::new()
+                # Consume the guest's actual hurt ACK and notify native before
+                # any pose carrying that same vanilla knockback is dispatched.
+                $combatCommand=''
+                if($CombatState){
+                    $combatCommand=Get-GameplayCombatCommands $CombatState $utc -DeferApplied
+                    $applied=Get-GameplayIncomingAppliedCommand $CombatState $utc;if($applied){$parts.Add((RejectWrapper $applied))}
+                }
                 if($WorldBlocks -and $pose){
                     $collision=$pose.camera_collision;$text=$collision|ConvertTo-Json -Depth 4 -Compress
                     if($cameraGeometry -and ($collision.generation -lt $cameraGeometry.generation -or ($collision.generation -eq $cameraGeometry.generation -and $text -cne $cameraGeometryText))){throw 'Gameplay camera collision generation regressed or changed.'}
@@ -340,7 +352,7 @@ function Get-GameplayMovementWorker {
                    (-not $Identity.PSObject.Properties['RespawnCoverage'] -or -not(Test-GameplayRespawnCoverage $Identity.RespawnCoverage $pose.position))){throw 'Gameplay respawn leaves captured cells.'}
                 if($pose){Update-GameplayRespawnHostPose $respawnState $pose $utc}
                 if($BlocksState){$command=Get-GameplayBlocksCommands $BlocksState $utc;if($command){$parts.Add((RejectWrapper $command))}}
-                if($CombatState){$command=Get-GameplayCombatCommands $CombatState $utc;if($command){$parts.Add((RejectWrapper $command))}}
+                if($combatCommand){$parts.Add((RejectWrapper $combatCommand))}
                 if($pose){
                     $perspectiveArgument=if($WorldBlocks){','+[string]$pose.perspective_request+','+[string]$pose.camera_collision.generation}else{''}
                     if($pose.PSObject.Properties['lifecycle']){
@@ -541,7 +553,7 @@ function Start-GameplayMovementHost {
     $blocksState=if($Blocks -and -not $WorldBlocks){New-GameplayBlocksHost -Context $Context -Run $Run -WorldId $WorldId -Patch $Patch -SnapshotFile (Join-Path $evidenceDirectory 'gameplay-blocks.json') -ExpiresUtcMs $ExpiresUtcMs -TerrainState $terrainState}else{$null}
     $identity=[pscustomobject]@{Run=$Run;WorldId=$WorldId;Pid=$Context.GamePid;Start=$Context.GameStartedUtc.ToFileTimeUtc().ToString();PatchRun=$Patch.Run;PatchHash=$Patch.Hash}
     $combatState=if($Combat){New-GameplayCombatHost -Context $Context -Identity $identity -Directory $evidenceDirectory -ExpiresUtcMs $ExpiresUtcMs}else{$null}
-    if($combatState){Initialize-MineComeProbeRun $Context $combatState.Probe}
+    if($combatState){Initialize-MineComeProbeRun $Context $combatState.Probe;Initialize-MineComeProbeRun $Context $combatState.Incoming.Probe}
     if($WorldBlocks){$identity|Add-Member -NotePropertyName CameraOrigin -NotePropertyValue ([pscustomobject]@{x=[double]$Patch.Data.center.x;y=[double]$Patch.Data.center.y;z=[double]$Patch.Data.center.z-64.0})}
     if($WorldBlocks -and -not $Explore){$identity|Add-Member -NotePropertyName RespawnCoverage -NotePropertyValue @(Get-GameplayRespawnCoverage $Patch)}
     $shared=[Collections.Concurrent.ConcurrentDictionary[string,object]]::new([StringComparer]::Ordinal)

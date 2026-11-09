@@ -75,7 +75,14 @@ local function safe(s,p)
  if p and p.allow_perspective and (distance(camera_eye(s,p),s.position)>3 or not unit(s.head_direction) or not up_for(unit(s.head_direction))) then return 'head_camera_unavailable' end
  if p and (s.entity~=p.entity or s.id~=p.id or (s.link==nil)~=p.link_nil) then return 'player_changed' end
  if p and distance(s.position,p.last_owned)>0.35 then return 'unexpected_player_navigation' end
- if math.sqrt(s.velocity.x*s.velocity.x+s.velocity.y*s.velocity.y)>0.2 or math.abs(s.velocity.z)>6 then return 'native_input_or_velocity' end
+ if math.sqrt(s.velocity.x*s.velocity.x+s.velocity.y*s.velocity.y)>0.2 or math.abs(s.velocity.z)>6 then
+  local ok,allowed,diagnostic=false,false,nil
+  if p and type(MineCome.GameplayCombatIncomingAllowsReaction)=='function'then ok,allowed,diagnostic=pcall(MineCome.GameplayCombatIncomingAllowsReaction,p.run,p,s.entity,s.id,s.velocity)end
+  if math.abs(s.velocity.z)>6 or not ok or allowed~=true then
+   if p then local at=clock();p.rejected_motion={at=at,velocity=copy(s.velocity),position=copy(s.position),last_owned=copy(p.last_owned),target=p.latest and copy(p.latest.target),source_age_ms=at and p.latest and (at-p.latest.received)*1000 or nil,reaction=type(diagnostic)=='table' and diagnostic or{reason=ok and 'unavailable' or 'guard_failed'}}end
+   return 'native_input_or_velocity'
+  end
+ end
  return nil
 end
 local function inside(p,v,margin) local b=p.bounds;return vector(v) and v.x>=b[1]-margin and v.x<=b[2]+margin and v.y>=b[3]-margin and v.y<=b[4]+margin and v.z>=b[5]-margin and v.z<=b[6]+margin end
@@ -122,6 +129,9 @@ local function emit(p,event,result,s,seq)
  if p.allow_perspective then t=t:sub(1,-2)..',"body_visible_baseline_owned":true,"body_hidden":'..tostring(p.body_hidden==true)..',"body_restore_dispatched":'..tostring(p.body_restore_dispatched==true)..',"body_draw_calls":'..number(p.body_draw_calls or 0)..'}' end
  if p.allow_perspective then local g=p.camera_geometry;t=t:sub(1,-2)..',"camera_collision_generation":'..number(g and g.generation or 0)..',"camera_collision_required":'..number(p.latest and p.latest.camera_generation or 0)..',"camera_collision_complete":'..tostring(g~=nil and g.complete==true)..',"camera_collision_boxes":'..number(g and #g.boxes or 0)..',"camera_collision_distance":'..number(p.camera_owned_distance or 0)..'}' end
  if event=='lifecycle' and p.lifecycle then local life=p.lifecycle;t=t:sub(1,-2)..',"lifecycle":'..quote(life.phase)..',"respawn_epoch":'..number(life.epoch)..',"from":'..vec(life.from)..',"target":'..vec(life.target)..'}' end
+ if event=='terminal' and result=='native_input_or_velocity' and p.rejected_motion then local d=p.rejected_motion;local r=d.reaction
+  t=t:sub(1,-2)..',"rejected_motion":{"sampled_engine_seconds":'..number(d.at)..',"velocity":'..vec(d.velocity)..',"position":'..vec(d.position)..',"last_owned":'..vec(d.last_owned)..',"guest_target":'..vec(d.target)..',"source_age_ms":'..number(d.source_age_ms)..',"reaction_reason":'..quote(r.reason)..',"injury_age_ms":'..number(r.injury_age_ms)..',"guest_hurt_ack":'..number(r.guest_hurt_ack)..',"guest_hurt_age_ms":'..number(r.guest_hurt_age_ms)..',"native_health":'..number(r.native_health)..',"native_maximum":'..number(r.native_maximum)..'}}'
+ end
  local ok,v=pcall(System.LogAlways,'[MineComeGameplayMovement] '..t)
  if ok and v~=false and event=='view' then
   -- A deferred camera readback can emit after the console request's marker.

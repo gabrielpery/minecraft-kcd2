@@ -52,6 +52,57 @@ try{
  Require ([IO.File]::ReadAllText($destination) -ceq 'new' -and -not [IO.File]::Exists($source)) 'Replacement retry failed.'
  [IO.File]::WriteAllText($state.HostFile+'.tmp','pending');$state.TemporaryClean=$false;Get-GameplayCombatStopCommand $state|Out-Null
  Require ($state.TemporaryClean -and -not [IO.File]::Exists($state.HostFile+'.tmp')) 'Stop left temporary publication.'
+ # Native incoming integration: exact name generation -> GUID pin -> immutable
+ # hurt, retained attacker after disappearance, and cumulative Minecraft ACK.
+ [IO.File]::Delete($file)
+ $incoming=New-GameplayCombatState $id $dir ($now+10000);$incoming.BeginSent=$true;$incoming.Begin=[pscustomobject]@{result='ready'}
+ $incoming.Incoming.Enabled=$true;$incoming.Incoming.EpochRoot=($dir+'/incoming-epochs').Replace('\','/')
+ [void][IO.Directory]::CreateDirectory($incoming.Incoming.EpochRoot+'/000000')
+ Require ((Get-GameplayCombatCommands $incoming $now) -like '*IncomingBegin*') 'Incoming native begin missing.'
+ Accept-GameplayIncomingReceipt $incoming ([pscustomobject]@{schema=1;run=$id.Run;event='begin';player_name='Dude';native_clock_ms=1000.;native_maximum=100.;path=$incoming.Incoming.EpochRoot+'/000000/'}) ($now+10)
+ # First combat Sample was dispatched alongside incoming Begin.
+ Accept-GameplayIncomingReceipt $incoming ([pscustomobject]@{schema=1;run=$id.Run;event='identity';seq=1;player_name='Dude';native_clock_ms=1100.;actors=@([pscustomobject]@{token=1;name='Enemy';first_seen_ms=1100.})}) ($now+100)
+ Accept-GameplayCombatReceipt $incoming ([pscustomobject]@{schema=1;run=$id.Run;event='sample';result='sampled';active=$true;seq=1;actors=@($actor);hit_ack=0}) ($now+100)
+ $event=[ordered]@{t='2026-11-09T13:26:11';gt=1350;pt=.1;cause=@{name='CombatHit';attacker=@{guid='22222222-2222-4222-8222-222222222222';name='Enemy'};victim=@{guid='11111111-1111-4111-8111-111111111111';name='Dude'};attackType=6;damageType=4};effects=@(
+  @{name='SoulState';soul=@{guid='11111111-1111-4111-8111-111111111111'};selector='health';oldState=100.;newState=96.;value=-4.},
+  @{name='HealthValue';soul=@{guid='11111111-1111-4111-8111-111111111111'};opponent=@{guid='22222222-2222-4222-8222-222222222222'};value=-4.;deathReason='DR_Combat'})}
+ [IO.File]::WriteAllText($incoming.Incoming.EpochRoot+'/000000/eventlog_test.json',(ConvertTo-Json -InputObject @($event) -Depth 10 -Compress))
+ Require ((Get-GameplayIncomingCommands $incoming ($now+400)) -like '*IncomingRotate*') 'Incoming native rotate missing.'
+ Accept-GameplayIncomingReceipt $incoming ([pscustomobject]@{schema=1;run=$id.Run;event='closed_segment';sequence=1;native_clock_ms=1400.;closed_path=$incoming.Incoming.EpochRoot+'/000000/';next_path=$incoming.Incoming.EpochRoot+'/000001/'}) ($now+410)
+ Update-GameplayIncomingEpochs $incoming ($now+440)
+ Require ($incoming.Incoming.HurtSequence -eq 1 -and $incoming.Incoming.Pending[0].Hurt.damage -eq .8 -and $incoming.Incoming.Pending[0].Hurt.source_utc_ms -eq $now+350) 'Native damage fraction/source timestamp changed.'
+ Require ($incoming.Incoming.PlayerGuid -ceq '11111111-1111-4111-8111-111111111111' -and $incoming.Incoming.Identities[1].Guid -ceq '22222222-2222-4222-8222-222222222222') 'Native exact-name GUID pin missing.'
+ $null=Get-GameplayCombatCommands $incoming ($now+500)
+ Accept-GameplayIncomingReceipt $incoming ([pscustomobject]@{schema=1;run=$id.Run;event='identity';seq=2;player_name='Dude';native_clock_ms=1500.;actors=@()}) ($now+510)
+ Accept-GameplayCombatReceipt $incoming ([pscustomobject]@{schema=1;run=$id.Run;event='sample';result='sampled';active=$true;seq=2;actors=@();hit_ack=0}) ($now+510)
+ $packet=Get-Content -LiteralPath $incoming.HostFile -Raw|ConvertFrom-Json
+ Require ($packet.hurts.Count -eq 1 -and $packet.actors.Count -eq 1 -and $packet.actors[0].token -eq 1) 'Pending hurt lost its captured attacker.'
+ Refuses {Accept-GameplayIncomingAck $incoming 2}
+ Accept-GameplayIncomingAck $incoming 1
+ Require ($incoming.Incoming.Pending.Count -eq 0 -and $incoming.Incoming.HurtAck -eq 1) 'Incoming hurt was not retired by original ACK.'
+ Refuses {Accept-GameplayIncomingAck $incoming 0}
+ $notification=Get-GameplayIncomingAppliedCommand $incoming ($now+520)
+ Require ($notification -ceq "MineCome.GameplayCombatIncomingApplied('$($id.Run)',1)") 'Consumed hurt ACK was not sent to native.'
+ Require ((Get-GameplayIncomingAppliedCommand $incoming ($now+550)) -ceq '') 'Pending applied notification retried too frequently.'
+ Require ((Get-GameplayIncomingAppliedCommand $incoming ($now+600)) -ceq $notification -and $incoming.Incoming.AppliedPendingSinceUtcMs -eq $now+520) 'Retry changed or renewed the original applied notification.'
+ $applied=[pscustomobject]@{schema=1;run=$id.Run;event='applied';ack=1;native_clock_ms=1600.}
+ Accept-GameplayIncomingReceipt $incoming $applied ($now+610)
+ Accept-GameplayIncomingReceipt $incoming $applied ($now+615)
+ Require ($incoming.Incoming.AppliedAck -eq 1 -and $incoming.Incoming.AppliedReceipts.Count -eq 1 -and (Get-GameplayIncomingAppliedCommand $incoming ($now+620)) -ceq '') 'Repeated applied ACK reopened its native reaction window.'
+ $applied.native_clock_ms=1601.;Refuses {Accept-GameplayIncomingReceipt $incoming $applied ($now+621)};$applied.native_clock_ms=1600.
+ $incoming.Incoming.HurtSequence=3;Accept-GameplayIncomingAck $incoming 3
+ Require ((Get-GameplayIncomingAppliedCommand $incoming ($now+650)) -like '*Applied*3)') 'Coalesced consumed ACK was lost.'
+ Refuses {Get-GameplayIncomingAppliedCommand $incoming ($now+1651)}
+ Accept-GameplayIncomingReceipt $incoming ([pscustomobject]@{schema=1;run=$id.Run;event='applied';ack=3;native_clock_ms=1650.}) ($now+660)
+ # The camera-ACK wait may forward only a fresh owned guest ACK, without
+ # advancing combat sample cadence or dispatching its pending melee request.
+ $incoming.Incoming.HurtSequence=4;$valid.seq=1;$valid.utc_ms=$now+680;$valid.hurt_ack=4;$valid.hit=$null;Write-Snapshot $valid
+ $previousSequence=$incoming.Sequence
+ Require ((Get-GameplayCombatUrgentCommands $incoming ($now+690)) -like '*Applied*4)' -and $incoming.Sequence -eq $previousSequence -and -not $incoming.PendingHit) 'Urgent applied ACK changed normal combat cadence.'
+ Accept-GameplayIncomingReceipt $incoming ([pscustomobject]@{schema=1;run=$id.Run;event='applied';ack=4;native_clock_ms=1690.}) ($now+700)
+ $incoming.Stopping=$true
+ Accept-GameplayIncomingReceipt $incoming ([pscustomobject]@{schema=1;run=$id.Run;event='terminal';cvars_restored=$true;buff_restored=$true;health_restored=$true}) ($now+550)
+ Require ((Get-GameplayIncomingHostState $incoming).CleanupComplete) 'Incoming native restoration not acknowledged.'
  'PASS combat host strict identity, numeric bounds, duplicates, stale/replayed attack, atomic publication and cleanup (no game/network)'
 }finally{
  $resolved=[IO.Path]::GetFullPath($dir);$tempRoot=[IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\')+'\'

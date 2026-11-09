@@ -33,6 +33,13 @@ try{
  if($m.failure -or -not $m.cleanup_complete -or -not $m.controls_released -or $m.patch_run -cne $run -or $m.patch_sha256 -cne $hash -or
   $b.failure -or $b.pending -or -not $b.cleanup_complete -or -not $b.controls_released -or ($c.PSObject.Properties['failure'] -and $c.failure) -or -not $c.cleanup_complete -or $c.pending -or
   $c.outgoing_hits -ne 4 -or $c.hit_ack -ne 4 -or $c.hurt_ack -ne 2 -or $c.incoming_hurts -ne 2){throw 'Combat ownership, confirmation or cleanup differs.'}
+ if($c.incoming_pending -ne 0 -or $c.incoming_creative_skipped -ne 0 -or $c.incoming_old_life_skipped -ne 0 -or $c.incoming_receipts.Count -ne 2){throw 'Incoming damage queue/receipts did not drain exactly once.'}
+ for($i=0;$i -lt 2;$i++){
+  $hurt=$c.incoming_receipts[$i];$expectedDamage=if($i -eq 0){$f.unarmored_hurt}else{$f.armored_hurt}
+  if($hurt.seq -ne ($i+1) -or $hurt.attacker_token -ne 1 -or $hurt.requested_damage -ne 8 -or $hurt.result -cne 'damaged' -or -not $hurt.vanilla_accepted -or
+   $hurt.life -ne 0 -or $hurt.source_utc_ms -le 0 -or $hurt.applied_utc_ms -lt ($hurt.source_utc_ms-50) -or
+   [Math]::Abs(($hurt.health_before-$hurt.health_after)-$expectedDamage) -gt .001){throw 'Incoming source receipt differs from actual vanilla health/armour result.'}
+ }
  $expectedStages=if($BowCheck){'combat|bow'}else{'combat'}
  if(($f.images.stage -join '|') -cne $expectedStages){throw 'Missing actual combat HUD capture.'}
  foreach($capture in $f.images){if($capture.file -cne ('combat-'+$capture.stage+'.png') -or (Get-FileHash -LiteralPath (Join-Path $result[0].EvidenceDirectory $capture.file)).Hash.ToLowerInvariant() -cne $capture.sha256 -or

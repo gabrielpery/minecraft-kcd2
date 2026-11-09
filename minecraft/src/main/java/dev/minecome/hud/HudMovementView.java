@@ -2,8 +2,6 @@ package dev.minecome.hud;
 
 import com.google.gson.*;
 import com.google.gson.stream.*;
-import dev.minecome.input.ExternalInputSessionGate;
-import dev.minecome.input.HostViewSeed;
 import java.io.*;
 import java.math.BigDecimal;
 import java.nio.ByteBuffer;
@@ -32,19 +30,22 @@ public record HudMovementView(long sequence,long utcMs,float yaw,float pitch) {
                 throw new IOException("Camera snapshot session identity differs");
             long seq=integer(value,"seq"),utc=integer(value,"utc_ms");
             if(seq<1 || seq>1_000_000 || utc<=0 || utc>now+50)throw new IOException("Camera sequence/time invalid");
-            // Reuse the inspected basis, roll and axis conversion contract. The
-            // moving snapshot has no position authority: its synthetic zero here
-            // only satisfies that parser's independent initial-position field.
-            var seed=new JsonObject();seed.addProperty("schema",1);seed.addProperty("run",id.run());
-            seed.addProperty("source_kind",fixture?"standalone_fixture":"live_kcd_view_seed");seed.addProperty("patch_sha256",patchHash);
-            seed.addProperty("target_pid",id.targetPid());seed.addProperty("target_start_filetime",Long.toUnsignedString(id.targetStart()));
-            seed.addProperty("captured_utc_ms",utc);var zero=new JsonObject();zero.addProperty("x",0);zero.addProperty("y",0);zero.addProperty("z",0);
-            seed.add("player",zero);seed.add("forward",value.get("forward"));seed.add("up",value.get("up"));
-            var expected=new ExternalInputSessionGate.Identity(id.run(),id.targetPid(),Long.toUnsignedString(id.targetStart()));
+            var forward=vector(value,"forward");var up=vector(value,"up");double fn=forward.length(),un=up.length();
+            if(fn<.99||fn>1.01||un<.99||un>1.01)throw new IOException("Moving camera forward/up must be unit vectors within0.01");
+            if(Math.abs(forward.dot(up)/(fn*un))>.01)throw new IOException("Moving camera forward/up are not orthogonal");
+            double horizontal=Math.hypot(forward.x(),forward.y());
+            if(horizontal/fn<.01)throw new IOException("Near-vertical moving camera unsupported");
+            // Movement consumes yaw/pitch, so roll around forward cannot change
+            // these angles. Native melee recoil legitimately rolls the camera.
+            // The independent GameplayAimReader -> GameplayWorldRenderer path
+            // keeps the full native up vector in setLookAt and frame metadata;
+            // the compositor checks that same rolled basis against native depth.
+            // Initial teleport seeds retain their separate <=1degree contract.
+            double yaw=Math.toDegrees(Math.atan2(-forward.x(),-forward.y()));
+            double pitch=-Math.toDegrees(Math.atan2(forward.z(),horizontal));
             // Structural parsing may retain a stale snapshot, but only fresh()
             // below authorizes use. It never renews an old capture timestamp.
-            var decoded=HostViewSeed.parse(seed.toString().getBytes(StandardCharsets.UTF_8),expected,patchHash,fixture,0,0,0,utc);
-            return new HudMovementView(seq,utc,(float)decoded.yawDegrees(),(float)decoded.pitchDegrees());
+            return new HudMovementView(seq,utc,(float)yaw,(float)pitch);
         }catch(IllegalArgumentException|IllegalStateException|ArithmeticException e){throw new IOException("Invalid camera snapshot",e);}
     }
     public boolean fresh(long now){return now>=utcMs-50 && now-utcMs<=MAX_AGE_MS;}
@@ -59,4 +60,11 @@ public record HudMovementView(long sequence,long utcMs,float yaw,float pitch) {
     }
     private static String string(JsonObject o,String key)throws IOException{var p=o.get(key);if(p==null || !p.isJsonPrimitive() || !p.getAsJsonPrimitive().isString())throw new IOException("Camera string "+key);return p.getAsString();}
     private static long integer(JsonObject o,String key)throws IOException{var p=o.get(key);if(p==null || !p.isJsonPrimitive() || !p.getAsJsonPrimitive().isNumber())throw new IOException("Camera integer "+key);return p.getAsBigDecimal().longValueExact();}
+    private record Vec(double x,double y,double z){double length(){return Math.hypot(Math.hypot(x,y),z);}double dot(Vec other){return x*other.x+y*other.y+z*other.z;}}
+    private static Vec vector(JsonObject value,String name)throws IOException{
+        var element=value.get(name);if(element==null||!element.isJsonObject()||!element.getAsJsonObject().keySet().equals(Set.of("x","y","z")))throw new IOException("Moving camera vector fields differ");
+        var v=element.getAsJsonObject();double[] axes=new double[3];int i=0;
+        for(String axis:new String[]{"x","y","z"}){var p=v.get(axis);if(!p.isJsonPrimitive()||!p.getAsJsonPrimitive().isNumber()||!Double.isFinite(p.getAsDouble())||Math.abs(p.getAsDouble())>10_000_000)throw new IOException("Moving camera vector number invalid");axes[i++]=p.getAsDouble();}
+        return new Vec(axes[0],axes[1],axes[2]);
+    }
 }

@@ -1,5 +1,38 @@
 # MineCome progress — 2026-11-09
 
+## Native unarmed attacks now damage Minecraft health
+
+**Implemented, compiled and automatically verified in both games.** The `-Combat`
+path reads actual attributed KCD2 hit records, binds exact native actor generations,
+and delivers immutable damage events to the real Minecraft server. Vanilla applies
+health loss, armor, hurt cooldowns, Creative immunity and knockback. Native health
+is maintained only as an owned proxy and restored on stop. Incoming native armed
+and ranged attacks are not enabled yet.
+
+Coupled PASS:
+`runtime/evidence/gameplay-kcd-20261109-141001-8462b86ec10c4c6cafb563d0467dccd7/native-incoming-combat-verification.json`.
+Two actual native hits6.342/3.2095 produced Minecraft1.2684/0.6419 damage:
+health20→18.7316→18.0897 with ACK2. A hit during inventory, NPC removal, three HUD
+captures and11.25s continued rendering passed; native composition/reprojection
+advanced201 frames. Save/normal exit and native health, protection, logging,
+movement/body and timer cleanup passed. All interaction in this check was scripted;
+physical keyboard/mouse acceptance is not claimed.
+
+The integration fixes native/Windows clock drift with bounded historical anchors,
+preserves full recoil camera roll, and acknowledges consumed Minecraft hits before
+applying their knockback poses. Duplicate acknowledgements cannot renew a native
+reaction allowance. Expanded terrain accommodates knockback without bypassing
+coverage boundaries. Native scenery destruction remains deferred.
+
+Actual standalone Minecraft armor acceptance also passed (20→12 unarmored;
+20→13.536 armored; chestplate wear2). Focused checks passed:409 combat,505 physical
+movement,1092 initial input/pose,61 incoming-reader checks, combat-host regression,
+43 Lua movement cases and native incoming/outgoing melee/projectile/TNT suites.
+See [source, ownership and limitations](research/INCOMING-COMBAT.md).
+
+Both clients closed normally and the temporary bundle was restored, armed=false:
+`runtime/evidence/gameplay-hud-restore-20261109-141156-caec5e4176bd4df8b266a51c74e14c89`.
+
 ## Native environmental explosions deferred
 
 The user agreed that destruction of KCD2 scenery by TNT/other explosions can be

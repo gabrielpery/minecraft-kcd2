@@ -1091,19 +1091,24 @@ the resulting damage fraction onto the native NPC's maximum health. Native
 NPCs keep their identity, movement and AI. Block mining keeps its existing path
 when the crosshair does not select an NPC. Inventory and chat suppress attacks.
 
-The outgoing bridge covers melee, bows and the TNT path above. Native NPC
-attacks are not yet routed into Minecraft health. Crossbows, sweep damage,
-knockback and secondary enchantment effects are not transferred. Minecraft's
-incoming armor/hurt logic is implemented and tested with synthetic host events;
-a native pre-damage hook and safe ownership of the underlying player's health
-are still required. See [native binding evidence](research/KCD-COMBAT.md).
+The outgoing bridge covers melee, bows and the TNT path above. Incoming native
+unarmed attacks now reduce real Minecraft health, including during inventory.
+The adapter reads attributed native hit records, normalizes native health loss
+to Minecraft's20-health scale and invokes vanilla damage. Minecraft applies
+armor, hurt cooldowns, Creative immunity and its own knockback. Native health is
+temporarily maintained as a proxy, with its original health and owned protection
+restored on stop. Use `-Combat -Explore` for room to move under knockback.
+Native armed/ranged attacks, crossbows, outgoing sweep/knockback and secondary
+enchantment effects remain unfinished. Native incoming damage still includes
+native armor before Minecraft armor; this is an initial balance, not exact
+vanilla weapon parity. See [incoming source and limits](research/INCOMING-COMBAT.md).
 
 The required combat model is free aiming and unrestricted movement. The adapter
 owns three source-backed player lock settings during `-Combat`, restoring their
 exact baselines on stop or lease expiry. A native hostile-NPC comparison verified
 that target lock stayed off while attacks continued; the default settings locked
-onto the same enemy. This does not yet establish the combined hostile HUD/mouse
-experience or reciprocal Minecraft health. NPC AI and attacks remain enabled.
+onto the same enemy. Physical hostile mouse/keyboard acceptance remains separate
+from the automated incoming-hit check. NPC AI and attacks remain enabled.
 
 The outgoing native call attributes damage using the player's native WUID and
 requests hit reactions (`suppressHitreaction=false`). A basic native recoil was
@@ -1129,9 +1134,10 @@ and 10 seconds per flight, with 64 retained arrow records. Existing embedded arr
 and pickup. Standard bow arrows are covered by live checks; spectral/tipped bow
 arrows share the collision path, but their special native effects are not
 transferred. Crossbows and piercing remain unsupported.
-Native incoming hit logging is a promising source, but delivery, duplicate
-handling and protection-clamp behavior remain unverified; native `hurts` stays
-empty.
+Incoming events keep their original source timestamps and identities through
+acknowledgement. The log transport adds delay (roughly0.6–1s in current live hits);
+it does not reset vanilla hurt cooldowns. Death/respawn discards old-life pending
+hits. Native camera recoil keeps its real basis in world rendering/reprojection.
 
 Automated checks use isolated saves and require no manual attack sequence:
 
@@ -1145,6 +1151,10 @@ Automated checks use isolated saves and require no manual attack sequence:
 & './scripts/Test-KcdCombat.ps1' -BundleDirectory $bundle
 # Actual bow arrows against an owned native NPC and real native scenery:
 & './scripts/Test-KcdCombat.ps1' -BundleDirectory $bundle -ProjectileCheck
+# Real hostile hits, inventory damage, expanded terrain and continued HUD:
+& './scripts/Test-KcdIncomingCombat.ps1' -BundleDirectory $bundle
+# Reverify saved evidence without launching either game:
+& './scripts/Test-KcdIncomingCombat.ps1' -VerifyEvidenceDirectory $evidence
 ```
 
 The standalone check uses real Minecraft attack packets, cooldowns, durability,

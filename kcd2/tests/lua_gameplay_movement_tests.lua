@@ -72,6 +72,20 @@ test('navigation conflicts and explicit hard expiry stop without origin restorat
  f=fixture();f:begin(A,1000);f:pose(1,0,5,2,3);f:fire('tick',.01);f:fire('hard',1)
  f:lastReason('session_expired');eq(f.position.x,5);eq(f:activeTimers(),0)
 end)
+test('owned incoming reaction keeps drift and vertical guards intact',function()
+ local f=fixture();f:begin();f:pose(1,0,1,2,3);f:fire('tick',.01)
+ MineCome.GameplayCombatIncomingAllowsReaction=function(run,owner,e,id,v)
+  eq(run,A);eq(owner,MineCome._gameplay_movement.active);eq(e,player);eq(id,17);eq(v.x,1);return true
+ end
+ f.velocity.x=1;f:fire('tick',.01);assert(MineCome._gameplay_movement.active);eq(f.writes,0)
+ f.velocity.z=6.01;f:fire('tick',.01);f:lastReason('native_input_or_velocity');assert(f.logs[#f.logs]:find('"rejected_motion":',1,true));assert(f.logs[#f.logs]:find('"velocity":{"x":1,"y":0,"z":6.009',1,true))
+ f=fixture();f:begin();f:pose(1,0,1,2,3);f:fire('tick',.01)
+ MineCome.GameplayCombatIncomingAllowsReaction=function()return true end
+ f.velocity.x=1;f.position.x=f.position.x+.351;f:fire('tick',.01);f:lastReason('unexpected_player_navigation')
+ f=fixture();f:begin();f:pose(1,0,1,2,3);f:fire('tick',.01)
+ MineCome.GameplayCombatIncomingAllowsReaction=function()error('unavailable guard')end
+ f.velocity.x=1;f:fire('tick',.01);f:lastReason('native_input_or_velocity')
+end)
 
 test('only explicit Creative flight permits vanilla sprint flight speed',function()
  local f=fixture();eq(MineCome.GameplayMovementBegin(A,86400000,-10,10,-10,10,-10,10,'true'),false);eq(f.serial,0)
