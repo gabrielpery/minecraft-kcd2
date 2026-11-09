@@ -1,5 +1,21 @@
 # MineCome progress — 2026-11-09
 
+## Native environmental explosions deferred
+
+The user agreed that destruction of KCD2 scenery by TNT/other explosions can be
+omitted if it slows delivery. It is now optional, not a release gate. Verified
+Minecraft construction destruction and native NPC blast damage remain working.
+
+Research identified the native DestroyableObject damage/state/model-swap path,
+but not a general way to destroy ordinary static scenery or terrain. SkyCraft
+implements a separate mesh and collision excavation system; EldenCraft keeps
+native terrain intact. See [the pinned source findings](research/TNT-SCENERY.md).
+Experimental prop changes were archived, then removed from the working code;
+they were not compiled or live-verified and are not a shipped capability.
+The unused test world closed normally and its temporary installation was restored:
+`runtime/evidence/gameplay-hud-restore-20261109-130132-99393ab42bd547c99e6f3305ec43d827`.
+Next priority is reciprocal native NPC attacks, not environmental explosions.
+
 ## TNT now damages native KCD2 NPCs
 
 `-Combat` connects player-owned vanilla TNT and chain explosions to native NPC

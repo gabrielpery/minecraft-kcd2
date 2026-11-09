@@ -53,6 +53,8 @@ An automated two-game check passes primary and chain blast damage to a native
 NPC, an unharmed control outside the radius, continued rendering and cleanup.
 Native wall-cover acceptance remains pending; automated source checks cover
 partial and full occlusion. KCD2 buildings and terrain remain unchanged.
+Native environmental explosion destruction is [optional and deferred](docs/research/TNT-SCENERY.md)
+so it does not delay the playable release.
 
 **Status: experimental development prototype.** Several bounded two-game tests
 work, but this is not yet a complete playable mod or a ready-to-install release.

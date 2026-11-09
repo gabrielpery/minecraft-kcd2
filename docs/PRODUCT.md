@@ -1,6 +1,6 @@
 # MineCome product target
 
-User-confirmed scope, 5 November 2026. This defines the intended product, not
+User-confirmed scope, 5 November 2026; explosion scope revised 9 November. This defines the intended product, not
 features available in the current development prototype. The original goal is
 real Minecraft Java gameplay inside the actual Kingdom Come: Deliverance II
 world, following the integration principles of SkyCraft and EldenCraft.
@@ -22,7 +22,7 @@ environment, NPCs, AI, dialogue and quests wherever the integration permits.
 | Survival | Real Minecraft health, hunger, saturation, food, regeneration, armour, effects, fall/environmental damage, death and respawn. Minecraft's server owns the player's survival state; a decorative HUD does not satisfy this requirement. |
 | Combat | Minecraft melee/ranged weapons and combat rules against KCD2 NPCs, with reciprocal NPC attacks damaging the Minecraft player. Preserve native NPC identity/AI and translate damage coherently between the games. |
 | Systems | Crafting, containers, furnaces, enchanting, redstone, moving blocks, fluids, TNT/explosions, Minecraft mobs and their relevant interactions with the host world. |
-| Host world | Preserve KCD2 towns, buildings, weather, dialogue, quests and native interactions where compatible. Persistent mining/deformation of native terrain and environmental objects remains part of the full target. |
+| Host world | Preserve KCD2 towns, buildings, weather, dialogue, quests and native interactions where compatible. Persistent native-terrain mining remains a longer-term ambition. Explosion-driven destruction of native terrain, buildings and props is optional and deferred; it must not block a playable release. |
 | Persistence and delivery | A reusable world/session, saved inventory/player state and construction, clean reload/reconnect, a supported KCD2 build, repeatable installation and one normal start/stop flow. No short demo cutoff or automatic return to the starting position in ordinary play. |
 
 Commands use Minecraft's parser and server permission checks, not arbitrary KCD2
@@ -39,8 +39,11 @@ actual charge/ammunition, projectile flight, collisions, damage and enchantments
 and render the real Minecraft projectiles in the host world.
 TNT must cause actual block destruction and explosion damage, not just particles.
 Stage this through Minecraft-owned construction and native NPC damage first.
-Destruction of native buildings, environmental objects and terrain remains a
-separate part of the full target; its engine support is not yet established.
+On 9 November the user allowed native environmental destruction by TNT and other
+explosions to be omitted if expensive. It is deferred and optional, rather than
+a release requirement. Preserve the verified Minecraft block destruction and
+native NPC damage. See [the scenery investigation](research/TNT-SCENERY.md) for
+reference-project behavior and the cost of arbitrary native geometry changes.
 Flights must use Minecraft's actual ability and Elytra mechanics; increasing a
 ground-test position limit alone is not a flight implementation.
 
@@ -66,7 +69,8 @@ not silently change the release checklist.
    attacks in both directions, death/respawn, and Elytra/rocket flight in the same
    persistent session. These are required features, not optional polish.
 4. **Extended systems and release:** remaining block entities/redstone/fluids,
-   mobs, native terrain destruction, progression/quest compatibility and packaging.
+   mobs, progression/quest compatibility and packaging. Native environmental
+   explosion destruction is a possible later extension, not a release gate.
 
 Milestones are implementation order, not reduced final scope. A finished product
 must satisfy the agreed required experience and list any remaining limitations.

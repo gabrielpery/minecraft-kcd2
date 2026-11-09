@@ -1057,6 +1057,8 @@ movement, hit-reaction animation or changed cover does not reinterpret that even
 Changed actors, stale grants and ambiguous native results fail closed without
 retrying damage. This does not require a fresh melee aim at the explosion.
 Native knockback and destruction of native geometry are not transferred.
+Environmental destruction by explosions is optional and deferred by the
+9 November scope decision; see [the investigation](research/TNT-SCENERY.md).
 
 Focused automated source/transport checks cover partial and full native cover,
 multi-target damage, duplicate bursts, changed actors and cleanup. The connected

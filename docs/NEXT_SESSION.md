@@ -1,5 +1,31 @@
 # Resume checkpoint — 9 November 2026
 
+## Latest decision: defer native environmental explosion destruction
+
+The user allowed this feature to be omitted if costly. Inspection found that
+SkyCraft cuts native ground/rock meshes and collision separately while protecting
+buildings; EldenCraft's current gathering design leaves native terrain intact.
+KCD2's `DestroyableObject` can break/swap native props, but ordinary BasicEntity
+objects, static brushes and terrain do not automatically support that route.
+Existing authored-world use of DestroyableObject was not established. Do not
+spend another iteration on this optional feature or claim a spawned barrel test
+proves destruction of arbitrary world scenery.
+
+Production code is restored exactly to the verified TNT/NPC implementation at
+`389854301efbc97dfab576bf1a19a23b8097cead`. Interrupted, unverified scenery changes
+are preserved outside the working tree at
+`runtime/deferred/tnt-scenery-20261109/work-in-progress.patch` (52,680 bytes,
+SHA256 `99d84ab8e8668936351dac82370d9734128878886284c7aeb7c9b40d06f234fd`).
+Do not apply it automatically. Sources and design notes:
+[TNT-SCENERY.md](research/TNT-SCENERY.md).
+
+The unused fresh test world was closed normally. No scenery fixture or explosion
+was run. Temporary installation restored and unarmed:
+`runtime/evidence/gameplay-hud-restore-20261109-130132-99393ab42bd547c99e6f3305ec43d827`.
+Resume the required gameplay work: reciprocal KCD2 NPC attacks damaging the real
+Minecraft player, using the existing native combat telemetry findings below.
+Preserve the passed TNT block/NPC milestone; no repeat manual test is needed.
+
 ## Latest work: TNT damages native NPCs, automatically verified
 
 Preserve the connected `-Combat` TNT path. `GameplayBlasts` pauses an owned TNT
