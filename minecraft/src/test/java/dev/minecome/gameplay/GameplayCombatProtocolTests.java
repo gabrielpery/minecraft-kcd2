@@ -74,6 +74,7 @@ public final class GameplayCombatProtocolTests {
         altered=valid.deepCopy();altered.getAsJsonArray("hurts").get(0).getAsJsonObject().addProperty("damage",1001);reject(altered,"Damage bound");
         for(String text:List.of("","null","[]","{}",valid+"{}","/*comment*/"+valid," ".repeat(131073)))reject(text,"Malformed/bounded document");
         projectileReplies();snapshotFiles();
+        checks+=GameplayProjectileInterpolationTests.run();
         System.out.println("GameplayCombatProtocolTests: "+checks+" checks passed; no games");
     }
     private static void projectileReplies(){

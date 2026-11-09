@@ -1,5 +1,44 @@
 # MineCome progress — 2026-11-09
 
+## Confirmed arrow interpolation and earlier collision dispatch
+
+The existing single console worker now dispatches projectile requests during its
+camera acknowledgement wait, preserving camera deadlines, request timestamps,
+ownership and melee cadence. A focused worker regression published a projectile
+reply in53ms while its180ms camera acknowledgement was still outstanding.
+
+The world renderer now interpolates along consecutive confirmed server segments
+instead of compressing each movement into one client tick. Playback retains
+corners and stays within100ms; contact, removal, respawn or a discontinuity clears
+it immediately. It changes only presentation, never collision or physical state.
+
+**Actual two-game automatic PASS:**
+`runtime/evidence/gameplay-kcd-20261109-104526-49ec8754f44c48deb5ea46253c110830/native-combat-verification.json`.
+Eight traces yielded6 clear segments, one native NPC hit and one scenery hit.
+Vanilla damage8 reduced native NPC health100→60; the second arrow embedded in
+actual native ground. The actual renderer submitted32 intermediate confirmed
+positions. Inventory suppression,0.641m walking,194 further native composition
+and reprojection frames, normal save and complete cleanup passed. Input was
+scripted; no manual test or subjective smoothness acceptance is claimed.
+
+The9 requests averaged135.8ms from publication to native receipt:43.8ms before
+dispatch and92.0ms after dispatch, with186ms maximum total. Waiting server ticks
+were24 versus27 in the preceding8-trace native run. This is a modest improvement,
+not vanilla-speed flight. The remaining native round trip needs a transport or
+checked-path batching change, rather than more interpolation tuning or repeated
+manual comparisons. Do not relax collision/freshness to conceal the delay.
+
+Standalone actual Minecraft with synthetic contacts also passed, including7
+intermediate render samples, damage, scenery, charge/ammo/durability and cleanup:
+`runtime/evidence/gameplay-combat-20261109-104430-ab15d62b37c145cc94b59f54d15a3712/verification.json`.
+Compilation and308 focused combat checks (28 interpolation checks),46 projectile
+host checks, existing combat host and actual worker regressions passed.
+
+KCD2 exited normally; the temporary installation is restored and unarmed:
+`runtime/evidence/gameplay-hud-restore-20261109-104644-9fae40fc94f748d2969a7f6870cd6211`.
+This supersedes the unmeasured timing-refinement status below. TNT destruction
+and reciprocal NPC damage remain separate unfinished gameplay milestones.
+
 ## Bow arrows hit native scenery and NPCs
 
 Connected `-Combat` now enables ordinary bow input. Real vanilla arrows query

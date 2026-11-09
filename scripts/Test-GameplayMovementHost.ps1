@@ -133,6 +133,9 @@ function Start-Sleep([int]$Milliseconds){
     Microsoft.PowerShell.Utility\Start-Sleep -Milliseconds $Milliseconds
 }
 function Assert-MineComeProbeContext($Context){
+    if($WorldBlocks -and $Context.FixtureFault -eq 'projectile_wait' -and $request.Command.Contains('GameplayProjectileTrace')){
+        $Shared['FixtureProjectileGuard']=[pscustomobject]@{Sequence=$pendingViewRequest.Sequence;DeadlineAt=$pendingViewRequest.DeadlineAt;RequestedUtcMs=$pendingViewRequest.RequestedUtcMs}
+    }
     if($WorldBlocks -and $Context.FixtureFault -eq 'dispatch_delay' -and $request.Command -match "GameplayMovementSample\('[a-f0-9]+',(\d+)(,true)?\)"){
         $script:fixtureGateStarted=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
         Start-Sleep -Milliseconds 80
@@ -141,6 +144,13 @@ function Assert-MineComeProbeContext($Context){
     if($WorldBlocks -and $Context.FixtureFault -eq 'prefetch_slow' -and $request.Command -match "GameplayMovementSample\('[a-f0-9]+',(\d+)(,true)?\)" -and [long]$Matches[1] -ge 2){Start-Sleep -Milliseconds 220}
 }
 $script:originalPublish=${function:Publish-GameplayMovementView}
+$script:originalCombatPublish=${function:Publish-GameplayCombatFile}
+function Publish-GameplayCombatFile([string]$Temporary,[string]$Destination){
+    & $script:originalCombatPublish $Temporary $Destination
+    if($WorldBlocks -and $Context.FixtureFault -eq 'projectile_wait' -and $Destination -ceq $CombatState.Projectiles.HostFile){
+        $Shared['FixtureProjectilePublished']=[pscustomobject]@{Sequence=$pendingViewRequest.Sequence;DeadlineAt=$pendingViewRequest.DeadlineAt;RequestedUtcMs=$pendingViewRequest.RequestedUtcMs;UtcMs=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()}
+    }
+}
 function Publish-GameplayMovementView([string]$Temporary,[string]$Destination,[int]$RetryMilliseconds=100){
     $capture=$null;$started=0L
     if($WorldBlocks -and $Context.FixtureFault -eq 'pipeline' -and $Destination -in @($ViewFile,$aimFile)){
@@ -160,6 +170,18 @@ $script:fixtureGateStarted=0L;$script:fixtureGateFinished=0L
 function Invoke-MineComeToolsRequest([string]$PathAndQuery,[int]$TimeoutMilliseconds){
     $body=[Uri]::UnescapeDataString($PathAndQuery.Substring($PathAndQuery.IndexOf('command=')+8))
     if($WorldBlocks){$Shared['FixtureCommands'].Enqueue($body)}
+    if($WorldBlocks -and $Context.FixtureFault -eq 'projectile_wait'){
+        $combat=$null
+        if($body.Contains('GameplayCombatBegin')){$combat=@{schema=1;run=$Identity.Run;event='begin';result='ready';active=$true;lock_policy_active=$true}}
+        elseif($body.Contains('GameplayCombatEnd')){$combat=@{schema=1;run=$Identity.Run;event='terminal';result='explicit_stop';active=$false;timers_cancelled=$true;lock_policy_restored=$true}}
+        elseif($body -match "GameplayCombatSample\('[a-f0-9]+',(\d+)\)"){$combat=@{schema=1;run=$Identity.Run;event='sample';seq=[long]$Matches[1];result='sampled';active=$true;hit_ack=0;actors=@()}}
+        if($combat){[IO.File]::AppendAllText($Context.GameLog,('[MineComeGameplayCombat] '+($combat|ConvertTo-Json -Depth 5 -Compress)+"`n"))}
+        if($body.Contains('GameplayProjectileTrace')){
+            $p=$CombatState.Projectiles.Pending;$pr=$p.request
+            $combat=@{schema=1;run=$Identity.Run;event='projectile_trace';seq=$p.seq;active=$true;projectile=$pr.projectile;segment=$pr.segment;result='clear';reason='';actor_token=0;contact=$pr.to;normal=@{x=0.;y=0.;z=0.};actor=$null;before=$null;after=$null}
+            [IO.File]::AppendAllText($Context.GameLog,('[MineComeGameplayCombat] '+($combat|ConvertTo-Json -Depth 5 -Compress)+"`n"))
+        }
+    }
     # A native timer can emit its camera ACK after the request's flush. KCD's
     # latest log line then becomes readable only on a subsequent console flush.
     if($script:fixtureUnterminated){
@@ -209,7 +231,15 @@ function Invoke-MineComeToolsRequest([string]$PathAndQuery,[int]$TimeoutMillisec
         if($script:fixtureUnterminated){$script:fixtureBufferedSequence=$r.seq}
         $ending=if($script:fixtureUnterminated){''}else{"`n"}
         $line='[MineComeGameplayMovement] '+($r|ConvertTo-Json -Depth 5 -Compress)+$ending
-        if($WorldBlocks -and $Context.FixtureFault -in @('pipeline','prefetch_slow') -and $r.event -eq 'view'){[MineCome.Tests.DelayedGameplayLog]::Append($Context.GameLog,$line,60)}else{[IO.File]::AppendAllText($Context.GameLog,$line)}
+        if($WorldBlocks -and $Context.FixtureFault -eq 'projectile_wait' -and $r.event -eq 'view' -and $r.seq -eq 1){
+            # The request appears only AFTER the outer combat command pass.
+            # Withhold this camera ACK so the original worker would stall it.
+            $requestUtc=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+            $guest=@{schema=1;kind='minecome_gameplay_projectiles_guest_v1';run=$Identity.Run;world_id=$Identity.WorldId;target_pid=$Identity.Pid;target_start_filetime=$Identity.Start;patch_run=$Identity.PatchRun;patch_sha256=$Identity.PatchHash;seq=1;utc_ms=$requestUtc;request=@{operation='trace';projectile='d'*32;segment=1;from=@{x=1.;y=2.;z=4.62};to=@{x=1.;y=5.;z=4.62};actor_token=0;damage_mc=0.;damage_fraction=0.}}
+            [IO.File]::WriteAllText($CombatState.Projectiles.SnapshotFile,($guest|ConvertTo-Json -Depth 8 -Compress))
+            $Shared['FixtureProjectileCreated']=$requestUtc
+            [MineCome.Tests.DelayedGameplayLog]::Append($Context.GameLog,$line,180)
+        }elseif($WorldBlocks -and $Context.FixtureFault -in @('pipeline','prefetch_slow') -and $r.event -eq 'view'){[MineCome.Tests.DelayedGameplayLog]::Append($Context.GameLog,$line,60)}else{[IO.File]::AppendAllText($Context.GameLog,$line)}
     }
     $script:fixtureSequence++
     $p=[ordered]@{schema=1;kind='minecome_gameplay_pose_v1';run=$Identity.Run;world_id=$Identity.WorldId;target_pid=$Identity.Pid;target_start_filetime=$Identity.Start;patch_run=$Identity.PatchRun;patch_sha256=$Identity.PatchHash;seq=$script:fixtureSequence;utc_ms=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds();source_ms=$script:fixtureSequence*10;position=@{x=1.;y=2.;z=3.}}
@@ -258,7 +288,7 @@ function Invoke-MineComeToolsRequest([string]$PathAndQuery,[int]$TimeoutMillisec
         @{Perspective=1;Fault='cleanup_result'},@{Perspective=1;Fault='cleanup_active'},@{Perspective=1;Fault='cleanup_camera'},
         @{Perspective=1;Fault='cleanup_body'},@{Perspective=1;Fault='cleanup_hidden'},@{Perspective=1;Fault='cleanup_missing'},
         @{Perspective=1;Fault='cleanup_type'},@{Perspective=1;Fault='perspective_cleanup'},@{Perspective=0;Fault='buffered_view'},
-        @{Perspective=1;Fault='dispatch_delay'},@{Perspective=1;Fault='receipt_delay'},@{Perspective=1;Fault='sample_cadence'},@{Perspective=1;Fault='pipeline'},@{Perspective=1;Fault='prefetch_slow'},
+        @{Perspective=1;Fault='dispatch_delay'},@{Perspective=1;Fault='receipt_delay'},@{Perspective=1;Fault='sample_cadence'},@{Perspective=1;Fault='pipeline'},@{Perspective=1;Fault='prefetch_slow'},@{Perspective=1;Fault='projectile_wait'},
         @{Perspective=1;Fault='';Boxes=512},@{Perspective=1;Fault='';CameraFault='incomplete'},
         @{Perspective=1;Fault='';CameraFault='mutate'},@{Perspective=1;Fault='';CameraFault='regress'},@{Perspective=1;Fault='';CameraFault='fresh'})){
         [IO.File]::WriteAllText($gameLog,'');[IO.File]::Delete($poseFile);[IO.File]::Delete($viewFile)
@@ -279,7 +309,8 @@ function Invoke-MineComeToolsRequest([string]$PathAndQuery,[int]$TimeoutMillisec
         $minimumViews=if($case.Fault -eq 'sample_cadence'){12}elseif($case.Fault -eq 'pipeline'){6}else{3}
         $context=[pscustomobject]@{GameLog=$gameLog;FixturePerspective=$case.Perspective;FixtureFault=$case.Fault;FixtureBoxCount=$boxCount;FixtureCameraFault=$cameraFault}
         $expires=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()+5000
-        $null=$pipeline.AddScript((Get-GameplayMovementWorker).ToString()).AddArgument($context).AddArgument($identity).AddArgument($bounds).AddArgument($poseFile).AddArgument($viewFile).AddArgument($expires).AddArgument(0L).AddArgument($shared).AddArgument($cancel.Token).AddArgument($directory).AddArgument($null).AddArgument($null).AddArgument($false).AddArgument($true)
+        $combatState=if($case.Fault -eq 'projectile_wait'){New-GameplayCombatState $identity $directory $expires}else{$null}
+        $null=$pipeline.AddScript((Get-GameplayMovementWorker).ToString()).AddArgument($context).AddArgument($identity).AddArgument($bounds).AddArgument($poseFile).AddArgument($viewFile).AddArgument($expires).AddArgument(0L).AddArgument($shared).AddArgument($cancel.Token).AddArgument($directory).AddArgument($null).AddArgument($null).AddArgument($false).AddArgument($true).AddArgument($combatState)
         $async=$pipeline.BeginInvoke();$watch=[Diagnostics.Stopwatch]::StartNew()
         do{
             if($shared.ContainsKey('Snapshot')){$s=$shared['Snapshot'];if($s.Stopped -or ($s.ViewCount -ge $minimumViews -and $s.PoseCount -ge $minimumPoses) -or ($case.Fault -eq 'receipt_delay' -and $s.LastView -and $s.LastView.seq -ge 2) -or ($case.Fault -eq 'prefetch_slow' -and $s.LastView)){break}}
@@ -323,7 +354,7 @@ function Invoke-MineComeToolsRequest([string]$PathAndQuery,[int]$TimeoutMillisec
             Require (-not [IO.File]::Exists($viewFile) -and [IO.File]::Exists($aimFile)) 'Slow prefetch did not retain the earlier fresh aim while rejecting the expired legacy view.'
             $aim=Get-Content -LiteralPath $aimFile -Raw|ConvertFrom-Json;$first=$shared['FixtureSamples']['1'];$firstTiming=@($s.ViewTiming.Samples|Where-Object Sequence -eq 1)[0]
             Require ($aim.seq -eq 1 -and $aim.utc_ms -eq $first.RequestedUtc -and $firstTiming.AimPublished -and $firstTiming.AimPublicationUtcMs-$aim.utc_ms -le 250 -and -not $firstTiming.Published) 'Early aim publication renewed its original timestamp or exceeded expiry.'
-        }elseif($case.Fault -and $case.Fault -notin @('buffered_view','dispatch_delay','sample_cadence','pipeline')){
+        }elseif($case.Fault -and $case.Fault -notin @('buffered_view','dispatch_delay','sample_cadence','pipeline','projectile_wait')){
             $expected=switch($case.Fault){'perspective' {'Native gameplay perspective missing.'};'perspective_cleanup' {'Native gameplay perspective missing.'};'fov' {'World block camera FOV unavailable.'};'sequence' {'Native gameplay view acknowledgement differs.'}}
             Require ($s.Failure -ceq $expected -and -not [IO.File]::Exists($aimFile)) "Malformed native $($case.Fault) was published: $($s.Failure)"
         }else{
@@ -339,6 +370,14 @@ function Invoke-MineComeToolsRequest([string]$PathAndQuery,[int]$TimeoutMillisec
             Require ($view.utc_ms -le $sampleTiming.ExecutedUtc) 'View capture UTC was restamped after the actual sample executed.'
             if($case.Fault -eq 'dispatch_delay'){
                 Require ($sampleTiming.GateFinished-$sampleTiming.GateStarted -ge 70 -and $view.utc_ms -ge $sampleTiming.GateFinished) 'View UTC includes pre-dispatch identity-gate delay.'
+            }
+            if($case.Fault -eq 'projectile_wait'){
+                $guard=$shared['FixtureProjectileGuard'];$published=$shared['FixtureProjectilePublished'];$reply=$s.Combat.Projectiles.LastReply
+                Require ($guard.Sequence -eq 1 -and $published.Sequence -eq 1 -and $published.DeadlineAt -eq $guard.DeadlineAt -and $published.RequestedUtcMs -eq $guard.RequestedUtcMs) 'Projectile did not dispatch/publish during the same original camera wait.'
+                Require ($reply.request_utc_ms -eq $shared['FixtureProjectileCreated'] -and $reply.utc_ms -le $published.UtcMs -and $reply.utc_ms-$reply.request_utc_ms -lt 180) 'Projectile waited for the withheld camera ACK or renewed its original UTC.'
+                Require (@($commands|Where-Object {$_ -match 'GameplayProjectileTrace'}).Count -eq 1 -and $s.Combat.Projectiles.Timing.Count -eq 1) 'Urgent projectile was dispatched or counted more than once.'
+                Require ($s.Combat.CleanupComplete -and $s.Combat.Projectiles.CleanupComplete -and -not $s.Combat.Projectiles.Pending) 'Urgent projectile did not retain combat/worker cleanup.'
+                Write-Output ('HOST_PROJECTILE camera_ack_delay_ms=180 request_receipt_ms='+($reply.utc_ms-$reply.request_utc_ms))
             }
             Require ($aim.origin.x -eq 1 -and $aim.origin.y -eq 2 -and $aim.origin.z -eq 4.62 -and $aim.direction.x -eq 1 -and $aim.direction.y -eq 0) 'Interaction ray did not retain the player eye.'
             Require ($aim.camera_origin.y -eq -1 -and $aim.camera_direction.y -eq -1 -and $aim.camera_up.z -eq 1 -and $aim.vertical_fov -eq 1.2) 'Third-person render camera basis differs.'

@@ -55,6 +55,7 @@ if(-not $ProjectileCheck -and ($c.outgoing_hits -ne 1 -or $c.hit_ack -ne 1 -or $
 foreach($capture in $f.images){if((Get-FileHash -LiteralPath (Join-Path $saved $capture.file)).Hash.ToLowerInvariant() -cne $capture.sha256 -or $capture.metadata.world_id -cne $s.world_id -or -not $capture.metadata.PSObject.Properties['world_camera']){throw 'Native combat image identity differs.'}}
 if($ProjectileCheck){
  $p=$c.projectiles;$native=$h.Combat.Projectiles;$impact=$native.LastImpact.reply
+ if($p.rendered_intermediate_samples -lt 1 -or $p.prequeued_segments -lt 1){throw 'Native projectile check did not exercise flight dispatch and rendering smoothing.'}
  if(-not $f.projectile_check -or -not $f.native_projectile_scenery_verified -or $p.impacts -ne 1 -or $p.scenery_hits -ne 1 -or $p.rejected -ne 0 -or $p.pending -or -not $p.cleanup_complete -or
   $native.Impacts -ne 1 -or $native.Scenery -ne 1 -or $native.Damaged -ne 1 -or $native.Rejected -ne 0 -or $native.Pending -or -not $native.CleanupComplete -or
   $impact.result -cne 'damaged' -or $impact.before -ne $f.native_health_before -or [Math]::Abs($impact.after-$f.native_health_after) -gt .01 -or
@@ -96,6 +97,7 @@ if($compositedDelta -lt 1 -or $reprojectedDelta -lt 1){throw 'Native composition
 [ordered]@{schema=1;kind='minecome_native_combat_verification_v1';result='passed';run=$s.run;world_id=$s.world_id;fixture_run=$run;fixture_removed=$removed;
  actual_minecraft=$true;actual_native_npc=$true;scripted_guest_input=$true;physical_native_input_verified=$false;reciprocal_native_damage_verified=$false;hostile_free_aim_verified=$false;
  projectile_check=[bool]$ProjectileCheck;native_damage_receipt=$(if($ProjectileCheck){$h.Combat.Projectiles.LastImpact.reply}else{$h.Combat.LastHit});projectiles=$h.Combat.Projectiles;vanilla_damage=$f.vanilla_damage;walk_distance=$f.walk_distance;fixture_evidence=$probe.Directory;
+ minecraft_projectiles=$(if($ProjectileCheck){$c.projectiles}else{$null});
  native_composited_frames=($depth.composited|Measure-Object -Maximum).Maximum;native_reprojected_frames=($depth.reprojected|Measure-Object -Maximum).Maximum;
  native_post_walk_composited_frames=$compositedDelta;native_post_walk_reprojected_frames=$reprojectedDelta;native_post_walk_counter_samples=$window;
  inventory_native_eye_horizontal_drift=$f.inventory_native_eye_horizontal_drift}|

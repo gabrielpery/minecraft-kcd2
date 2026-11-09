@@ -1,6 +1,6 @@
 # Resume checkpoint — 9 November 2026
 
-## Current work: connected bows, then arrow smoothness
+## Current work: connected bows and confirmed arrow smoothing
 
 Outgoing actual Minecraft primary melee → native NPC damage is already verified,
 as are native visible hit reactions. Preserve the WUID attribution fix:
@@ -63,22 +63,34 @@ Do not regress this to raw native AABBs: the first horizontal shot grazed above
 the NPC head. Aim slightly downward through the torso before a coupled check;
 ordinary native mouse input established that aim for the passing run.
 
-**Next priority: arrow travel latency.** The user saw the arrow as very laggy and
-not smooth. Collision currently pauses each actual arrow tick for the file/console
-round trip. Passing evidence has8 traces and27 waiting server ticks; this is a
-known user-visible limitation, not finished vanilla-speed flight. A first fix now
-queues the next segment immediately after a confirmed clear vanilla tick, using
-its actual updated position/velocity. It applies only to the sole airborne
-arrow, so the single transport slot does not starve other arrows. Actual Minecraft
-synthetic-host PASS:
-`runtime/evidence/gameplay-combat-20261109-103239-25283b0c5a3c4adc931c8ebf8a22710c/verification.json`.
-All3 clear segments used this path; blocked ticks fell6→2 across5 traces, with
-scenery, damage and cleanup still passing. This final timing refinement has not
-had another coupled run; do not claim native smoothness is solved. Native final
-trace request→receipt was122ms and impact158ms in the earlier coupled run.
-Investigate the existing worker/receipt path next while preserving checked
-collision, immutable timestamps and deduplication. Do not hide latency with
-unchecked client prediction or repeat the already-passing hitbox acceptance.
+**Latest arrow smoothing PASS:**
+`runtime/evidence/gameplay-kcd-20261109-104526-49ec8754f44c48deb5ea46253c110830/native-combat-verification.json`.
+Preserve immediate next-segment publication from actual vanilla state, the urgent
+projectile dispatch inside the same worker's camera-ACK wait, and render-only
+confirmed-segment playback. The latter follows corners, caps lag at100ms and
+resets immediately for contact/removal/respawn/discontinuities; it never changes
+physics or predicts through unchecked scenery. Exact client entity generations
+own playback; server snapshots are immutable.
+
+Actual native run:8 traces,6 clear,1 actor,1 scenery, damage8/native100→60HP,
+32 actual intermediate render samples,24 waiting server ticks (previously27),
+inventory suppression,0.641m walking,194 further composition/reprojection frames,
+normal save and cleanup. All6 clear segments prequeued.9 requests averaged135.8ms
+publication→receipt:43.8ms dispatch wait +92.0ms native/log wait; maximum186ms.
+This improves presentation but does not establish vanilla flight speed or human
+smoothness acceptance. Any further substantial speed work must reduce native
+round trips or safely batch checked paths; do not spend another iteration on
+tiny interpolation tuning or repeat hitbox/manual checks.
+
+Standalone actual Minecraft/synthetic host also passes:
+`runtime/evidence/gameplay-combat-20261109-104430-ab15d62b37c145cc94b59f54d15a3712/verification.json`.
+It records7 intermediate samples,3 waits across5 traces, intact damage/scenery
+and cleanup. Compile +308 combat checks (28 interpolation),46 projectile-host,
+existing combat-host and movement-worker checks passed. The mocked actual worker
+regression returns the projectile reply in53ms during a180ms camera ACK, without
+renewing deadlines or retrying. Both actual runners now require intermediate
+render samples; the coupled result stores Minecraft counters alongside native
+timing. Preserve immutable timestamps, ownership and duplicate protection.
 Current bounds:16 active flights,64 retained records,4m segments,64m travel,10s.
 Spectral/tipped bow arrows share the same base path but their special native
 effects and separate live acceptance remain open; crossbows/piercing are absent.
@@ -97,9 +109,9 @@ reaction proof is `runtime/evidence/combat-reaction-20261108-221429-6f97fea06371
 Preserve immediate validated attack dispatch and unchanged freshness deadlines.
 Windows sharing failures must not refresh stale snapshot timestamps.
 
-Native test worlds closed normally. The temporary WorldBlocks installation is
-restored and unarmed:
-`runtime/evidence/gameplay-hud-restore-20261109-102504-a96c9ce8013a4492986166e6e99b22e4`.
+Native test worlds closed normally. The latest temporary WorldBlocks installation
+(`runtime/hud-projectile-smoothing-20261109`) is restored and unarmed:
+`runtime/evidence/gameplay-hud-restore-20261109-104644-9fae40fc94f748d2969a7f6870cd6211`.
 For a relevant coupled change, prepare/install a fresh owned WorldBlocks bundle
 and run `scripts/Test-KcdCombat.ps1 -BundleDirectory $bundle -ProjectileCheck` in a fresh loaded
 tools world. It starts Minecraft, owns/spawns/removes its passive NPC, fires at

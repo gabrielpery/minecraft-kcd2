@@ -32,6 +32,7 @@ try{
  Require ($response.seq -eq 1 -and $response.utc_ms -eq $now+20 -and $response.request_utc_ms -eq $now -and $response.reply.operation -ceq 'trace' -and $state.Pending -eq $null) 'Trace response identity/time differs.'
  $published=Get-Content -LiteralPath $state.HostFile -Raw;Accept-GameplayProjectileReceipt $state $clear ($now+30)
  Require ((Get-Content -LiteralPath $state.HostFile -Raw) -ceq $published) 'Duplicate receipt refreshed response timestamp.'
+ Require ($state.Timing.Count -eq 1 -and $state.Timing.TotalMs -eq 20 -and $state.Timing.MaxMs -eq 20 -and $state.Timing.DispatchWaitTotalMs -eq 0 -and $state.Timing.NativeWaitTotalMs -eq 20) 'Receipt timing omitted original UTC or counted a duplicate.'
  Require ((Get-GameplayProjectileCommands $state ($now+40)) -ceq '') 'Acknowledged request replayed.'
  $document.seq=2;$document.utc_ms=$now+50;$request.operation='impact';$request.actor_token=1;$request.damage_mc=7.;$request.damage_fraction=.35;Write-Request
  Refuses {Get-GameplayProjectileCommands $state ($now+50)}

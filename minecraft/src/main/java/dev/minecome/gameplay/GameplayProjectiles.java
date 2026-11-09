@@ -29,19 +29,24 @@ public final class GameplayProjectiles {
     private static volatile GameplayProjectiles active;
     private static final class Track {
         final PersistentProjectileEntity arrow;final UUID owner;final String id;final long created=System.nanoTime();
+        final List<GameplayProjectileInterpolation.Sample> confirmed=new ArrayList<>();
         int segment;boolean embedded,finished,applied;GameplayProjectileProtocol.Reply trace;Vec3d from,to;GameplayActorEntity actor;
-        Track(PersistentProjectileEntity arrow){this.arrow=arrow;owner=arrow.getOwner().getUuid();id=arrow.getUuid().toString().replace("-","");}
+        Track(PersistentProjectileEntity arrow){this.arrow=arrow;owner=arrow.getOwner().getUuid();id=arrow.getUuid().toString().replace("-","");confirmed.add(new GameplayProjectileInterpolation.Sample(0,created,presentationPoint(arrow.getPos())));}
     }
     private record Pending(GameplayProjectileProtocol.Request request,Track track,long at){}
-    private record Pose(Vec3d position,Vec3d velocity,float yaw,float pitch,int shake,boolean ground,boolean removed){}
+    private record Pose(Vec3d position,Vec3d velocity,float yaw,float pitch,int shake,boolean ground,boolean removed,boolean finished,List<GameplayProjectileInterpolation.Sample> confirmed){}
+    private record Visual(PersistentProjectileEntity arrow,GameplayProjectileInterpolation playback){}
+    public record RenderPosition(Vec3d position,boolean visible,boolean intermediate){}
     private final GameplayCombat combat;private final HudInputProtocol.Identity identity;private final String worldId;private volatile GroundSurface surface;
     private final Path hostFile,guestFile,temporary;private final boolean enabled;
     private final Map<UUID,Track> tracks=new LinkedHashMap<>(); // Server thread only.
     private volatile Map<UUID,Pose> poses=Map.of();
+    private final Map<UUID,Visual> visuals=new HashMap<>(); // Client/render thread only; exact entity generation.
+    private volatile boolean resetVisuals;
     private final AtomicReference<Pending> pending=new AtomicReference<>();private final AtomicReference<GameplayProjectileProtocol.Reply> delivered=new AtomicReference<>();
     private volatile GameplayProjectileProtocol.Reply lastReply,lastImpact,lastScenery;private volatile boolean closed,workerClosed,serverClosed,ready;
     private Object clientWorld,clientPlayer;private volatile MinecraftServer server;private ServerPlayerEntity player;
-    private long sequence,published,readSequence;private String readText;private volatile long traces,clear,scenery,actorHits,impacts,rejected,waitTicks,prequeuedSegments,mirroredTicks,removedOnStop;
+    private long sequence,published,readSequence;private String readText;private volatile long traces,clear,scenery,actorHits,impacts,rejected,waitTicks,prequeuedSegments,mirroredTicks,removedOnStop,renderedIntermediateSamples;
     private volatile double damage,minecraftDamage;private volatile String failure;
     public GameplayProjectiles(GameplayCombat combat,HudInputProtocol.Identity identity,GameplayWorld save,GroundSurface surface,Path directory,boolean standalone)throws IOException{
         this.combat=combat;this.identity=identity;this.worldId=save.id().toString();this.surface=surface;
@@ -53,6 +58,8 @@ public final class GameplayProjectiles {
     public void client(MinecraftClient c,boolean admitted){
         if(!enabled)return;if(clientWorld==null){clientWorld=c.world;clientPlayer=c.player;server=c.getServer();}
         if(c.world!=clientWorld||c.player!=clientPlayer||c.getServer()!=server)throw new IllegalStateException("Projectile client owner changed");
+        if(resetVisuals){visuals.clear();resetVisuals=false;}
+        visuals.entrySet().removeIf(entry->entry.getValue().arrow().isRemoved()||entry.getValue().arrow().getWorld()!=clientWorld||entry.getValue().arrow().getOwner()!=clientPlayer);
         ready=admitted&&!closed&&failure==null;
     }
     public static boolean readyForDraw(MinecraftClient c){var s=active;return s!=null&&s.enabled&&s.ready&&!s.closed&&s.clientWorld==c.world&&s.clientPlayer==c.player&&s.server==c.getServer();}
@@ -68,7 +75,20 @@ public final class GameplayProjectiles {
         if(task!=null&&System.nanoTime()-task.at()>1_500_000_000L)fail("Native projectile reply expired; no replay");
         tracks.entrySet().removeIf(entry->entry.getValue().arrow.isRemoved()&&(pending.get()==null||pending.get().track()!=entry.getValue()));publishPoses();
     }
-    private void publishPoses(){var next=new HashMap<UUID,Pose>();for(var t:tracks.values()){var a=t.arrow;next.put(a.getUuid(),new Pose(a.getPos(),a.getVelocity(),a.getYaw(),a.getPitch(),a.shake,t.embedded,a.isRemoved()));}poses=Map.copyOf(next);}
+    private void publishPoses(){var next=new HashMap<UUID,Pose>();for(var t:tracks.values()){var a=t.arrow;next.put(a.getUuid(),new Pose(a.getPos(),a.getVelocity(),a.getYaw(),a.getPitch(),a.shake,t.embedded,a.isRemoved(),t.finished,List.copyOf(t.confirmed)));}poses=Map.copyOf(next);}
+    /** The world renderer uses this translation without changing the client or server entity. */
+    public static RenderPosition renderPosition(PersistentProjectileEntity arrow){
+        var s=active;var c=MinecraftClient.getInstance();
+        if(s==null||s.closed||!c.isOnThread()||c.world!=s.clientWorld||c.player!=s.clientPlayer||c.getServer()!=s.server||arrow.getWorld()!=c.world||arrow.getOwner()!=c.player)return null;
+        var visual=s.visuals.get(arrow.getUuid());var pose=s.poses.get(arrow.getUuid());
+        if(s.resetVisuals){s.visuals.clear();s.resetVisuals=false;visual=null;}
+        if(pose==null)return visual==null?null:new RenderPosition(arrow.getPos(),false,false);
+        if(visual==null||visual.arrow()!=arrow){visual=new Visual(arrow,new GameplayProjectileInterpolation());s.visuals.put(arrow.getUuid(),visual);}
+        if(pose.ground()||pose.removed()||pose.finished()){visual.playback().clear();return new RenderPosition(pose.position(),!pose.removed()&&!pose.finished(),false);}
+        var frame=visual.playback().frame(pose.confirmed(),System.nanoTime());
+        var p=frame.point();return new RenderPosition(new Vec3d(p.x(),p.y(),p.z()),true,frame.intermediate());
+    }
+    public static void rendered(PersistentProjectileEntity arrow,RenderPosition position){var s=active;if(s==null||s.closed||position==null||!position.intermediate())return;var visual=s.visuals.get(arrow.getUuid());if(visual!=null&&visual.arrow()==arrow)s.renderedIntermediateSamples++;}
     public static boolean beforeTick(PersistentProjectileEntity arrow,boolean inGround){
         var s=active;if(s==null||!s.enabled||s.closed)return false;
         try{return arrow.getWorld().isClient?s.clientTick(arrow):s.serverTick(arrow,inGround);}catch(Exception e){s.fail(e.toString());if(!arrow.getWorld().isClient&&s.owned(arrow))arrow.discard();return true;}
@@ -163,6 +183,10 @@ public final class GameplayProjectiles {
             t.embedded=inGround;boolean confirmedClear=t.trace!=null&&t.trace.result().equals("clear");
             if(t.trace!=null&&t.trace.result().equals("actor")&&!t.applied&&!inGround){t.finished=true;arrow.discard();s.rejected++;}
             t.trace=null;
+            if(confirmedClear&&!inGround&&!t.finished&&!arrow.isRemoved()){
+                t.confirmed.add(new GameplayProjectileInterpolation.Sample(t.segment,System.nanoTime(),presentationPoint(arrow.getPos())));
+                if(t.confirmed.size()>8)t.confirmed.removeFirst();
+            }
             // Only the completed vanilla tick supplies this segment's position and
             // velocity. Queue it now so transport can run between server ticks.
             // Multiple arrows keep the existing scheduler and its single-flight slot.
@@ -199,14 +223,16 @@ public final class GameplayProjectiles {
     }
     public void filesClosed(){if(!enabled){workerClosed=true;return;}try{Files.deleteIfExists(temporary);}catch(IOException e){fail(e.toString());}workerClosed=true;}
     public void closeServer(){if(!enabled){serverClosed=true;return;}for(var t:tracks.values())if(!t.embedded&&!t.arrow.isRemoved()){t.arrow.discard();removedOnStop++;}tracks.clear();poses=Map.of();serverClosed=true;}
-    public void close(){closed=true;ready=false;pending.set(null);delivered.set(null);if(active==this)active=null;if(server==null)serverClosed=true;}
-    public void respawn(){if(!enabled)return;closeServer();serverClosed=false;player=null;clientPlayer=null;clientWorld=null;ready=false;pending.set(null);delivered.set(null);}
+    public void close(){closed=true;ready=false;visuals.clear();pending.set(null);delivered.set(null);if(active==this)active=null;if(server==null)serverClosed=true;}
+    public void respawn(){if(!enabled)return;closeServer();resetVisuals=true;serverClosed=false;player=null;clientPlayer=null;clientWorld=null;ready=false;pending.set(null);delivered.set(null);}
     public JsonObject evidence(){var j=new JsonObject();j.addProperty("enabled",enabled);j.addProperty("traces",traces);j.addProperty("clear_segments",clear);j.addProperty("scenery_hits",scenery);j.addProperty("actor_hits",actorHits);j.addProperty("impacts",impacts);j.addProperty("damage",minecraftDamage);j.addProperty("native_damage",damage);j.addProperty("rejected",rejected);j.addProperty("wait_ticks",waitTicks);j.addProperty("prequeued_segments",prequeuedSegments);j.addProperty("client_mirror_ticks",mirroredTicks);j.addProperty("pending",pending.get()!=null);j.addProperty("cleanup_complete",!enabled||closed&&workerClosed&&serverClosed);j.addProperty("removed_on_stop",removedOnStop);if(failure!=null)j.addProperty("failure",failure);
+        j.addProperty("rendered_intermediate_samples",renderedIntermediateSamples);
         if(lastReply!=null)j.add("last_reply",replyEvidence(lastReply));if(lastImpact!=null)j.add("last_impact",replyEvidence(lastImpact));if(lastScenery!=null)j.add("last_scenery",replyEvidence(lastScenery));return j;}
     private static JsonObject replyEvidence(GameplayProjectileProtocol.Reply r){var value=new JsonObject();value.addProperty("seq",r.seq());value.addProperty("operation",r.operation());value.addProperty("projectile",r.projectile());value.addProperty("segment",r.segment());value.addProperty("result",r.result());value.addProperty("reason",r.reason());value.addProperty("actor_token",r.token());value.addProperty("before",r.before());value.addProperty("after",r.after());value.add("contact",point(r.contact()));value.add("normal",point(r.normal()));return value;}
     private static JsonObject point(GameplayCombatProtocol.Point p){var j=new JsonObject();j.addProperty("x",p.x());j.addProperty("y",p.y());j.addProperty("z",p.z());return j;}
     private GameplayCombatProtocol.Point nativePoint(Vec3d p){return GameplayCombatProtocol.toHost(new GameplayCombatProtocol.Point(p.x,p.y,p.z),surface);}
     private Vec3d minecraftPoint(GameplayCombatProtocol.Point p){var v=GameplayCombatProtocol.toMinecraft(p,surface);return new Vec3d(v.x(),v.y(),v.z());}
     private static boolean finite(Vec3d p){return Double.isFinite(p.x)&&Double.isFinite(p.y)&&Double.isFinite(p.z);}
+    private static GameplayProjectileInterpolation.Point presentationPoint(Vec3d p){return new GameplayProjectileInterpolation.Point(p.x,p.y,p.z);}
     private void fail(String reason){failure=reason;ready=false;combat.projectileFailure(reason);}
 }

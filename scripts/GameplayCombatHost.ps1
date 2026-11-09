@@ -121,8 +121,15 @@ function Get-GameplayCombatCommands($State,[long]$Now){
         if($State.Sequence-$State.PublishedSequence -gt 3 -or ($State.LastSampleUtcMs -gt 0 -and $Now-$State.LastSampleUtcMs -gt 1500)){throw 'Native combat samples expired.'}
         $State.Sequence++;$State.LastSendUtcMs=$Now;$commands.Add("MineCome.GameplayCombatSample('$run',$($State.Sequence))")
     }
-    $projectileCommand=Get-GameplayProjectileCommands $State.Projectiles $Now;if($projectileCommand){$commands.Add($projectileCommand)}
+    $projectileCommand=Get-GameplayCombatUrgentCommands $State $Now;if($projectileCommand){$commands.Add($projectileCommand)}
     return [string]::Join(';',$commands)
+}
+function Get-GameplayCombatUrgentCommands($State,[long]$Now){
+    # Projectile flight waits for native collision, so it may use the existing
+    # console owner's camera-ACK wait. Do not advance melee/sample cadence here.
+    if($State.Failure){throw $State.Failure};if($State.Stopping){return ''};if($Now -ge $State.ExpiresUtcMs){throw 'Combat identity expired.'}
+    if(-not $State.Begin){return ''}
+    return Get-GameplayProjectileCommands $State.Projectiles $Now
 }
 function Accept-GameplayCombatReceipt($State,$Receipt,[long]$Now){
     if(-not(Test-GameplayCombatInteger $Receipt.schema 1 1) -or $Receipt.run -cne $State.Identity.Run){throw 'Combat receipt identity differs.'}

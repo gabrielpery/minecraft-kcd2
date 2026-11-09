@@ -56,6 +56,7 @@ try{
   if($ProjectileCheck){
    $projectiles=$c.projectiles
    if($projectiles.prequeued_segments -lt 1){throw 'Actual arrow check did not exercise prompt next-segment dispatch.'}
+   if($projectiles.rendered_intermediate_samples -lt 1){throw 'Actual arrow check did not render confirmed intermediate flight positions.'}
    if(-not $bow.synthetic_projectile_contacts_verified -or $bow.synthetic_projectile_scenery_hits -ne 1 -or $bow.synthetic_projectile_impacts -ne 1 -or
     $projectiles.impacts -ne 1 -or $projectiles.actor_hits -ne 1 -or $projectiles.scenery_hits -ne 1 -or $projectiles.rejected -ne 0 -or $projectiles.pending -or -not $projectiles.cleanup_complete -or
     $projectiles.damage -le 0 -or [Math]::Abs($projectiles.damage-$bow.synthetic_projectile_damage) -gt .001 -or [Math]::Abs($projectiles.native_damage-$projectiles.damage*5) -gt .01){throw 'Actual arrow physics and synthetic native impact proof differ.'}

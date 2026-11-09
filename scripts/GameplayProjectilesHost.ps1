@@ -37,6 +37,7 @@ function Read-GameplayProjectileRequest([string]$Path,$Identity,[long]$Now){
 function New-GameplayProjectilesState($Identity,[string]$Directory){
     [pscustomobject]@{Identity=$Identity;SnapshotFile=(Join-Path $Directory 'projectiles.json');HostFile=(Join-Path $Directory 'host-projectiles.json');
         LastSequence=0L;LastUtcMs=0L;LastCanonical='';Pending=$null;PendingSinceUtcMs=0L;LastReceiptCanonical='';LastReply=$null;LastImpact=$null;LastScenery=$null;
+        Timing=[ordered]@{Count=0L;TotalMs=0L;MaxMs=0L;DispatchWaitTotalMs=0L;DispatchWaitMaxMs=0L;NativeWaitTotalMs=0L;NativeWaitMaxMs=0L};
         TraceGrants=@{};Requests=0L;Traces=0L;Impacts=0L;Scenery=0L;Actors=0L;Damaged=0L;Rejected=0L;Abandoned=0L;AbandonedRequest=$null;AbandonedReceipt=$null;AbandonedReceiptCanonical='';TemporaryClean=$true;Stopped=$false}
 }
 function Get-GameplayProjectileCommands($State,[long]$Now){
@@ -121,6 +122,12 @@ function Accept-GameplayProjectileReceipt($State,$Receipt,[long]$Now){
     # Keep detached publication snapshots; caller-owned native receipt objects
     # or subsequent replies cannot alter the historical impact/scenery evidence.
     $accepted=$published|ConvertFrom-Json -Depth 8
+    # Count only the first accepted publication. Immutable request UTC includes
+    # queue delay; PendingSince splits host dispatch wait from native/log wait.
+    $total=$Now-[long]$pending.utc_ms;$dispatch=$State.PendingSinceUtcMs-[long]$pending.utc_ms;$native=$Now-$State.PendingSinceUtcMs
+    $State.Timing.Count++;$State.Timing.TotalMs+=$total;$State.Timing.MaxMs=[Math]::Max($State.Timing.MaxMs,$total)
+    $State.Timing.DispatchWaitTotalMs+=$dispatch;$State.Timing.DispatchWaitMaxMs=[Math]::Max($State.Timing.DispatchWaitMaxMs,$dispatch)
+    $State.Timing.NativeWaitTotalMs+=$native;$State.Timing.NativeWaitMaxMs=[Math]::Max($State.Timing.NativeWaitMaxMs,$native)
     $State.TemporaryClean=$true;$State.LastReceiptCanonical=$receiptCanonical;$State.LastReply=$accepted;$State.Pending=$null
     if($request.operation -ceq 'impact'){$State.LastImpact=$published|ConvertFrom-Json -Depth 8}
     if($Receipt.result -ceq 'scenery'){$State.LastScenery=$published|ConvertFrom-Json -Depth 8}
@@ -132,5 +139,5 @@ function Stop-GameplayProjectilesHost($State){
     try{[IO.File]::Delete($State.HostFile+'.tmp');$State.TemporaryClean=$true}catch{$State.TemporaryClean=$false;throw}
 }
 function Get-GameplayProjectilesHostState($State){
-    [pscustomobject]@{Requests=$State.Requests;Traces=$State.Traces;Impacts=$State.Impacts;Scenery=$State.Scenery;Actors=$State.Actors;Damaged=$State.Damaged;Rejected=$State.Rejected;Abandoned=$State.Abandoned;AbandonedReceipt=$State.AbandonedReceipt;Pending=($null -ne $State.Pending);LastReply=$State.LastReply;LastImpact=$State.LastImpact;LastScenery=$State.LastScenery;TemporaryClean=$State.TemporaryClean;CleanupComplete=($State.TemporaryClean -and ($State.Requests -eq 0 -or $State.Stopped) -and $null -eq $State.Pending)}
+    [pscustomobject]@{Requests=$State.Requests;Traces=$State.Traces;Impacts=$State.Impacts;Scenery=$State.Scenery;Actors=$State.Actors;Damaged=$State.Damaged;Rejected=$State.Rejected;Abandoned=$State.Abandoned;AbandonedReceipt=$State.AbandonedReceipt;Timing=$State.Timing;Pending=($null -ne $State.Pending);LastReply=$State.LastReply;LastImpact=$State.LastImpact;LastScenery=$State.LastScenery;TemporaryClean=$State.TemporaryClean;CleanupComplete=($State.TemporaryClean -and ($State.Requests -eq 0 -or $State.Stopped) -and $null -eq $State.Pending)}
 }

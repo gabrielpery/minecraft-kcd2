@@ -431,6 +431,19 @@ function Get-GameplayMovementWorker {
                         }
                     }
                     if(-not $requestView){break}
+                    # Flight must not wait for a camera ACK before asking native
+                    # collision. Reuse this sole console owner and its identity
+                    # gate; reserve the full150ms HTTP timeout plus polling room
+                    # inside the original camera deadline. This request also
+                    # flushes pending native log lines. Never renew either UTC.
+                    if($CombatState -and -not $Token.IsCancellationRequested -and $until-$stopwatch.Elapsed.TotalMilliseconds -ge 165){
+                        $urgent=Get-GameplayCombatUrgentCommands $CombatState ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())
+                        if($urgent){
+                            Send (RejectWrapper $urgent)
+                            $pendingViewRequest.LastFlushAt=$stopwatch.Elapsed.TotalMilliseconds
+                            continue
+                        }
+                    }
                     # Perspective reset/readback can acknowledge from a later
                     # engine timer, after the original console flush. Delimit
                     # that buffered line without resampling, renewing its UTC

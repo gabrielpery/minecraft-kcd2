@@ -1021,8 +1021,14 @@ Each actual arrow segment queries native scenery and NPC collision. A nearer
 Minecraft block or native obstruction wins; NPC damage uses vanilla's actual
 impact calculation, attributed to the native player with hit reactions enabled.
 
-The initial transport waits for a native reply before each arrow tick. This can
-slow visible flight; it does not extrapolate an arrow through unchecked scenery.
+The transport still waits for a native reply before each arrow tick. New flight
+requests can dispatch during the camera acknowledgement wait using the same
+guarded console worker. Rendering interpolates along consecutive confirmed
+segments, with at most 100ms of playback; it never extrapolates through unchecked
+scenery or changes physical collision positions. Contact/removal immediately ends
+playback. This reduces jumps, but native round trips still slow flight: the latest
+automatic coupled run averaged136ms per request and recorded32 intermediate
+render frames. Vanilla flight speed and subjective smoothness are not yet proven.
 Limits are 16 active flights, 4 metres per segment, 64 metres of cumulative travel
 and 10 seconds per flight, with 64 retained arrow records. Existing embedded arrows retain vanilla aging, save
 and pickup. Standard bow arrows are covered by live checks; spectral/tipped bow

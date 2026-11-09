@@ -1,6 +1,7 @@
 package dev.minecome.hud;
 
 import com.mojang.blaze3d.systems.RenderSystem;
+import dev.minecome.gameplay.GameplayProjectiles;
 import dev.minecome.terrain.GroundSurface;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.render.VertexConsumerProvider;
@@ -54,9 +55,11 @@ public final class GameplayProjectileRenderer {
             .thenComparingInt(PersistentProjectileEntity::getId));
         var submitted=new ArrayList<Projectile>(candidates.size());var dispatcher=client.getEntityRenderDispatcher();
         for(var projectile:candidates){
+            var presentation=GameplayProjectiles.renderPosition(projectile);if(presentation!=null&&!presentation.visible())continue;
             double x=MathHelper.lerp(tickDelta,projectile.lastRenderX,projectile.getX());
             double y=MathHelper.lerp(tickDelta,projectile.lastRenderY,projectile.getY());
             double z=MathHelper.lerp(tickDelta,projectile.lastRenderZ,projectile.getZ());
+            if(presentation!=null){x=presentation.position().x;y=presentation.position().y;z=presentation.position().z;}
             if(!Double.isFinite(x)||!Double.isFinite(y)||!Double.isFinite(z)||!surface.containsFeet(x,z,0)||
                     (x-origin.x)*(x-origin.x)+(y-origin.y)*(y-origin.y)+(z-origin.z)*(z-origin.z)>MAX_DISTANCE*MAX_DISTANCE||
                     !Float.isFinite(projectile.prevPitch)||!Float.isFinite(projectile.getPitch()))continue;
@@ -67,6 +70,7 @@ public final class GameplayProjectileRenderer {
             try{
                 matrices.translate(x-origin.x+offset.x,y-origin.y+offset.y,z-origin.z+offset.z);
                 renderer.render(projectile,yaw,tickDelta,matrices,vertices,dispatcher.getLight(projectile,tickDelta));
+                GameplayProjectiles.rendered(projectile,presentation);
             }finally{matrices.pop();}
             submitted.add(new Projectile(projectile.getUuid(),Registries.ENTITY_TYPE.getId(projectile.getType()).toString(),
                 player.getUuid(),x,y,z));

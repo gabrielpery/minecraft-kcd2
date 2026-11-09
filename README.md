@@ -36,9 +36,11 @@ release to fire. Arrows test their actual flight segments against KCD2 scenery
 and NPCs, stop at scenery, and transfer Minecraft-calculated impact damage to
 native NPC health. Minecraft retains charge, ammunition, durability, embedded
 arrow pickup and rendering. Inventory or lost authority cancels an unfinished
-draw. Flight currently waits for each native collision reply, so arrow travel
-can look slower than vanilla. An automated two-game check passed NPC damage,
-ground collision, later walking and continued HUD rendering.
+draw. Confirmed flight positions now interpolate between frames, and collision
+requests can dispatch while the camera is waiting for its update. Native collision
+round trips still make flight slower than vanilla. An automated two-game check
+passed interpolated rendering, NPC damage, ground collision, later walking and
+continued HUD rendering.
 See [combat testing and limits](docs/GAMEPLAY_SESSION.md#npc-melee-bridge).
 
 **Status: experimental development prototype.** Several bounded two-game tests
