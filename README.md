@@ -28,13 +28,18 @@ walking, continued HUD composition and cleanup. Standalone Minecraft checks also
 cover weapons, armor, cooldowns and block occlusion. A separate native hostile
 comparison verifies that the combat profile suppresses player target lock while
 enemy attacks continue, and restores the original settings afterward. Native
-attacks are not yet routed into Minecraft health. Connected ranged attacks and
-secondary combat effects remain unfinished; this is not yet complete two-way combat.
+attacks are not yet routed into Minecraft health. Crossbows and secondary combat
+effects remain unfinished; this is not yet complete two-way combat.
 
-Vanilla bow charging, ammunition, durability, nonfiring cancellation and real
-arrow colour/depth rendering now pass an automated Minecraft check. Bow input is
-limited to that standalone fixture until projectile impacts are connected to
-KCD2 scenery and NPCs; it is not enabled in ordinary gameplay yet.
+The combat profile also connects Minecraft bows: hold right-click to draw and
+release to fire. Arrows test their actual flight segments against KCD2 scenery
+and NPCs, stop at scenery, and transfer Minecraft-calculated impact damage to
+native NPC health. Minecraft retains charge, ammunition, durability, embedded
+arrow pickup and rendering. Inventory or lost authority cancels an unfinished
+draw. Flight currently waits for each native collision reply, so arrow travel
+can look slower than vanilla. An automated two-game check passed NPC damage,
+ground collision, later walking and continued HUD rendering.
+See [combat testing and limits](docs/GAMEPLAY_SESSION.md#npc-melee-bridge).
 
 **Status: experimental development prototype.** Several bounded two-game tests
 work, but this is not yet a complete playable mod or a ready-to-install release.

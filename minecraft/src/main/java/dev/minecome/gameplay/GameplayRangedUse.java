@@ -37,7 +37,7 @@ public final class GameplayRangedUse {
     }
     private static final ConcurrentHashMap<UUID,Cancellation> cancellations=new ConcurrentHashMap<>();
     private static boolean registered;
-    public static boolean enabled(){return GameplayMode.bowFixtureEnabled(System.getProperties());}
+    public static boolean enabled(){return GameplayMode.rangedUseEnabled(System.getProperties());}
 
     /** Fabric's typed receiver runs on the server thread, in packet order. */
     public static void register(){
@@ -88,7 +88,7 @@ public final class GameplayRangedUse {
         settleCancellation();
         if(held||active)return true;
         var owner=observed;long now=System.nanoTime();
-        if(cancellation!=null||!allowed||!usable(client)||owner==null||now<owner.at()||now-owner.at()>500_000_000L||
+        if(cancellation!=null||!allowed||!usable(client)||!GameplayMode.bowFixtureEnabled(System.getProperties())&&!GameplayProjectiles.readyForDraw(client)||owner==null||now<owner.at()||now-owner.at()>500_000_000L||
             owner.player().getServer()!=client.getServer()||!owner.player().getUuid().equals(client.player.getUuid())||
             owner.slot()!=client.player.getInventory().selectedSlot||!ItemStack.areItemsAndComponentsEqual(owner.stack(),client.player.getMainHandStack())||
             !ClientPlayNetworking.canSend(Cancel.ID)){
@@ -148,7 +148,7 @@ public final class GameplayRangedUse {
         observed=new ServerOwner(System.nanoTime(),player,player.getWorld(),player.getInventory().selectedSlot,player.getMainHandStack().copy());
     }
     public JsonObject evidence(){
-        var j=new JsonObject();j.addProperty("experimental_fixture_only",true);j.addProperty("enabled",enabled());j.addProperty("held",held);j.addProperty("active",active);
+        var j=new JsonObject();j.addProperty("experimental_fixture_only",GameplayMode.bowFixtureEnabled(System.getProperties()));j.addProperty("enabled",enabled());j.addProperty("held",held);j.addProperty("active",active);
         j.addProperty("starts",starts);j.addProperty("vanilla_releases",releases);j.addProperty("cancellations",cancelled);j.addProperty("rejected",rejected);j.addProperty("preserved_ticks",preserved);
         j.addProperty("cancel_pending",cancellation!=null&&!cancellation.done);j.addProperty("last_result",result);j.addProperty("synthetic_use_key",false);j.addProperty("projectiles_created_directly",false);return j;
     }

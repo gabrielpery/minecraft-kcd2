@@ -142,4 +142,95 @@ reset_policy_state()
 start();local foreign_calls=0;System.SetCVar=function()foreign_calls=foreign_calls+1 end
 require_true(not MineCome.GameplayCombatEnd(run) and foreign_calls==0 and logs[#logs]:match('"lock_policy_restored":false'),'foreign setter used or unconfirmed cleanup hidden')
 reset_policy_state()
-print('PASS native combat lifecycle, normalization, replay, identity, occlusion and owned free-aim policy cleanup (simulated engine; hostile no-lock behavior unverified)')
+-- Real-arrow contract: contiguous segments independent of the current eye after
+-- launch, nearest native obstruction, exact actor generations and one setter.
+local arrow=string.rep('b',32)
+local function trace(seq,id,segment,from,to)
+ return MineCome.GameplayProjectileTrace(run,seq,id or arrow,segment or 1,0,from or 0,1.6,0,to or 3,1.6)
+end
+local function impact(seq,id,segment,actor_token,fraction)
+ return MineCome.GameplayProjectileImpact(run,seq,id or arrow,segment or 1,actor_token or 1,fraction or .25)
+end
+local function projectile_receipt(event,result)
+ local text=logs[#logs];require_true(text:match('"event":"'..event..'"') and text:match('"result":"'..result..'"'),'projectile receipt differs: '..text)
+ require_true(#text<4000,'projectile log exceeded native limit');return text
+end
+a=npc(1,2);entities={a};start();before=damage_calls
+local projectile_rays=0;on_ray=function()projectile_rays=projectile_rays+1 end
+require_true(trace(1),'arrow actor trace failed');projectile_receipt('projectile_trace','actor')
+require_true(trace(1) and projectile_rays==1,'duplicate trace was executed again')
+require_true(not trace(1,nil,1,0,2.5) and projectile_rays==1,'changed duplicate trace admitted');on_ray=nil
+require_true(a.health==100 and damage_calls==before,'trace changed NPC health')
+require_true(logs[#logs]:match('"actor_token":1') and math.abs(MineCome._gameplay_combat.active.projectiles[arrow].collision.point.y-1.4)<.000001,'vanilla arrow margin on real actor contact missing')
+require_true(impact(2),'arrow impact failed');projectile_receipt('projectile_impact','damaged')
+require_true(a.health==75 and damage_calls==before+1,'vanilla damage fraction not applied')
+require_true(impact(2) and a.health==75 and damage_calls==before+1,'duplicate impact reapplied')
+require_true(not impact(2,nil,nil,nil,.5),'changed duplicate impact admitted')
+require_true(impact(3),'finished-arrow rejection absent');projectile_receipt('projectile_impact','rejected');require_true(a.health==75,'same arrow damaged twice')
+finish()
+-- Launch anchored once; aiming elsewhere later cannot redirect the real arrow.
+a=npc(1,5);entities={a};start();require_true(trace(1,nil,1,0,3),'initial clear arrow trace failed');projectile_receipt('projectile_trace','clear')
+local view_get=MineCome.GameplayMovementCombatView
+MineCome.GameplayMovementCombatView=function()error('continuation must not query current eye')end
+require_true(trace(2,nil,2,3,6),'continuation used current view');projectile_receipt('projectile_trace','actor')
+require_true(impact(3,nil,2),'distant arrow impact failed');require_true(a.health==75,'distant trajectory damage absent')
+MineCome.GameplayMovementCombatView=view_get;finish()
+-- Actual rectangle contact wins over the square proxy and nearer scenery wins
+-- over that real contact; native output order is not assumed sorted.
+a=npc(1,2);function a:GetWorldBBox()return{x=-.6,y=1.7,z=0},{x=.6,y=2.3,z=1.8}end
+entities={a};start();ray_hits={{dist=2.5,pos={x=0,y=2.5,z=1.6},normal={x=0,y=-1,z=0}},{dist=1,pos={x=0,y=1,z=1.6},normal={x=0,y=-1,z=0}}}
+require_true(trace(1),'scenery trace failed');projectile_receipt('projectile_trace','scenery')
+require_true(logs[#logs]:match('"contact":{"x":0,"y":1,"z":1.6}') and a.health==100,'nearest scenery was not selected')
+ray_hits={};require_true(impact(2),'scenery-impact refusal absent');projectile_receipt('projectile_impact','rejected');require_true(a.health==100,'scenery arrow damaged actor');finish()
+-- Match vanilla ProjectileUtil's0.3f entity margin, including impact recheck.
+-- A ray just outside the expanded top must miss; nearby scenery is never inflated.
+for _,height in ipairs({2.099,2.101})do
+ a=npc(1,2);entities={a};start()
+ require_true(MineCome.GameplayProjectileTrace(run,1,arrow,1,0,0,height,0,3,height),'grazing arrow trace failed')
+ if height<2.1 then
+  projectile_receipt('projectile_trace','actor');require_true(impact(2),'grazing impact failed')
+  projectile_receipt('projectile_impact','damaged');require_true(a.health==75,'vanilla margin omitted from impact recheck')
+ else projectile_receipt('projectile_trace','clear');require_true(a.health==100,'outside vanilla margin hit actor')end
+ finish()
+end
+a=npc(1,2);entities={a};start();ray_hits={{dist=1,pos={x=0,y=1,z=2.099},normal={x=0,y=-1,z=0}}}
+MineCome.GameplayProjectileTrace(run,1,arrow,1,0,0,2.099,0,3,2.099)
+require_true(projectile_receipt('projectile_trace','scenery'):match('"contact":{"x":0,"y":1,"z":2.099}'),'scenery moved by actor margin')
+require_true(a.health==100,'grazing arrow crossed scenery');ray_hits={};finish()
+-- A new obstruction appearing before acknowledgement blocks native damage.
+a=npc(1,2);entities={a};start();trace(1);ray_hits={{dist=1,pos={x=0,y=1,z=1.6},normal={x=0,y=-1,z=0}}};impact(2)
+require_true(projectile_receipt('projectile_impact','rejected'):match('"reason":"occluded"') and a.health==100,'impact skipped fresh scenery check');ray_hits={};finish()
+-- Malformed ray output, stale collision, reused actor and changed shooter refuse.
+for _,fault in ipairs({'normal','point','overflow'})do
+ a=npc(1,2);entities={a};start();ray_hits={{dist=1,pos={x=0,y=1,z=1.6},normal={x=0,y=-1,z=0}}}
+ if fault=='normal'then ray_hits[1].normal.y=2 elseif fault=='point'then ray_hits[1].pos.x=1 else for i=2,16 do ray_hits[i]=ray_hits[1]end end
+ trace(1);require_true(projectile_receipt('projectile_trace','rejected'):match('scenery_unknown'),'invalid native trace admitted');ray_hits={};finish()
+end
+a=npc(1,2);entities={a};start();trace(1);clock=clock+.301;impact(2)
+require_true(projectile_receipt('projectile_impact','rejected'):match('stale_impact') and a.health==100,'stale impact admitted');finish()
+a=npc(1,2);entities={a};start();trace(1);a.soul.GetId=function()return 999999 end;impact(2)
+require_true(projectile_receipt('projectile_impact','rejected'):match('target_changed') and a.health==100,'replaced actor generation damaged');finish()
+a=npc(1,2);entities={a};start();trace(1);before=damage_calls;saved_wuid=player.this.id
+on_ray=function()player.this.id='replacement-wuid'end;ok,why=impact(2);on_ray=nil
+require_true(not ok and why=='player_changed' and damage_calls==before,'impact changed shooter attribution');player.this.id=saved_wuid;restored()
+-- Unknown setter outcomes are consumed exactly once, even under a new request.
+a=npc(1,2);entities={a};start();trace(1)
+function a.soul:DealDamage(_,amount)damage_calls=damage_calls+1;a.health=a.health-amount;error('setter changed then failed')end
+before=damage_calls;impact(2);require_true(projectile_receipt('projectile_impact','rejected'):match('damage_unconfirmed'),'unknown projectile setter success claimed')
+impact(2);impact(3);require_true(a.health==75 and damage_calls==before+1,'unknown arrow impact retried');finish()
+-- Bad initial eye, discontinuity, too long segment and expired trajectory stop.
+entities={};start();trace(1,nil,1,1,3);require_true(projectile_receipt('projectile_trace','rejected'):match('launch_changed'),'remote arrow spawn admitted');finish()
+entities={};start();trace(1,nil,1,0,3);trace(2,nil,2,3.1,6);require_true(projectile_receipt('projectile_trace','rejected'):match('trajectory_changed'),'discontinuous arrow admitted');finish()
+entities={};start();trace(1,nil,1,0,5);require_true(projectile_receipt('projectile_trace','rejected'):match('invalid_segment'),'oversized arrow segment admitted');finish()
+entities={};start();for segment=1,21 do trace(segment,nil,segment,(segment-1)*3,segment*3);projectile_receipt('projectile_trace','clear')end
+trace(22,nil,22,63,66);require_true(projectile_receipt('projectile_trace','rejected'):match('trajectory_changed'),'cumulative arrow path exceeded64m');finish()
+entities={};clock=clock+3;require_true(MineCome.GameplayCombatBegin(run,20000,16,8),'long session begin');trace(1,nil,1,0,1)
+for step=1,11 do clock=clock+1;sample(step)end
+trace(2,nil,2,1,2);require_true(projectile_receipt('projectile_trace','rejected'):match('trajectory_changed'),'expired arrow trajectory admitted');finish()
+entities={};start();require_true(not MineCome.GameplayProjectileTrace(run,1,'not-uuid',1,0,0,1.6,0,3,1.6),'malformed arrow identity admitted')
+require_true(MineCome.GameplayProjectileTrace(run,1,arrow,1,0/0,0,1.6,0,3,1.6),'malformed vector lacked bounded refusal');projectile_receipt('projectile_trace','rejected');finish()
+-- At most16 active flights; terminal arrows cannot reuse their UUID to launch.
+entities={};start();for i=1,16 do require_true(trace(i,string.format('%032x',i),1,0,1),'bounded arrow admission failed')end
+trace(17,string.format('%032x',17),1,0,1);require_true(projectile_receipt('projectile_trace','rejected'):match('projectile_capacity'),'active projectile bound ignored');finish()
+require_true(next(MineCome._gameplay_combat.last.projectiles)==nil and MineCome._gameplay_combat.last.projectile_last==nil,'projectile refs retained after cleanup')
+print('PASS native combat lifecycle, normalization, replay, identity, occlusion, owned lock cleanup and projectile trace/impact (simulated engine)')

@@ -1,6 +1,6 @@
 # Resume checkpoint — 9 November 2026
 
-## Current work: free combat and bows
+## Current work: connected bows, then arrow smoothness
 
 Outgoing actual Minecraft primary melee → native NPC damage is already verified,
 as are native visible hit reactions. Preserve the WUID attribution fix:
@@ -34,28 +34,60 @@ GUID mapping and raw damage at the immortality1HP clamp. IncomingDamageImplement
 remains false. Runtime observer scripts are ignored experiments, not a deployed
 bridge. See `docs/research/KCD-COMBAT.md` for pinned sources and SDK limits.
 
-Bow hold/release and tracked real-arrow colour/depth rendering are implemented
-behind `-BowCheck` in the existing standalone combat fixture. No connected bow
-flag is admitted. Vanilla owns charge/ammo/durability; ordered custom cancellation
-clears use without RELEASE_USE_ITEM, which would fire a bow. Cancellation must
-retain suppression until acknowledged and clear exact-server pending entries on
-shutdown. Actual-Minecraft PASS:
-`runtime/evidence/gameplay-combat-20261109-094544-dfcbf0e9bcb441969e789aace246807f/verification.json`.
-Short/full charge, two real arrows, ammo/durability, inventory/authority cancel,
-no-ammo refusal and cleanup all passed. Isolated world PNG has6612 arrow pixels,
-all with depth; actual projectile UUIDs/owner match server spawn observations.
-The earlier render timeout was fixture geometry after vanilla knockback, fixed
-by waiting for settled position and aligning inward aim/backstop/camera. Do not
-relax renderer coverage/owner guards or teleport the player. The mode guard now
-admits only this exact standalone combat option. Focused Blocks350/Combat214 and
-World33 checks plus compilation passed; the real run includes melee regressions.
-Minecraft exited normally. No manual test is needed for these verified changes.
+Connected `-Combat` now enables bows. `GameplayProjectiles` gates actual vanilla
+arrow ticks with native swept-segment replies through `GameplayProjectilesHost`
+and the existing combat worker. UUID/shooter/weapon identity, initial native-eye
+admission, endpoint continuity, actor generations, freshness and cached results
+protect the separate projectile trace/impact route. Never send distant arrow
+contacts through current-eye melee. Preserve vanilla charge/ammo/durability,
+critical damage, embedding/pickup and nonfiring cancellation.
 
-Next weapon work: actual projectile trajectory/contact validation against native
-scenery and actors, then enable connected bows and add crossbows. The melee
-contract requires the current player eye; never pass distant arrow impacts
-through it. Use the actual projectile owner/weapon and distinct impact identity.
-Reuse existing combat fixture/render/depth paths, not another test framework.
+Coupled automatic PASS:
+`runtime/evidence/gameplay-kcd-20261109-102336-74a2a3b6292f4a73bfc4a9c7f7c2b060/native-combat-verification.json`.
+Actual vanilla arrow damage8 reduced native NPC health100→60; a second arrow
+embedded in actual native ground after the owned NPC was removed. Its exact UUID
+supplied838 isolated colour/depth pixels. Inventory suppression,0.641m walking,
+advancing HUD composition/reprojection and normal save/cleanup passed. No human
+attack sequence was needed. The fixture removal request now publishes atomically;
+its final refinement compiled after the run. Exact scenery-UUID isolation was
+also checked against the passing evidence and is now required by the runner.
+
+Standalone actual-Minecraft synthetic contact PASS:
+`runtime/evidence/gameplay-combat-20261109-100811-5b6142dbeb444767850ea2c70761bc36/verification.json`.
+Native direct segments/deduplication/ground PASS:
+`runtime/evidence/combat-native-20261109-100254-d5dbc257ee044dd196c2d9b2b8028e77`.
+Focused Combat280, World37, projectile-host45, existing combat-host and Lua combat
+checks passed; final assemble passed. Native actor ray/impact bounds include the
+source-inspected vanilla0.3f projectile margin, leaving scenery and melee unchanged.
+Do not regress this to raw native AABBs: the first horizontal shot grazed above
+the NPC head. Aim slightly downward through the torso before a coupled check;
+ordinary native mouse input established that aim for the passing run.
+
+**Next priority: arrow travel latency.** The user saw the arrow as very laggy and
+not smooth. Collision currently pauses each actual arrow tick for the file/console
+round trip. Passing evidence has8 traces and27 waiting server ticks; this is a
+known user-visible limitation, not finished vanilla-speed flight. A first fix now
+queues the next segment immediately after a confirmed clear vanilla tick, using
+its actual updated position/velocity. It applies only to the sole airborne
+arrow, so the single transport slot does not starve other arrows. Actual Minecraft
+synthetic-host PASS:
+`runtime/evidence/gameplay-combat-20261109-103239-25283b0c5a3c4adc931c8ebf8a22710c/verification.json`.
+All3 clear segments used this path; blocked ticks fell6→2 across5 traces, with
+scenery, damage and cleanup still passing. This final timing refinement has not
+had another coupled run; do not claim native smoothness is solved. Native final
+trace request→receipt was122ms and impact158ms in the earlier coupled run.
+Investigate the existing worker/receipt path next while preserving checked
+collision, immutable timestamps and deduplication. Do not hide latency with
+unchecked client prediction or repeat the already-passing hitbox acceptance.
+Current bounds:16 active flights,64 retained records,4m segments,64m travel,10s.
+Spectral/tipped bow arrows share the same base path but their special native
+effects and separate live acceptance remain open; crossbows/piercing are absent.
+
+The user also asked about TNT. After arrow smoothness, explosion work should
+first destroy Minecraft-owned blocks and damage native NPCs. Arbitrary KCD2
+building/terrain destruction has not been established; do not promise native
+geometry destruction without inspecting actual support. Incoming native attacks
+into Minecraft health remains the distinct blocker described above.
 
 Latest earlier coupled melee proof:
 `runtime/evidence/gameplay-kcd-20261108-215647-d4359c30548545cbb27c6f5ccca282ba/native-combat-verification.json`:
@@ -65,13 +97,13 @@ reaction proof is `runtime/evidence/combat-reaction-20261108-221429-6f97fea06371
 Preserve immediate validated attack dispatch and unchanged freshness deadlines.
 Windows sharing failures must not refresh stale snapshot timestamps.
 
-Both native test worlds closed normally. This continuation did not install/arm
-a HUD bundle. The earlier installation remains restored and unarmed:
-`runtime/evidence/gameplay-hud-restore-20261108-215807-3123a19ae7e44eb7a393c45889eaebe5`.
+Native test worlds closed normally. The temporary WorldBlocks installation is
+restored and unarmed:
+`runtime/evidence/gameplay-hud-restore-20261109-102504-a96c9ce8013a4492986166e6e99b22e4`.
 For a relevant coupled change, prepare/install a fresh owned WorldBlocks bundle
-and run `scripts/Test-KcdCombat.ps1 -BundleDirectory $bundle` in a fresh loaded
-tools world. It starts Minecraft, owns/spawns/removes its passive NPC, attacks,
-checks inventory/walking/HUD and saves normally without human input. Spawn the
+and run `scripts/Test-KcdCombat.ps1 -BundleDirectory $bundle -ProjectileCheck` in a fresh loaded
+tools world. It starts Minecraft, owns/spawns/removes its passive NPC, fires at
+the NPC and scenery, checks inventory/walking/HUD and saves normally without human input. Spawn the
 short-lived path-follower only AFTER Minecraft readiness. One sustained session
 per native process; verify receipts/PID rather than assuming an old installation.
 

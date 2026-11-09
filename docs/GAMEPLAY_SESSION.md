@@ -996,8 +996,8 @@ the resulting damage fraction onto the native NPC's maximum health. Native
 NPCs keep their identity, movement and AI. Block mining keeps its existing path
 when the crosshair does not select an NPC. Inventory and chat suppress attacks.
 
-This is an outgoing primary-melee increment, not complete combat. Native NPC
-attacks are not yet routed into Minecraft health. Ranged attacks, sweep damage,
+This is an outgoing melee/bow increment, not complete combat. Native NPC
+attacks are not yet routed into Minecraft health. Crossbows, sweep damage,
 knockback and secondary enchantment effects are not transferred. Minecraft's
 incoming armor/hurt logic is implemented and tested with synthetic host events;
 a native pre-damage hook and safe ownership of the underlying player's health
@@ -1013,14 +1013,24 @@ experience or reciprocal Minecraft health. NPC AI and attacks remain enabled.
 The outgoing native call attributes damage using the player's native WUID and
 requests hit reactions (`suppressHitreaction=false`). A basic native recoil was
 visually observed on the owned test NPC; the suppressed control stayed upright.
-This does not establish every enemy animation. Bow hold/release and real arrow
-rendering are implemented behind a standalone combat-fixture flag. They preserve
-vanilla charge, ammunition and durability; inventory or lost authority cancel the
-draw without firing. Native scenery/target projectile collision is still needed
-before enabling bows in connected gameplay. Crossbows follow that shared impact
-path. Native incoming hit logging is a promising source, but delivery, duplicate
+This does not establish every enemy animation. Bows are enabled in connected
+`-Combat`: hold right-click to draw, release to fire. Vanilla owns charge,
+ammunition, durability, critical arrow damage and embedded-arrow pickup. Inventory
+or lost authority cancels the draw without firing; already-fired arrows continue.
+Each actual arrow segment queries native scenery and NPC collision. A nearer
+Minecraft block or native obstruction wins; NPC damage uses vanilla's actual
+impact calculation, attributed to the native player with hit reactions enabled.
+
+The initial transport waits for a native reply before each arrow tick. This can
+slow visible flight; it does not extrapolate an arrow through unchecked scenery.
+Limits are 16 active flights, 4 metres per segment, 64 metres of cumulative travel
+and 10 seconds per flight, with 64 retained arrow records. Existing embedded arrows retain vanilla aging, save
+and pickup. Standard bow arrows are covered by live checks; spectral/tipped bow
+arrows share the collision path, but their special native effects are not
+transferred. Crossbows and piercing remain unsupported.
+Native incoming hit logging is a promising source, but delivery, duplicate
 handling and protection-clamp behavior remain unverified; native `hurts` stays
-empty. Ranged items are not yet connected to native NPC damage.
+empty.
 
 Automated checks use isolated saves and require no manual attack sequence:
 
@@ -1028,8 +1038,12 @@ Automated checks use isolated saves and require no manual attack sequence:
 & './scripts/Test-GameplayCombat.ps1'
 # Adds vanilla bow charging/cancellation/ammunition and real arrow pixel checks:
 & './scripts/Test-GameplayCombat.ps1' -BowCheck
+# Real Minecraft arrows against explicitly synthetic native contacts:
+& './scripts/Test-GameplayCombat.ps1' -ProjectileCheck
 # Installed WorldBlocks bundle and a fresh, loaded KCD2 tools world:
 & './scripts/Test-KcdCombat.ps1' -BundleDirectory $bundle
+# Actual bow arrows against an owned native NPC and real native scenery:
+& './scripts/Test-KcdCombat.ps1' -BundleDirectory $bundle -ProjectileCheck
 ```
 
 The standalone check uses real Minecraft attack packets, cooldowns, durability,
@@ -1042,3 +1056,10 @@ check passes on the supported tools build; see [progress evidence](PROGRESS.md).
 Its NPC expires automatically within two minutes and is removed on normal or
 failed cleanup. This fixture does not establish hostile NPC retaliation or
 physical mouse acceptance.
+
+The projectile variant fires at the temporary native NPC, verifies native health
+against actual vanilla arrow damage, removes that exact NPC, then fires a short
+shot into native scenery. It requires actual arrow colour/depth pixels, inventory
+suppression, later walking, continuing native composition and normal cleanup.
+Aim slightly downward before running it so the spawned NPC is targeted through
+its torso rather than at the edge of its head.

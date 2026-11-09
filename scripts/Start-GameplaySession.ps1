@@ -1,7 +1,7 @@
 # Sustained HUD/inventory, with an explicit Minecraft walking profile.
 [CmdletBinding()]
 param([string]$BundleDirectory,[string]$InstanceDirectory,[string]$JavaHome='C:/Program Files/Java/jdk-24',
- [ValidateRange(0,300)][int]$SmokeSeconds=0,[switch]$PreflightOnly,[switch]$Movement,[switch]$Blocks,[switch]$Explore,[switch]$Chat,[switch]$Flight,[switch]$Hands,[switch]$WorldBlocks,[switch]$Combat,[switch]$CombatCheck,[string]$CombatFixtureRun,[string]$GroundPatchFile,[switch]$ThirdPersonWalkingCheck,[switch]$DropsCheck,[switch]$CraftingCheck,[switch]$FurnaceCheck,[switch]$RespawnCheck,[ValidateRange(0,1)][int]$InitialTerrainRadius=0)
+ [ValidateRange(0,300)][int]$SmokeSeconds=0,[switch]$PreflightOnly,[switch]$Movement,[switch]$Blocks,[switch]$Explore,[switch]$Chat,[switch]$Flight,[switch]$Hands,[switch]$WorldBlocks,[switch]$Combat,[switch]$CombatCheck,[switch]$ProjectileCheck,[string]$CombatFixtureRun,[string]$GroundPatchFile,[switch]$ThirdPersonWalkingCheck,[switch]$DropsCheck,[switch]$CraftingCheck,[switch]$FurnaceCheck,[switch]$RespawnCheck,[ValidateRange(0,1)][int]$InitialTerrainRadius=0)
 . (Join-Path $PSScriptRoot 'powershell7.ps1')
 if($PSVersionTable.PSVersion.Major -lt 7){
  $code=Invoke-MineComePowerShell7 -ScriptPath $PSCommandPath -BoundParameters $PSBoundParameters
@@ -15,6 +15,7 @@ $root=[IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
 . (Join-Path $PSScriptRoot 'GameplayHudSessionGuard.ps1')
 if($RespawnCheck){$InitialTerrainRadius=1}
 if($InitialTerrainRadius -eq 1){$Explore=$true}
+if($ProjectileCheck -and -not $CombatCheck){throw 'ProjectileCheck requires the owned CombatCheck.'}
 if($CombatCheck){if($CombatFixtureRun -cnotmatch '^[0-9a-f]{32}$'){throw 'Use Test-KcdCombat.ps1 to own the isolated NPC lifecycle.'};$Combat=$true}
 elseif($CombatFixtureRun){throw 'CombatFixtureRun requires the owned automated combat check.'}
 if($Combat){$WorldBlocks=$true};if($WorldBlocks){$Hands=$true};if($Hands){$Flight=$true};if($Flight){$Chat=$true}
@@ -81,7 +82,7 @@ try{
  if($Chat){$arguments+='-Chat'}
  if($Flight){$arguments+='-Flight'}
  if($Hands){$arguments+='-Hands'};if($WorldBlocks){$arguments+='-WorldBlocks'};if($Combat){$arguments+='-Combat'}
- if($CombatCheck){$arguments+='-CombatCheck'}
+ if($CombatCheck){$arguments+='-CombatCheck'};if($ProjectileCheck){$arguments+='-ProjectileCheck'}
  if($RespawnCheck){$arguments+='-RespawnCheck'}
  if($FurnaceCheck){$arguments+='-FurnaceCheck'}
  if($CraftingCheck){$arguments+='-CraftingCheck'}
@@ -135,7 +136,8 @@ try{
  try{$bytes=[Text.Encoding]::UTF8.GetBytes($armText);$file.Write($bytes,0,$bytes.Length);$file.Flush($true);$armWritten=$true}finally{$file.Dispose()}
  [IO.File]::WriteAllText((Join-Path $directory 'arm.ini'),$armText)
  Write-Output "GAMEPLAY_READY run=$run stop_file=$(Join-Path $directory 'session.stop')"
- if($CombatCheck){Write-Output 'AUTOMATED_COMBAT_CHECK: production native NPC snapshots and vanilla primary melee; no physical input or reciprocal native damage claim.'}
+ if($ProjectileCheck){Write-Output 'AUTOMATED_PROJECTILE_CHECK: actual vanilla bow arrows against native NPCs and scenery; no physical input or reciprocal native damage claim.'}
+ elseif($CombatCheck){Write-Output 'AUTOMATED_COMBAT_CHECK: production native NPC snapshots and vanilla primary melee; no physical input or reciprocal native damage claim.'}
  if($RespawnCheck){Write-Output 'AUTOMATED_RESPAWN_CHECK: keep KCD2 focused; scripted guest walking, death and a real Respawn-button click verify native relocation and continued play. Physical input is not claimed.'}
  if($FurnaceCheck){Write-Output 'AUTOMATED_FURNACE_CHECK: keep KCD2 focused; actual guest UI clicks load fuel/input, smelt and collect output, then save. Physical input is not claimed.'}
  if($CraftingCheck){Write-Output 'AUTOMATED_CRAFTING_CHECK: keep KCD2 focused; real guest UI clicks craft ingredients/table/tool, verify unused-input return, then save. Physical input is not claimed.'}
@@ -146,8 +148,26 @@ try{
  if($Hands){Write-Output $(if($WorldBlocks){'Minecraft hands and Steve use the layered HUD stream. F5 requests first/back/front perspective while inventory and chat are closed; the view changes after native camera acknowledgement.'}else{'Minecraft first-person hands and held items share the HUD stream. Inventory hides them; use WorldBlocks for Steve and F5 perspective controls.'})}
  if($Flight){Write-Output 'Creative flight: /gamemode creative, double-tap Space to toggle; Space rises, Shift descends, Ctrl sprints. Flight stays within captured terrain and its vertical limit; F8 saves airborne position.'}
  Write-Output $(if($WorldBlocks){'Minecraft models render owned solid blocks. Right-click places supported held blocks; left-click mines. E opens inventory; F8 saves. Captured ground occludes blocks. Native scenery depth is used when camera/projection checks match.'}elseif($Blocks){'Focus KCD2 with controls released. Walking, HUD and stone controls activate automatically: right-click places held stone, left-click mines owned stone. E opens inventory; F8 stops and saves. Terrain coverage and owned stone capacity are bounded.'}elseif($Movement){'Focus KCD2 with controls released. Minecraft walking and HUD activate automatically. F8 stops and saves at the last safe position. Walking is limited to the captured terrain; blocks, commands and flight are not connected in this path yet.'}else{'Focus KCD2 with controls released. HUD activates automatically; F8 stops and saves. KCD owns walking; Minecraft commands/flight are not connected yet.'})
- $smokeDeadline=[DateTime]::UtcNow.AddSeconds($SmokeSeconds)
+ $smokeDeadline=[DateTime]::UtcNow.AddSeconds($SmokeSeconds);$projectileFixtureRemoved=$false
  while(-not $helper.HasExited){
+  if($ProjectileCheck -and -not $projectileFixtureRemoved -and (Test-Path -LiteralPath (Join-Path $directory 'projectile-fixture-remove.json'))){
+   $remove=Read-MineComeGameplayJson (Join-Path $directory 'projectile-fixture-remove.json')
+   Assert-GameplayCombatKeys $remove @('schema','kind','world_id','actor_token')
+   if($remove.schema -ne 1 -or $remove.kind -cne 'minecome_native_projectile_fixture_remove_v1' -or $remove.world_id -cne $guest.world_id -or $remove.actor_token -ne 1){throw 'Projectile fixture removal identity differs.'}
+   $removeOffset=(Get-Item -LiteralPath $context.GameLog).Length
+   Invoke-MineComeProbeConsole $context "#MineCome.GameplayCombatFixtureEnd('$CombatFixtureRun')"|Out-Null
+   $removeDeadline=[DateTime]::UtcNow.AddSeconds(3)
+   do{
+    Invoke-MineComeProbeConsole $context "#System.LogAlways('[MineComeProjectileFixtureRemove] $CombatFixtureRun')"|Out-Null
+    $removedReceipts=@(Get-MineComeProbeReceipts (Read-MineComeProbeLog $context $removeOffset) 'MineComeCombatFixture' $CombatFixtureRun)
+    $projectileFixtureRemoved=@($removedReceipts|Where-Object {$_.event -ceq 'terminal' -and $_.removed -eq $true -and $_.path_restored -eq $true -and $_.active -eq $false}).Count -gt 0
+    if(-not $projectileFixtureRemoved){Start-Sleep -Milliseconds 50}
+   }while(-not $projectileFixtureRemoved -and [DateTime]::UtcNow -lt $removeDeadline)
+   if(-not $projectileFixtureRemoved){throw 'Owned NPC removal before ground shot was not confirmed.'}
+   $removedText=[ordered]@{schema=1;world_id=$guest.world_id;removed=$true}|ConvertTo-Json -Compress
+   $removedTemporary=Join-Path $directory 'projectile-fixture-removed.tmp'
+   [IO.File]::WriteAllText($removedTemporary,$removedText);[IO.File]::Move($removedTemporary,(Join-Path $directory 'projectile-fixture-removed.json'),$false)
+  }
   if($hostFollower){
    $stoppingPath=Join-Path $directory 'gameplay-stopping.json'
    if(-not $hostFollower.Final -and (Test-Path -LiteralPath $stoppingPath)){

@@ -1,7 +1,7 @@
-# A real NPC, real vanilla primary melee, and normal save/cleanup. No physical-input claim.
+# A real NPC, vanilla melee or bow impacts, and normal save/cleanup. No physical-input claim.
 [CmdletBinding()]
 param([Parameter(Mandatory)][string]$BundleDirectory,[string]$InstanceDirectory,[string]$GroundPatchFile,
- [string]$JavaHome='C:/Program Files/Java/jdk-24')
+ [string]$JavaHome='C:/Program Files/Java/jdk-24',[switch]$ProjectileCheck)
 . (Join-Path $PSScriptRoot 'powershell7.ps1')
 if($PSVersionTable.PSVersion.Major -lt 7){$code=Invoke-MineComePowerShell7 -ScriptPath $PSCommandPath -BoundParameters $PSBoundParameters;if($code -ne 0){throw "Native combat check failed: $code"};return}
 $ErrorActionPreference='Stop';Set-StrictMode -Version Latest
@@ -21,7 +21,7 @@ $probe=New-MineComeProbeRun $context 'gameplay-combat-fixture' (Join-Path $conte
 $saved=$null;$attempted=$false;$removed=$false
 try{
  $attempted=$true
- & (Join-Path $PSScriptRoot 'Start-GameplaySession.ps1') -BundleDirectory $BundleDirectory -InstanceDirectory $InstanceDirectory -JavaHome $JavaHome -GroundPatchFile $GroundPatchFile -Combat -CombatCheck -CombatFixtureRun $run | ForEach-Object {
+ & (Join-Path $PSScriptRoot 'Start-GameplaySession.ps1') -BundleDirectory $BundleDirectory -InstanceDirectory $InstanceDirectory -JavaHome $JavaHome -GroundPatchFile $GroundPatchFile -Combat -CombatCheck -ProjectileCheck:$ProjectileCheck -CombatFixtureRun $run | ForEach-Object {
   if($_ -is [string] -and $_.StartsWith('GAMEPLAY_SESSION_SAVED evidence=')){$saved=$_.Substring('GAMEPLAY_SESSION_SAVED evidence='.Length)}
   Write-Host $_
  }
@@ -46,13 +46,30 @@ $s=Get-Content -LiteralPath (Join-Path $saved 'gameplay-session.json') -Raw|Conv
 $h=Get-Content -LiteralPath (Join-Path $saved 'host-movement.json') -Raw|ConvertFrom-Json -Depth 32
 $v=Get-Content -LiteralPath (Join-Path $saved 'verification.json') -Raw|ConvertFrom-Json -Depth 32
 $f=$s.fixture;$c=$s.combat
-if($v.result -cne 'passed' -or -not $v.normal_client_exit -or $h.Failure -or -not $h.ResourcesClosed -or -not $h.Combat.CleanupComplete -or $h.Combat.Damaged -ne 1 -or $h.Combat.Rejected -ne 0 -or $h.Combat.LastHit.result -cne 'damaged'){throw 'Native combat health/cleanup receipt failed.'}
+if($v.result -cne 'passed' -or -not $v.normal_client_exit -or $h.Failure -or -not $h.ResourcesClosed -or -not $h.Combat.CleanupComplete){throw 'Native combat cleanup receipt failed.'}
+if(-not $ProjectileCheck -and ($h.Combat.Damaged -ne 1 -or $h.Combat.Rejected -ne 0 -or $h.Combat.LastHit.result -cne 'damaged')){throw 'Native melee health receipt failed.'}
 if($f.kind -cne 'minecome_native_combat_fixture_v1' -or $f.result -cne 'passed' -or $f.failure -or -not $f.actual_minecraft -or $f.synthetic_host -or $f.physical_native_keys_verified -or $f.position_writes_used -or $f.camera_writes_used -or $f.direct_health_inventory_entity_writes){throw 'Native combat fixture scope/identity differs.'}
 foreach($flag in @('native_health_damage_verified','durability_verified','inventory_suppression_verified','native_walking_verified','render_pixels_verified')){if($f.$flag -ne $true){throw "Native combat capability missing: $flag"}}
 if($f.inventory_native_eye_horizontal_limit -ne .08 -or $f.inventory_native_eye_horizontal_drift -lt 0 -or $f.inventory_native_eye_horizontal_drift -gt .08){throw 'Native inventory camera suppression was not verified.'}
-if($c.outgoing_hits -ne 1 -or $c.hit_ack -ne 1 -or $c.incoming_hurts -ne 0 -or $c.pending -or -not $c.cleanup_complete -or $c.server_applied_damage -ne 7 -or $h.Combat.LastHit.before -ne $f.native_health_before -or [Math]::Abs($h.Combat.LastHit.after-$f.native_health_after) -gt .01){throw 'Native and vanilla damage evidence disagree.'}
+if(-not $ProjectileCheck -and ($c.outgoing_hits -ne 1 -or $c.hit_ack -ne 1 -or $c.incoming_hurts -ne 0 -or $c.pending -or -not $c.cleanup_complete -or $c.server_applied_damage -ne 7 -or $h.Combat.LastHit.before -ne $f.native_health_before -or [Math]::Abs($h.Combat.LastHit.after-$f.native_health_after) -gt .01)){throw 'Native and vanilla damage evidence disagree.'}
 foreach($capture in $f.images){if((Get-FileHash -LiteralPath (Join-Path $saved $capture.file)).Hash.ToLowerInvariant() -cne $capture.sha256 -or $capture.metadata.world_id -cne $s.world_id -or -not $capture.metadata.PSObject.Properties['world_camera']){throw 'Native combat image identity differs.'}}
-if(($f.images.stage -join '|') -cne 'before|hit|inventory|walking|after'){throw 'Native combat capture sequence incomplete.'}
+if($ProjectileCheck){
+ $p=$c.projectiles;$native=$h.Combat.Projectiles;$impact=$native.LastImpact.reply
+ if(-not $f.projectile_check -or -not $f.native_projectile_scenery_verified -or $p.impacts -ne 1 -or $p.scenery_hits -ne 1 -or $p.rejected -ne 0 -or $p.pending -or -not $p.cleanup_complete -or
+  $native.Impacts -ne 1 -or $native.Scenery -ne 1 -or $native.Damaged -ne 1 -or $native.Rejected -ne 0 -or $native.Pending -or -not $native.CleanupComplete -or
+  $impact.result -cne 'damaged' -or $impact.before -ne $f.native_health_before -or [Math]::Abs($impact.after-$f.native_health_after) -gt .01 -or
+  $p.damage -le 0 -or [Math]::Abs($p.damage-$f.vanilla_damage) -gt .001 -or [Math]::Abs(($impact.before-$impact.after)/$f.native_max_health-$p.damage/20) -gt .02 -or
+  $native.LastScenery.reply.result -cne 'scenery' -or $c.outgoing_hits -ne 0 -or $c.incoming_hurts -ne 0){throw 'Native scenery/NPC and vanilla projectile evidence disagree.'}
+ $sceneCapture=@($f.images|Where-Object stage -CEQ 'scenery')[0]
+ $sceneProjectiles=@($sceneCapture.metadata.projectiles)
+ if($sceneProjectiles.Count -ne 1 -or $sceneCapture.metadata.projectile_render_count -ne 1 -or $sceneCapture.metadata.projectiles_truncated -or
+  $sceneProjectiles[0].id.Replace('-','') -cne $native.LastScenery.reply.projectile -or $sceneProjectiles[0].type -cne 'minecraft:arrow' -or
+  $sceneCapture.metadata.player_pixels -or $sceneCapture.metadata.rendered_world_blocks -ne 0 -or $sceneCapture.metadata.dropped_item_render_count -ne 0){throw 'Native scenery frame must isolate the exact contacted arrow.'}
+ if($sceneCapture.world_file -cne 'native-combat-scenery-world.png' -or $sceneCapture.world_pixels -lt 1 -or $sceneCapture.world_depth_pixels -lt 1 -or $sceneCapture.metadata.projectile_render_count -lt 1 -or
+  (Get-FileHash -LiteralPath (Join-Path $saved $sceneCapture.world_file)).Hash.ToLowerInvariant() -cne $sceneCapture.world_sha256){throw 'Native scenery arrow capture/depth proof differs.'}
+}
+$expectedCaptures=if($ProjectileCheck){'before|hit|scenery|inventory|walking|after'}else{'before|hit|inventory|walking|after'}
+if(($f.images.stage -join '|') -cne $expectedCaptures){throw 'Native combat capture sequence incomplete.'}
 $windowStart=[long]$f.native_composition_window_started_utc_ms;$windowEnd=[long]$f.native_composition_window_completed_utc_ms
 if($windowStart -le 0 -or $windowEnd-$windowStart -lt 11000 -or $windowEnd-$windowStart -gt 14000){throw 'Native post-walk composition observation window differs.'}
 $walkingCapture=@($f.images|Where-Object stage -CEQ 'walking')[0];$afterCapture=@($f.images|Where-Object stage -CEQ 'after')[0]
@@ -78,7 +95,7 @@ $compositedDelta=$window[-1].composited-$window[0].composited;$reprojectedDelta=
 if($compositedDelta -lt 1 -or $reprojectedDelta -lt 1){throw 'Native composition/reprojection stopped before the post-walk observation.'}
 [ordered]@{schema=1;kind='minecome_native_combat_verification_v1';result='passed';run=$s.run;world_id=$s.world_id;fixture_run=$run;fixture_removed=$removed;
  actual_minecraft=$true;actual_native_npc=$true;scripted_guest_input=$true;physical_native_input_verified=$false;reciprocal_native_damage_verified=$false;hostile_free_aim_verified=$false;
- native_damage_receipt=$h.Combat.LastHit;vanilla_damage=$c.server_applied_damage;walk_distance=$f.walk_distance;fixture_evidence=$probe.Directory;
+ projectile_check=[bool]$ProjectileCheck;native_damage_receipt=$(if($ProjectileCheck){$h.Combat.Projectiles.LastImpact.reply}else{$h.Combat.LastHit});projectiles=$h.Combat.Projectiles;vanilla_damage=$f.vanilla_damage;walk_distance=$f.walk_distance;fixture_evidence=$probe.Directory;
  native_composited_frames=($depth.composited|Measure-Object -Maximum).Maximum;native_reprojected_frames=($depth.reprojected|Measure-Object -Maximum).Maximum;
  native_post_walk_composited_frames=$compositedDelta;native_post_walk_reprojected_frames=$reprojectedDelta;native_post_walk_counter_samples=$window;
  inventory_native_eye_horizontal_drift=$f.inventory_native_eye_horizontal_drift}|

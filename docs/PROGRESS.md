@@ -1,5 +1,73 @@
 # MineCome progress — 2026-11-09
 
+## Bow arrows hit native scenery and NPCs
+
+Connected `-Combat` now enables ordinary bow input. Real vanilla arrows query
+their actual flight segments against native scenery and NPCs; nearer Minecraft
+blocks still win. Scenery uses vanilla embedding/aging/pickup, and NPC impacts
+use actual vanilla arrow damage before one attributed native damage call.
+Projectile UUIDs, continuous endpoints, actor generations, freshness and cached
+receipts prevent changed or duplicate requests from applying another hit.
+Native actor collision includes vanilla's source-inspected0.3f arrow margin;
+scenery and melee bounds are unchanged. Client rendering follows the checked
+server flight while a native reply is pending.
+
+**Coupled automatic PASS:**
+`runtime/evidence/gameplay-kcd-20261109-102336-74a2a3b6292f4a73bfc4a9c7f7c2b060/native-combat-verification.json`.
+A real bow-fired arrow dealt8 Minecraft damage and reduced the owned native
+NPC from100 to60HP. After confirmed removal of that NPC, a second real arrow
+embedded in native ground. The scenery capture contains exactly that arrow's
+UUID and838 colour/depth pixels, with no other world-layer content; its PNG was
+visually inspected. Eight traces, one actor impact and one scenery hit completed
+without rejection or pending work. Inventory suppressed walking, subsequent
+movement covered0.641m, and both native composition/reprojection counters grew
+by192 in the post-walk observation. Save, NPC removal, native settings and all
+bridge cleanup passed. Input was scripted; no physical bow-input claim.
+
+Additional evidence:
+- Actual Minecraft with explicitly synthetic native contacts passed:
+  `runtime/evidence/gameplay-combat-20261109-100811-5b6142dbeb444767850ea2c70761bc36/verification.json`.
+  Vanilla damage10 produced50 synthetic native HP damage; charge, ammunition,
+  durability, cancellation, no-ammo and existing melee regressions also passed.
+- Direct native trace/damage/duplicate/ground checks passed:
+  `runtime/evidence/combat-native-20261109-100254-d5dbc257ee044dd196c2d9b2b8028e77`.
+- Compilation, Combat280, World37, projectile-host45, existing combat-host and
+  Lua combat regressions passed, including the subsequent actor-margin fix.
+
+The first coupled shot grazed above the raw native head AABB. Inspecting the
+pinned vanilla collision implementation exposed the missing arrow-specific
+margin. The final check also aimed through the torso using normal native mouse
+input; no camera/health/position writes or expanded scenery bounds were used.
+An earlier standalone fixture placed its embedded arrow inside pickup range;
+the fixture was moved farther away, preserving normal pickup behavior.
+Review also made the fixture's NPC-removal request publication atomic and tied
+scenery-frame acceptance to the exact native-contact UUID. The latter assertion
+was applied to the passing saved evidence; the publication change compiled.
+
+The user observed very laggy/uneven arrow travel. A first timing improvement
+now queues the next trace immediately after a confirmed clear vanilla tick,
+using actual post-tick position/velocity. It prequeues only for the sole airborne
+arrow, preserving multi-arrow scheduling. No unchecked simulation or relaxed
+freshness was introduced. Actual Minecraft synthetic-host PASS:
+`runtime/evidence/gameplay-combat-20261109-103239-25283b0c5a3c4adc931c8ebf8a22710c/verification.json`.
+All3 clear segments used immediate dispatch; blocked flight ticks fell6→2 across
+5 traces compared with the earlier same fixture. Scenery, damage, ammunition,
+durability, cancellation, old melee behavior and cleanup still passed. The final
+timing refinement is compiled/standalone-verified, not yet measured in another
+native run. The earlier coupled final trace took122ms request→reply and its impact
+took158ms; native transport delay remains the next performance priority.
+
+Limits: native replies gate each flight tick, adding visible travel latency.
+There are16 active-flight and64 retained-record bounds,4m segments,64m cumulative
+travel and10s flight lifetime. Spectral/tipped bow arrows use the same base
+collision path but were not separately live-tested, and their native special
+effects are not transferred. Crossbows, piercing, native knockback and reciprocal
+Minecraft health remain unfinished. This supersedes the standalone-only bow
+status below.
+
+KCD2 closed normally and the temporary HUD installation was restored/unarmed:
+`runtime/evidence/gameplay-hud-restore-20261109-102504-a96c9ce8013a4492986166e6e99b22e4`.
+
 ## Vanilla bow use and real arrow rendering
 
 Implemented bow press/hold/release using vanilla item packets, with real tracked

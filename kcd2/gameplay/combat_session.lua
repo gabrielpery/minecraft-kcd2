@@ -89,7 +89,7 @@ local function stop(p,why)
  if p.timer then local ok,v=pcall(Script.KillTimer,p.timer);if ok and v~=false then p.timer=nil else p.reason='timer_cleanup_failed'end end
  if not restore_lock_policy(p)then p.reason='lock_policy_cleanup_unconfirmed'end
  p.cleanup_complete=p.timer==nil and p.lock_policy_restored==true
- p.timer_data=nil;state.active=nil;state.last=p
+ p.timer_data=nil;p.projectiles={};p.projectile_last=nil;state.active=nil;state.last=p
  emit(p,'terminal',p.reason);return p.cleanup_complete
 end
 local function valid(p)
@@ -135,7 +135,7 @@ function MineCome.GameplayCombatBegin(run,duration_ms,radius,max_actors)
  if not System or type(System.GetEntitiesInSphere)~='function' or type(System.GetCurrTime)~='function' or type(System.LogAlways)~='function' or not Script or type(Script.SetTimerForFunction)~='function' or type(Script.KillTimer)~='function' or not Physics or type(Physics.RayWorldIntersection)~='function' or not integer(ent_all,1,2147483647) then return false,'api_unavailable'end
  if type(player)~='table' or not player.id or not wuid(player) or type(player.soul)~='table' or read(player.actor,'IsDead')~=false then return false,'player_unavailable'end
  local t=clock();if not t then return false,'clock_unavailable'end
- local p={run=run,deadline=t+duration_ms/1000,received=t,last_clock=t,player=player,player_id=player.id,player_wuid=wuid(player),player_soul=player.soul,radius=radius,max_actors=max_actors,next_token=1,actors={},samples={},sequence=0,hit_ack=0}
+ local p={run=run,deadline=t+duration_ms/1000,received=t,last_clock=t,player=player,player_id=player.id,player_wuid=wuid(player),player_soul=player.soul,radius=radius,max_actors=max_actors,next_token=1,actors={},samples={},sequence=0,hit_ack=0,projectiles={},projectile_count=0,projectile_ack=0}
  if not prepare_lock_policy(p)then return false,'lock_policy_baseline_unavailable'end
  state.active=p;if not schedule(p)then state.active=nil;return false,'timer_unavailable'end
  if not apply_lock_policy(p)then stop(p,'lock_policy_setup_failed');return false,'lock_policy_setup_failed'end
@@ -231,6 +231,166 @@ function MineCome.GameplayCombatHit(run,sequence,actor_token,source_seq,fraction
  local result=after<before and 'damaged' or 'no_damage'
  p.last_hit={seq=sequence,result=result,extra=',"seq":'..sequence..',"before":'..number(before)..',"after":'..number(after)..',"locked_before":'..boolean(locked_before)..',"locked_after":'..boolean(locked_after)}
  emit(p,'hit',result,p.last_hit.extra);return true
+end
+-- Arrow trajectory uses its own contiguous, bounded segments. Only the first
+-- segment uses the shooter's eye; subsequent contacts are not melee eye rays.
+-- The real Minecraft arrow computes damage after the native trace acknowledgement.
+local function point_json(v)return '{"x":'..number(v.x)..',"y":'..number(v.y)..',"z":'..number(v.z)..'}'end
+local function actor_json(a)
+ if not a then return 'null'end
+ return '{"token":'..a.token..',"x":'..number(a.x)..',"y":'..number(a.y)..',"z":'..number(a.z)..',"width":'..number(a.width)..',"height":'..number(a.height)..',"health":'..number(a.health)..',"max_health":'..number(a.max_health)..',"alive":'..tostring(a.alive)..'}'
+end
+local function projectile_reply(p,request,result,reason,point,normal,a,before,after)
+ point=point or {x=0,y=0,z=0};normal=normal or {x=0,y=0,z=0}
+ local extra=',"seq":'..request[1]..',"projectile":"'..request[3]..'","segment":'..request[4]..',"reason":"'..(reason or '')..'","contact":'..point_json(point)..',"normal":'..point_json(normal)..',"actor_token":'..(a and a.token or 0)..',"actor":'..actor_json(a)..',"before":'..number(before)..',"after":'..number(after)
+ p.projectile_last={request=request,event=request[2],result=result,extra=extra}
+ if not emit(p,request[2],result,extra)then stop(p,'log_failed');return false,'log_failed'end
+ return true,result
+end
+local function projectile_request(run,request)
+ local p=state.active;if not p or p.run~=run then return nil,'session_missing'end
+ local t,why=valid(p);if not t then stop(p,why);return nil,why end
+ if not integer(request[1],1,10000000) or not token(request[3]) or not integer(request[4],1,10000)then return nil,'invalid_request'end
+ if request[1]==p.projectile_ack and p.projectile_last then
+  local previous=p.projectile_last
+  if #request~=#previous.request then return nil,'request_changed'end
+  for i=1,#request do if request[i]~=previous.request[i]then return nil,'request_changed'end end
+  emit(p,previous.event,previous.result,previous.extra);return nil,'duplicate'
+ end
+ if request[1]<=p.projectile_ack then return nil,'replayed_request'end
+ -- Consume first, including failures. A native setter's ambiguous result cannot
+ -- become another attack by resubmitting or changing an existing request.
+ p.projectile_ack=request[1];p.received=t
+ return p,t
+end
+local function projectile_close(p,id)
+ local s=p.projectiles[id];if s then p.projectiles[id]={done=true}end
+end
+local function projectile_reject(p,request,reason)
+ projectile_close(p,request[3]);return projectile_reply(p,request,'rejected',reason)
+end
+-- Yarn1.21.1+build.3 PersistentProjectileEntity.getEntityCollision delegates to
+-- ProjectileUtil's six-argument overload, which expands the target box by0.3f.
+-- Match that float promoted to double on the actual native rectangle; this
+-- margin does not alter scenery rays or melee reach/contact. Inspected bytecode:
+-- runtime/evidence/projectile-impact-source-20261109/ProjectileUtil.txt:228-264.
+local PROJECTILE_ACTOR_MARGIN=.30000001192092896
+local function segment_contact(origin,direction,length,a)
+ local entry,exit=0,length;local normal={x=-direction.x,y=-direction.y,z=-direction.z}
+ for _,axis in ipairs({'x','y','z'})do local d,o=direction[axis],origin[axis]
+  local lo,hi=a.lo[axis]-PROJECTILE_ACTOR_MARGIN,a.hi[axis]+PROJECTILE_ACTOR_MARGIN
+  if math.abs(d)<.00000001 then if o<lo or o>hi then return nil end
+  else local first,last=(lo-o)/d,(hi-o)/d;local sign=-1
+   if first>last then first,last=last,first;sign=1 end
+   if first>entry then entry=first;normal={x=0,y=0,z=0};normal[axis]=sign end
+   exit=math.min(exit,last);if entry>exit then return nil end
+  end
+ end
+ if entry<0 or entry>length then return nil end
+ return{x=origin.x+direction.x*entry,y=origin.y+direction.y*entry,z=origin.z+direction.z*entry},entry,normal
+end
+local function projectile_scenery(p,origin,direction,length,skip)
+ if length<.000001 then return true,nil end
+ local hits={};local ok,count=pcall(Physics.RayWorldIntersection,copy(origin),{x=direction.x*length,y=direction.y*length,z=direction.z*length},16,ent_all,p.player_id,skip,hits)
+ if not ok or not integer(count,0,15)then return false end
+ local nearest
+ for i=1,16 do local h=hits[i]
+  if i>count then if h~=nil then return false end
+  elseif type(h)~='table' or not finite(h.dist) or h.dist<0 or h.dist>length+.01 or not vector(h.pos) or not vector(h.normal) or
+   math.abs(h.normal.x^2+h.normal.y^2+h.normal.z^2-1)>.05 or
+   distance(h.pos,{x=origin.x+direction.x*h.dist,y=origin.y+direction.y*h.dist,z=origin.z+direction.z*h.dist})>.03 then return false
+  elseif not nearest or h.dist<nearest.dist then nearest={dist=h.dist,pos=copy(h.pos),normal=copy(h.normal)}end
+ end
+ if hits[17]~=nil then return false end
+ return true,nearest
+end
+local function projectile_actor(p,origin,target,direction,length)
+ local center={x=(origin.x+target.x)/2,y=(origin.y+target.y)/2,z=(origin.z+target.z)/2}
+ local ok,entities=pcall(System.GetEntitiesInSphere,center,length/2+5)
+ if not ok or type(entities)~='table'then return false end
+ local nearest,point,normal,best;local count=0
+ for _,entity in pairs(entities)do
+  count=count+1;if count>128 then return false end
+  local a=actor(entity)
+  if a and a.alive then local hit,dist,n=segment_contact(origin,direction,length,a)
+   if hit and (not best or dist<best or dist==best and a.raw<nearest.raw)then nearest,point,normal,best=a,hit,n,dist end
+  end
+ end
+ return true,nearest,point,normal,best
+end
+function MineCome.GameplayProjectileTrace(run,sequence,id,segment,ox,oy,oz,tx,ty,tz)
+ local request={sequence,'projectile_trace',id,segment,ox,oy,oz,tx,ty,tz}
+ local p,t=projectile_request(run,request);if not p then return t=='duplicate',t end
+ local origin,target={x=ox,y=oy,z=oz},{x=tx,y=ty,z=tz}
+ if not vector(origin) or not vector(target)then return projectile_reject(p,request,'invalid_segment')end
+ local length=distance(origin,target)
+ if length<.000001 or length>4 then return projectile_reject(p,request,'invalid_segment')end
+ local direction={x=(tx-ox)/length,y=(ty-oy)/length,z=(tz-oz)/length}
+ local trajectory=p.projectiles[id]
+ if trajectory then
+  if trajectory.done or trajectory.collision then return projectile_reject(p,request,'projectile_finished')end
+  if segment~=trajectory.segment+1 or distance(origin,trajectory.endpoint)>.03 or t-trajectory.started>10 or trajectory.distance+length>64 then return projectile_reject(p,request,'trajectory_changed')end
+ else
+  if segment~=1 or p.projectile_count>=4096 then return projectile_reject(p,request,'projectile_capacity')end
+  local active=0
+  for old_id,s in pairs(p.projectiles)do
+   if not s.done and t-s.started>10 then projectile_close(p,old_id)elseif not s.done then active=active+1 end
+  end
+  if active>=16 then return projectile_reject(p,request,'projectile_capacity')end
+  local ok,view=pcall(function()return MineCome.GameplayMovementCombatView(run)end)
+  if not ok or type(view)~='table' or view.entity~=p.player or view.id~=p.player_id or not vector(view.origin) or not vector(view.direction) or
+   distance(origin,view.origin)>.6 or math.abs(view.direction.x^2+view.direction.y^2+view.direction.z^2-1)>.02 or
+   direction.x*view.direction.x+direction.y*view.direction.y+direction.z*view.direction.z<.97 then return projectile_reject(p,request,'launch_changed')end
+  trajectory={started=t,segment=0,distance=0};p.projectiles[id]=trajectory;p.projectile_count=p.projectile_count+1
+ end
+ local ok,a,point,normal,actor_distance=projectile_actor(p,origin,target,direction,length)
+ if not ok then return projectile_reject(p,request,'actors_unknown')end
+ local scene_ok,scenery=projectile_scenery(p,origin,direction,length,a and a.id or nil)
+ if not scene_ok then return projectile_reject(p,request,'scenery_unknown')end
+ local ended,why=valid(p);if not ended then stop(p,why);return false,why end
+ if ended-t>.1 then return projectile_reject(p,request,'trace_expired')end
+ trajectory.segment=segment;trajectory.distance=trajectory.distance+length;trajectory.endpoint=copy(target)
+ if scenery and (not actor_distance or scenery.dist<=actor_distance+.001)then
+  projectile_close(p,id);return projectile_reply(p,request,'scenery','',scenery.pos,scenery.normal)
+ end
+ if a then
+  local current=actor(a.entity)
+  if not same(a,current) or not current.alive or distance(a.lo,current.lo)>.03 or distance(a.hi,current.hi)>.03 then return projectile_reject(p,request,'target_changed')end
+  local found;for old_token,old in pairs(p.actors)do if same(old,current)then found=old_token;break end end
+  if not found then
+   if p.next_token>256 then return projectile_reject(p,request,'actor_capacity')end
+   found=p.next_token;p.next_token=p.next_token+1;p.actors[found]=current
+  end
+  current.token=found
+  trajectory.collision={time=ended,actor=current,point=point,normal=normal,origin=copy(origin),direction=direction,length=length}
+  return projectile_reply(p,request,'actor','',point,normal,current)
+ end
+ return projectile_reply(p,request,'clear','',target,{x=0,y=0,z=0})
+end
+function MineCome.GameplayProjectileImpact(run,sequence,id,segment,actor_token,fraction)
+ local request={sequence,'projectile_impact',id,segment,actor_token,fraction}
+ local p,t=projectile_request(run,request);if not p then return t=='duplicate',t end
+ local trajectory=p.projectiles[id];local collision=trajectory and trajectory.collision
+ projectile_close(p,id) -- Consume before any native damage setter, including errors.
+ if not integer(actor_token,1,256) or not finite(fraction) or fraction<=0 or fraction>50 then return projectile_reply(p,request,'rejected','invalid_damage')end
+ if not trajectory or trajectory.segment~=segment or not collision or collision.actor.token~=actor_token or t-collision.time>FRESH then return projectile_reply(p,request,'rejected','stale_impact')end
+ local current=actor(collision.actor.entity)
+ if not same(collision.actor,current) or not same(p.actors[actor_token],current) or not current.alive then return projectile_reply(p,request,'rejected','target_changed')end
+ local point,length,normal=segment_contact(collision.origin,collision.direction,collision.length,current)
+ if not point or distance(point,collision.point)>.15 then return projectile_reply(p,request,'rejected','target_changed')end
+ local scene_ok,scenery=projectile_scenery(p,collision.origin,collision.direction,length,current.id)
+ if not scene_ok then return projectile_reply(p,request,'rejected','scenery_unknown')end
+ if scenery and scenery.dist<length-.001 then return projectile_reply(p,request,'rejected','occluded')end
+ local ended,why=valid(p);if not ended then stop(p,why);return false,why end
+ local again=actor(current.entity)
+ if ended-t>.1 or ended-collision.time>FRESH or not same(current,again) or not again.alive or distance(current.lo,again.lo)>.03 or distance(current.hi,again.hi)>.03 then return projectile_reply(p,request,'rejected','target_changed')end
+ again.token=actor_token
+ local before=again.health;local damage=math.min(before,fraction*again.max_health)
+ local applied=pcall(again.soul.DealDamage,again.soul,0,damage,p.player_wuid,false)
+ local after=read(again.soul,'GetState','health')
+ if not applied or not finite(after) or after<0 or after>before+.01 then return projectile_reply(p,request,'rejected','damage_unconfirmed',point,normal,again,before,after)end
+ again.health=after;again.alive=after>0 and read(again.entity.actor,'IsDead')==false
+ return projectile_reply(p,request,after<before and 'damaged' or 'no_damage','',point,normal,again,before,after)
 end
 function MineCome.GameplayCombatEnd(run)
  local p=state.active

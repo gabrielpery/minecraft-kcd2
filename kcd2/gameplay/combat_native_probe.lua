@@ -2,8 +2,8 @@
 -- Explicit, bounded real-engine check using the production combat path and
 -- official owned NPC fixture. Loading this source does not execute it.
 MineCome=MineCome or {}
-function MineCome.GameplayCombatNativeProbe(run)
- local result={ok=false,reason='not_started'}
+function MineCome.GameplayCombatNativeProbe(run,projectile_check)
+ local result={ok=false,reason='not_started',projectile_check=projectile_check==true}
  local function require_true(ok,reason)if not ok then error(reason)end end
  local ok,err=pcall(function()
   local pos=player:GetWorldPos();local forward=player.actor:GetHeadDir()
@@ -39,13 +39,40 @@ function MineCome.GameplayCombatNativeProbe(run)
   require_true(math.abs(result.after-math.max(0,result.before-result.maximum*.35))<.001,'native_health_delta')
   require_true(MineCome.GameplayCombatHit(run,1,1,1,.35,origin.x,origin.y,origin.z,target.x,target.y,target.z),'duplicate_ack')
   result.duplicate_after=a.entity.soul:GetState('health');require_true(result.duplicate_after==result.after,'native_hit_replayed')
+  if result.projectile_check then
+   local arrow='11111111111111111111111111111111'
+   local endpoint={x=origin.x+view.direction.x*3,y=origin.y+view.direction.y*3,z=origin.z+view.direction.z*3}
+   require_true(MineCome.GameplayProjectileTrace(run,1,arrow,1,origin.x,origin.y,origin.z,endpoint.x,endpoint.y,endpoint.z),'projectile_trace_call')
+   local traced=p.projectile_last;local trajectory=p.projectiles[arrow]
+   require_true(traced and traced.result=='actor' and trajectory and trajectory.collision and trajectory.collision.actor.entity==a.entity,'projectile_native_actor_contact')
+   local actor_token=trajectory.collision.actor.token
+   result.projectile_before=a.entity.soul:GetState('health')
+   require_true(MineCome.GameplayProjectileImpact(run,2,arrow,1,actor_token,.2),'projectile_impact_call')
+   result.projectile_after=a.entity.soul:GetState('health')
+   require_true(p.projectile_last.result=='damaged' and math.abs(result.projectile_after-math.max(0,result.projectile_before-result.maximum*.2))<.001,'projectile_native_damage')
+   require_true(MineCome.GameplayProjectileImpact(run,2,arrow,1,actor_token,.2),'projectile_duplicate_ack')
+   result.projectile_duplicate_after=a.entity.soul:GetState('health')
+   require_true(result.projectile_duplicate_after==result.projectile_after,'projectile_damage_replayed')
+   result.projectile_damage_verified=true
+   -- Scripted contiguous native segments verify the real scenery binding, not
+   -- Minecraft ballistics. The coupled fixture separately shoots actual arrows.
+   -- Launch beside the player, then sample downward before reaching the NPC;
+   -- the player is excluded by the same production trace implementation.
+   local scenery_arrow='22222222222222222222222222222222'
+   local from={x=origin.x+view.direction.x*.25,y=origin.y+view.direction.y*.25,z=origin.z+view.direction.z*.25}
+   require_true(MineCome.GameplayProjectileTrace(run,3,scenery_arrow,1,origin.x,origin.y,origin.z,from.x,from.y,from.z),'projectile_scenery_launch')
+   require_true(p.projectile_last.result=='clear','projectile_scenery_launch_obstructed')
+   require_true(MineCome.GameplayProjectileTrace(run,4,scenery_arrow,2,from.x,from.y,from.z,from.x,from.y,from.z-3.5),'projectile_scenery_trace')
+   require_true(p.projectile_last.result=='scenery','projectile_native_ground_missing')
+   result.projectile_scenery_verified=true
+  end
   local movement=MineCome._gameplay_movement.active
   require_true(movement and movement.writes==0 and not movement.camera_owned,'probe_moved_native_player')
-  result.ok=true;result.reason='native_melee_and_dedup_verified'
+  result.ok=true;result.reason=result.projectile_check and 'native_melee_projectile_and_scenery_verified' or 'native_melee_and_dedup_verified'
  end)
  if not ok then result.reason=tostring(err):gsub('[^a-zA-Z0-9_ :./-]','_')end
  pcall(MineCome.GameplayCombatEnd,run);pcall(MineCome.GameplayMovementEnd,run);pcall(MineCome.GameplayCombatFixtureEnd,run)
  local function n(v)return type(v)=='number' and tostring(v) or 'null'end
- System.LogAlways('[MineComeCombatNativeProbe] {"schema":1,"run":"'..run..'","ok":'..tostring(result.ok)..',"reason":"'..result.reason..'","before":'..n(result.before)..',"maximum":'..n(result.maximum)..',"after":'..n(result.after)..',"duplicate_after":'..n(result.duplicate_after)..'}')
+ System.LogAlways('[MineComeCombatNativeProbe] {"schema":1,"run":"'..run..'","ok":'..tostring(result.ok)..',"reason":"'..result.reason..'","before":'..n(result.before)..',"maximum":'..n(result.maximum)..',"after":'..n(result.after)..',"duplicate_after":'..n(result.duplicate_after)..',"projectile_check":'..tostring(result.projectile_check)..',"projectile_damage_verified":'..tostring(result.projectile_damage_verified==true)..',"projectile_scenery_verified":'..tostring(result.projectile_scenery_verified==true)..',"projectile_before":'..n(result.projectile_before)..',"projectile_after":'..n(result.projectile_after)..',"projectile_duplicate_after":'..n(result.projectile_duplicate_after)..',"actual_minecraft_projectile":false}')
  return result.ok,result.reason
 end

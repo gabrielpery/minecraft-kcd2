@@ -1,9 +1,10 @@
 # Actual vanilla melee/armour and optional bow use/rendering; synthetic host only.
 [CmdletBinding()]
-param([string]$JavaHome='C:/Program Files/Java/jdk-24',[string]$ReceiverPath,[switch]$BowCheck)
+param([string]$JavaHome='C:/Program Files/Java/jdk-24',[string]$ReceiverPath,[switch]$BowCheck,[switch]$ProjectileCheck)
 . (Join-Path $PSScriptRoot 'powershell7.ps1')
 if($PSVersionTable.PSVersion.Major -lt 7){$code=Invoke-MineComePowerShell7 -ScriptPath $PSCommandPath -BoundParameters $PSBoundParameters;if($code -ne 0){throw "Combat check failed: $code"};return}
 $ErrorActionPreference='Stop';Set-StrictMode -Version Latest
+if($ProjectileCheck){$BowCheck=$true}
 $root=Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot 'HudGroundMovement.ps1')
 $run=[guid]::NewGuid().ToString('N');$directory=Join-Path $root ('runtime/evidence/gameplay-combat-'+[DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss')+'-'+$run)
@@ -15,7 +16,7 @@ $hash=(Get-FileHash -LiteralPath $patch).Hash.ToLowerInvariant();$passed=$false;
 try{
  $arguments=@{JavaHome=$JavaHome;InstanceDirectory=$instance;EvidenceDirectory=(Join-Path $directory 'combat');FixturePhase='combat';WorldBlocks=$true;Combat=$true;GroundPatchFile=$patch}
  if($ReceiverPath){$arguments.ReceiverPath=$ReceiverPath}
- if($BowCheck){$arguments.BowCheck=$true}
+ if($BowCheck){$arguments.BowCheck=$true};if($ProjectileCheck){$arguments.ProjectileCheck=$true}
  $result=@(& (Join-Path $PSScriptRoot 'Start-GameplayGuest.ps1') @arguments|ForEach-Object {if($_ -isnot [string] -and $_.PSObject.Properties['VerificationFile']){$_}else{Write-Host $_}})
  if($result.Count -ne 1){throw 'Missing combat result.'}
  $v=Get-Content -LiteralPath $result[0].VerificationFile -Raw|ConvertFrom-Json
@@ -52,6 +53,13 @@ try{
    $capture.world_pixels -lt 1 -or $capture.world_with_depth_pixels -lt 1 -or $meta.projectile_render_count -lt 1 -or $meta.projectiles.Count -ne $meta.projectile_render_count -or
    $meta.rendered_world_blocks -ne 0 -or $meta.dropped_item_render_count -ne 0 -or $meta.player_pixels){throw 'Isolated real arrow pixels or depth missing.'}
   foreach($projectile in $meta.projectiles){if($projectile.owner -cne $bow.shots[0].owner -or $projectile.id -cnotin $bow.shots.id){throw 'Rendered arrow is not an observed vanilla bow shot.'}}
+  if($ProjectileCheck){
+   $projectiles=$c.projectiles
+   if($projectiles.prequeued_segments -lt 1){throw 'Actual arrow check did not exercise prompt next-segment dispatch.'}
+   if(-not $bow.synthetic_projectile_contacts_verified -or $bow.synthetic_projectile_scenery_hits -ne 1 -or $bow.synthetic_projectile_impacts -ne 1 -or
+    $projectiles.impacts -ne 1 -or $projectiles.actor_hits -ne 1 -or $projectiles.scenery_hits -ne 1 -or $projectiles.rejected -ne 0 -or $projectiles.pending -or -not $projectiles.cleanup_complete -or
+    $projectiles.damage -le 0 -or [Math]::Abs($projectiles.damage-$bow.synthetic_projectile_damage) -gt .001 -or [Math]::Abs($projectiles.native_damage-$projectiles.damage*5) -gt .01){throw 'Actual arrow physics and synthetic native impact proof differ.'}
+  }
  }elseif($f.PSObject.Properties['bow']){throw 'Unexpected bow experiment in ordinary combat fixture.'}
  $passed=$true
 }catch{$failure=$_.Exception.Message;throw}

@@ -37,6 +37,10 @@ hit-reaction/animation system. Health loss alone does not establish that visual
 requirement. Minecraft bows and crossbows are part of ranged combat: preserve
 actual charge/ammunition, projectile flight, collisions, damage and enchantments,
 and render the real Minecraft projectiles in the host world.
+TNT must cause actual block destruction and explosion damage, not just particles.
+Stage this through Minecraft-owned construction and native NPC damage first.
+Destruction of native buildings, environmental objects and terrain remains a
+separate part of the full target; its engine support is not yet established.
 Flights must use Minecraft's actual ability and Elytra mechanics; increasing a
 ground-test position limit alone is not a flight implementation.
 

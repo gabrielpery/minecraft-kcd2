@@ -49,21 +49,23 @@ public final class GameplayCombatProtocol {
     public static JsonObject identity(HudInputProtocol.Identity id,String world,GroundSurface surface,String kind){
         var j=new JsonObject();j.addProperty("schema",1);j.addProperty("kind",kind);j.addProperty("run",id.run());j.addProperty("world_id",world);j.addProperty("target_pid",id.targetPid());j.addProperty("target_start_filetime",Long.toUnsignedString(id.targetStart()));j.addProperty("patch_run",surface.run());j.addProperty("patch_sha256",surface.sha256());return j;
     }
-    private static JsonElement element(JsonReader r,int depth)throws IOException{
+    static JsonElement element(JsonReader r,int depth)throws IOException{return element(r,depth,false);}
+    static JsonElement element(JsonReader r,int depth,boolean allowNull)throws IOException{
         if(depth>4)throw new IOException("Combat nesting limit");
         return switch(r.peek()){
-            case BEGIN_OBJECT->{r.beginObject();var j=new JsonObject();while(r.hasNext()){var key=r.nextName();if(key.length()>64||j.has(key)||j.size()>=32)throw new IOException("Duplicate/oversized combat object");j.add(key,element(r,depth+1));}r.endObject();yield j;}
-            case BEGIN_ARRAY->{r.beginArray();var a=new JsonArray();while(r.hasNext()){if(a.size()>=32)throw new IOException("Oversized combat array");a.add(element(r,depth+1));}r.endArray();yield a;}
+            case BEGIN_OBJECT->{r.beginObject();var j=new JsonObject();while(r.hasNext()){var key=r.nextName();if(key.length()>64||j.has(key)||j.size()>=32)throw new IOException("Duplicate/oversized combat object");j.add(key,element(r,depth+1,allowNull));}r.endObject();yield j;}
+            case BEGIN_ARRAY->{r.beginArray();var a=new JsonArray();while(r.hasNext()){if(a.size()>=32)throw new IOException("Oversized combat array");a.add(element(r,depth+1,allowNull));}r.endArray();yield a;}
             case STRING->{var s=r.nextString();if(s.length()>128)throw new IOException("Oversized combat string");yield new JsonPrimitive(s);}
             case NUMBER->{var s=r.nextString();if(s.length()>64)throw new IOException("Oversized combat number");yield new JsonPrimitive(new LazilyParsedNumber(s));}
             case BOOLEAN->new JsonPrimitive(r.nextBoolean());
+            case NULL->{if(!allowNull)throw new IOException("Unsupported combat null");r.nextNull();yield JsonNull.INSTANCE;}
             default->throw new IOException("Unsupported combat value");
         };
     }
-    private static void keys(JsonObject j,Set<String> names)throws IOException{if(!j.keySet().equals(names))throw new IOException("Combat fields differ");}
-    private static String string(JsonObject j,String n)throws IOException{var v=j.get(n);if(!v.isJsonPrimitive()||!v.getAsJsonPrimitive().isString())throw new IOException("Combat string required");return v.getAsString();}
-    private static long integer(JsonObject j,String n,long min,long max)throws IOException{var v=j.get(n);if(!v.isJsonPrimitive()||!v.getAsJsonPrimitive().isNumber()||!v.getAsString().matches("[0-9]+"))throw new IOException("Exact combat integer required");long x=Long.parseLong(v.getAsString());if(x<min||x>max)throw new IOException("Combat integer bounds");return x;}
-    private static double number(JsonObject j,String n,double min,double max)throws IOException{var v=j.get(n);if(!v.isJsonPrimitive()||!v.getAsJsonPrimitive().isNumber())throw new IOException("Combat number required");double x=v.getAsDouble();if(!Double.isFinite(x)||x<min||x>max)throw new IOException("Combat number bounds");return x;}
-    private static boolean bool(JsonObject j,String n)throws IOException{var v=j.get(n);if(!v.isJsonPrimitive()||!v.getAsJsonPrimitive().isBoolean())throw new IOException("Combat boolean required");return v.getAsBoolean();}
-    private static JsonArray array(JsonObject j,String n,int maximum)throws IOException{var v=j.get(n);if(!v.isJsonArray()||v.getAsJsonArray().size()>maximum)throw new IOException("Combat array required");return v.getAsJsonArray();}
+    static void keys(JsonObject j,Set<String> names)throws IOException{if(!j.keySet().equals(names))throw new IOException("Combat fields differ");}
+    static String string(JsonObject j,String n)throws IOException{var v=j.get(n);if(!v.isJsonPrimitive()||!v.getAsJsonPrimitive().isString())throw new IOException("Combat string required");return v.getAsString();}
+    static long integer(JsonObject j,String n,long min,long max)throws IOException{var v=j.get(n);if(!v.isJsonPrimitive()||!v.getAsJsonPrimitive().isNumber()||!v.getAsString().matches("[0-9]+"))throw new IOException("Exact combat integer required");long x=Long.parseLong(v.getAsString());if(x<min||x>max)throw new IOException("Combat integer bounds");return x;}
+    static double number(JsonObject j,String n,double min,double max)throws IOException{var v=j.get(n);if(!v.isJsonPrimitive()||!v.getAsJsonPrimitive().isNumber())throw new IOException("Combat number required");double x=v.getAsDouble();if(!Double.isFinite(x)||x<min||x>max)throw new IOException("Combat number bounds");return x;}
+    static boolean bool(JsonObject j,String n)throws IOException{var v=j.get(n);if(!v.isJsonPrimitive()||!v.getAsJsonPrimitive().isBoolean())throw new IOException("Combat boolean required");return v.getAsBoolean();}
+    static JsonArray array(JsonObject j,String n,int maximum)throws IOException{var v=j.get(n);if(!v.isJsonArray()||v.getAsJsonArray().size()>maximum)throw new IOException("Combat array required");return v.getAsJsonArray();}
 }

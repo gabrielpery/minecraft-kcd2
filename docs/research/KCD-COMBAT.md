@@ -242,3 +242,46 @@ Floating Damage example also observes `S_DamageEventData::Dispatch`. Those are
 retail1.5.6 APIs, not tools1.5.5 compatibility evidence. The installed retail
 build still lacks the verified KCSE address map and loader; see the
 [native backend prerequisites](KCD2.md#loader-and-the-immediate-blocker).
+
+## Bow projectile collision and damage (2026-11-09)
+
+The projectile bridge uses separate trace/impact identities; distant arrow
+contacts never enter the melee route's current-eye check. The real server arrow
+owns a UUID, shooter and bow weapon. Native admission checks its initial segment
+against the current player eye/direction, then requires continuous endpoints,
+bounded travel and the same combat lease. Each reply retains its original receipt
+time; duplicates return cached results and cannot refresh an expired impact.
+
+Native `Physics.RayWorldIntersection` checks scenery along each actual segment.
+Nearby NPCs come from `System.GetEntitiesInSphere`; their exact live AABBs and
+generation-bound actor tokens determine the nearest actor contact. Scenery in
+front wins. Impact rechecks identity, current geometry and obstruction before
+consuming the contact and calling attributed `DealDamage` once. A failed or
+uncertain setter is never retried as a new hit. The existing NPC binding and
+player WUID attribution sources above remain applicable.
+
+The pinned Minecraft1.21.1 / Yarn1.21.1+build.3 implementations were inspected in
+`PersistentProjectileEntity.tick`, `getEntityCollision`, `onEntityHit`,
+`onBlockHit`, and `ProjectileUtil.getEntityCollision`. The latter's six-argument
+overload supplies a0.3f entity margin; native projectile actor checks use the
+same margin, including impact revalidation. This does not enlarge scenery or
+melee hitboxes. Source inspection is saved locally under
+`runtime/evidence/projectile-impact-source-20261109/`.
+
+Minecraft still executes its actual impact pipeline, including charge, critical
+randomization and weapon effects on the proxy. Only the resulting health damage
+fraction is transferred to KCD2; native knockback, potion effects, Flame and
+spectral highlighting are not implemented. Normal, tipped and spectral bow
+entities enter the same base-class collision hook; crossbows and piercing do not.
+The scenery hook supplies a real vanilla block-hit result without placing fake
+Minecraft blocks, preserving embedding, aging, save and pickup.
+
+The file transport currently gates every flight tick on a native segment reply.
+It is bounded to16 active flights,4m segments,64m cumulative travel and10s per
+flight. This establishes checked collision rather than vanilla-speed flight;
+travel latency remains a performance limitation. Exact-owner client arrows
+mirror the authoritative server trajectory while replies are pending.
+The controller now dispatches the next clear segment immediately after vanilla's
+completed tick, using its actual new position/velocity. This overlaps the request
+with the normal interval between ticks without simulating unverified motion.
+It applies only to the sole airborne arrow to avoid monopolizing the transport.

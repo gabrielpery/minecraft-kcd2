@@ -73,9 +73,31 @@ public final class GameplayCombatProtocolTests {
         altered=valid.deepCopy();altered.getAsJsonArray("hurts").get(0).getAsJsonObject().addProperty("kind","projectile");reject(altered,"Unimplemented damage kind rejected");
         altered=valid.deepCopy();altered.getAsJsonArray("hurts").get(0).getAsJsonObject().addProperty("damage",1001);reject(altered,"Damage bound");
         for(String text:List.of("","null","[]","{}",valid+"{}","/*comment*/"+valid," ".repeat(131073)))reject(text,"Malformed/bounded document");
-        snapshotFiles();
+        projectileReplies();snapshotFiles();
         System.out.println("GameplayCombatProtocolTests: "+checks+" checks passed; no games");
     }
+    private static void projectileReplies(){
+        var envelope=GameplayCombatProtocol.identity(ID,WORLD,SURFACE,"minecome_gameplay_projectiles_host_v1");envelope.addProperty("seq",1);envelope.addProperty("utc_ms",NOW);envelope.addProperty("request_utc_ms",NOW-30);
+        var reply=new JsonObject();reply.addProperty("operation","trace");reply.addProperty("projectile","d".repeat(32));reply.addProperty("segment",1);reply.addProperty("result","clear");reply.addProperty("reason","");reply.addProperty("actor_token",0);
+        var zero=new JsonObject();zero.addProperty("x",0);zero.addProperty("y",0);zero.addProperty("z",0);reply.add("contact",zero.deepCopy());reply.add("normal",zero.deepCopy());reply.add("actor",JsonNull.INSTANCE);reply.add("before",JsonNull.INSTANCE);reply.add("after",JsonNull.INSTANCE);envelope.add("reply",reply);
+        check(projectile(envelope.toString()).result().equals("clear"),"Native clear trajectory accepted with explicit null outcomes");
+        for(String key:envelope.keySet()){var changed=envelope.deepCopy();changed.remove(key);rejectProjectile(changed.toString(),"Missing projectile root "+key);rejectProjectile(envelope.toString().replaceFirst("\\{","{\""+key+"\":"+envelope.get(key)+","),"Duplicate projectile root "+key);}
+        for(String key:reply.keySet()){var changed=envelope.deepCopy();changed.getAsJsonObject("reply").remove(key);rejectProjectile(changed.toString(),"Missing projectile reply "+key);}
+        for(String key:List.of("run","world_id","patch_run","patch_sha256","target_start_filetime")){var changed=envelope.deepCopy();changed.addProperty(key,"foreign");rejectProjectile(changed.toString(),"Foreign projectile owner "+key);}
+        for(String raw:List.of("\"1\"","1.0","1e0","-1","true","null"))rejectProjectile(envelope.toString().replace("\"seq\":1","\"seq\":"+raw),"Exact projectile sequence "+raw);
+        var scene=envelope.deepCopy();scene.getAsJsonObject("reply").addProperty("result","scenery");rejectProjectile(scene.toString(),"Scenery needs a real normal");scene.getAsJsonObject("reply").getAsJsonObject("normal").addProperty("z",1);check(projectile(scene.toString()).result().equals("scenery"),"Scenery contact admitted");
+        var actor=envelope.deepCopy();var a=snapshot().getAsJsonArray("actors").get(0).deepCopy();actor.getAsJsonObject("reply").addProperty("result","actor");actor.getAsJsonObject("reply").addProperty("actor_token",1);actor.getAsJsonObject("reply").add("actor",a);check(projectile(actor.toString()).actor().token()==1,"Native actor generation and geometry admitted");
+        var wrong=actor.deepCopy();wrong.getAsJsonObject("reply").addProperty("actor_token",2);rejectProjectile(wrong.toString(),"Actor token mismatch");wrong=actor.deepCopy();wrong.getAsJsonObject("reply").getAsJsonObject("actor").addProperty("alive",false);rejectProjectile(wrong.toString(),"Dead actor cannot admit arrow trace");
+        var impact=actor.deepCopy();var h=impact.getAsJsonObject("reply");h.addProperty("operation","impact");h.addProperty("result","damaged");h.addProperty("before",100);h.addProperty("after",0);h.getAsJsonObject("actor").addProperty("health",0);h.getAsJsonObject("actor").addProperty("alive",false);check(projectile(impact.toString()).after()==0,"Lethal native impact accepted with dead actor snapshot");
+        wrong=impact.deepCopy();wrong.getAsJsonObject("reply").addProperty("after",101);rejectProjectile(wrong.toString(),"Native damage cannot heal");wrong=impact.deepCopy();wrong.getAsJsonObject("reply").add("before",JsonNull.INSTANCE);rejectProjectile(wrong.toString(),"Damage needs real outcome");
+        var refused=envelope.deepCopy();refused.getAsJsonObject("reply").addProperty("operation","impact");refused.getAsJsonObject("reply").addProperty("result","rejected");refused.getAsJsonObject("reply").addProperty("reason","stale_contact");check(projectile(refused.toString()).result().equals("rejected"),"Rejected impact may have no actor/outcome");
+        for(String raw:List.of("true","\"1\"","1e999","null"))rejectProjectile(scene.toString().replace("\"z\":1","\"z\":"+raw),"Invalid native normal "+raw);
+        var request=new GameplayProjectileProtocol.Request(3,NOW,"impact","d".repeat(32),2,new GameplayCombatProtocol.Point(1,2,3),new GameplayCombatProtocol.Point(2,3,4),1,7);
+        var encoded=GameplayProjectileProtocol.request(request,ID,WORLD,SURFACE);check(encoded.getAsJsonObject("request").get("damage_fraction").getAsDouble()==.35,"Actual vanilla projectile damage normalization preserved");
+        for(String bad:List.of("null","[]","{}",envelope+"{}"," ".repeat(8193)))rejectProjectile(bad,"Bounded projectile document");
+    }
+    private static GameplayProjectileProtocol.Reply projectile(String text){return GameplayProjectileProtocol.parse(text,ID,WORLD,SURFACE);}
+    private static void rejectProjectile(String text,String reason){try{projectile(text);throw new AssertionError(reason);}catch(IllegalArgumentException expected){checks++;}}
     private static void snapshotFiles()throws Exception{
         Path directory=Files.createTempDirectory("minecome-combat-snapshot-");
         try{

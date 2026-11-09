@@ -25,6 +25,9 @@ public final class GameplayWorldTests {
             String previous=profile.getProperty(key);profile.remove(key);check(!GameplayMode.bowFixtureEnabled(profile),"Missing bow gate "+key);reject(()->GameplayMode.requireExclusive(profile),"Reject missing bow gate "+key);profile.setProperty(key,previous);
         }
         profile.setProperty("minecome.someOtherFixture","true");reject(()->GameplayMode.requireExclusive(profile),"Bow gate does not permit other diagnostic ownership");
+        profile.remove("minecome.someOtherFixture");profile.setProperty("minecome.gameplayProjectileFixture","true");GameplayMode.requireExclusive(profile);check(GameplayMode.projectileFixtureEnabled(profile),"Projectile simulator requires exact standalone bow fixture");
+        profile.remove("minecome.gameplayBowFixture");reject(()->GameplayMode.requireExclusive(profile),"Projectile fixture cannot bypass bow owner");profile.remove("minecome.gameplayProjectileFixture");
+        check(!GameplayMode.rangedUseEnabled(profile),"Ordinary standalone does not admit connected bow input");profile.remove("minecome.gameplayStandalone");profile.remove("minecome.gameplayFixture");check(GameplayMode.rangedUseEnabled(profile),"Connected Combat owns production bows");
         Path root=Files.createTempDirectory("minecome-gameplay-world-").toRealPath();
         Path saves=root.resolve("instance/saves");
         var fresh=GameplayWorld.prepare(saves,root);

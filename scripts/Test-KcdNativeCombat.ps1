@@ -1,6 +1,6 @@
 #Requires -Version 7.3
 [CmdletBinding()]
-param([Parameter(Mandatory)][int]$ExpectedPid)
+param([Parameter(Mandatory)][int]$ExpectedPid,[switch]$ProjectileCheck)
 $ErrorActionPreference='Stop';Set-StrictMode -Version Latest
 . (Join-Path $PSScriptRoot 'KcdToolsProbeHelpers.ps1')
 $ctx=Get-MineComeProbeContext;if($ctx.GamePid -ne $ExpectedPid){throw 'Native combat proof target PID differs.'}
@@ -9,7 +9,8 @@ $modules=@(@('gameplay-movement','movement_session.lua','GameplayMovementBegin')
 $loaded=@();foreach($m in $modules){$loaded+=New-MineComeProbeRun $ctx $m[0] (Join-Path $ctx.ProjectRoot ('kcd2/gameplay/'+$m[1])) $m[2]}
 $probe=$loaded[-1];$run=$probe.Run;$offset=(Get-Item -LiteralPath $ctx.GameLog).Length
 try{
-    Invoke-MineComeProbeConsole $ctx "#MineCome.GameplayCombatNativeProbe('$run')"|Out-Null
+    $projectileLiteral=if($ProjectileCheck){'true'}else{'false'}
+    Invoke-MineComeProbeConsole $ctx "#MineCome.GameplayCombatNativeProbe('$run',$projectileLiteral)"|Out-Null
     $until=[DateTime]::UtcNow.AddSeconds(3)
     do{
         Invoke-MineComeProbeConsole $ctx "#System.LogAlways('[MineComeCombatNativeFlush] $run')"|Out-Null
@@ -28,9 +29,17 @@ $outcome=@(Get-MineComeProbeReceipts $log 'MineComeCombatNativeProbe' $run)
 $combat=@(Get-MineComeProbeReceipts $log 'MineComeGameplayCombat' $run)
 $fixture=@(Get-MineComeProbeReceipts $log 'MineComeCombatFixture' $run|Where-Object {$_.event -ceq 'terminal' -and $_.removed -eq $true -and $_.path_restored -eq $true})
 $movement=@(Get-MineComeProbeReceipts $log 'MineComeGameplayMovement' $run|Where-Object {$_.event -ceq 'terminal'})
-$success=$outcome.Count -eq 1 -and $outcome[0].ok -eq $true -and $fixture.Count -gt 0 -and @($combat|Where-Object {$_.event -ceq 'terminal' -and $_.timers_cancelled -eq $true}).Count -gt 0 -and $movement.Count -gt 0 -and $movement[-1].writes -eq 0
-$result=[ordered]@{schema=1;kind='minecome_native_combat_proof_v1';success=$success;run=$run;pid=$ctx.GamePid;outcome=$outcome;combat=$combat;movement=$movement;fixture=$fixture;modules=$loaded}
+$success=$outcome.Count -eq 1 -and $outcome[0].ok -eq $true -and $fixture.Count -gt 0 -and @($combat|Where-Object {$_.event -ceq 'terminal' -and $_.timers_cancelled -eq $true -and $_.lock_policy_restored -eq $true}).Count -gt 0 -and $movement.Count -gt 0 -and $movement[-1].writes -eq 0
+if($ProjectileCheck){
+ $success=$success -and $outcome[0].projectile_check -eq $true -and $outcome[0].projectile_damage_verified -eq $true -and $outcome[0].projectile_scenery_verified -eq $true -and
+  @($combat|Where-Object {$_.event -ceq 'projectile_trace' -and $_.result -ceq 'actor'}).Count -eq 1 -and
+  @($combat|Where-Object {$_.event -ceq 'projectile_trace' -and $_.result -ceq 'scenery'}).Count -eq 1 -and
+  @($combat|Where-Object {$_.event -ceq 'projectile_impact' -and $_.result -ceq 'damaged'}).Count -eq 2 -and
+  $outcome[0].projectile_after -eq $outcome[0].projectile_duplicate_after -and $outcome[0].projectile_after -lt $outcome[0].projectile_before
+}
+$result=[ordered]@{schema=1;kind='minecome_native_combat_proof_v1';success=$success;run=$run;pid=$ctx.GamePid;projectile_check=[bool]$ProjectileCheck;outcome=$outcome;combat=$combat;movement=$movement;fixture=$fixture;modules=$loaded}
 $result|ConvertTo-Json -Depth 10|Set-Content -LiteralPath (Join-Path $probe.Directory 'result.json') -Encoding utf8NoBOM
 Write-Output $probe.Directory
 if(-not $success){throw 'Native combat proof failed; inspect saved receipts.'}
 Write-Output 'PASS real KCD NPC melee health delta, duplicate acknowledgement and owned cleanup; zero movement writes.'
+if($ProjectileCheck){Write-Output 'PASS real native projectile actor contact/damage/dedup and scenery trace; scripted segments, not actual Minecraft flight.'}
