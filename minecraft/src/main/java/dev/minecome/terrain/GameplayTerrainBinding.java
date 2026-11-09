@@ -45,8 +45,9 @@ public final class GameplayTerrainBinding {
             Files.copy(source,staging.resolve("ground-patch.json"));
             GroundPatch copied=GroundPatch.read(staging.resolve("ground-patch.json"),true);
             if(!copied.sha256().equals(requested.sha256()))throw new IOException("Terrain changed while binding");
-            Files.writeString(staging.resolve("binding.json"),json(save,requested,null).toString(),StandardCharsets.UTF_8,StandardOpenOption.CREATE_NEW);
-            Files.move(staging,dir,StandardCopyOption.ATOMIC_MOVE);
+            String binding=json(save,requested,null).toString();
+            Files.writeString(staging.resolve("binding.json"),binding,StandardCharsets.UTF_8,StandardOpenOption.CREATE_NEW);
+            publishInitial(save,requested,staging,dir,binding);
         }
         if(Files.isSymbolicLink(dir)||!dir.toRealPath().equals(save.directory().resolve("minecome-terrain")))throw new IOException("Redirected terrain binding");
         Path patchFile=dir.resolve("ground-patch.json"),marker=dir.resolve("binding.json");
@@ -66,6 +67,30 @@ public final class GameplayTerrainBinding {
                 position=new Position(p.get("x").getAsDouble(),p.get("y").getAsDouble(),p.get("z").getAsDouble(),p.get("yaw").getAsFloat(),p.get("pitch").getAsFloat(),p.has("flying")&&p.get("flying").getAsBoolean(),falling,falling?p.get("fall_distance").getAsFloat():0);validate(coverage==null?cached:coverage.surface(),position,blocks,flight);}
             var binding=new GameplayTerrainBinding(save,dir,cached,text,position);binding.blockSupport=blocks;binding.flightSupport=flight;binding.coverage=coverage;return binding;
         }catch(RuntimeException e){throw new IOException("Invalid gameplay terrain binding",e);}
+    }
+    private static void publishInitial(GameplayWorld save,GroundPatch requested,Path staging,Path target,String binding)throws IOException{
+        long started=System.nanoTime();AccessDeniedException lastDenied=null;
+        while(true){
+            if(Thread.currentThread().isInterrupted())throw new java.io.InterruptedIOException("Terrain binding publication interrupted");
+            save.verifyOwnership();
+            if(Files.exists(target,LinkOption.NOFOLLOW_LINKS))throw new FileAlreadyExistsException(target.toString());
+            Path patch=staging.resolve("ground-patch.json"),marker=staging.resolve("binding.json");
+            if(Files.isSymbolicLink(staging)||!Files.isDirectory(staging,LinkOption.NOFOLLOW_LINKS)||!staging.toRealPath().equals(staging)||
+                Files.isSymbolicLink(patch)||Files.isSymbolicLink(marker)||Files.size(marker)>4096||
+                !Files.readString(marker,StandardCharsets.UTF_8).equals(binding)||!GroundPatch.read(patch,true).sha256().equals(requested.sha256()))
+                throw new IOException("Terrain staging changed before publication");
+            if(lastDenied!=null&&System.nanoTime()-started>=250_000_000L)throw lastDenied;
+            try{
+                // Same-parent rename, explicitly without replacement. ATOMIC_MOVE
+                // permits provider-specific replacement of an existing target.
+                Files.move(staging,target);return;
+            }catch(AccessDeniedException denied){
+                lastDenied=denied;long remaining=250_000_000L-(System.nanoTime()-started);
+                if(remaining<=0)throw denied;
+                try{java.util.concurrent.TimeUnit.NANOSECONDS.sleep(Math.min(5_000_000L,remaining));}
+                catch(InterruptedException interrupted){Thread.currentThread().interrupt();var error=new java.io.InterruptedIOException("Terrain binding publication interrupted");error.initCause(interrupted);throw error;}
+            }
+        }
     }
     public GroundPatch surface(){return surface;}
     public GameplayTerrainStore coverage(){return coverage;}

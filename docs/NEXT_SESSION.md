@@ -1,5 +1,50 @@
 # Resume checkpoint — 9 November 2026
 
+## Latest work: TNT gameplay verified in both games
+
+Preserve the implemented TNT path: vanilla flint-and-steel ignition, tracked
+fuse/chain entities, actual vanilla rendering, captured-ground support and
+owned-block explosion reconciliation. Ownership is bounded and frozen on stop;
+lit-fuse persistence is implemented. The nearest-surface placement fix allows
+nearer captured ground to win over a farther Minecraft block without relaxing
+reach, visibility, coverage or placement collision.
+
+Actual Minecraft **tnt + tnt-resume PASS**:
+`runtime/evidence/gameplay-tnt-20261109-110746-30533f1dbb3c40f2922996cc3c667134/verification.json`.
+Four Survival placements, one ignition, two real TNT/fuses/explosions, destroyed
+TNT and wool, preserved obsidian, tool wear, isolated colour/depth pixels and
+same-world saved state passed. Final compile, assemble and 387 block checks
+passed, including four unadmitted-explosion chain regressions. The
+PowerShell reload check was corrected for JSON key order while keeping exact
+keys/values; `Test-GameplayTnt.ps1 -VerifyEvidenceDirectory <evidence>` reruns all
+acceptance assertions without launching games.
+
+**Coupled automatic PASS:**
+`runtime/evidence/gameplay-kcd-20261109-113044-b6ffd37ed72446e885cee3785f462e0a/native-tnt-verification.json`.
+World `b286724b-67db-46e5-9919-b9043eaac8a8`: primed=2, chain=1, explosions=2,
+obsidian-only ledger; 94,560 isolated TNT colour/depth pixels and 15,333 after
+pixels; 307 TNT render frames; 199 native composition/reprojection advances
+during the full 11.25-second post-explosion dwell. Normal save/exit, cleanup and
+body restoration passed; native camera unchanged. No human sequence was needed.
+`Test-KcdTnt.ps1 -VerifyEvidenceDirectory <evidence>` verifies the saved run.
+
+Next implement **native NPC blast damage**, preserving this TNT acceptance.
+Do not repeat the passed fixture without relevant changes. Keep the guard that
+prevents unadmitted explosions from removing owned TNT before chain admission.
+Earlier failures were a transient directory rename, an expired 100 ms input
+lease and obsidian outside the horizontal view. Startup now retries only
+AccessDenied for at most 250 ms with unchanged staging/no overwrite; the final
+fixture moved obsidian one cell farther, keeping pixel assertions unchanged.
+Both game clients closed normally. The temporary installation is restored,
+`armed=false`: `runtime/evidence/gameplay-hud-restore-20261109-113202-f39c86df3a9b438eadbc55ce73b1279b`.
+
+Keep the remaining scope explicit: native NPC blast damage is not connected;
+native geometry destruction is not established; lit-fuse save/resume has no
+dedicated live proof; player blast damage was not acceptance-tested because
+fixture-only protection is applied and restored. Reciprocal native attacks and
+the arrow round-trip delay remain separate outstanding work. Older checkpoints
+below are historical; their claims that TNT is wholly unimplemented are superseded.
+
 ## Current work: connected bows and confirmed arrow smoothing
 
 Outgoing actual Minecraft primary melee → native NPC damage is already verified,

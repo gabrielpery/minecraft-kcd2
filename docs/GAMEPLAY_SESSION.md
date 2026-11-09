@@ -987,6 +987,48 @@ The sustained gameplay HUD accepts one session per KCD2 process. Restart KCD2
 normally before another session; the launcher now detects an already consumed
 session before starting Minecraft.
 
+## TNT and owned construction
+
+`-WorldBlocks` includes normal TNT (`unstable=false`). Place it through the usual
+block controls and right-click it with flint and steel or a fire charge. Minecraft
+owns ignition costs, fuse timing, gravity/bounce, explosion power, block resistance,
+chain priming and drops. Its registered TNT renderer supplies the flashing and
+swelling fuse model in the shared colour/depth pass. Destroyed owned blocks leave
+the rendering/collision ledger and stay destroyed after saving and reopening.
+
+Explosions currently affect Minecraft-owned construction. Native KCD buildings
+and terrain are unchanged, and native NPC blast damage is not connected yet.
+Vanilla Minecraft damage/knockback remains active; the automatic fixture alone
+uses temporary Creative mode and a restored knockback-resistance attribute.
+The blast particle pass and collision against arbitrary native scenery remain
+unfinished; primed TNT currently uses captured terrain and Minecraft block collision.
+
+At most16 lit TNT entities are admitted. Excess chain candidates remain unprimed
+blocks. A lit TNT fuse pauses if its footprint leaves captured coverage or its
+session stops. Vanilla saves its fuse/velocity, while a world/player ownership
+tag allows rebinding when that saved world and terrain are attached again. Vanilla
+does not save TNT's causing entity: durable ownership does not invent a player
+damage attribution on reload. Normal completed explosions and destruction reload
+are automatically checked; lit-fuse save/rebind still needs a dedicated live check.
+Redstone and command-only unstable TNT ignition are outside this first path.
+
+Automated checks use normal interaction packets and isolated saves:
+
+```powershell
+& './scripts/Test-GameplayTnt.ps1'
+# Fresh loaded tools world and fresh isolated Minecraft instance:
+& './scripts/Test-KcdTnt.ps1' -BundleDirectory $bundle -InstanceDirectory $instance
+# Recheck already-recorded evidence without another launch:
+& './scripts/Test-GameplayTnt.ps1' -VerifyEvidenceDirectory $standaloneEvidence
+& './scripts/Test-KcdTnt.ps1' -VerifyEvidenceDirectory $nativeEvidence
+```
+
+The checks verify Survival placement/ignition costs, a normal fuse and shortened
+chain fuse, destruction of wool, preservation of obsidian, isolated TNT model
+pixels and complete cleanup. The standalone check reopens the same save; the
+native check requires continued HUD composition after the explosions. Scripted
+aiming is explicit and no human controls or subjective effects are claimed.
+
 ## NPC melee bridge
 
 `-Combat` adds the experimental NPC adapter to WorldBlocks. Aim and left-click

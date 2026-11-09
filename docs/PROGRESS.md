@@ -1,5 +1,48 @@
 # MineCome progress — 2026-11-09
 
+## TNT ignition, chain explosions and persistent block destruction
+
+WorldBlocks now admits player-ignited vanilla TNT, renders its actual tracked
+entity with Minecraft's fuse flash/scale, and reconciles explosions with the
+owned-block ledger. Chain ignition, captured-ground support, bounded ownership,
+shutdown freezing and saved lit-fuse ownership are implemented. Placement also
+now selects nearer captured ground instead of a farther Minecraft block; normal
+reach, coverage, camera visibility and collision checks remain in place.
+
+**Actual Minecraft and same-world reload PASS:**
+`runtime/evidence/gameplay-tnt-20261109-110746-30533f1dbb3c40f2922996cc3c667134/verification.json`.
+Four Survival placements, one flint-and-steel ignition, two real TNT entities,
+their normal/shortened chain fuses and two explosions passed. Both TNT blocks
+and white wool became air; obsidian alone remained in the ledger. Tool wear,
+isolated TNT colour/depth pixels, disappearance, restored fixture protection,
+normal save and exact saved inventory/block state on reload passed. The saved
+verifier compares exact state keys/values independently of JSON member order.
+Final compilation, assemble and 387 focused block checks passed, including four
+regressions that preserve owned TNT before an unadmitted explosion can remove it.
+
+**Coupled KCD2 automatic PASS:**
+`runtime/evidence/gameplay-kcd-20261109-113044-b6ffd37ed72446e885cee3785f462e0a/native-tnt-verification.json`.
+Two primed entities, one chain ignition and two explosions left only obsidian.
+The isolated TNT frame contains 94,560 colour/depth pixels; the after frame has
+15,333 obsidian pixels. TNT rendered for 307 frames, and native composition and
+reprojection each advanced by 199 during the 11.25-second post-explosion dwell.
+Normal client exit, entity/control cleanup and body restoration passed; the
+native camera was untouched. Input was scripted, with no manual test required.
+
+Earlier retries exposed a transient first-attach directory sharing failure
+(now bounded to 250 ms with unchanged staging and no overwrite), one expired
+100 ms input lease, and obsidian outside the horizontal native view. The final
+fixture moved obsidian one cell farther without weakening pixel assertions.
+Both game clients closed normally. The temporary installation is restored and
+unarmed: `runtime/evidence/gameplay-hud-restore-20261109-113202-f39c86df3a9b438eadbc55ce73b1279b`.
+
+Limits: native NPC blast damage is not connected; destruction of KCD2 geometry
+is not established. Lit-fuse save/resume is implemented but lacks a dedicated
+live acceptance check. Player explosion damage was not acceptance-tested: the
+fixture temporarily protects the player and restores the original setting.
+Native NPC blast damage is the next gameplay milestone. Historical sections
+below retain the earlier arrow milestone and its limits.
+
 ## Confirmed arrow interpolation and earlier collision dispatch
 
 The existing single console worker now dispatches projectile requests during its

@@ -92,7 +92,47 @@ public final class GameplayBlocksTests {
         worldBlockStateTests(root);
         cameraVisibilityTests();
         cameraCollisionTests();
+        tntOwnershipTests();
+        nearestSurfaceTests();
         System.out.println("GameplayBlocksTests: "+checks+" checks passed; no game calls");
+    }
+    private static void nearestSurfaceTests(){
+        var eye=new Vec3d(0,65.62,0);var direction=new Vec3d(1,-1,0).normalize();
+        var ground=new GameplayBlocks.Aim(1,1,eye,direction,4.5,true,2,true);
+        check(GameplayBlocks.terrainPrecedesBlock(1,ground,3),"Nearer captured ground remains placeable when a farther owned block intersects the same ray");
+        for(double blockDistance:List.of(1.5,2.0,2.049,2.05))check(!GameplayBlocks.terrainPrecedesBlock(1,ground,blockDistance),"Earlier/equal Minecraft block keeps priority within existing5cm tolerance");
+        check(GameplayBlocks.terrainPrecedesBlock(1,ground,2.051),"Ground takes priority only beyond existing obstruction tolerance");
+        for(int action:List.of(0,2,3))check(!GameplayBlocks.terrainPrecedesBlock(action,ground,3),"Mining/workstation/ignition cannot bypass nearer terrain occlusion");
+        var wall=new GameplayBlocks.Aim(1,1,eye,direction,4.5,true,2,false);
+        check(!GameplayBlocks.terrainPrecedesBlock(1,wall,3),"Native wall hit cannot become a ground placement");
+        var unknown=new GameplayBlocks.Aim(1,1,eye,direction,4.5,false,-1,false);
+        check(!GameplayBlocks.terrainPrecedesBlock(1,unknown,3),"Unknown native obstruction cannot become a ground placement");
+        check(!GameplayBlocks.terrainPrecedesBlock(1,ground,Double.NaN),"Invalid Minecraft distance cannot prefer terrain");
+    }
+    private static void tntOwnershipTests(){
+        check(GameplayBlocksPalette.supportsBlock("minecraft:tnt")&&GameplayBlocksPalette.blockIds().contains("minecraft:tnt"),"Vanilla TNT item is available for placement");
+        check(GameplayBlocksPalette.tntState("minecraft:tnt[unstable=false]")&&GameplayBlocksPalette.supportsState("minecraft:tnt[unstable=false]"),"Normal placed vanilla TNT state persists");
+        for(String state:List.of("minecraft:tnt","minecraft:tnt[unstable=true]","minecraft:tnt[unstable=FALSE]","minecraft:tnt[unstable=1]","minecraft:tnt[unstable=false,lit=true]","minecraft:tnt[unstable=false ]"))check(!GameplayBlocksPalette.supportsState(state),"Malformed or unsupported unstable TNT state rejected");
+        var world=UUID.fromString("01234567-89ab-cdef-0123-456789abcdef");var player=UUID.fromString("fedcba98-7654-3210-fedc-ba9876543210");var tag=GameplayTntOwnership.tag(world,player);
+        check(GameplayTntOwnership.matches(tag,world,player),"Durable TNT tag retains exact saved world and original player");
+        check(!GameplayTntOwnership.matches(tag,player,world),"Foreign world/player cannot rebind saved TNT");
+        check(GameplayTntOwnership.owner(List.of("ordinary-tag",tag)).equals(new GameplayTntOwnership.Owner(world,player)),"Unrelated entity tags do not grant or erase TNT ownership");
+        for(String value:List.of(tag.toUpperCase(Locale.ROOT),tag+"x",tag.substring(0,tag.length()-1),"minecome.tnt.v1:invalid","minecome.tnt.v2:"+world+":"+player))check(GameplayTntOwnership.parse(value)==null,"Malformed or foreign-version TNT tag does not admit entity");
+        check(GameplayTntOwnership.managed("minecome.tnt.v1:invalid")&&GameplayTntOwnership.owner(List.of("minecome.tnt.v1:invalid"))==null,"Malformed managed tag remains freeze-eligible without admission");
+        check(GameplayTntOwnership.owner(List.of(tag,"minecome.tnt.v1:invalid"))==null,"Malformed second tag cannot bypass freeze with one valid tag");
+        check(GameplayTntOwnership.owner(List.of(tag,GameplayTntOwnership.tag(player,world)))==null,"Contradictory durable owners cannot be rebound");
+        check(GameplayTntOwnership.owner(List.of("ordinary-tag"))==null&&!GameplayTntOwnership.managed("ordinary-tag"),"Ordinary vanilla TNT is untouched by ownership policy");
+        check(GameplayTntOwnership.MAX_ACTIVE==16,"Primed entity admission remains bounded");
+        var blast=List.of("owned_tnt_a","owned_wool","unowned_tnt","unowned_stone","owned_tnt_b");
+        var owned=Set.of("owned_tnt_a","owned_wool","owned_tnt_b");var tnt=Set.of("owned_tnt_a","unowned_tnt","owned_tnt_b");
+        var unadmitted=new ArrayList<>(blast);GameplayTntOwnership.filterAffected(unadmitted,false,16,owned::contains,tnt::contains);
+        check(unadmitted.equals(List.of("owned_wool","unowned_tnt","unowned_stone")),"Untracked explosion preserves owned TNT before removal while retaining all its other vanilla effects");
+        var chain=new ArrayList<>(blast);GameplayTntOwnership.filterAffected(chain,true,16,owned::contains,tnt::contains);
+        check(chain.equals(List.of("owned_tnt_a","owned_wool","owned_tnt_b")),"Admitted explosion retains owned chain TNT and ordinary owned destruction only");
+        var capacity=new ArrayList<>(blast);GameplayTntOwnership.filterAffected(capacity,true,1,owned::contains,tnt::contains);
+        check(capacity.equals(List.of("owned_tnt_a","owned_wool")),"Excess chain TNT remains a block rather than being removed before a denied spawn");
+        var full=new ArrayList<>(blast);GameplayTntOwnership.filterAffected(full,true,0,owned::contains,tnt::contains);
+        check(full.equals(List.of("owned_wool")),"Full priming capacity still permits ordinary owned block destruction");
     }
     private static void cameraCollisionTests()throws Exception{
         var producer=new GameplayCameraCollision();

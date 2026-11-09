@@ -85,9 +85,9 @@ public final class GameplayBlocksPalette {
         FURNACE_STATES=Set.copyOf(furnaces);
     }
     private GameplayBlocksPalette(){}
-    public static boolean supportsBlock(String id){return id!=null&&(id.equals("minecraft:furnace")||PLAIN.contains(id)||AXIS.contains(id)||SLABS.contains(id)||STAIRS.contains(id)||FENCES.contains(id)||WALLS.contains(id));}
+    public static boolean supportsBlock(String id){return id!=null&&(id.equals("minecraft:furnace")||id.equals("minecraft:tnt")||PLAIN.contains(id)||AXIS.contains(id)||SLABS.contains(id)||STAIRS.contains(id)||FENCES.contains(id)||WALLS.contains(id));}
     public static boolean supportsState(String state){
-        if(state==null)return false;if(PLAIN.contains(state)||furnaceState(state))return true;
+        if(state==null)return false;if(PLAIN.contains(state)||furnaceState(state)||tntState(state))return true;
         for(var value:List.of("x","y","z")){
             var suffix="[axis="+value+"]";
             if(state.endsWith(suffix)&&AXIS.contains(state.substring(0,state.length()-suffix.length())))return true;
@@ -99,9 +99,11 @@ public final class GameplayBlocksPalette {
         return false;
     }
     public static boolean furnaceState(String state){return state!=null&&FURNACE_STATES.contains(state);}
+    /** Normal vanilla placed TNT. Command-only unstable mining ignition is not admitted. */
+    public static boolean tntState(String state){return "minecraft:tnt[unstable=false]".equals(state);}
     /** Only vanilla burn-state changes may reconcile a persisted furnace. */
     public static boolean sameFurnace(String before,String after){
         return furnaceState(before)&&furnaceState(after)&&before.substring(0,before.indexOf(",lit=")).equals(after.substring(0,after.indexOf(",lit=")));
     }
-    public static Set<String> blockIds(){var all=new TreeSet<>(PLAIN);all.addAll(AXIS);all.addAll(SLABS);all.addAll(STAIRS);all.addAll(FENCES);all.addAll(WALLS);all.add("minecraft:furnace");return Collections.unmodifiableSet(all);}
+    public static Set<String> blockIds(){var all=new TreeSet<>(PLAIN);all.addAll(AXIS);all.addAll(SLABS);all.addAll(STAIRS);all.addAll(FENCES);all.addAll(WALLS);all.add("minecraft:furnace");all.add("minecraft:tnt");return Collections.unmodifiableSet(all);}
 }

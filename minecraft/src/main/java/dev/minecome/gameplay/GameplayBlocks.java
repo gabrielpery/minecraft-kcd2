@@ -33,6 +33,7 @@ import java.util.concurrent.atomic.*;
 /** Persistent bounded building through vanilla interaction packets, with server-confirmed block states. */
 public final class GameplayBlocks {
     private static final int WORKSTATION_USE=2;
+    private static final int TNT_IGNITE=3;
     public record Aim(long capturedUtcMs,long observedAtNanos,Vec3d origin,Vec3d direction,double range,
                       boolean obstructionKnown,double obstructionDistance,boolean terrainHit,Vec3d cameraOrigin) {
         public Aim(long capturedUtcMs,long observedAtNanos,Vec3d origin,Vec3d direction,double range,
@@ -60,13 +61,14 @@ public final class GameplayBlocks {
     private final GameplayCameraCollision cameraCollision=new GameplayCameraCollision();
     private final GameplayFoodUse foodUse=new GameplayFoodUse();
     private final GameplayRangedUse rangedUse=new GameplayRangedUse();
+    private final GameplayTnt tnt;
     private final AtomicReference<Intent> intent=new AtomicReference<>();private final AtomicReference<Observation> observation=new AtomicReference<>();
     private final AtomicReference<String> failure=new AtomicReference<>();
     private volatile MinecraftServer server;private Object clientWorld,clientPlayer,serverWorld,serverPlayer;
     private volatile UUID playerId;private volatile boolean serverInitialized,closing,serverClosed;private volatile long closeAt;
     private volatile long serverRespawns,clientRespawns;
     private Aim aim;private Plan pending;private boolean actions,ready,left,right,dispatched,breakCancelled;
-    private long ids,serverSequence,revision,confirmed,dispatchedAt,lastDispatch,places,breaks,rejections,cancellations,groundPlaces,survivalBreaks,survivalPreservedTicks,craftingOpens,furnaceOpens;
+    private long ids,serverSequence,revision,confirmed,dispatchedAt,lastDispatch,places,breaks,rejections,cancellations,groundPlaces,survivalBreaks,survivalPreservedTicks,craftingOpens,furnaceOpens,tntIgnitions;
     private String lastResult="starting";
 
     public GameplayBlocks(Path root,GameplayWorld save,GroundSurface surface,HudInputProtocol.Identity identity,Path evidenceDirectory)throws IOException {
@@ -75,6 +77,7 @@ public final class GameplayBlocks {
     public GameplayBlocks(Path root,GameplayWorld save,GroundSurface surface,HudInputProtocol.Identity identity,Path evidenceDirectory,boolean worldBlocks)throws IOException {
         this.save=save;this.surface=surface;this.identity=identity;this.worldBlocks=worldBlocks;ledger=new GameplayBlocksLedger(save,surface,worldBlocks);
         serverCells.putAll(ledger.initialStates);owned.set(Map.copyOf(serverCells));revision=ledger.initialRevision;files=new GameplayBlocksFiles(root,evidenceDirectory,ledger);
+        tnt=new GameplayTnt(this,save,surface);
     }
     public void aim(Aim next){aim=next;}
     /** Called while gameplay is paused, after both collision owners attach the same additive coverage. */
@@ -84,9 +87,25 @@ public final class GameplayBlocks {
             before.centerX()!=next.centerX()||before.centerY()!=next.centerY()||before.centerZ()!=next.centerZ()||
             !(before instanceof GameplayTerrain old)||!(next instanceof GameplayTerrain grown)||(grown!=old&&!grown.isSuccessorOf(old))||
             owned.get().keySet().stream().anyMatch(c->!GameplayBlocksLedger.allowed(next,c)))throw new IllegalArgumentException("Block terrain identity or owned coverage changed");
-        ledger.surface=next;surface=next;
+        ledger.surface=next;surface=next;tnt.terrain(next);
     }
     public boolean ready(){return ready&&!closing&&failure.get()==null;}
+    boolean worldBlocksEnabled(){return worldBlocks;}
+    public GameplayTnt tnt(){return tnt;}
+    UUID tntPlayerId(){return playerId;}
+    boolean tntClientOwned(BlockPos position){return GameplayBlocksPalette.tntState(owned.get().get(cell(position)));}
+    boolean tntOwnedCell(World source,BlockPos position){return tntOwnedCell(source,position,true);}
+    boolean tntOwnedCell(World source,BlockPos position,boolean onlyTnt){
+        if(server==null||!server.isOnThread()||source!=serverWorld||!serverInitialized)return false;
+        var state=serverCells.get(cell(position));if(state!=null)return !onlyTnt||GameplayBlocksPalette.tntState(state);
+        var request=intent.get();return onlyTnt&&request!=null&&request.dispatchedAt()>0&&request.plan().action()==1&&
+            request.plan().selection().target().equals(position)&&GameplayBlocksPalette.tntState(request.plan().expectedState());
+    }
+    UUID tntIgniter(World source,BlockPos position,net.minecraft.entity.LivingEntity igniter){
+        if(!tntOwnedCell(source,position))return null;
+        if(igniter==serverPlayer&&igniter!=null)return igniter.getUuid();
+        return null;
+    }
     /** Explicit same-world replacement, called only from the owned AFTER_RESPAWN coordinator. */
     public void serverRespawn(ServerPlayerEntity oldPlayer,ServerPlayerEntity newPlayer){
         if(server==null||!server.isOnThread()||closing||!serverInitialized||oldPlayer!=serverPlayer||oldPlayer==newPlayer||
@@ -141,12 +160,12 @@ public final class GameplayBlocks {
             return stateName(client.world.getBlockState(selected.target())).equals(confirmed.get(cell(selected.target())))?selected.hit():null;
         }catch(IllegalArgumentException rejected){return null;}
     }
-    private void check(){if(files.failure()!=null)failure.compareAndSet(null,files.failure());if(failure.get()!=null)throw new IllegalStateException(failure.get());}
+    private void check(){if(files.failure()!=null)failure.compareAndSet(null,files.failure());if(tnt.failure()!=null)failure.compareAndSet(null,tnt.failure());if(failure.get()!=null)throw new IllegalStateException(failure.get());}
     public void tick(MinecraftClient client,boolean enabled){
         if(closing)return;check();if(client.world==null||client.player==null||client.getServer()==null||client.interactionManager==null)return;
         if(clientWorld==null){if(!client.isOnThread()||client.world.getRegistryKey()!=World.OVERWORLD||!client.isIntegratedServerRunning())throw new IllegalStateException("Block controller requires owned overworld");
             clientWorld=client.world;clientPlayer=client.player;playerId=client.player.getUuid();if(server!=null&&server!=client.getServer())throw new IllegalStateException("Block server changed");server=client.getServer();}
-        requireClient(client);long now=System.nanoTime();var observed=observation.get();
+        requireClient(client);tnt.client(client);long now=System.nanoTime();var observed=observation.get();
         ready=serverInitialized&&observed!=null&&now-observed.at()<250_000_000L;
         actions=ready&&enabled&&client.player.isAlive()&&client.currentScreen==null&&client.getOverlay()==null&&!client.isPaused();
         if(!actions)suspend(client);
@@ -158,7 +177,7 @@ public final class GameplayBlocks {
                 }
             }else{
                 if(observed!=null&&observed.confirmed()==pending.id()){
-                    if(expectedStateMatches(pending,state(client.world,pending.selection().target()))){if(pending.action()==1){places++;if(pending.selection().ground())groundPlaces++;}else if(pending.action()==WORKSTATION_USE){if(GameplayBlocksPalette.furnaceState(pending.expectedState()))furnaceOpens++;else craftingOpens++;}else{breaks++;if(!pending.creative())survivalBreaks++;}finish(client,"confirmed",true);}
+                    if(expectedStateMatches(pending,state(client.world,pending.selection().target()))){if(pending.action()==1){places++;if(pending.selection().ground())groundPlaces++;}else if(pending.action()==WORKSTATION_USE){if(GameplayBlocksPalette.furnaceState(pending.expectedState()))furnaceOpens++;else craftingOpens++;}else if(pending.action()==TNT_IGNITE)tntIgnitions++;else{breaks++;if(!pending.creative())survivalBreaks++;}finish(client,"confirmed",true);}
                 }
                 if(pending!=null&&pending.action()==0&&!pending.creative()){
                     if(!actions||!left||!sameCurrentTarget(client,pending)){if(!breakCancelled){client.interactionManager.cancelBlockBreaking();breakCancelled=true;}}
@@ -197,6 +216,7 @@ public final class GameplayBlocks {
         var current=aim;long now=System.nanoTime();lastDispatch=now;if(current==null||!current.fresh(System.currentTimeMillis(),now)){rejections++;lastResult="aim_stale";return;}
         try{
             if(action==1&&workstationTarget(client))action=WORKSTATION_USE;
+            else if(action==1&&tntTarget(client))action=TNT_IGNITE;
             var selected=select(client.world,client.player,current,action,owned.get().keySet());
             if(action==1&&!owned.get().containsKey(cell(selected.target()))&&owned.get().size()>=GameplayBlocksLedger.MAX_BLOCKS){rejections++;lastResult="block_capacity";return;}
             var expected=action==1?placementState(client.player,selected):action==WORKSTATION_USE?state(client.world,selected.target()):"minecraft:air";
@@ -233,16 +253,18 @@ public final class GameplayBlocks {
         if(!success){rejections++;if(reason.contains("cancel"))cancellations++;}lastResult=reason;pending=null;intent.set(null);dispatched=false;breakCancelled=false;}
     private Selection select(World world,PlayerEntity player,Aim ray,int action,Set<GameplayBlocksLedger.Cell> cells){
         if(action==WORKSTATION_USE&&(!worldBlocks||!blockUseAllowed(player)||player.currentScreenHandler!=player.playerScreenHandler))throw new IllegalArgumentException("workstation_unavailable");
+        if(action==TNT_IGNITE&&(!worldBlocks||!tnt.canPrime()||!ignitionItem(player)||player.currentScreenHandler!=player.playerScreenHandler))throw new IllegalArgumentException("tnt_ignition_unavailable");
         if(!ray.obstructionKnown()||!ray.fresh(System.currentTimeMillis(),System.nanoTime()))throw new IllegalArgumentException("aim_unavailable");
         if(ray.origin().distanceTo(player.getEyePos())>.35)throw new IllegalArgumentException("eye_disagrees");
         var end=ray.origin().add(ray.direction().multiply(ray.range()));
         var hit=world.raycast(new RaycastContext(ray.origin(),end,RaycastContext.ShapeType.OUTLINE,RaycastContext.FluidHandling.NONE,player));
-        if(hit.getType()==HitResult.Type.BLOCK){
+        if(hit.getType()==HitResult.Type.BLOCK&&!terrainPrecedesBlock(action,ray,hit.getPos().distanceTo(ray.origin()))){
             if(!cells.contains(cell(hit.getBlockPos()))||!supported(world.getBlockState(hit.getBlockPos())))throw new IllegalArgumentException("unowned_target");
             double distance=hit.getPos().distanceTo(ray.origin());
             if(ray.obstructionDistance()>=0&&ray.obstructionDistance()<distance-.05)throw new IllegalArgumentException("native_obstruction");
             requireCameraVisibility(world,player,ray,hit.getPos(),cells);
             if(action==WORKSTATION_USE&&!workstation(world.getBlockState(hit.getBlockPos())))throw new IllegalArgumentException("not_supported_workstation");
+            if(action==TNT_IGNITE&&!world.getBlockState(hit.getBlockPos()).isOf(Blocks.TNT))throw new IllegalArgumentException("not_owned_tnt");
             if(action==1&&worldBlocks&&workstation(world.getBlockState(hit.getBlockPos()))&&blockUseAllowed(player))throw new IllegalArgumentException("workstation_action_changed");
             // Vanilla chooses the replaceable hit cell for a slab merge, otherwise
             // its adjacent cell. Never assume every placement offsets a full cube.
@@ -279,11 +301,24 @@ public final class GameplayBlocks {
         // This user-placed block can overlap the sampled slab; breaking it restores AIR.
         return new Selection(target,groundHit,true);
     }
+    /** Placement uses the nearest known surface. A farther Minecraft block must
+     * not hide captured ground; the normal ground branch still validates its
+     * coverage, height, camera visibility, reach and placement collision. */
+    static boolean terrainPrecedesBlock(int action,Aim ray,double blockDistance){
+        return action==1&&ray.terrainHit()&&ray.obstructionKnown()&&ray.obstructionDistance()>=0&&
+            Double.isFinite(blockDistance)&&ray.obstructionDistance()<blockDistance-.05;
+    }
     private boolean workstationTarget(MinecraftClient client){
         if(!worldBlocks||aim==null||client.player==null||client.world==null)return false;
         try{select(client.world,client.player,aim,WORKSTATION_USE,owned.get().keySet());return true;}
         catch(IllegalArgumentException rejected){return false;}
     }
+    private boolean tntTarget(MinecraftClient client){
+        if(!worldBlocks||aim==null||client.player==null||client.world==null||!ignitionItem(client.player))return false;
+        try{select(client.world,client.player,aim,TNT_IGNITE,owned.get().keySet());return true;}
+        catch(IllegalArgumentException rejected){return false;}
+    }
+    private static boolean ignitionItem(PlayerEntity player){var stack=player.getMainHandStack();return stack.isOf(Items.FLINT_AND_STEEL)||stack.isOf(Items.FIRE_CHARGE);}
     private static boolean workstation(BlockState state){return state.isOf(Blocks.CRAFTING_TABLE)||state.isOf(Blocks.FURNACE);}
     private static boolean expectedStateMatches(Plan plan,String actual){
         return plan.expectedState().equals(actual)||(plan.action()==WORKSTATION_USE&&GameplayBlocksPalette.sameFurnace(plan.expectedState(),actual));
@@ -350,7 +385,7 @@ public final class GameplayBlocks {
                         admitted=same(selected,plan.selection())&&sameStack(player,plan)&&(plan.action()!=1||placementState(player,selected).equals(plan.expectedState()))&&
                             (plan.action()!=WORKSTATION_USE||expectedStateMatches(plan,targetState));reason=admitted?"admitted":"server_selection_or_stack_changed";
                     }catch(IllegalArgumentException rejected){reason=rejected.getMessage();}}
-                    else if(confirmed<plan.id()&&expectedStateMatches(plan,targetState)){
+                    else if(confirmed<plan.id()&&expectedStateMatches(plan,targetState)&&(plan.action()!=TNT_IGNITE||tnt.primedAt(world,plan.selection().target(),plan.at()))){
                         if(plan.action()==WORKSTATION_USE){
                             if(plan.expectedState().equals("minecraft:crafting_table")?player.currentScreenHandler instanceof CraftingScreenHandler:player.currentScreenHandler instanceof FurnaceScreenHandler)confirmed=plan.id();
                         }else{
@@ -375,6 +410,7 @@ public final class GameplayBlocks {
                 }
             }
             if(reconciled){revision++;owned.set(Map.copyOf(serverCells));}
+            tnt.observe(source);
             long utc=System.currentTimeMillis(),now=System.nanoTime();var cells=Map.copyOf(serverCells);
             observation.set(new Observation(now,utc,planId,admitted,reason,targetState,confirmed,cells));publish(utc,cells);
             if(closing&&now-closeAt>=150_000_000L){serverClosed=true;files.close();}
@@ -407,13 +443,14 @@ public final class GameplayBlocks {
         }
         return result;
     }
-    public void close(MinecraftClient client){if(closing)return;suspend(client);closing=true;closeAt=System.nanoTime();if(server==null||!serverInitialized){serverClosed=true;files.close();}}
-    public boolean cleanupComplete(){return closing&&serverClosed&&files.finished()&&files.failure()==null;}
+    public void close(MinecraftClient client){if(closing)return;suspend(client);tnt.close();closing=true;closeAt=System.nanoTime();if(server==null||!serverInitialized){serverClosed=true;files.close();}}
+    public boolean cleanupComplete(){return closing&&serverClosed&&files.finished()&&files.failure()==null&&tnt.cleanupComplete();}
     public JsonObject evidence(MinecraftClient client){var j=new JsonObject();j.addProperty("schema",1);j.addProperty("kind","minecome_gameplay_blocks_controller_v1");j.addProperty("run",identity.run());j.addProperty("world_id",save.id().toString());
         j.addProperty("ready",ready);j.addProperty("revision",revision);j.addProperty("owned_count",owned.get().size());j.add("blocks",GameplayBlocksLedger.blocks(owned.get()));
         j.addProperty("places",places);j.addProperty("breaks",breaks);j.addProperty("ground_places",groundPlaces);j.addProperty("rejections",rejections);j.addProperty("cancellations",cancellations);j.addProperty("last_result",lastResult);
         j.addProperty("survival_breaks",survivalBreaks);j.addProperty("survival_preserved_ticks",survivalPreservedTicks);
         j.addProperty("crafting_opens",craftingOpens);j.addProperty("furnace_opens",furnaceOpens);
+        j.addProperty("tnt_ignitions",tntIgnitions);j.add("tnt",tnt.evidence());
         j.addProperty("server_respawns",serverRespawns);j.addProperty("client_respawns",clientRespawns);
         j.add("food_use",foodUse.evidence(client));
         j.add("ranged_use",rangedUse.evidence());

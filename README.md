@@ -43,6 +43,12 @@ passed interpolated rendering, NPC damage, ground collision, later walking and
 continued HUD rendering.
 See [combat testing and limits](docs/GAMEPLAY_SESSION.md#npc-melee-bridge).
 
+The experimental [TNT path](docs/GAMEPLAY_SESSION.md#tnt-and-owned-construction)
+adds real ignition, animated fuses and chain explosions that destroy
+Minecraft-owned construction. Block resistance and saved destruction remain
+Minecraft-authoritative. Native NPC blast damage and destruction of KCD2
+buildings or terrain are still unfinished.
+
 **Status: experimental development prototype.** Several bounded two-game tests
 work, but this is not yet a complete playable mod or a ready-to-install release.
 The public repository contains source, build scripts and development procedures.
