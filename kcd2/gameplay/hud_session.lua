@@ -1,7 +1,9 @@
 -- SPDX-License-Identifier: GPL-3.0-or-later
--- Selective native stats visibility, owned by one existing movement session.
+-- Selective native stats and equipment visibility, owned by one movement session.
 -- Installed KCD2Mod Data/IPL_GameData.pak, Libs/UI/UIElements/HUD.xml:2,693
 -- defines element "hud" and MovieClip "Stats" (bc.mc_StatsContainer.mc_StatsEle).
+-- Its sibling clips QAMWeapon and QAMFood are declared on lines 694-695;
+-- hide these equipped-weapon/consumable squares independently of Stats.
 -- Player/horse/opponent bars are children (735-754); compass, subtitles,
 -- dialogue and interaction prompts are separate clips and are never written.
 -- Inspected kcd2-mod-docs 9cb0675 CScriptBindUIAction__{IsVisible,SetVisible}
@@ -25,6 +27,7 @@ else
  assert(type(state)=='table' and state.owner=='minecome_gameplay_hud_v1' and state.callback==MineCome_GameplayHudTimer and exports(state),'HUD state already owned')
 end
 local LEASE=2
+local CLIPS={'Stats','QAMWeapon','QAMFood'}
 local function finite(v)return type(v)=='number' and v==v and v>-math.huge and v<math.huge end
 local function token(v)return type(v)=='string' and #v==32 and v:match('^[0-9a-f]+$')~=nil end
 local function handle(v)return type(v)=='userdata' or finite(v) and v>0 and v==math.floor(v) end
@@ -35,19 +38,38 @@ local function clock(p)
  local ok,v=pcall(System.GetCurrTime);return ok and finite(v) and v>=0 and v<1e12 and v or nil
 end
 local function bindings(p)return UIAction==p.ui and UIAction and UIAction.IsVisible==p.reader and UIAction.SetVisible==p.writer end
-local function read(p)
+local function read(p,clip)
  if not bindings(p) then return nil end
- local ok,v=pcall(p.reader,'hud',0,'Stats');if ok and type(v)=='boolean' then return v end
+ local ok,v=pcall(p.reader,'hud',0,clip);if ok and type(v)=='boolean' then return v end
 end
 local function quote(v)return '"'..tostring(v):gsub('[%z\1-\31\\"]',function(c)return string.format('\\u%04x',string.byte(c))end)..'"' end
 local function value(v)if type(v)=='boolean' then return tostring(v) elseif finite(v) then return string.format('%.17g',v) elseif type(v)=='string' then return quote(v) end return 'null' end
+local function refresh(p)
+ for _,c in ipairs(p.clips)do c.current=read(p,c.clip)end
+end
 local function emit(p,event)
+ local clip_receipts,clip_json={},{}
+ local hidden=p.applied==true
+ p.original,p.current=p.clips[1].original,p.clips[1].current
+ p.write_attempted,p.owned_write,p.restore_attempted=false,false,false
+ for _,c in ipairs(p.clips)do
+  hidden=hidden and c.current==false
+  p.write_attempted=p.write_attempted or c.write_attempted==true
+  p.owned_write=p.owned_write or c.owned_write==true
+  p.restore_attempted=p.restore_attempted or c.restore_attempted==true
+  local r={clip=c.clip,original_visible=c.original,current_visible=c.current,hidden=p.applied==true and c.current==false,
+   restored=c.restored==true,write_attempted=c.write_attempted==true,owned_write=c.owned_write==true,restore_attempted=c.restore_attempted==true}
+  clip_receipts[#clip_receipts+1]=r
+  local fields={};for _,k in ipairs({'clip','original_visible','current_visible','hidden','restored','write_attempted','owned_write','restore_attempted'})do fields[#fields+1]=quote(k)..':'..value(r[k])end
+  clip_json[#clip_json+1]='{'..table.concat(fields,',')..'}'
+ end
  local o={schema=1,run=p.run,event=event,result=p.reason or 'queued',backend='ui_movieclip',element='hud',instance=0,clip='Stats',
-  original_visible=p.original,current_visible=p.current,hidden=p.applied==true and p.current==false,restored=p.restored==true,
+  original_visible=p.original,current_visible=p.current,hidden=hidden,restored=p.restored==true,clips=clip_receipts,
   active=state.active==p and not p.terminal,write_attempted=p.write_attempted==true,owned_write=p.owned_write==true,
   restore_attempted=p.restore_attempted==true,timers_cancelled=p.timers_cancelled~=false,lease_seconds=LEASE,
   native_clock_ms=(clock(p) or 0)*1000,movement_sequence=p.movement.sequence or 0}
  local parts={};for _,k in ipairs({'schema','run','event','result','backend','element','instance','clip','original_visible','current_visible','hidden','restored','active','write_attempted','owned_write','restore_attempted','timers_cancelled','lease_seconds','native_clock_ms','movement_sequence'}) do parts[#parts+1]=quote(k)..':'..value(o[k]) end
+ parts[#parts+1]='"clips":['..table.concat(clip_json,',')..']'
  if System~=p.system or System.LogAlways~=p.log then return false,o end
  local ok,v=pcall(p.log,'[MineComeGameplayHud] {'..table.concat(parts,',')..'}');return ok and v~=false,o
 end
@@ -60,14 +82,17 @@ local function cancel(p)
 end
 local function finish(p,reason)
  if state.active~=p or p.terminal then return false end
- p.reason=reason;p.current=read(p)
- if p.original~=nil then
-  if p.current==p.original then p.restored=true
-  elseif p.write_attempted and p.current==false and bindings(p) then
-   p.restore_attempted=true;pcall(p.writer,'hud',0,'Stats',p.original)
-   p.current=read(p);p.restored=p.current==p.original
-  end
- else p.restored=not p.write_attempted end
+ p.reason=reason;refresh(p);p.restored=true
+ for _,c in ipairs(p.clips)do
+  if c.original~=nil then
+   if c.current==c.original then c.restored=true
+   elseif c.write_attempted and c.current==false and bindings(p) then
+    c.restore_attempted=true;pcall(p.writer,'hud',0,c.clip,c.original)
+    c.current=read(p,c.clip);c.restored=c.current==c.original
+   end
+  else c.restored=not c.write_attempted end
+  p.restored=p.restored and c.restored==true
+ end
  p.terminal=true;cancel(p);state.active=nil;state.last=p
  local logged=emit(p,'terminal');return p.restored==true and logged
 end
@@ -102,7 +127,8 @@ function MineCome.GameplayHudBegin(run,duration_ms)
  if not Script or type(Script.SetTimerForFunction)~='function' or type(Script.KillTimer)~='function' then return false,'timer_api_unavailable' end
  local p={run=run,created=t,last_clock=t,deadline=math.min(t+duration_ms/1000,m.deadline),movement=m,movement_state=ms,entity=player,id=m.id,
   ui=UIAction,reader=UIAction.IsVisible,writer=UIAction.SetVisible,system=System,clock=System.GetCurrTime,log=System.LogAlways,
-  script=Script,schedule=Script.SetTimerForFunction,kill=Script.KillTimer,timers={},data={}}
+  script=Script,schedule=Script.SetTimerForFunction,kill=Script.KillTimer,timers={},data={},clips={}}
+ for _,clip in ipairs(CLIPS)do p.clips[#p.clips+1]={clip=clip}end
  state.active=p
  -- Schedule expiry before the first callback that can touch Flash state.
  if not arm(p,'expiry',math.max(1,math.floor((p.deadline-t)*1000))) or not arm(p,'tick',1) then
@@ -120,17 +146,26 @@ function MineCome_GameplayHudTimer(data)
  if slot=='expiry'then return finish(p,'session_expired')end
  if p.end_requested then return finish(p,'requested_end')end
  local why=reason(p);if why then return finish(p,why)end
- p.current=read(p)
+ refresh(p)
  if not p.applied then
-  if p.current==nil then return finish(p,'visibility_unavailable')end
-  p.original=p.current
-  if p.original then
-   p.write_attempted=true;local ok,v=pcall(p.writer,'hud',0,'Stats',false);p.current=read(p);p.owned_write=p.current==false
-   if not ok or v==false or p.current~=false then return finish(p,'hide_failed')end
+  -- Capture every baseline before the first write, so a missing clip cannot
+  -- leave a partially hidden HUD. Roll back every attempted write on failure.
+  for _,c in ipairs(p.clips)do
+   if c.current==nil then return finish(p,'visibility_unavailable')end
+   c.original=c.current
+  end
+  for _,c in ipairs(p.clips)do
+   if c.original then
+    c.write_attempted=true;local ok,v=pcall(p.writer,'hud',0,c.clip,false)
+    c.current=read(p,c.clip);c.owned_write=c.current==false
+    if not ok or v==false or c.current~=false then return finish(p,'hide_failed')end
+   end
   end
   p.applied=true;p.reason='hidden'
   if not emit(p,'begin')then return finish(p,'log_failed')end
- elseif p.current~=false then return finish(p,'visibility_changed')end
+ else
+  for _,c in ipairs(p.clips)do if c.current~=false then return finish(p,'visibility_changed')end end
+ end
  why=reason(p);if why then return finish(p,why)end
  if not arm(p,'tick',100)then return finish(p,'heartbeat_timer_failed')end
  return true

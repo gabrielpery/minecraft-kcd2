@@ -17,8 +17,8 @@ capturing Minecraft's actual HUD and inventory pixels for display in the host re
 **Play on the configured development machine:** double-click
 [`Play-MineCome.cmd`](Play-MineCome.cmd), leave its terminal open and keep KCD2 in
 front. It handles startup and reconnects your dedicated Minecraft save. The HUD
-opens automatically; **F8 saves and stops**. KCD2's native health/stamina bars are
-hidden during MineCome and restored afterward. See [controls and first launch](docs/GAMEPLAY_SESSION.md#play-on-the-configured-development-machine).
+opens automatically; **F8 saves and stops**. KCD2's native health/stamina bars and
+equipped weapon/consumable icons hide during MineCome and restore afterward. See [controls and first launch](docs/GAMEPLAY_SESSION.md#play-on-the-configured-development-machine).
 This entry requires the existing development setup; it is not a packaged release.
 
 The [product target](docs/PRODUCT.md) includes Minecraft's Steve, hands and equipment,

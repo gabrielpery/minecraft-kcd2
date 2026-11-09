@@ -1,5 +1,23 @@
 # MineCome progress — 2026-11-09
 
+## Equipped weapon and consumable HUD squares now hide too
+
+The user confirmed native bars disappeared but their flanking equipment squares
+remained. These are sibling clips, `QAMWeapon` and `QAMFood`, in the installed
+HUD.xml lines694–695. The existing HUD lease now owns all three clips separately,
+captures all visibility baselines before writing, and restores each exact baseline
+on stop/peer loss. Compass, subtitles, dialogue and prompts remain unchanged.
+No renderer rebuild or installation is needed; the next Play launch loads the Lua.
+
+Thirty-one Lua lifecycle tests and45 host checks pass. A real Play session passes
+all three hide/restore readbacks, normal save/exit, and297 native composition and
+reprojection advances across18.6s:
+`runtime/evidence/gameplay-kcd-20261109-161123-1a204f4054134cdcafc357c40e4c6296/play-verification.json`
+(latest launch's `native_equipment_hidden_and_restored=true`; the earlier launch
+in this comparison predates icon suppression). An initial attempt hit the existing
+HUD publication-stale stop; all three clips still restored. The foreground retry
+passed without changing stream freshness thresholds. Both games closed normally.
+
 ## Play launcher and native health/stamina hiding
 
 **Implemented and automatically verified in both games.** `Play-MineCome.cmd`

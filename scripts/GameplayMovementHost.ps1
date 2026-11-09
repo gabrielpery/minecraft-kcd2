@@ -299,6 +299,12 @@ function Get-GameplayMovementWorker {
                             if($r.backend -cne 'ui_movieclip' -or $r.element -cne 'hud' -or $r.instance -ne 0 -or $r.clip -cne 'Stats'){throw 'Native HUD receipt target differs.'}
                             if($r.event -ceq 'begin'){
                                 if($r.active -isnot [bool] -or -not $r.active -or $r.hidden -isnot [bool] -or -not $r.hidden -or $r.current_visible -isnot [bool] -or $r.current_visible -or $r.original_visible -isnot [bool]){throw 'Native stats hiding was not acknowledged.'}
+                                $expectedClips=@('Stats','QAMWeapon','QAMFood')
+                                if(@($r.clips).Count -ne 3){throw 'Native stats/equipment hiding receipt is incomplete.'}
+                                for($i=0;$i -lt 3;$i++){
+                                    $c=$r.clips[$i]
+                                    if($c.clip -cne $expectedClips[$i] -or $c.original_visible -isnot [bool] -or $c.current_visible -isnot [bool] -or $c.current_visible -or $c.hidden -isnot [bool] -or -not $c.hidden){throw 'Native stats/equipment hiding was not acknowledged.'}
+                                }
                                 $hud.Begin=$r
                             }elseif($r.event -ceq 'terminal'){
                                 $hud.Terminal=$r
@@ -545,6 +551,13 @@ function Get-GameplayMovementWorker {
                 if($hudStarted -and -not $failure){
                     $h=$hud.Terminal
                     if(-not $h -or $h.active -isnot [bool] -or $h.active -or $h.restored -isnot [bool] -or -not $h.restored -or $h.original_visible -isnot [bool] -or $h.current_visible -isnot [bool] -or $h.current_visible -ne $h.original_visible -or ($hud.Begin -and $h.original_visible -ne $hud.Begin.original_visible)){$failure='Native stats visibility was not restored.'}
+                }
+                if($hudStarted -and -not $failure){
+                    if(@($h.clips).Count -ne 3){$failure='Native stats/equipment restoration receipt is incomplete.'}
+                    else{for($i=0;$i -lt 3;$i++){
+                        $c=$h.clips[$i];$b=$hud.Begin.clips[$i]
+                        if($c.clip -cne $b.clip -or $c.original_visible -isnot [bool] -or $c.current_visible -isnot [bool] -or $c.original_visible -ne $b.original_visible -or $c.current_visible -ne $b.original_visible -or $c.restored -isnot [bool] -or -not $c.restored){$failure='Native stats/equipment visibility was not restored.';break}
+                    }}
                 }
                 if($combatStarted -and -not (Get-GameplayCombatHostState $CombatState).CleanupComplete -and -not $failure){$failure='Native combat cleanup incomplete.'}
                 if($blocksStarted -and -not (Get-GameplayBlocksHostState $BlocksState).CleanupComplete -and -not $failure){$failure='Native block cleanup incomplete.'}

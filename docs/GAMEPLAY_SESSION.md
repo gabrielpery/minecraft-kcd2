@@ -60,9 +60,10 @@ crafting, food, bows and the current NPC combat adapter. Existing coverage,
 collision, palette and ranged-enemy limitations still apply; this remains a
 configured-machine prototype, not a standalone redistributable release.
 
-Play hides KCD2's **Stats** movie clip during the session: native health/stamina,
-horse and opponent bars. The compass, subtitles, dialogue and interaction prompts
-are separate clips and are left alone. The original visibility is restored when
+Play hides KCD2's **Stats**, **QAMWeapon** and **QAMFood** movie clips during
+the session: native health/stamina, horse/opponent bars and the two equipped
+weapon/consumable squares. The compass, subtitles, dialogue and interaction prompts
+are separate clips and are left alone. Each clip's original visibility is restored when
 the session stops or its movement heartbeat expires. This uses the native UI API,
 not a screen mask. Other diagnostic profiles keep their previous HUD behavior
 unless `-HideNativeVitals` is requested with movement.

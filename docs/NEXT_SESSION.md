@@ -9,13 +9,22 @@ session. F8 saves/stops; normal use has no short timer or activation countdown.
 The user save is `runtime/gameplay/play/instance`, separate from automated checks.
 See [controls](GAMEPLAY_SESSION.md#play-on-the-configured-development-machine).
 
-`-HideNativeVitals` now leases the native `hud` instance0 `Stats` movie clip.
-Health/stamina, horse and opponent bars hide; compass, subtitles, dialogue and
-prompts are separate clips. Native API readback verified explicit restoration
-and missing-peer restoration after2.099s, with zero player/camera writes:
+`-HideNativeVitals` now leases native `hud` instance0 clips `Stats`, `QAMWeapon`
+and `QAMFood`. Health/stamina, horse/opponent bars and equipped weapon/consumable
+squares hide; compass, subtitles, dialogue and prompts remain separate.
+The earlier Stats-only native check verified explicit restoration and missing-peer
+restoration after2.099s, with zero player/camera writes:
 `runtime/evidence/hud-selective-validation-20261109-152332-5a41cd11702a48a6875528f7300f3fdf/result.json`.
+The equipped weapon/consumable squares are now included after user feedback.
+Current coupled proof:
+`runtime/evidence/gameplay-kcd-20261109-161123-1a204f4054134cdcafc357c40e4c6296/play-verification.json`.
+Its latest launch confirms all three clips hide/restore, normal save/exit and297
+native composition/reprojection advances. The initial attempt stopped for HUD
+publication staleness and restored every clip; the foreground retry passed without
+relaxing freshness limits. No reinstall is needed: Play loads the revised Lua.
+
 The module follows the existing movement owner/heartbeat and restores on cleanup.
-Twenty-seven Lua lifecycle cases cover false visibility, binding changes, failed
+Thirty-one Lua lifecycle cases cover false visibility, binding changes, failed
 writes, timers, replacement owners and repeated sessions.
 
 Cold loading required retrying read-only native pose timeouts. Restart required

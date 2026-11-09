@@ -42,6 +42,20 @@ function Read-PlaySession([string]$Path){
  if($hud.Begin.event -cne 'begin' -or $hud.Terminal.event -cne 'terminal' -or $hud.Begin.current_visible -or $hud.Terminal.active -isnot [bool] -or $hud.Terminal.active -or
   $hud.Terminal.original_visible -ne $hud.Begin.original_visible -or $hud.Terminal.current_visible -ne $hud.Begin.original_visible){throw 'Native health/stamina HUD did not restore its original visibility.'}
  Assert-PlayTrue $hud.Begin.active 'native HUD suppression active';Assert-PlayTrue $hud.Begin.hidden 'native HUD hidden';Assert-PlayTrue $hud.Terminal.restored 'native HUD restored'
+ $equipmentVerified=$false
+ # Historical stats-only evidence remains readable. New receipts must prove
+ # each equipment clip's independent baseline as well as the aggregate flags.
+ if($hud.Begin.PSObject.Properties['clips'] -or $hud.Terminal.PSObject.Properties['clips']){
+  if(@($hud.Begin.clips).Count -ne 3 -or @($hud.Terminal.clips).Count -ne 3){throw 'Native stats/equipment receipt is incomplete.'}
+  $expectedClips=@('Stats','QAMWeapon','QAMFood')
+  for($i=0;$i -lt 3;$i++){
+   $clipBefore=$hud.Begin.clips[$i];$clipAfter=$hud.Terminal.clips[$i]
+   if($clipBefore.clip -cne $expectedClips[$i] -or $clipAfter.clip -cne $clipBefore.clip -or $clipBefore.original_visible -isnot [bool] -or $clipBefore.current_visible -isnot [bool] -or $clipBefore.current_visible -or
+    $clipAfter.original_visible -isnot [bool] -or $clipAfter.current_visible -isnot [bool] -or $clipAfter.original_visible -ne $clipBefore.original_visible -or $clipAfter.current_visible -ne $clipBefore.original_visible){throw 'Native stats/equipment visibility did not match its baseline.'}
+   Assert-PlayTrue $clipBefore.hidden 'native equipment hidden';Assert-PlayTrue $clipAfter.restored 'native equipment restored'
+  }
+  $equipmentVerified=$true
+ }
  $started=[long]$s.input.first_connected_utc_ms;$ended=[long]$s.input.closed_ack_written_utc_ms
  if($started -le 0 -or $ended-$started -lt 12000 -or $ended-$started -gt 360000 -or $s.input.closed_ack_failure -cne 'none'){throw 'Native input observation interval differs.'}
  $anchor=[DateTimeOffset]::FromUnixTimeMilliseconds($started).ToLocalTime();$depth=[Collections.Generic.List[object]]::new();$ends=@();$closed=@()
@@ -63,7 +77,7 @@ function Read-PlaySession([string]$Path){
  $composited=$depth[-1].composited-$depth[0].composited;$reprojected=$depth[-1].reprojected-$depth[0].reprojected
  if($composited -lt 1 -or $reprojected -lt 1){throw 'Native HUD did not continue compositing/reprojecting.'}
  $hashes=[ordered]@{};foreach($name in @('verification.json','gameplay-session.json','host-movement.json','capture/stream-result.json','native-hud.log','play-launch.json')){$hashes[$name]=(Get-FileHash -LiteralPath (Join-Path $directory $name)).Hash.ToLowerInvariant()}
- [pscustomobject]@{Directory=$directory;Session=$s;Verification=$v;Host=$h;Launch=$launch;Ledger=(Get-PlayLedger $b);Proof=[ordered]@{directory=$directory;run=$s.run;world_id=$s.world_id;new_world=$s.new_world;target_pid=$v.target_pid;target_start_filetime=$v.target_start_filetime;active_ms=$s.active_ms;owned_blocks=$b.owned_count;block_revision=$b.revision;native_hud_hidden=$true;native_hud_restored=$true;native_hud_original_visible=$hud.Begin.original_visible;native_composited_delta=$composited;native_reprojected_delta=$reprojected;native_counter_samples=$depth.ToArray();evidence_sha256=$hashes}}
+ [pscustomobject]@{Directory=$directory;Session=$s;Verification=$v;Host=$h;Launch=$launch;Ledger=(Get-PlayLedger $b);Proof=[ordered]@{directory=$directory;run=$s.run;world_id=$s.world_id;new_world=$s.new_world;target_pid=$v.target_pid;target_start_filetime=$v.target_start_filetime;active_ms=$s.active_ms;owned_blocks=$b.owned_count;block_revision=$b.revision;native_equipment_hidden_and_restored=$equipmentVerified;native_hud_hidden=$true;native_hud_restored=$true;native_hud_original_visible=$hud.Begin.original_visible;native_composited_delta=$composited;native_reprojected_delta=$reprojected;native_counter_samples=$depth.ToArray();evidence_sha256=$hashes}}
 }
 $first=Read-PlaySession $FirstEvidenceDirectory;$second=Read-PlaySession $SecondEvidenceDirectory
 if($first.Directory -ieq $second.Directory -or $first.Session.run -ceq $second.Session.run -or
@@ -77,6 +91,6 @@ if($second.Session.movement.first_attachment -or -not $second.Session.movement.r
 foreach($axis in @('x','y','z')){Assert-PlayNear $second.Session.movement.initial_position.$axis $first.Session.movement.resume_checkpoint.$axis ('position '+$axis)}
 $proof=[ordered]@{schema=1;kind='minecome_launcher_resume_verification_v1';result='passed';world_id=$first.Session.world_id;instance=$first.Verification.instance;
  actual_minecraft=$true;actual_kcd=$true;physical_native_input_verified=$false;normal_save_resume_verified=$true;kcd_process_restart_verified=$true;native_composition_verified=$true;native_health_stamina_hud_hidden_and_restored=$true;
- block_ledger_unchanged=$true;nonempty_block_persistence_verified=($first.Session.blocks.owned_count -gt 0);inventory_persistence_verified=$false;launches=@($first.Proof,$second.Proof)}
+ native_equipment_icons_hidden_and_restored=($first.Proof.native_equipment_hidden_and_restored -and $second.Proof.native_equipment_hidden_and_restored);block_ledger_unchanged=$true;nonempty_block_persistence_verified=($first.Session.blocks.owned_count -gt 0);inventory_persistence_verified=$false;launches=@($first.Proof,$second.Proof)}
 $output=Join-Path $second.Directory 'play-verification.json';$proof|ConvertTo-Json -Depth 12|Set-Content -LiteralPath $output -Encoding utf8NoBOM
 Write-Output "PLAY_MINECOME_PASS evidence=$output"
