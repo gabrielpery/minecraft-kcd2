@@ -1,5 +1,44 @@
 # MineCome progress — 2026-11-09
 
+## Play launcher and native health/stamina hiding
+
+**Implemented and automatically verified in both games.** `Play-MineCome.cmd`
+provides one double-click entry for the persistent Combat/Explore profile. It
+selects installed PowerShell 7 even from Windows PowerShell5.1, verifies the
+renderer deployment, waits through native loading and opens the dedicated save.
+Activation is automatic; F8 saves/stops. The next launch restarts only its own
+successfully saved native session. Neither game assets nor a general installer
+are bundled; the existing development setup is still required.
+
+The new optional movement-owned HUD lease hides only native `hud` instance0's
+`Stats` clip via the documented UIAction API. It leaves compass, subtitles,
+dialogue and prompts alone, restores the original visibility at stop, and restores
+on missing peer heartbeat. Actual native explicit-stop and2.099s peer-expiry
+readbacks pass, with no camera/position writes:
+`runtime/evidence/hud-selective-validation-20261109-152332-5a41cd11702a48a6875528f7300f3fdf/result.json`.
+Twenty-seven real-Lua/simulated-engine lifecycle tests also pass.
+
+Automatic Play acceptance created a save, closed Minecraft normally, loaded the
+same save with its terrain/checkpoint, and verified native bars hidden/restored
+in both sessions. Native composition/reprojection advanced386 and352 frames.
+Evidence:
+`runtime/evidence/gameplay-kcd-20261109-153150-e3ed8cfd0e31476e92abbd68e406e4ed/play-verification.json`.
+The smoke sessions use an isolated instance and do not claim new physical-input
+or populated-inventory persistence acceptance. Existing gameplay fixtures cover
+those underlying systems. The user instance remains separate and ready for play.
+
+Cold-start testing fixed premature read-only HTTP timeouts during map loading;
+normal-restart testing fixed Windows returning a dying process with no executable
+path. The launcher retains exact process/start/endpoint ownership and deployment
+receipts. Focused launcher tests,12 session-guard tests and45 host transport checks
+pass. No manual test was requested.
+
+A final third launch exercised automatic normal KCD shutdown/restart and saved
+resume end to end, with356 additional composition/reprojection advances:
+`runtime/evidence/gameplay-kcd-20261109-153428-fdbf0cf01e974bb98cfbb26903f0890b/play-verification.json`.
+Both games closed normally after testing. The verified Play renderer remains
+installed and unarmed; default launcher preflight passes with no changes.
+
 ## Armed incoming damage verified; ranged native source still blocked
 
 The final automatic coupled sword check passes real native damage into Minecraft:
@@ -26,11 +65,10 @@ did not fire or consume ammunition; no ranged cause schema has been assumed.
 Details and failed-trial evidence are in [NEXT_SESSION.md](NEXT_SESSION.md) and
 [INCOMING-COMBAT.md](research/INCOMING-COMBAT.md). No manual test was requested.
 
-Physical Escape stopped Computer Use during final window cleanup. Minecraft
-exited normally; KCD2 remains open with ended gameplay leases. The temporary
-`runtime/hud-armed-incoming-20261109` installation is unarmed and awaits a normal
-KCD2 close before restoration. The requested Play runner and native HUD cleanup
-are the next usability milestone, not delivered by this combat change.
+The interrupted cleanup was completed in the subsequent Play milestone: KCD2
+was already closed, and the temporary `runtime/hud-armed-incoming-20261109` bundle
+was restored before the new launcher deployment. The current machine checkpoint
+is in [NEXT_SESSION.md](NEXT_SESSION.md).
 
 ## Native unarmed attacks now damage Minecraft health
 

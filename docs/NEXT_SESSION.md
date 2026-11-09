@@ -1,24 +1,59 @@
 # Resume checkpoint — 9 November 2026
 
-## Latest verified milestone: armed native damage and injury cleanup
+## Latest milestone: independent Play launcher and selective native HUD
 
-**Automatic two-game sword PASS on the final code:**
+Double-click `Play-MineCome.cmd` on this configured machine. It selects installed
+PowerShell 7, verifies/reuses the renderer deployment, starts the native development
+world, waits for a fresh player pose and connects the persistent `-Combat -Explore`
+session. F8 saves/stops; normal use has no short timer or activation countdown.
+The user save is `runtime/gameplay/play/instance`, separate from automated checks.
+See [controls](GAMEPLAY_SESSION.md#play-on-the-configured-development-machine).
+
+`-HideNativeVitals` now leases the native `hud` instance0 `Stats` movie clip.
+Health/stamina, horse and opponent bars hide; compass, subtitles, dialogue and
+prompts are separate clips. Native API readback verified explicit restoration
+and missing-peer restoration after2.099s, with zero player/camera writes:
+`runtime/evidence/hud-selective-validation-20261109-152332-5a41cd11702a48a6875528f7300f3fdf/result.json`.
+The module follows the existing movement owner/heartbeat and restores on cleanup.
+Twenty-seven Lua lifecycle cases cover false visibility, binding changes, failed
+writes, timers, replacement owners and repeated sessions.
+
+Cold loading required retrying read-only native pose timeouts. Restart required
+waiting on the captured process handle because Windows can briefly enumerate a
+dying process with no executable path. Only a successful same-instance Play
+receipt permits normal console `quit`; foreign or unsuccessful sessions are
+preserved. Never bypass deployment/session receipts or delete their tombstones.
+
+The prior interrupted cleanup is complete: the old `hud-armed-incoming-20261109`
+bundle was restored while KCD2 was closed. Play prepared a fresh verified bundle:
+`runtime/hud-play-20261109-152406-18a477d175e44d21989360cec8d314cb`.
+This installed bundle is intended to remain available for the user's launcher.
+
+Automatic two-launch Play save/resume acceptance passes:
+`runtime/evidence/gameplay-kcd-20261109-153150-e3ed8cfd0e31476e92abbd68e406e4ed/play-verification.json`.
+Both runs have normal guest exit, native HUD restoration, movement/combat/terrain
+cleanup and advancing compositor/reprojection counters. The second run restores
+the same world UUID, terrain binding, checkpoint and empty block ledger. This
+acceptance does not claim populated inventory retention or physical inputs.
+Test instance: `runtime/gameplay/play-acceptance-20261109/instance`.
+
+A third launch verified the repaired automatic normal-quit/restart path end to end,
+then saved the same world with356 further composition/reprojection advances:
+`runtime/evidence/gameplay-kcd-20261109-153428-fdbf0cf01e974bb98cfbb26903f0890b/play-verification.json`.
+The offline verifier also passed through Windows PowerShell5.1→7 forwarding.
+
+**Current machine state:** both games closed normally; renderer installed/unarmed.
+Final `Play-MineCome.cmd -PreflightOnly` passes with installed=true and no changes.
+No restoration/restart or repeat manual acceptance is pending. The default user
+Play instance has not been used by these tests. Continue future gameplay work from
+the saved launcher path; preserve this working startup/cleanup behavior.
+
+## Remaining gameplay priority
+
+The prior native sword milestone remains verified:
 `runtime/evidence/gameplay-kcd-20261109-150004-56894fe8881d4de883f7197ce853ef65/native-incoming-combat-verification.json`.
-A real native slash reduced Minecraft health from20 to17.45866; the HUD continued
-for11.25 seconds after NPC removal with144 native composition/reprojection
-advances. Normal Minecraft save/exit, actor removal, health, both owned buffs,
-logging, movement and camera cleanup passed. No manual acceptance is needed.
-
-Melee admission now covers source-backed stab0→4/5, slash1→5/6, smash2→4 and
-the existing unarmed pairs. Actual sword telemetry corroborates stab0/5 and
-slash1/6. Discovery is32m with the existing eight-actor limit; reach is unchanged.
-
-Native sword injuries previously caused bleeding after the health lease ended.
-An exact owned nonpersistent `bleeding_protection` buff (`hin=0`) now prevents
-new injuries without suppressing hit damage or clearing pre-existing injuries.
-Native proof `armed-capture-20261109-144045-340a9b993c8e40829232d71cfe04ae52`
-contains three positive sword hits, no new injuries and stable native HP100 for
-five seconds after both guards were removed.
+Do not repeat completed melee/inventory/top-face checks or small manual countdown
+labs. Preserve the independent launcher and use its sustained path for future work.
 
 **Ranged native attacks remain unfinished.** Minecraft's immutable projectile
 kind, actual arrow damage source, armor/Projectile Protection and adapter cleanup
@@ -40,25 +75,6 @@ event mapping. Next source investigation should establish the actor's actual
 CombatSoul.Target/HasMissileWeapon state or use a correctly configured native
 archer/test behavior. `IncomingWeapon bow/crossbow` are diagnostic modes, not
 passing acceptance checks. See [incoming design](research/INCOMING-COMBAT.md).
-
-**Current machine state:** Minecraft closed normally. KCD2 PID36308 remains
-open because physical Escape stopped Computer Use during final window cleanup.
-Do not treat this as a crash or an approval-policy failure. All gameplay leases
-are ended and the renderer is unarmed. Temporary bundle
-`runtime/hud-armed-incoming-20261109` is still installed, not restored.
-After KCD2 closes normally, restore with
-`scripts/Install-GameplayHud.ps1 -BundleDirectory runtime/hud-armed-incoming-20261109 -WorldBlocks -Restore`.
-This KCD process has consumed its HUD session and needs a normal restart before
-another connected session. Never bypass the deployment/session receipt guards.
-
-The user also requested clear priorities for removing native health/stamina
-widgets and independently launching MineCome. The next usability milestone is
-a simple Play runner for the existing sustained `-Combat -Explore` path and
-session-owned HUD suppression/restoration. Reuse the persistent save, automatic
-activation and F8 stop/save. Whole-HUD `wh_ui_ShowHud` is verified; selective
-widgets and dialogue/subtitle compatibility still need implementation. This is
-not yet a delivered runner or hidden native HUD. Preserve outgoing bows/TNT and
-the proven unarmed inventory acceptance; no repeat manual tests are needed.
 
 ## Prior verified milestone: unarmed native incoming combat
 

@@ -210,11 +210,12 @@ function Accept-GameplayRespawnReceipt($State,$Receipt,$Identity,[long]$Now){
 }
 function Get-GameplayMovementWorker {
     return {
-        param($Context,$Identity,$Bounds,[string]$PoseFile,[string]$ViewFile,[long]$ExpiresUtcMs,[long]$LogOffset,$Shared,$Token,[string]$ProjectRoot,$BlocksState,$TerrainState,[bool]$Flight=$false,[bool]$WorldBlocks=$false,$CombatState=$null)
+        param($Context,$Identity,$Bounds,[string]$PoseFile,[string]$ViewFile,[long]$ExpiresUtcMs,[long]$LogOffset,$Shared,$Token,[string]$ProjectRoot,$BlocksState,$TerrainState,[bool]$Flight=$false,[bool]$WorldBlocks=$false,$CombatState=$null,[bool]$HideNativeVitals=$false)
         $ErrorActionPreference='Stop';Set-StrictMode -Version Latest
         . (Join-Path $ProjectRoot 'scripts/GameplayMovementHost.ps1')
         $run=$Identity.Run;$stopwatch=[Diagnostics.Stopwatch]::StartNew();$limit=$ExpiresUtcMs-[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
         $log=$null;$position=$LogOffset;$lastLength=$LogOffset;$begin=$null;$terminal=$null;$latestView=$null
+        $hud=@{Begin=$null;Terminal=$null};$hudStarted=$false
         $sequence=0L;$source=-1.0;$viewSequence=0L;$views=0L;$poses=0L;$lastPoseUtc=0L;$lastPoseAt=0.0;$lastViewAt=-1000.0;$failure=$null;$started=$false;$stage='starting'
         $requestCount=0L;$maxRequestPathLength=0;$lastDispatch=$null
         $viewTiming=[ordered]@{Count=0L;MaxDispatchMs=0.0;MaxAckAgeMs=0L;MaxPublicationMs=0L;Samples=[Collections.Generic.Queue[object]]::new()}
@@ -223,7 +224,7 @@ function Get-GameplayMovementWorker {
         $temp=$ViewFile+'.'+$run+'.tmp'
         $aimFile=Join-Path (Split-Path -Parent $ViewFile) 'gameplay-aim.json';$aimTemp=$aimFile+'.'+$run+'.tmp'
         $respawnFile=Join-Path (Split-Path -Parent $PoseFile) 'respawn-ack.json';$respawnTemp=$respawnFile+'.'+$run+'.tmp';$respawnState=New-GameplayRespawnHostState
-        function Publish([bool]$Stopped=$false){$Shared['Snapshot']=[pscustomobject]@{Stopped=$Stopped;Failure=$failure;Stage=$stage;PoseCount=$poses;ViewCount=$views;LastPoseSequence=$sequence;LastPoseUtcMs=$lastPoseUtc;RequestCount=$requestCount;MaxRequestPathLength=$maxRequestPathLength;LastDispatch=$lastDispatch;ViewTiming=$viewTiming;Begin=$begin;Terminal=$terminal;LastView=$latestView;Blocks=$(if($BlocksState){Get-GameplayBlocksHostState $BlocksState}else{$null});Terrain=$(if($TerrainState){Get-GameplayTerrainHostState $TerrainState}else{$null});Combat=$(if($CombatState){Get-GameplayCombatHostState $CombatState}else{$null})}}
+        function Publish([bool]$Stopped=$false){$Shared['Snapshot']=[pscustomobject]@{Stopped=$Stopped;Failure=$failure;Stage=$stage;PoseCount=$poses;ViewCount=$views;LastPoseSequence=$sequence;LastPoseUtcMs=$lastPoseUtc;RequestCount=$requestCount;MaxRequestPathLength=$maxRequestPathLength;LastDispatch=$lastDispatch;ViewTiming=$viewTiming;Begin=$begin;Terminal=$terminal;LastView=$latestView;Hud=$(if($HideNativeVitals){[pscustomobject]$hud}else{$null});Blocks=$(if($BlocksState){Get-GameplayBlocksHostState $BlocksState}else{$null});Terrain=$(if($TerrainState){Get-GameplayTerrainHostState $TerrainState}else{$null});Combat=$(if($CombatState){Get-GameplayCombatHostState $CombatState}else{$null})}}
         function Numeric($v){([double]$v).ToString('R',[Globalization.CultureInfo]::InvariantCulture)}
         function New-ViewTiming {return [ordered]@{FirstLogBytesUtcMs=0L;ViewReceiptParsedUtcMs=0L;ReceiptReadCalls=0L;ReceiptReadBytes=0L;ReceiptReadMs=0.0;ReceiptParseCount=0L;ReceiptParseMs=0.0}}
         function Capture-ViewRequest([long]$LoopUtc,[double]$DispatchMs){
@@ -285,7 +286,7 @@ function Get-GameplayMovementWorker {
             $result=[Collections.Generic.List[object]]::new()
             if($lf -ge 0){
                 $text=[Text.UTF8Encoding]::new($false,$true).GetString($bytes,0,$lf+1)
-                foreach($m in [regex]::Matches($text,'\[MineComeGameplay(Movement|Blocks|Terrain|Combat|Incoming)\] (\{[^\r\n]*\})\r?\n')){
+                foreach($m in [regex]::Matches($text,'\[MineComeGameplay(Movement|Blocks|Terrain|Combat|Incoming|Hud)\] (\{[^\r\n]*\})\r?\n')){
                     if($m.Groups[2].Length -gt 4096){throw 'Gameplay native receipt exceeded bound.'}
                     $r=$m.Groups[2].Value|ConvertFrom-Json -Depth 6
                     if($pendingViewTiming){
@@ -293,6 +294,19 @@ function Get-GameplayMovementWorker {
                         if($m.Groups[1].Value -ceq 'Movement' -and $r.run -ceq $run -and $r.event -ceq 'view' -and $r.seq -eq $viewSequence){$pendingViewTiming.ViewReceiptParsedUtcMs=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()}
                     }
                     if($r.schema -ne 1 -or $r.run -cne $run){continue}
+                    if($m.Groups[1].Value -ceq 'Hud'){
+                        if($HideNativeVitals){
+                            if($r.backend -cne 'ui_movieclip' -or $r.element -cne 'hud' -or $r.instance -ne 0 -or $r.clip -cne 'Stats'){throw 'Native HUD receipt target differs.'}
+                            if($r.event -ceq 'begin'){
+                                if($r.active -isnot [bool] -or -not $r.active -or $r.hidden -isnot [bool] -or -not $r.hidden -or $r.current_visible -isnot [bool] -or $r.current_visible -or $r.original_visible -isnot [bool]){throw 'Native stats hiding was not acknowledged.'}
+                                $hud.Begin=$r
+                            }elseif($r.event -ceq 'terminal'){
+                                $hud.Terminal=$r
+                                if($stage -ne 'stopping'){throw ('Native stats visibility lease ended: '+$r.result)}
+                            }
+                        }
+                        continue
+                    }
                     if($m.Groups[1].Value -ceq 'Blocks'){if($BlocksState){Accept-GameplayBlocksReceipt $BlocksState $r};continue}
                     if($m.Groups[1].Value -ceq 'Terrain'){if($TerrainState){Accept-GameplayTerrainReceipt $TerrainState $r ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())};continue}
                     if($m.Groups[1].Value -ceq 'Combat'){if($CombatState){Accept-GameplayCombatReceipt $CombatState $r ([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds())};continue}
@@ -317,6 +331,18 @@ function Get-GameplayMovementWorker {
             $until=$stopwatch.Elapsed.TotalMilliseconds+1000
             do{foreach($r in @(Receipts)){if($r.event -ceq 'begin'){$begin=$r}elseif($r.event -in @('rejected','terminal')){throw "Native gameplay begin rejected: $($r.result)"}};if($begin){break};Start-Sleep -Milliseconds 5}while($stopwatch.Elapsed.TotalMilliseconds -lt $until)
             if(-not $begin -or $begin.result -cne 'ready' -or -not $begin.active){throw 'No native gameplay begin acknowledgement.'}
+            if($HideNativeVitals){
+                $hudStarted=$true
+                Send (RejectWrapper "MineCome.GameplayHudBegin('$run',$remaining)")
+                $until=$stopwatch.Elapsed.TotalMilliseconds+1000
+                do{
+                    foreach($r in @(Receipts)){if($r.event -in @('rejected','terminal')){throw ('Native HUD begin rejected: '+$r.result)}}
+                    if($hud.Begin){break}
+                    Send "System.LogAlways('[MineComeGameplayHudFlush] $run')"
+                    Start-Sleep -Milliseconds 10
+                }while($stopwatch.Elapsed.TotalMilliseconds -lt $until)
+                if(-not $hud.Begin){throw 'No native stats visibility acknowledgement.'}
+            }
             $stage='running';Publish
             while(-not $Token.IsCancellationRequested){
                 $utc=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds();$elapsed=$stopwatch.Elapsed.TotalMilliseconds
@@ -486,6 +512,7 @@ function Get-GameplayMovementWorker {
                 # A failed block request must never skip the movement stop.
                 if($blocksStarted){try{Send (RejectWrapper (Get-GameplayBlocksStopCommand $BlocksState))}catch{if(-not $failure){$failure=$_.Exception.Message}}}
                 if($terrainStarted){try{Send (RejectWrapper (Get-GameplayTerrainStopCommand $TerrainState))}catch{if(-not $failure){$failure=$_.Exception.Message}}}
+                if($hudStarted){try{Send (RejectWrapper "MineCome.GameplayHudEnd('$run')")}catch{if(-not $failure){$failure=$_.Exception.Message}}}
                 try{Send (RejectWrapper "MineCome.GameplayMovementEnd('$run')")}catch{if(-not $failure){$failure=$_.Exception.Message}}
                 try{
                 # Owned block removal retries may take two seconds. Keep the
@@ -494,7 +521,7 @@ function Get-GameplayMovementWorker {
                 $lastCleanupFlush=$stopwatch.Elapsed.TotalMilliseconds
                 do{
                     foreach($r in @(Receipts)){if($r.event -ceq 'terminal'){$terminal=$r}}
-                    if($terminal -and (-not $blocksStarted -or $BlocksState.Terminal) -and (-not $terrainStarted -or $TerrainState.Terminal) -and (-not $combatStarted -or $CombatState.Terminal)){break}
+                    if($terminal -and (-not $hudStarted -or $hud.Terminal) -and (-not $blocksStarted -or $BlocksState.Terminal) -and (-not $terrainStarted -or $TerrainState.Terminal) -and (-not $combatStarted -or $CombatState.Terminal)){break}
                     # The timer emits block cleanup after End's synchronous
                     # flush. KCD can leave its latest line unterminated until
                     # the next log message; solicit that delimiter explicitly.
@@ -515,6 +542,10 @@ function Get-GameplayMovementWorker {
                         if(-not $failure -and $terminal.body_visible_baseline_owned -and (-not $terminal.body_restore_dispatched -or $terminal.body_hidden)){$failure='Native gameplay body cleanup incomplete.'}
                     }
                 }
+                if($hudStarted -and -not $failure){
+                    $h=$hud.Terminal
+                    if(-not $h -or $h.active -isnot [bool] -or $h.active -or $h.restored -isnot [bool] -or -not $h.restored -or $h.original_visible -isnot [bool] -or $h.current_visible -isnot [bool] -or $h.current_visible -ne $h.original_visible -or ($hud.Begin -and $h.original_visible -ne $hud.Begin.original_visible)){$failure='Native stats visibility was not restored.'}
+                }
                 if($combatStarted -and -not (Get-GameplayCombatHostState $CombatState).CleanupComplete -and -not $failure){$failure='Native combat cleanup incomplete.'}
                 if($blocksStarted -and -not (Get-GameplayBlocksHostState $BlocksState).CleanupComplete -and -not $failure){$failure='Native block cleanup incomplete.'}
                 if($terrainStarted -and -not (Get-GameplayTerrainHostState $TerrainState).CleanupComplete -and -not $failure){$failure='Native terrain cleanup incomplete.'}
@@ -528,7 +559,7 @@ function Get-GameplayMovementWorker {
     }
 }
 function Start-GameplayMovementHost {
-    param($Context,[string]$Run,[string]$WorldId,$Patch,[string]$PoseFile,[string]$ViewFile,[long]$ExpiresUtcMs,$Bounds,[switch]$Blocks,[switch]$Explore,[string]$TerrainCacheFile,[switch]$Flight,[switch]$WorldBlocks,[switch]$Combat,[ValidateRange(0,1)][int]$InitialTerrainRadius=0)
+    param($Context,[string]$Run,[string]$WorldId,$Patch,[string]$PoseFile,[string]$ViewFile,[long]$ExpiresUtcMs,$Bounds,[switch]$Blocks,[switch]$Explore,[string]$TerrainCacheFile,[switch]$Flight,[switch]$WorldBlocks,[switch]$Combat,[ValidateRange(0,1)][int]$InitialTerrainRadius=0,[switch]$HideNativeVitals)
     if($Combat){$WorldBlocks=$true}
     if($Flight -or $WorldBlocks){$Blocks=$true}
     if($InitialTerrainRadius -gt 0 -and -not $Explore){throw 'Initial terrain capture requires Explore and its owned terrain cache.'}
@@ -548,6 +579,7 @@ function Start-GameplayMovementHost {
     if($Blocks){$Bounds.MaxZ=[Math]::Max($Bounds.MaxZ,[double]$Patch.Data.center.z+19)}
     foreach($name in @('MinX','MaxX','MinY','MaxY','MinZ','MaxZ')){if(-not(Test-GameplayHostNumber $Bounds.$name)){throw 'Invalid gameplay coverage bounds.'}}
     $probe=New-MineComeProbeRun $Context 'gameplay-movement' (Join-Path $root 'kcd2/gameplay/movement_session.lua') 'GameplayMovementBegin'
+    if($HideNativeVitals){$null=New-MineComeProbeRun $Context 'gameplay-hud-visibility' (Join-Path $root 'kcd2/gameplay/hud_session.lua') 'GameplayHudBegin'}
     $evidenceDirectory=Split-Path -Parent $PoseFile
     $terrainState=if($Explore){New-GameplayTerrainHost -Context $Context -Run $Run -WorldId $WorldId -Patch $Patch -CacheFile $TerrainCacheFile -AdmissionFile (Join-Path $evidenceDirectory 'terrain-admission.json') -AckFile (Join-Path $evidenceDirectory 'terrain-ack.json') -ExpiresUtcMs $ExpiresUtcMs -InitialTerrainRadius $InitialTerrainRadius}else{$null}
     $blocksState=if($Blocks -and -not $WorldBlocks){New-GameplayBlocksHost -Context $Context -Run $Run -WorldId $WorldId -Patch $Patch -SnapshotFile (Join-Path $evidenceDirectory 'gameplay-blocks.json') -ExpiresUtcMs $ExpiresUtcMs -TerrainState $terrainState}else{$null}
@@ -557,11 +589,11 @@ function Start-GameplayMovementHost {
     if($WorldBlocks){$identity|Add-Member -NotePropertyName CameraOrigin -NotePropertyValue ([pscustomobject]@{x=[double]$Patch.Data.center.x;y=[double]$Patch.Data.center.y;z=[double]$Patch.Data.center.z-64.0})}
     if($WorldBlocks -and -not $Explore){$identity|Add-Member -NotePropertyName RespawnCoverage -NotePropertyValue @(Get-GameplayRespawnCoverage $Patch)}
     $shared=[Collections.Concurrent.ConcurrentDictionary[string,object]]::new([StringComparer]::Ordinal)
-    $shared['Snapshot']=[pscustomobject]@{Stopped=$false;Failure=$null;Stage='starting';PoseCount=0L;ViewCount=0L;LastPoseSequence=0L;LastPoseUtcMs=0L;RequestCount=0L;MaxRequestPathLength=0;LastDispatch=$null;ViewTiming=$null;Begin=$null;Terminal=$null;LastView=$null;Blocks=$null;Terrain=$null;Combat=$null}
+    $shared['Snapshot']=[pscustomobject]@{Stopped=$false;Failure=$null;Stage='starting';PoseCount=0L;ViewCount=0L;LastPoseSequence=0L;LastPoseUtcMs=0L;RequestCount=0L;MaxRequestPathLength=0;LastDispatch=$null;ViewTiming=$null;Begin=$null;Terminal=$null;LastView=$null;Hud=$null;Blocks=$null;Terrain=$null;Combat=$null}
     $cancellation=[Threading.CancellationTokenSource]::new();$runspace=[RunspaceFactory]::CreateRunspace();$pipeline=[PowerShell]::Create()
     try{
         $runspace.Open();$pipeline.Runspace=$runspace
-        $null=$pipeline.AddScript((Get-GameplayMovementWorker).ToString()).AddArgument($Context).AddArgument($identity).AddArgument($Bounds).AddArgument($PoseFile).AddArgument($ViewFile).AddArgument($ExpiresUtcMs).AddArgument((Get-Item -LiteralPath $Context.GameLog).Length).AddArgument($shared).AddArgument($cancellation.Token).AddArgument($root).AddArgument($blocksState).AddArgument($terrainState).AddArgument([bool]$Flight).AddArgument([bool]$WorldBlocks).AddArgument($combatState)
+        $null=$pipeline.AddScript((Get-GameplayMovementWorker).ToString()).AddArgument($Context).AddArgument($identity).AddArgument($Bounds).AddArgument($PoseFile).AddArgument($ViewFile).AddArgument($ExpiresUtcMs).AddArgument((Get-Item -LiteralPath $Context.GameLog).Length).AddArgument($shared).AddArgument($cancellation.Token).AddArgument($root).AddArgument($blocksState).AddArgument($terrainState).AddArgument([bool]$Flight).AddArgument([bool]$WorldBlocks).AddArgument($combatState).AddArgument([bool]$HideNativeVitals)
         $async=$pipeline.BeginInvoke()
         return [pscustomobject]@{Runspace=$runspace;PowerShell=$pipeline;Async=$async;Shared=$shared;Cancellation=$cancellation;Probe=$probe;Final=$null;Disposed=$false;Bounds=$Bounds;Identity=$identity}
     }catch{$cancellation.Cancel();$pipeline.Dispose();$runspace.Dispose();$cancellation.Dispose();throw}
@@ -577,7 +609,7 @@ function Stop-GameplayMovementHost($Session){
     if(-not $Session.Async.AsyncWaitHandle.WaitOne(4000)){throw 'Gameplay host worker did not finish bounded cleanup.'}
     $errorText=$null;try{$null=$Session.PowerShell.EndInvoke($Session.Async)}catch{$errorText=$_.Exception.Message}
     $s=$Session.Shared['Snapshot'];if(-not $errorText -and $Session.PowerShell.Streams.Error.Count -gt 0){$errorText=[string]$Session.PowerShell.Streams.Error[0]}
-    $Session.Final=[pscustomobject]@{Stopped=$s.Stopped;Failure=$(if($s.Failure){$s.Failure}else{$errorText});Stage=$s.Stage;PoseCount=$s.PoseCount;ViewCount=$s.ViewCount;LastPoseSequence=$s.LastPoseSequence;LastPoseUtcMs=$s.LastPoseUtcMs;RequestCount=$s.RequestCount;MaxRequestPathLength=$s.MaxRequestPathLength;LastDispatch=$s.LastDispatch;ViewTiming=$s.ViewTiming;Begin=$s.Begin;Terminal=$s.Terminal;LastView=$s.LastView;Blocks=$s.Blocks;Terrain=$s.Terrain;Combat=$s.Combat;ResourcesClosed=$true}
+    $Session.Final=[pscustomobject]@{Stopped=$s.Stopped;Failure=$(if($s.Failure){$s.Failure}else{$errorText});Stage=$s.Stage;PoseCount=$s.PoseCount;ViewCount=$s.ViewCount;LastPoseSequence=$s.LastPoseSequence;LastPoseUtcMs=$s.LastPoseUtcMs;RequestCount=$s.RequestCount;MaxRequestPathLength=$s.MaxRequestPathLength;LastDispatch=$s.LastDispatch;ViewTiming=$s.ViewTiming;Begin=$s.Begin;Terminal=$s.Terminal;LastView=$s.LastView;Hud=$s.Hud;Blocks=$s.Blocks;Terrain=$s.Terrain;Combat=$s.Combat;ResourcesClosed=$true}
     $Session.PowerShell.Dispose();$Session.Runspace.Dispose();$Session.Cancellation.Dispose();$Session.Disposed=$true
     $Session.Final|ConvertTo-Json -Depth 8|Set-Content -LiteralPath (Join-Path $Session.Probe.Directory 'verification.json') -Encoding utf8NoBOM
     return $Session.Final

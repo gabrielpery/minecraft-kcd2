@@ -27,6 +27,56 @@ and native perspective control with Steve. Unrestricted blocks, cross-game
 health/combat and Elytra remain unfinished. Existing bounded gameplay labs remain
 separate.
 
+## Play on the configured development machine
+
+Double-click **`Play-MineCome.cmd`** in the repository folder. Leave its terminal
+open. It selects installed PowerShell 7, checks the supported KCD2 development
+build and renderer, loads a fresh native world, then connects Minecraft using the
+combined Combat/Explore profile. Keep KCD2 in front with its menus closed. The
+Minecraft HUD appears automatically; **F8 saves and stops**, with no activation
+countdown or short demo timer.
+
+The Play save is separate from diagnostics:
+`runtime/gameplay/play/instance/saves/MineCome-Gameplay`. Run the same launcher to
+resume it. The launcher normally restarts its completed KCD2 session because the
+renderer currently permits one session per process. If the open game cannot be
+identified as a successfully saved Play session, it waits for you to close it
+normally. It never loads retail KCD2 saves or resets a Minecraft world.
+
+| Control | Action |
+| --- | --- |
+| WASD, mouse, Space | Move, look, jump |
+| Left / right mouse | Mine or attack / place or use |
+| 1–9, wheel | Select hotbar slot |
+| E | Open or close inventory |
+| T or / | Chat and Minecraft commands |
+| F5 | Change perspective |
+| Double Space in Creative | Toggle flight; Space up, Shift down |
+| F8 | Save and stop MineCome |
+
+New saves start in Creative with commands enabled. Use `/gamemode survival` or
+`/gamemode creative` in chat. The launcher includes Minecraft blocks, hands/Steve,
+crafting, food, bows and the current NPC combat adapter. Existing coverage,
+collision, palette and ranged-enemy limitations still apply; this remains a
+configured-machine prototype, not a standalone redistributable release.
+
+Play hides KCD2's **Stats** movie clip during the session: native health/stamina,
+horse and opponent bars. The compass, subtitles, dialogue and interaction prompts
+are separate clips and are left alone. The original visibility is restored when
+the session stops or its movement heartbeat expires. This uses the native UI API,
+not a screen mask. Other diagnostic profiles keep their previous HUD behavior
+unless `-HideNativeVitals` is requested with movement.
+
+For a terminal launch (Windows PowerShell 5.1 also works):
+
+```powershell
+& './scripts/Play-MineCome.ps1'
+```
+
+No administrator mode or manual PowerShell installation is needed on the configured
+machine. For another computer, complete [setup](SETUP.md) first; the launcher checks
+existing prerequisites and does not download game assets or dependencies.
+
 ## Run the standalone guest
 
 From the repository root on the configured development machine:

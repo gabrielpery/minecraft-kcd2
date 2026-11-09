@@ -1,7 +1,7 @@
 # Sustained HUD/inventory, with an explicit Minecraft walking profile.
 [CmdletBinding()]
 param([string]$BundleDirectory,[string]$InstanceDirectory,[string]$JavaHome='C:/Program Files/Java/jdk-24',
- [ValidateRange(0,300)][int]$SmokeSeconds=0,[switch]$PreflightOnly,[switch]$Movement,[switch]$Blocks,[switch]$Explore,[switch]$Chat,[switch]$Flight,[switch]$Hands,[switch]$WorldBlocks,[switch]$Combat,[switch]$CombatCheck,[switch]$IncomingCombatCheck,[ValidateSet('unarmed','sword','bow','crossbow')][string]$IncomingWeapon='unarmed',[switch]$ProjectileCheck,[string]$CombatFixtureRun,[string]$GroundPatchFile,[switch]$ThirdPersonWalkingCheck,[switch]$DropsCheck,[switch]$CraftingCheck,[switch]$FurnaceCheck,[switch]$TntCheck,[switch]$TntCombatCheck,[switch]$RespawnCheck,[ValidateRange(0,1)][int]$InitialTerrainRadius=0)
+ [ValidateRange(0,300)][int]$SmokeSeconds=0,[switch]$PreflightOnly,[switch]$HideNativeVitals,[switch]$Movement,[switch]$Blocks,[switch]$Explore,[switch]$Chat,[switch]$Flight,[switch]$Hands,[switch]$WorldBlocks,[switch]$Combat,[switch]$CombatCheck,[switch]$IncomingCombatCheck,[ValidateSet('unarmed','sword','bow','crossbow')][string]$IncomingWeapon='unarmed',[switch]$ProjectileCheck,[string]$CombatFixtureRun,[string]$GroundPatchFile,[switch]$ThirdPersonWalkingCheck,[switch]$DropsCheck,[switch]$CraftingCheck,[switch]$FurnaceCheck,[switch]$TntCheck,[switch]$TntCombatCheck,[switch]$RespawnCheck,[ValidateRange(0,1)][int]$InitialTerrainRadius=0)
 . (Join-Path $PSScriptRoot 'powershell7.ps1')
 if($PSVersionTable.PSVersion.Major -lt 7){
  $code=Invoke-MineComePowerShell7 -ScriptPath $PSCommandPath -BoundParameters $PSBoundParameters
@@ -31,6 +31,7 @@ if($FurnaceCheck -and (-not $WorldBlocks -or $SmokeSeconds -ne 0 -or $ThirdPerso
 if($CraftingCheck -and (-not $WorldBlocks -or $SmokeSeconds -ne 0 -or $ThirdPersonWalkingCheck -or $DropsCheck)){throw "CraftingCheck requires WorldBlocks and owns its bounded duration; omit other checks/SmokeSeconds."}
 if($DropsCheck -and (-not $WorldBlocks -or $SmokeSeconds -ne 0 -or $ThirdPersonWalkingCheck)){throw "DropsCheck requires WorldBlocks and owns its bounded duration; omit other checks/SmokeSeconds."}
 if($ThirdPersonWalkingCheck -and (-not $WorldBlocks -or $SmokeSeconds -ne 0)){throw 'ThirdPersonWalkingCheck requires WorldBlocks and owns its bounded duration; omit SmokeSeconds.'}
+if($HideNativeVitals -and -not $Movement){throw 'HideNativeVitals requires the movement session that owns its cleanup lease.'}
 if(-not $Movement -and $GroundPatchFile){throw 'GroundPatchFile requires Movement.'}
 if(-not $BundleDirectory){$BundleDirectory=Join-Path $root $(if($Chat){'runtime/hud-compositor-gameplay-chat'}elseif($Blocks){'runtime/hud-compositor-gameplay-blocks'}elseif($Movement){'runtime/hud-compositor-gameplay-movement'}else{'runtime/hud-compositor-gameplay'})}
 $installation=Get-MineComeGameplayInstallation -BundleDirectory $BundleDirectory -RequireUnarmed -Movement:$Movement -Blocks:$Blocks -Chat:$Chat
@@ -155,7 +156,7 @@ try{
    }while([DateTime]::UtcNow -lt $fixtureUntil)
    if(-not $fixtureSpawned){throw 'The isolated NPC was not confirmed; combat was not armed.'}
   }
-  $hostFollower=Start-GameplayMovementHost -Context $context -Run $run -WorldId $guest.world_id -Patch $patch -PoseFile (Join-Path $directory 'gameplay-pose.json') -ViewFile (Join-Path $directory 'host-view.json') -ExpiresUtcMs $expires -Blocks:$Blocks -Explore:$Explore -TerrainCacheFile (Join-Path $bindingDirectory 'coverage.json') -Flight:$Flight -WorldBlocks:$WorldBlocks -InitialTerrainRadius $InitialTerrainRadius -Combat:$Combat
+  $hostFollower=Start-GameplayMovementHost -Context $context -Run $run -WorldId $guest.world_id -Patch $patch -PoseFile (Join-Path $directory 'gameplay-pose.json') -ViewFile (Join-Path $directory 'host-view.json') -ExpiresUtcMs $expires -Blocks:$Blocks -Explore:$Explore -TerrainCacheFile (Join-Path $bindingDirectory 'coverage.json') -Flight:$Flight -WorldBlocks:$WorldBlocks -InitialTerrainRadius $InitialTerrainRadius -Combat:$Combat -HideNativeVitals:$HideNativeVitals
   $movementPath=Join-Path $directory 'gameplay-movement-ready.json';$until=[DateTime]::UtcNow.AddSeconds(12)
   while(-not (Test-Path -LiteralPath $movementPath)){
    $state=Get-GameplayMovementHostState $hostFollower
@@ -338,7 +339,7 @@ finally{
  }
  [ordered]@{schema=1;kind='minecome_gameplay_kcd_session_v1';run=$run;result=$(if($passed){'passed'}else{'failed'});failure=$failure;
   target_pid=$context.GamePid;target_start_filetime=$targetStart;instance=$InstanceDirectory;smoke_seconds=$SmokeSeconds;
-  minecraft_movement_connected=[bool]($Movement -and $passed);movement_profile=[bool]$Movement;blocks_profile=[bool]$Blocks;explore_profile=[bool]$Explore;chat_profile=[bool]$Chat;flight_profile=[bool]$Flight;hands_profile=[bool]$Hands;world_blocks_profile=[bool]$WorldBlocks;drops_check=[bool]$DropsCheck;crafting_check=[bool]$CraftingCheck;furnace_check=[bool]$FurnaceCheck;tnt_check=[bool]$TntCheck;tnt_combat_check=[bool]$TntCombatCheck;respawn_check=[bool]$RespawnCheck;combat_profile=[bool]$Combat;combat_check=[bool]$CombatCheck;host_command_typing_verified=$false;normal_client_exit=($helper -and $helper.HasExited -and $helper.ExitCode -eq 0)}|
+  minecraft_movement_connected=[bool]($Movement -and $passed);movement_profile=[bool]$Movement;blocks_profile=[bool]$Blocks;explore_profile=[bool]$Explore;chat_profile=[bool]$Chat;flight_profile=[bool]$Flight;hands_profile=[bool]$Hands;world_blocks_profile=[bool]$WorldBlocks;drops_check=[bool]$DropsCheck;crafting_check=[bool]$CraftingCheck;furnace_check=[bool]$FurnaceCheck;tnt_check=[bool]$TntCheck;tnt_combat_check=[bool]$TntCombatCheck;respawn_check=[bool]$RespawnCheck;combat_profile=[bool]$Combat;combat_check=[bool]$CombatCheck;hide_native_vitals=[bool]$HideNativeVitals;host_command_typing_verified=$false;normal_client_exit=($helper -and $helper.HasExited -and $helper.ExitCode -eq 0)}|
   ConvertTo-Json|Set-Content -LiteralPath (Join-Path $directory 'verification.json') -Encoding utf8NoBOM
 }
 if(-not $passed){throw $failure}
