@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later
+Original MineCome ranged test fixture; unique records, no base-game overrides.
+Official table schemas: Libs/Tables/schema0.xsd and ai/smartEntity/SmartEntity__so_codetest_scheduler.xml.
+The scheduler subbrain reference is the shipped npc_basic_scheduler; all other definition IDs are MineCome-owned. -->
+<database xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" name="barbora" xsi:noNamespaceSchemaLocation="../database.xsd">
+  <brain2subbrains version="1">
+    <brain2subbrain brain_id="0d7e2804-0490-4a00-8003-4359f1dc0f32" priority="0" subbrain_id="2736dd69-98bb-4c54-a66f-220d9a12acc6" />
+    <brain2subbrain brain_id="0d7e2804-0490-4a00-8003-4359f1dc0f32" priority="0" subbrain_id="4eaa0620-d090-e268-c244-cba09ad5ec80" />
+  </brain2subbrains>
+</database>

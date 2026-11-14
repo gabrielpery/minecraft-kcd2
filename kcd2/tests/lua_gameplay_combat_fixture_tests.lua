@@ -1,4 +1,4 @@
-local entities,names,timers={}, {}, {};local spawn_mode='entity';local calls=0;local logs={};local defer_remove=false
+local entities,names,timers={}, {}, {};local spawn_mode='entity';local host_mode='normal';local calls=0;local logs={};local defer_remove=false
 local run=string.rep('a',32);local last_entity,last_params;local profiles,weapons,spawns=0,0,0;local profile_mode='normal'
 local expected_preset='10101010-c8cb-81dd-40f1-2f0554804f83';local weapon_count,ammo_count=1,80;local draws,switches=0,0;local stats,skills={},{}
 local function check(v,m)if not v then error(m,2)end end
@@ -6,10 +6,21 @@ player={id=99,GetWorldPos=function()return{x=0,y=0,z=0}end,GetAngles=function()r
 local original_find=function(id)return{Pos={x=id,y=88,z=99}}end
 PathfindDebugUtils={FindDataTable=original_find,GetNPCSpeed=function()return 'walk'end,Data={untouched=true}}
 System={GetEntity=function(id)check(type(id)=='number','invalid handle lookup');return entities[id]end,GetEntityByName=function(name)return names[name]end,RemoveEntity=function(id)calls=calls+1;if defer_remove then return end;local e=entities[id];if e then names[e.name]=nil;entities[id]=nil end end,LogAlways=function(s)logs[#logs+1]=s end}
+System.SpawnEntity=function(params)
+ spawns=spawns+1
+ check(params.class=='SmartObjectHolder' and params.ClassName==nil and params.Name==nil and params.Properties==nil,'holder did not use System spawn schema')
+ check(params.name==('MineComeCombat_'..run..'_fixture_host'),'wrong holder name')
+ check(params.properties.guidSmartObjectType=='06d77d74-922b-4816-b376-043fab4e87f4' and params.properties.bSaved_by_game==false,'holder template/properties not supplied before spawn')
+ check(params.position.x==0 and params.position.y==6 and params.position.z==0,'holder spawn position differs')
+ check(params.orientation.x==0 and params.orientation.y==1 and params.orientation.z==0,'holder spawn orientation differs')
+ local h={id=2,name=params.name,class='SmartObjectHolder',Properties=params.properties,GetName=function(self)return self.name end}
+ if host_mode=='missing_properties' then h.Properties=nil elseif host_mode=='default_template' then h.Properties={guidSmartObjectType='DEF0005E-0000-0000-0000-DEF00000005E'}end
+ entities[2]=h;names[h.name]=h;return h
+end
 Script={SetTimerForFunction=function(_,_,data)timers[1]=data;return 1 end,KillTimer=function(id)timers[id]=nil end}
 XGenAIModule={SpawnEntity=function(params)
  spawns=spawns+1;last_params=params
- check(params.ClassName=='NPC' and (params.SharedSoulGuid=='88bee0ec-f164-4282-ae1e-6576a76b9bac' or params.SharedSoulGuid=='d2a3c045-2d43-491c-80a4-96137fcb99de'),'nonofficial test fixture')
+ check(params.ClassName=='NPC' and (params.SharedSoulGuid=='88bee0ec-f164-4282-ae1e-6576a76b9bac' or params.SharedSoulGuid=='d2a3c045-2d43-491c-80a4-96137fcb99de' or params.SharedSoulGuid=='b9eb13a6-19ce-47d2-84d0-e412471cfbf6'),'nonofficial test fixture')
  local e={id=1,name=params.Name,class='NPC',soul={SetStatLevelDebug=function(_,key,value)stats[key]=value end,SetSkillLevelDebug=function(_,key,value)skills[key]=value end},actor={},GetName=function(self)return self.name end};entities[1]=e;names[e.name]=e;last_entity=e
  e.actor.EquipWeaponPreset=function(_,preset)check(entities[1]==e and names[e.name]==e and e~=player,'unowned weapon mutation');check(preset==expected_preset,'wrong hostile preset');weapons=weapons+1 end
  local melee={['65a211bd-2c7e-40a8-984f-66c8730444e4']=1,['55f81ddb-7c17-41c5-a17c-c9948766c1c8']=1,['9aa773b1-ede0-4ff5-bbd8-2595b36c8a1a']=1,['a8eb10aa-84eb-416f-8ed2-46d909a26552']=1}
@@ -84,6 +95,13 @@ profile_mode='replace';before_weapons=weapons;before=calls
 check(not MineCome.GameplayCombatFixtureBegin(run,1000,0,2,0,'hostile'),'replacement during profile admitted')
 check(weapons==before_weapons and calls==before and logs[#logs]:match('cleanup_unconfirmed'),'replacement mutated or deleted')
 entities={};names={};profile_mode='normal';check(MineCome.GameplayCombatFixtureEnd(run),'late hostile removal unconfirmed')
+-- The extra holder API is required only for ranged fixtures and is checked
+-- before arming a timer or spawning either resource.
+local system_spawn=System.SpawnEntity;System.SpawnEntity=nil;before=spawns
+check(not MineCome.GameplayCombatFixtureBegin(run,1000,0,6,0,'hostile_bow'),'missing holder API admitted')
+check(spawns==before and next(timers)==nil,'missing holder API mutated state')
+check(MineCome.GameplayCombatFixtureBegin(run,1000,0,2,0,'hostile'),'holder API leaked into melee requirements')
+check(MineCome.GameplayCombatFixtureEnd(run),'melee without holder API failed cleanup');System.SpawnEntity=system_spawn
 -- Armed fixtures retain real native AI. The bow has verified inventory ammo,
 -- meets its official stat requirements and requests the ranged weapon set.
 expected_preset='9b042396-e438-4a79-ab9d-138c12cda0a6';before=draws;local switches_before=switches
@@ -94,7 +112,18 @@ expected_preset='540bab62-09ea-41a9-bc44-e30a8cf98d56';before=draws
 check(MineCome.GameplayCombatFixtureBegin(run,1000,0,6,0,'hostile_bow'),'bow rejected')
 check(draws==before+1 and switches==switches_before+1 and stats.strength==22 and stats.agility==22 and stats.courage==30 and skills.marksmanship==22,'bow ranged selection/stats/draw missing')
 check(logs[#logs]:match('"ammo_count":80') and logs[#logs]:match('"ranged_set_requested":true') and logs[#logs]:find(expected_preset,1,true),'bow inventory receipt incomplete')
+check(logs[#logs]:match('"host_template_verified":true') and logs[#logs]:find('06d77d74-922b-4816-b376-043fab4e87f4',1,true),'actual holder template proof missing')
 check(PathfindDebugUtils.FindDataTable==original_find and MineCome.GameplayCombatFixtureEnd(run),'bow AI or cleanup changed')
+check(logs[#logs]:match('"host_removed":true'),'owned holder disappearance not recorded')
+for _,missing in ipairs({'missing_properties','default_template'})do
+ host_mode=missing;before=spawns;local prior_profiles=profiles
+ local ok,reason=MineCome.GameplayCombatFixtureBegin(run,1000,0,6,0,'hostile_bow')
+ check(not ok and reason=='host_template_unconfirmed','missing/wrong actual holder template accepted')
+ check(spawns==before+1 and profiles==prior_profiles,'NPC created before actual holder template readback')
+ check(next(entities)==nil and next(timers)==nil and logs[#logs]:match('"host_removed":true'),'failed holder template leaked owned resources')
+ check(logs[#logs]:match('"host_template_verified":false'),'failed template claimed verified')
+end
+host_mode='normal'
 before=spawns
 for _,point in ipairs({2,5.49,8.01})do check(not MineCome.GameplayCombatFixtureBegin(run,1000,0,point,0,'hostile_bow'),'bow unsafe range accepted')end
 check(not MineCome.GameplayCombatFixtureBegin(run,1000,0,6,0,'hostile_sword') and not MineCome.GameplayCombatFixtureBegin(run,1000,0,6,0,'hostile'),'armed range leaked to melee')
@@ -118,9 +147,39 @@ expected_preset='1a5e4d64-f240-4596-b0c6-49e11c047468';ammo_count=65;before=draw
 check(MineCome.GameplayCombatFixtureBegin(run,1000,0,6,0,'hostile_crossbow'),'crossbow rejected')
 check(draws==before+1 and switches==switches_before+1 and logs[#logs]:match('"ammo_count":65') and logs[#logs]:match('"melee_items_removed":true') and logs[#logs]:match('"ammo_equip_requested":true'),'crossbow native equipment proof missing')
 check(MineCome.GameplayCombatFixtureEnd(run),'crossbow cleanup failed');expected_preset='10101010-c8cb-81dd-40f1-2f0554804f83';ammo_count=80
+-- Each separately-owned resource must clean up even if its peer was replaced.
+-- Exercise both immediate and deferred engine deletion in both directions.
+for _,deferred in ipairs({false,true})do
+ for _,replaced_id in ipairs({1,2})do
+  expected_preset='1a5e4d64-f240-4596-b0c6-49e11c047468';ammo_count=65;defer_remove=deferred
+  check(MineCome.GameplayCombatFixtureBegin(run,1000,0,6,0,'hostile_crossbow'),'dual resource fixture failed')
+  local foreign_original=entities[replaced_id]
+  local foreign={id=replaced_id,name=foreign_original.name,class=foreign_original.class,soul={},actor={}}
+  entities[replaced_id]=foreign;names[foreign.name]=foreign
+  local owned_id=replaced_id==1 and 2 or 1;local owned_entity=entities[owned_id]
+  before=calls;local prior_log_count=#logs
+  local ended=MineCome.GameplayCombatFixtureEnd(run)
+  check(calls==before+1,'replacement prevented independent owned removal or was deleted')
+  check(entities[replaced_id]==foreign and names[foreign.name]==foreign,'foreign replacement removed')
+  if deferred then
+   check(ended and entities[owned_id]==owned_entity and #logs==prior_log_count,'deferred independent cleanup ended too early')
+   pending=timers[1];timers[1]=nil;MineCome_CombatFixtureCleanupTick(pending)
+   check(#logs==prior_log_count and timers[1]~=nil,'still-owned pending resource was abandoned')
+   entities[owned_id]=nil;names[owned_entity.name]=nil
+   pending=timers[1];timers[1]=nil;MineCome_CombatFixtureCleanupTick(pending)
+  else
+   check(not ended and entities[owned_id]==nil and names[owned_entity.name]==nil,'independent immediate cleanup failed')
+  end
+  check(calls==before+1 and next(timers)==nil,'independent cleanup repeated removal or leaked timer')
+  check(logs[#logs]:match('cleanup_unconfirmed') and logs[#logs]:match('"removed":false'),'replacement concealed in terminal evidence')
+  check(entities[replaced_id]==foreign and names[foreign.name]==foreign,'replacement lost after cleanup polling')
+  entities={};names={};check(MineCome.GameplayCombatFixtureEnd(run),'eventual dual-resource disappearance not confirmed')
+ end
+end
+defer_remove=false;expected_preset='10101010-c8cb-81dd-40f1-2f0554804f83';ammo_count=80
 -- Default remains passive; hostile configuration must not leak across runs.
 before=profiles;before_weapons=weapons
 check(MineCome.GameplayCombatFixtureBegin(run,1000,0,2,0),'passive regression after hostile mode')
 check(last_params.SharedSoulGuid=='88bee0ec-f164-4282-ae1e-6576a76b9bac' and last_params.PercepDestinationrObjectAI==false and last_params.PerceptibleObjectAI==false and profiles==before and weapons==before_weapons,'hostile configuration leaked to passive mode')
 check(MineCome.GameplayCombatFixtureEnd(run),'final passive cleanup failed')
-print('PASS owned native NPC passive/unarmed/sword/bow/crossbow fixtures: official presets, ranged ammo/selection/stats, bounded geometry, missing APIs, uncertain spawn, replacement, expiry and deferred cleanup (simulated engine)')
+print('PASS owned native NPC passive/unarmed/sword/bow/crossbow fixtures: official presets, isolated ranged holder/template, missing APIs, uncertain spawn, independent NPC/holder replacement cleanup, expiry and deferred removal (simulated engine)')

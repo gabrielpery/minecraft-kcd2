@@ -1143,21 +1143,23 @@ NPCs keep their identity, movement and AI. Block mining keeps its existing path
 when the crosshair does not select an NPC. Inventory and chat suppress attacks.
 
 The outgoing bridge covers melee, bows and the TNT path above. Incoming native
-unarmed and sword attacks now reduce real Minecraft health; unarmed hits are also
+unarmed, sword, bow and crossbow attacks now reduce real Minecraft health; unarmed hits are also
 verified during inventory.
 The adapter reads attributed native hit records, normalizes native health loss
 to Minecraft's20-health scale and invokes vanilla damage. Minecraft applies
 armor, hurt cooldowns, Creative immunity and its own knockback. Native health is
 temporarily maintained as a proxy, with its original health and owned protection
 restored on stop. Use `-Combat -Explore` for room to move under knockback.
-Native ranged attacks, crossbows, outgoing sweep/knockback and secondary
+Outgoing Minecraft crossbows, sweep/knockback and secondary
 enchantment effects remain unfinished. Native incoming damage still includes
 native armor before Minecraft armor; this is an initial balance, not exact
 vanilla weapon parity. See [incoming source and limits](research/INCOMING-COMBAT.md).
 The automated sword check now also verifies owned injury protection, preventing
 new native bleeding from continuing after Minecraft stops. Minecraft's projectile
-damage/Projectile Protection path is tested separately; the native archer fixture
-has not yet fired, so this does not enable incoming native arrows.
+damage/Projectile Protection path is tested separately. Actual native bow and
+crossbow hits now pass coupled checks through the production `MissileHit` reader,
+including exact source attribution, vanilla arrow damage, adapter cleanup and
+continued HUD composition. This is enabled by the normal `-Combat` profile.
 
 The required combat model is free aiming and unrestricted movement. The adapter
 owns three source-backed player lock settings during `-Combat`, restoring their
@@ -1209,6 +1211,9 @@ Automated checks use isolated saves and require no manual attack sequence:
 & './scripts/Test-KcdCombat.ps1' -BundleDirectory $bundle -ProjectileCheck
 # Real hostile hits, inventory damage, expanded terrain and continued HUD:
 & './scripts/Test-KcdIncomingCombat.ps1' -BundleDirectory $bundle
+# Actual native ranged hits (each check requires a fresh loaded native process):
+& './scripts/Test-KcdIncomingCombat.ps1' -BundleDirectory $bundle -IncomingWeapon bow
+& './scripts/Test-KcdIncomingCombat.ps1' -BundleDirectory $bundle -IncomingWeapon crossbow
 # Reverify saved evidence without launching either game:
 & './scripts/Test-KcdIncomingCombat.ps1' -VerifyEvidenceDirectory $evidence
 ```

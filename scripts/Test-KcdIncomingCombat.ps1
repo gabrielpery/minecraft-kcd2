@@ -78,6 +78,10 @@ if($fixtureBegin.Count -ne 1 -or $fixtureEnd.Count -lt 1 -or @($nativeFixture.re
 if($armedWeapon){
  if($fixtureBegin[0].weapon_count -lt 1 -or -not $fixtureBegin[0].weapon_preset){throw 'Native armed fixture weapon readback missing.'}
  if($weapon -cin @('bow','crossbow') -and ($fixtureBegin[0].ammo_count -lt 1 -or -not $fixtureBegin[0].ranged_set_requested)){throw 'Native ranged fixture ammo/set readback missing.'}
+ if($weapon -cin @('bow','crossbow')){
+  if(-not $fixtureBegin[0].host_template_verified -or $fixtureBegin[0].host_template -cne '06d77d74-922b-4816-b376-043fab4e87f4' -or
+   @($fixtureEnd|Where-Object {$_.host_removed -eq $true}).Count -lt 1){throw 'Native ranged behavior holder configuration/cleanup missing.'}
+ }
 }
 foreach($name in @('incoming-fixture-ready.json','incoming-fixture-remove.json','incoming-fixture-removed.json')){$marker=Read-IncomingProof $name;if($marker.schema -ne 1 -or $marker.world_id -cne $s.world_id){throw 'Incoming fixture marker identity differs.'}}
 $guestReceipts=@($c.incoming_receipts)
@@ -199,6 +203,8 @@ for($i=0;$i -lt $hostReceipts.Count;$i++){
   $actual[0].AttackerGuid -cne $source.AttackerGuid -or $actual[0].VictimGuid -cne $source.VictimGuid -or $actual[0].AttackerName -cne $source.AttackerName){throw 'Raw native CombatHit does not match the forwarded event.'}
  if($armedWeapon -and (Get-GameplayIncomingDamageKind $actual[0]) -cne $expectedKind){throw 'Raw native event is not the requested armed/ranged attack.'}
  if($weapon -ceq 'sword' -and $actual[0].AttackType -notin @(0,1,2)){throw 'Sword fixture damaged with an unarmed action.'}
+ if($expectedKind -ceq 'projectile' -and ($actual[0].CauseName -cne 'MissileHit' -or $actual[0].WeaponId -cne $fixtureBegin[0].weapon_item -or
+  $source.WeaponId -cne $actual[0].WeaponId -or $source.AmmoId -cne $actual[0].AmmoId)){throw 'Native missile source differs from the fixture weapon.'}
  Assert-IncomingNear $actual[0].AttributedDamage $source.AttributedDamage 'raw native attributed damage'
  Assert-IncomingNear $actual[0].Before $source.Before 'raw native prior health';Assert-IncomingNear $actual[0].After $source.After 'raw native resulting health'
  $nativeDamage+=$source.AttributedDamage

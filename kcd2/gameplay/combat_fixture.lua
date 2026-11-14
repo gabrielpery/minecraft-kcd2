@@ -8,10 +8,17 @@
 -- Ranged selection/draw: CombatDebug.lua:1119-1130; inventory readback follows
 -- Scripts/Utils/ItemUtils.lua:118. Bow stat22 values follow skill profile4,
 -- exceeding the official bow_d item's strength19/agility14 requirements.
+-- Ranged-only AI is original: a type6 Switching starter requests our behavior
+-- from one owned SmartObjectHolder on the shipped type9 npc_basic_scheduler.
+-- Official shapes: AI/closedCastle/switch_closedCastle.xml, autotest/scheduler.xml:175
+-- and test/test_of_everything/test_shooting.xml. EntityCommon.lua:689-705 supplies
+-- System.SpawnEntity's lowercase properties schema; XGen SpawnEntity ignores it.
 -- Owns only the unique newly-created actor, never existing NPCs/player state.
 MineCome=MineCome or {}
 MineCome._gameplay_combat_fixture=MineCome._gameplay_combat_fixture or {}
 local state=MineCome._gameplay_combat_fixture
+local ranged_soul='b9eb13a6-19ce-47d2-84d0-e412471cfbf6'
+local ranged_host_template='06d77d74-922b-4816-b376-043fab4e87f4'
 local configurations={
  hostile={preset='10101010-c8cb-81dd-40f1-2f0554804f83',max_distance=5},
  hostile_sword={preset='9b042396-e438-4a79-ab9d-138c12cda0a6',weapon='9e31a288-7de0-4c0d-81cd-5cf00548d2d5',max_distance=5},
@@ -27,15 +34,27 @@ local function emit(p,event,result)
  if p.configuration then
   equipment=',"weapon_preset":"'..p.configuration.preset..'"'
   if p.configuration.weapon then equipment=equipment..',"weapon_item":"'..p.configuration.weapon..'","weapon_count":'..tostring(p.weapon_count or 0) end
-  if p.configuration.ammo then equipment=equipment..',"ammo_item":"'..p.configuration.ammo..'","ammo_count":'..tostring(p.ammo_count or 0)..',"ammo_equip_requested":'..tostring(p.ammo_equip_requested==true)..',"ranged_set_requested":'..tostring(p.ranged_set_requested==true)..',"melee_items_removed":'..tostring(p.melee_items_removed==true) end
+  if p.configuration.ammo then equipment=equipment..',"ammo_item":"'..p.configuration.ammo..'","ammo_count":'..tostring(p.ammo_count or 0)..',"ammo_equip_requested":'..tostring(p.ammo_equip_requested==true)..',"ranged_set_requested":'..tostring(p.ranged_set_requested==true)..',"melee_items_removed":'..tostring(p.melee_items_removed==true)..',"host_template":"'..(p.host_template or '')..'","host_template_verified":'..tostring(p.host_template==ranged_host_template) end
  end
- System.LogAlways('[MineComeCombatFixture] {"schema":1,"run":"'..p.run..'","mode":"'..(p.mode or 'passive')..'","event":"'..event..'","result":"'..result..'","active":'..tostring(state.active==p)..',"removed":'..tostring(p.removed==true)..',"path_restored":'..tostring(p.path_restored~=false)..equipment..'}')
+ System.LogAlways('[MineComeCombatFixture] {"schema":1,"run":"'..p.run..'","mode":"'..(p.mode or 'passive')..'","event":"'..event..'","result":"'..result..'","active":'..tostring(state.active==p)..',"removed":'..tostring(p.removed==true)..',"path_restored":'..tostring(p.path_restored~=false)..equipment..',"host_removed":'..tostring(p.host_name==nil or (System.GetEntityByName(p.host_name)==nil and (not p.host or System.GetEntity(p.host_id)==nil)))..'}')
 end
 local function owned(p)
  return p.entity and System.GetEntity(p.id)==p.entity and System.GetEntityByName(p.name)==p.entity and p.entity.id==p.id and p.entity.soul==p.soul
 end
-local function gone(p)
+local function host_owned(p)
+ return p.host and System.GetEntity(p.host_id)==p.host and System.GetEntityByName(p.host_name)==p.host and p.host.id==p.host_id
+end
+local function host_gone(p)
+ return (not p.host or System.GetEntity(p.host_id)==nil) and (not p.host_name or System.GetEntityByName(p.host_name)==nil) and not p.host_unknown
+end
+local function native_gone(p)
  return (not p.entity or System.GetEntity(p.id)==nil) and System.GetEntityByName(p.name)==nil and not p.spawn_unknown
+end
+local function pending_owned_removal(p)
+ return (p.remove_requested and owned(p)) or (p.host_remove_requested and host_owned(p))
+end
+local function gone(p)
+ return native_gone(p) and host_gone(p)
 end
 local function finish(p,removed)
  p.removed=removed;p.stopped=true;p.stopping=false
@@ -50,7 +69,7 @@ local function finish(p,removed)
 end
 local function cleanup_poll(p)
  if gone(p)then return finish(p,true)end
- if not owned(p) or p.cleanup_polls<=0 then return finish(p,false)end
+ if not pending_owned_removal(p) or p.cleanup_polls<=0 then return finish(p,false)end
  p.cleanup_polls=p.cleanup_polls-1
  local data={owner=p};local ok,id=pcall(Script.SetTimerForFunction,50,'MineCome_CombatFixtureCleanupTick',data,true)
  if not ok or id==nil or id==false then return finish(p,false)end;p.timer=id;p.timer_data=data;return true
@@ -71,10 +90,12 @@ local function stop(p,reason)
  p.stopping=true;p.reason=reason;p.cleanup_polls=40
  if p.timer then Script.KillTimer(p.timer);p.timer=nil end;p.timer_data=nil
  if gone(p)then return finish(p,true)end
- if not owned(p)then return finish(p,false)end
  -- Native deletion is deferred until an engine update. Issue it exactly once,
  -- retain the original references, and publish terminal only after readback.
- p.remove_requested=true;pcall(System.RemoveEntity,p.id)
+ -- Losing one resource must not prevent cleanup of the independently owned
+ -- other resource. A foreign replacement is preserved and keeps removed=false.
+ if owned(p)then p.remove_requested=true;pcall(System.RemoveEntity,p.id)end
+ if host_owned(p)then p.host_remove_requested=true;pcall(System.RemoveEntity,p.host_id)end
  return cleanup_poll(p)
 end
 function MineCome_CombatFixtureExpire(data)
@@ -89,6 +110,7 @@ function MineCome.GameplayCombatFixtureBegin(run,duration_ms,x,y,z,mode)
  if not player or type(player.GetWorldPos)~='function' or type(player.GetAngles)~='function' or not XGenAIModule or type(XGenAIModule.SpawnEntity)~='function' or not System or type(System.GetEntity)~='function' or type(System.GetEntityByName)~='function' or type(System.RemoveEntity)~='function' or not Script or type(Script.SetTimerForFunction)~='function' or type(Script.KillTimer)~='function' then return false,'fixture_api_missing'end
  if mode=='passive' and (type(PathfindDebugUtils)~='table' or type(PathfindDebugUtils.FindDataTable)~='function' or type(PathfindDebugUtils.GetNPCSpeed)~='function') then return false,'fixture_path_api_missing'end
  if configuration and (type(CombatDebug)~='table' or type(CombatDebug.SetSkillProfile)~='function')then return false,'fixture_combat_api_missing'end
+ if configuration and configuration.ammo and type(System.SpawnEntity)~='function'then return false,'fixture_host_api_missing'end
  local position={x=x,y=y,z=z};local feet=player:GetWorldPos()
  if not vector(feet) or distance(position,feet)>(configuration and configuration.max_distance or 5) then return false,'fixture_too_far'end
  if configuration and configuration.min_distance and distance(position,feet)<configuration.min_distance then return false,'fixture_too_close'end
@@ -99,11 +121,25 @@ function MineCome.GameplayCombatFixtureBegin(run,duration_ms,x,y,z,mode)
  if System.GetEntityByName(p.name)then return false,'fixture_name_occupied'end
  state.active=p;local data={owner=p};local ok,timer=pcall(Script.SetTimerForFunction,duration_ms,'MineCome_CombatFixtureExpire',data,true)
  if not ok or timer==nil or timer==false then state.active=nil;return false,'fixture_timer_missing'end;p.timer=timer;p.timer_data=data
+ if configuration and configuration.ammo then
+  p.host_name=p.name..'_host'
+  if System.GetEntityByName(p.host_name)then stop(p,'host_name_occupied');return false,'host_name_occupied'end
+  -- Official SmartObjectHolder.lua exposes guidSmartObjectType. Own one host
+  -- for this fixture's scheduled ranged behavior; never change global AI.
+  local ok,result=pcall(System.SpawnEntity,{class='SmartObjectHolder',name=p.host_name,properties={guidSmartObjectType=ranged_host_template,bSaved_by_game=false},position=position,orientation={x=0,y=1,z=0}})
+  local h=System.GetEntityByName(p.host_name)
+  if type(h)=='table' and h.id~=nil and h.class=='SmartObjectHolder' and System.GetEntity(h.id)==h and type(h.GetName)=='function' and h:GetName()==p.host_name then p.host=h;p.host_id=h.id end
+  if not ok or not p.host then p.host_unknown=h~=nil and p.host==nil;stop(p,'host_spawn_unconfirmed');return false,'host_spawn_unconfirmed'end
+  if not host_owned(p) or type(p.host.Properties)~='table' or p.host.Properties.guidSmartObjectType~=ranged_host_template then
+   stop(p,'host_template_unconfirmed');return false,'host_template_unconfirmed'
+  end
+  p.host_template=ranged_host_template
+ end
  local params={ClassName='NPC',Name=p.name,Properties={},Pos=position,Rot=rotation}
  if mode=='passive' then
   params.SharedSoulGuid='88bee0ec-f164-4282-ae1e-6576a76b9bac';params.PercepDestinationrObjectAI=false;params.PerceptibleObjectAI=false
  else
-  params.SharedSoulGuid='d2a3c045-2d43-491c-80a4-96137fcb99de'
+  params.SharedSoulGuid=configuration.ammo and ranged_soul or 'd2a3c045-2d43-491c-80a4-96137fcb99de'
   -- Official CombatDebug faces new enemies toward the player (1004-1007).
   params.Rot={x=0,y=0,z=rotation.z+math.pi}
  end
@@ -169,8 +205,8 @@ function MineCome.GameplayCombatFixtureBegin(run,duration_ms,x,y,z,mode)
    end
   end)
   if not configured or not owned(p)then stop(p,'fixture_combat_setup_failed');return false,'fixture_combat_setup_failed'end
-  -- Native npc_basic perception/combat remains active. No path override or
-  -- forced attack is installed; actual retaliation must be observed separately.
+  -- Melee keeps npc_basic behavior. Ranged uses the isolated scheduler request;
+  -- a configured weapon/behavior is not evidence of a shot or native damage.
   emit(p,'begin','spawned');return true
  end
  if PathfindDebugUtils~=p.path_table or p.path_table.FindDataTable~=p.path_original then stop(p,'fixture_path_changed');return false,'fixture_path_changed'end

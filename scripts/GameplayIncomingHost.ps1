@@ -2,6 +2,7 @@
 # Read-only parser for the native CombatDebug raw-GUID telemetry format.
 # Source: pinned CombatDebug.StartLog plus actual eventlog captures under
 # runtime/evidence/combat-stream-watch-0ba69e97163c4ec9b8ce3e6d1e681160.
+# MissileHit schema: armed-capture-20261114-220128-3e34409ee95b4eac994f0e2b8ed7283b.
 # This module never enables logging, changes game health or infers losslessness.
 # Callers must establish an immutable source cursor and exact native GUID mapping.
 function Get-GameplayIncomingProperty($Object,[string]$Name){
@@ -19,9 +20,19 @@ function Get-GameplayIncomingNumber($Object,[string]$Name,[double]$Minimum,[doub
     if($value.ValueKind -ne [Text.Json.JsonValueKind]::Number){throw "Native telemetry number invalid: $Name"}
     $number=0.;if(-not $value.TryGetDouble([ref]$number) -or -not [double]::IsFinite($number) -or $number -lt $Minimum -or $number -gt $Maximum){throw "Native telemetry number bound: $Name"};return $number
 }
-function Get-GameplayIncomingGuid($Object){
-    $guid=Get-GameplayIncomingString $Object 'guid' 36
+function Get-GameplayIncomingGuid($Object,[string]$Name='guid'){
+    $guid=Get-GameplayIncomingString $Object $Name 36
     if($guid -cnotmatch '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'){throw 'Native telemetry GUID invalid.'};return $guid
+}
+function Get-GameplayIncomingVector($Object){
+    [pscustomobject]@{x=(Get-GameplayIncomingNumber $Object 'x' ([double]::MinValue) ([double]::MaxValue));
+        y=(Get-GameplayIncomingNumber $Object 'y' ([double]::MinValue) ([double]::MaxValue));
+        z=(Get-GameplayIncomingNumber $Object 'z' ([double]::MinValue) ([double]::MaxValue))}
+}
+function Get-GameplayIncomingItem($Object){
+    $id=Get-GameplayIncomingGuid $Object 'id';$name=Get-GameplayIncomingString $Object 'name'
+    if(-not $name){throw 'Native missile item name is empty.'}
+    [pscustomobject]@{Id=$id;Name=$name}
 }
 function Assert-GameplayIncomingJson($Value,[int]$Depth=0){
     if($Depth -gt 16){throw 'Native telemetry nesting exceeded.'}
@@ -52,21 +63,38 @@ function ConvertFrom-GameplayIncomingTelemetry([string]$Text,[string]$VictimGuid
             # Native SetState maintenance records have an exact empty cause.
             if($cause.ValueKind -eq [Text.Json.JsonValueKind]::Object -and @($cause.EnumerateObject()).Count -eq 0){continue}
             $causeName=Get-GameplayIncomingString $cause 'name'
-            if($causeName -cne 'CombatHit'){continue}
+            if($causeName -cnotin @('CombatHit','MissileHit')){continue}
             $victimObject=Get-GameplayIncomingProperty $cause 'victim';$victim=Get-GameplayIncomingGuid $victimObject
             $victimNameValue=$null;$attackerNameValue=$null
-            if($VictimName){$victimNameValue=Get-GameplayIncomingString $victimObject 'name';if($victimNameValue -cne $VictimName){continue}}
+            if($VictimName -or $causeName -ceq 'MissileHit'){$victimNameValue=Get-GameplayIncomingString $victimObject 'name'}
+            if($VictimName){if($victimNameValue -cne $VictimName){continue}}
             elseif($victim -cne $VictimGuid){continue}
             $attackerObject=Get-GameplayIncomingProperty $cause 'attacker';$attacker=Get-GameplayIncomingGuid $attackerObject
-            if($VictimName){$attackerNameValue=Get-GameplayIncomingString $attackerObject 'name'}
+            if($VictimName -or $causeName -ceq 'MissileHit'){$attackerNameValue=Get-GameplayIncomingString $attackerObject 'name'}
             if($attacker -ceq $victim){throw 'Native combat hit has identical attacker and victim.'}
             $gameMs=Get-GameplayIncomingNumber $entry 'gt' 0 9007199254740991
             if($gameMs -ne [Math]::Floor($gameMs)){throw 'Native telemetry game time must be integer milliseconds.'}
             $playTime=Get-GameplayIncomingNumber $entry 'pt' 0 100000000
             $wallTime=Get-GameplayIncomingString $entry 't' 19;$date=[datetime]::MinValue
             if(-not [datetime]::TryParseExact($wallTime,'yyyy-MM-ddTHH:mm:ss',[Globalization.CultureInfo]::InvariantCulture,[Globalization.DateTimeStyles]::None,[ref]$date)){throw 'Native telemetry wall time invalid.'}
-            $attackType=Get-GameplayIncomingNumber $cause 'attackType' 0 1024;$damageType=Get-GameplayIncomingNumber $cause 'damageType' 0 1024
-            if($attackType -ne [Math]::Floor($attackType) -or $damageType -ne [Math]::Floor($damageType)){throw 'Native telemetry attack classification invalid.'}
+            $attackType=$null;$damageType=$null;$impactVelocity=$null;$targetNormal=$null;$weapon=$null;$ammo=$null;$origMatId0=$null;$targetSurfId=$null
+            if($causeName -ceq 'CombatHit'){
+                $attackType=Get-GameplayIncomingNumber $cause 'attackType' 0 1024;$damageType=Get-GameplayIncomingNumber $cause 'damageType' 0 1024
+                if($attackType -ne [Math]::Floor($attackType) -or $damageType -ne [Math]::Floor($damageType)){throw 'Native telemetry attack classification invalid.'}
+                $attackType=[int]$attackType;$damageType=[int]$damageType
+            }else{
+                if(-not $victimNameValue -or -not $attackerNameValue){throw 'Native missile actor name is empty.'}
+                $impactVelocity=Get-GameplayIncomingVector (Get-GameplayIncomingProperty $cause 'impactVelocity')
+                $targetNormal=Get-GameplayIncomingVector (Get-GameplayIncomingProperty $cause 'targetNormal')
+                $weapon=Get-GameplayIncomingItem (Get-GameplayIncomingProperty $cause 'attackerWeapon')
+                # Later real crossbow impacts report null ammo; the cause and
+                # attributed owner remain explicit. Never infer an ammo item.
+                $ammoObject=Get-GameplayIncomingProperty $cause 'attackerAmmo'
+                if($ammoObject.ValueKind -ne [Text.Json.JsonValueKind]::Null){$ammo=Get-GameplayIncomingItem $ammoObject}
+                $origMatId0=Get-GameplayIncomingNumber $cause 'origMatId0' 0 ([int]::MaxValue)
+                $targetSurfId=Get-GameplayIncomingNumber $cause 'targetSurfId' 0 ([int]::MaxValue)
+                if($origMatId0 -ne [Math]::Floor($origMatId0) -or $targetSurfId -ne [Math]::Floor($targetSurfId)){throw 'Native missile material/surface ID invalid.'}
+            }
             $effects=Get-GameplayIncomingProperty $entry 'effects'
             if($effects.ValueKind -ne [Text.Json.JsonValueKind]::Array -or $effects.GetArrayLength() -gt 128){throw 'Native hit effects exceeded.'}
             $healthValues=[Collections.Generic.List[object]]::new();$healthStates=[Collections.Generic.List[object]]::new()
@@ -108,7 +136,10 @@ function ConvertFrom-GameplayIncomingTelemetry([string]$Text,[string]$VictimGuid
             }
             $hash=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($entry.GetRawText()))).ToLowerInvariant()
             $result.Add([pscustomobject]@{Index=$entryIndex;CauseName=$causeName;GameMs=[long]$gameMs;PlayTime=$playTime;LoggedWallTime=$wallTime;AttackerGuid=$attacker;VictimGuid=$victim;
-                AttackType=[int]$attackType;DamageType=[int]$damageType;AttackerName=$attackerNameValue;VictimName=$victimNameValue;AttributedDamage=$attributed;AppliedDamage=$applied;Before=$before;After=$after;SoulStateValue=$stateValue;EventSha256=$hash})
+                AttackType=$attackType;DamageType=$damageType;AttackerName=$attackerNameValue;VictimName=$victimNameValue;
+                WeaponId=$(if($weapon){$weapon.Id}else{$null});WeaponName=$(if($weapon){$weapon.Name}else{$null});AmmoId=$(if($ammo){$ammo.Id}else{$null});AmmoName=$(if($ammo){$ammo.Name}else{$null});
+                ImpactVelocity=$impactVelocity;TargetNormal=$targetNormal;OrigMatId0=$origMatId0;TargetSurfId=$targetSurfId;
+                AttributedDamage=$attributed;AppliedDamage=$applied;Before=$before;After=$after;SoulStateValue=$stateValue;EventSha256=$hash})
         }
         return [pscustomobject]@{TotalEvents=$root.GetArrayLength();Hits=$result.ToArray()}
     }finally{$document.Dispose()}
@@ -310,6 +341,9 @@ function Read-GameplayIncomingClosedFiles([string]$Path){
     return $files.ToArray()
 }
 function Get-GameplayIncomingDamageKind($Hit){
+    # Three native crossbow impacts prove MissileHit is a distinct projectile
+    # cause with no attackType/damageType. Its required schema is parsed above.
+    if($Hit.CauseName -ceq 'MissileHit'){return 'projectile'}
     # Pinned official Libs/Tables/combat/combat_attack_type.xml supplies the
     # base melee pairs; combat_damage_type_mapping.xml supplies weapon overrides
     # stab0->smash4 and slash1->stab5. Unknown telemetry is never guessed ranged.

@@ -196,7 +196,7 @@ try{
     $incomingFixtureStarted=$true
     $incomingMode=if($IncomingWeapon -ceq 'unarmed'){'hostile'}else{'hostile_'+$IncomingWeapon}
     $incomingDistance=if($IncomingWeapon -cin @('bow','crossbow')){6}else{2}
-    Invoke-MineComeProbeConsole $context "#local p=player:GetWorldPos();local d=player.actor:GetHeadDir();local len=math.sqrt(d.x*d.x+d.y*d.y);if len>.1 then local ok,why=MineCome.GameplayCombatFixtureBegin('$CombatFixtureRun',60000,p.x+d.x/len*$incomingDistance,p.y+d.y/len*$incomingDistance,p.z,'$incomingMode');System.LogAlways('[MineComeIncomingFixtureSpawn] '..tostring(ok)..' '..tostring(why)) end"|Out-Null
+    Invoke-MineComeProbeConsole $context "#local p=player:GetWorldPos();local d=player.actor:GetHeadDir();local len=math.sqrt(d.x*d.x+d.y*d.y);if len>.1 then local x,y,z=p.x+d.x/len*$incomingDistance,p.y+d.y/len*$incomingDistance,p.z;if $incomingDistance==6 then local hits={};local n=Physics.RayWorldIntersection({x=x,y=y,z=z+3},{x=0,y=0,z=-6},16,ent_all,player.id,nil,hits);assert(n==1 and hits[1] and hits[1].pos,'incoming_fixture_ground');z=hits[1].pos.z+.02 end;local ok,why=MineCome.GameplayCombatFixtureBegin('$CombatFixtureRun',60000,x,y,z,'$incomingMode');System.LogAlways('[MineComeIncomingFixtureSpawn] '..tostring(ok)..' '..tostring(why)) end"|Out-Null
     $spawnDeadline=[DateTime]::UtcNow.AddSeconds(2);$spawned=$false
     do{
      Invoke-MineComeProbeConsole $context "#System.LogAlways('[MineComeIncomingFixtureReady] $CombatFixtureRun')"|Out-Null

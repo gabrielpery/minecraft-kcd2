@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later
+Original MineCome ranged test fixture; unique records, no base-game overrides.
+API shapes: official AI/closedCastle/switch_closedCastle.xml (Switching starter),
+AI/autotest/scheduler.xml:175 (AddInterrupt), AI/test/test_of_everything/test_shooting.xml
+(missile decorators), Scripts/Systems/StashInventoryCollector.lua:6 (holder WUID). -->
+<BehaviorTrees>
+  <BehaviorTree name="minecome_ranged_fixture" is_function="0">
+    <Variables>
+      <Variable name="host" type="_wuid" values="" isPersistent="0" form="single" />
+    </Variables>
+    <Root OneTimeOnly="false" FailState="Recoverable" saveVersion="2">
+      <Behavior canSkip="1">
+        <Sequence>
+          <Wait duration="'1s'" timeType="GameTime" doFail="false" variation="" skipInLOD="false" />
+          <ExecuteLua code="System.LogAlways('[MineComeRangedStarter] '..entity:GetName()); local host = assert(System.GetEntityByName(entity:GetName()..'_host'), 'MineCome ranged host missing'); local wuid = XGenAIModule.GetMyWUID(host); assert(Framework.IsValidWUID(wuid), 'MineCome ranged host WUID invalid'); data.host = wuid; System.LogAlways('[MineComeRangedHostResolved] '..host:GetName())" />
+          <AddInterrupt Target="$this.id" Host="$host" Behavior="'minecome_ranged'" Priority="15" IgnorePriorityOnPreviousInterrupt="false" urgency="Default" Aliveness="Alive" Privileged="false" />
+          <Wait duration="'-1'" timeType="GameTime" doFail="false" variation="" skipInLOD="false" />
+        </Sequence>
+      </Behavior>
+    </Root>
+    <ForestContainer />
+  </BehaviorTree>
+  <BehaviorTree name="minecome_ranged" is_function="0">
+    <Variables />
+    <Root OneTimeOnly="false" FailState="Recoverable" saveVersion="2">
+      <Behavior canSkip="1">
+        <Sequence>
+          <ExecuteLua code="System.LogAlways('[MineComeRangedAI] '..entity:GetName())" />
+          <MeleeOffenseAutomationDecorator active="true">
+            <WeaponAutomationDecorator WeaponChange="missile" active="true">
+              <CombatFollowerDecorator ProbablisticDrivenSweetSpot="true" RPGSweetSpotArcDriver="true" active="true">
+                <CombatAction TargetNPC="$__player" RelationOverride="Hostile" />
+              </CombatFollowerDecorator>
+            </WeaponAutomationDecorator>
+          </MeleeOffenseAutomationDecorator>
+        </Sequence>
+      </Behavior>
+    </Root>
+    <ForestContainer />
+  </BehaviorTree>
+</BehaviorTrees>

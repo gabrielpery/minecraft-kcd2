@@ -1,4 +1,37 @@
-# Resume checkpoint — 9 November 2026
+# Resume checkpoint — 14 November 2026
+
+
+## Current checkpoint: native ranged damage complete
+
+Real KCD2 bow and crossbow hits now damage real Minecraft health through the
+normal `-Combat` path. Both automatic coupled checks passed; do not repeat manual
+melee/inventory/face checks or the old archer loadout experiments.
+
+- Crossbow:20→6.7162 health,279 continued HUD composition/reprojection advances.
+  `runtime/evidence/gameplay-kcd-20261114-220551-b985e754f5fa4de6b80653fb18a38eff/native-incoming-combat-verification.json`.
+- Bow:20→9.16254 health,148 continued HUD composition/reprojection advances.
+  `runtime/evidence/gameplay-kcd-20261114-220959-f8264d016d984e06999adc7d0913c963/native-incoming-combat-verification.json`.
+
+Both prove exact real `MissileHit` attribution, vanilla arrow damage and adapter
+cleanup, native NPC/holder removal, normal Minecraft save/exit and native state
+restoration.130 parser checks and the Lua fixture lifecycle regression pass.
+Source and resolved AI/template details: [incoming combat](research/INCOMING-COMBAT.md).
+
+**Machine state:** both games closed normally. Production diagnostics/AI assets
+are installed; owned temporary `minecome-ranged-fixture.pak` was hash-checked and
+removed. Its ignored receipt records `restored=true`. Play renderer remains
+`runtime/hud-play-20261109-152406-18a477d175e44d21989360cec8d314cb`, installed/unarmed.
+`Play-MineCome.ps1 -PreflightOnly` passes without changes. No restart, installation
+or human acceptance is pending. The user Play save remains untouched.
+
+**Next concrete gameplay work:** outgoing Minecraft crossbows through the existing
+bow/native collision path, retaining vanilla charge, ammunition and enchantment
+semantics. Incoming native crossbows are complete; outgoing crossbows are not.
+Preserve the Play launcher and this ranged acceptance. Defer the known incoming
+log delay/armor-balance polish and optional native scenery destruction.
+
+The following sections retain earlier milestone details; this checkpoint takes
+precedence over their dated machine state and historical next-work suggestions.
 
 ## Latest milestone: independent Play launcher and selective native HUD
 
@@ -57,33 +90,13 @@ No restoration/restart or repeat manual acceptance is pending. The default user
 Play instance has not been used by these tests. Continue future gameplay work from
 the saved launcher path; preserve this working startup/cleanup behavior.
 
-## Remaining gameplay priority
+## Previous armed milestone
 
 The prior native sword milestone remains verified:
 `runtime/evidence/gameplay-kcd-20261109-150004-56894fe8881d4de883f7197ce853ef65/native-incoming-combat-verification.json`.
-Do not repeat completed melee/inventory/top-face checks or small manual countdown
-labs. Preserve the independent launcher and use its sustained path for future work.
-
-**Ranged native attacks remain unfinished.** Minecraft's immutable projectile
-kind, actual arrow damage source, armor/Projectile Protection and adapter cleanup
-are implemented. Actual Minecraft regression
-`gameplay-combat-20261109-143250-0ec06c3e506f411baa67018b07048563` passes four
-incoming hits plus outgoing bows/projectile collision. Its incoming sources are
-synthetic; it does not prove a native arrow hit.
-
-The native archer fixtures never fired or consumed ammunition. Bow animation
-queues overflowed; crossbow NPCs retreated to about26m despite facing the player
-with weapons drawn. Grounded spawning, courage30, equipped ammunition, backup
-weapon removal, foreground operation and45-second observation did not produce
-projectile telemetry. Latest capture:
-`armed-capture-20261109-145735-53c9c8c3bed341158e10fff49b448157`.
-Offense suppression, defensive mode and forced-melee contexts read false.
-The official Lua/REST schemas expose no confirmed per-actor context setter or
-direct shooting method. Do not repeat these loadout trials or invent a ranged
-event mapping. Next source investigation should establish the actor's actual
-CombatSoul.Target/HasMissileWeapon state or use a correctly configured native
-archer/test behavior. `IncomingWeapon bow/crossbow` are diagnostic modes, not
-passing acceptance checks. See [incoming design](research/INCOMING-COMBAT.md).
+Ranged native attacks are now complete as described above. The old non-firing
+archer blocker was resolved by the isolated scheduled behavior and verified holder
+template; no further loadout, courage or forced-context experiments are needed.
 
 ## Prior verified milestone: unarmed native incoming combat
 
@@ -122,7 +135,7 @@ was restored, armed=false:
 `runtime/evidence/gameplay-hud-restore-20261109-141156-caec5e4176bd4df8b266a51c74e14c89`.
 The successful isolated instance was `runtime/gameplay/incoming-native-20261109-g`.
 
-Armed work and the remaining ranged blocker are summarized above. Incoming
+Armed and ranged acceptance are summarized above. Incoming
 transport still adds roughly0.6–1s; native armor precedes Minecraft armor.
 General poison/bleeding synchronization and optional native scenery destruction
 remain deferred.

@@ -1,6 +1,6 @@
 # Native attacks and Minecraft health
 
-The incoming adapter consumes actual KCD2 RPG `CombatHit` records. It does not
+The incoming adapter consumes actual KCD2 RPG `CombatHit` and `MissileHit` records. It does not
 infer attacks from health polling or manufacture hits in the acceptance fixture.
 Minecraft applies the admitted damage on its server thread with its own armor,
 hurt cooldown, Creative immunity and death/respawn behavior.
@@ -24,9 +24,13 @@ duplicate names, including the player's name, cannot be used for attribution.
 Melee admission includes the official weapon-table pairs stab0→4/5,
 slash1→5/6, smash2→4 and unarmed4/5/6/7/9→4. Actual longsword captures
 corroborate slash1/6 and stab0/5. Unknown classifications remain unsupported.
-Native projectile admission remains disabled until a real ranged event establishes
-its cause/effect schema. The Minecraft adapter is ready, but native ranged combat
-has not passed an integrated check.
+Actual crossbow and bow captures establish a distinct `MissileHit` cause, with
+attacker/victim identities, impact velocity, target normal, weapon, ammunition
+and surface/material IDs. It has no melee attack/damage-type pair. The parser
+validates that schema and its attributed `HealthValue` before admitting the
+immutable `projectile` kind. Later actual impacts can report null ammunition;
+that does not replace or weaken the required attacker attribution. Both bow and
+crossbow damage have passed coupled-game acceptance checks.
 
 ## Damage and native health
 
@@ -85,7 +89,7 @@ NPCs can retreat beyond the old16m radius before firing. Enlarging discovery
 does not increase melee reach or permit damage from an unidentified attacker.
 
 Native health upkeep may generate empty-cause healing records. They are ignored;
-only attributed CombatHit health losses can produce Minecraft damage.
+only attributed `CombatHit` or `MissileHit` health losses can produce Minecraft damage.
 
 ## Native hit reactions
 
@@ -112,6 +116,24 @@ initial seed contract and native camera settings remain unchanged.
 
 Runtime evidence stays outside Git:
 
+- **Native bow coupled acceptance PASS:**
+  `gameplay-kcd-20261114-220959-f8264d016d984e06999adc7d0913c963`:
+  a real native arrow caused54.1873 native damage and10.83746 Minecraft damage,
+  health20→9.16254. The production packaged fixture, vanilla arrow attribution,
+  continued HUD composition, normal save/exit and complete native cleanup passed.
+- **Native crossbow coupled acceptance PASS:**
+  `gameplay-kcd-20261114-220551-b985e754f5fa4de6b80653fb18a38eff`:
+  a real native bolt caused66.419 native damage and13.2838 Minecraft damage,
+  health20→6.7162. Actual vanilla arrow attribution, native attacker/holder
+  removal,279 post-hit composition/reprojection advances, normal save/exit
+  and complete native cleanup passed. No manual attack sequence was needed.
+- **Native projectile source capture PASS:**
+  `armed-capture-20261114-220128-3e34409ee95b4eac994f0e2b8ed7283b`
+  records three actual crossbow `MissileHit` events.
+  `armed-capture-20261114-220304-973ebb153b7c4413adc1e84131d1fc67`
+  records actual native bow impacts with the same cause schema and complete
+  cleanup, no new injuries and native HP100 restored. This bow capture does
+  not claim that a connected Minecraft session received its hits.
 - **Final sword acceptance with injury protection PASS:**
   `gameplay-kcd-20261109-150004-56894fe8881d4de883f7197ce853ef65`:
   Minecraft health20→17.45866,11.25 seconds of post-hit HUD composition,
@@ -161,14 +183,21 @@ then removes the attacker and checks continuing HUD composition; requiring anoth
 armed hit could kill the test player. Verification binds the observation to the
 original source event, acknowledged damage and authoritative Minecraft health.
 
-`bow` and `crossbow` are unfinished diagnostic modes. Native fixtures equipped
-real weapons/ammunition, but neither consumed ammunition nor produced a shot.
-Bow loading overflowed native animation queues. Crossbow actors faced the player
-with weapons drawn, retreated to about26m and sometimes reached a loaded
-animation. Grounded placement, foreground operation, courage30, explicit ammo
-equipping, backup-weapon removal and45-second capture did not establish a hit.
-Offense/defence/forced-melee context checks were false. Final evidence:
-`armed-capture-20261109-145735-53c9c8c3bed341158e10fff49b448157`.
-Lua and observed REST metadata exposed no documented per-actor context setter or
-direct shot method. A real configured archer/behavior and actual projectile
-telemetry are still required; do not infer a schema from equipment alone.
+`-IncomingWeapon bow` and `-IncomingWeapon crossbow` now pass this same connected acceptance.
+Each armed profile removes the attacker after one admitted hit, then verifies
+continued HUD composition and cleanup.
+
+The ranged fixture uses original, unique soul/brain/template records: a type6
+Switching starter requests a missile behavior through the shipped type9 Scheduler
+and `AddInterrupt`. These shapes follow the official `closedCastle` switching,
+`autotest/scheduler.xml` and `test_of_everything/test_shooting.xml` definitions.
+The behavior lives on one separately owned `SmartObjectHolder`. It must be
+created through `System.SpawnEntity` with lowercase `properties`; the earlier
+XGen spawn call ignored that override and retained the default template, leaving
+the requested behavior unavailable. The fixture verifies the actual template
+before creating its NPC and resolves the holder with `GetMyWUID` rather than
+assuming it exposes a `this` proxy. Both resources share bounded cleanup; replacements
+are preserved while independently owned resources are removed. Existing NPC AI,
+melee/passive fixtures and game data records are not overwritten. Equipping a
+weapon alone is still not proof of a shot: acceptance requires the original
+native event, acknowledged vanilla damage and authoritative Minecraft health.

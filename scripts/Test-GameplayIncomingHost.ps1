@@ -10,6 +10,16 @@ function Event([double]$Damage=3.2,[long]$GameMs=1000){
   [ordered]@{name='SoulState';soul=@{guid=$victim};selector='health';oldState=100.;newState=(100.-$Damage);value=-$Damage},
   [ordered]@{name='HealthValue';soul=@{guid=$victim};opponent=@{guid=$attacker};value=-$Damage;subpartId=38;isKill=$false;deathReason='DR_Combat'})}
 }
+function MissileEvent([long]$GameMs=1350){
+ # Captured crossbow form, with test actor/item identities. MissileHit carries
+ # vectors and item IDs, and does not carry CombatHit classification enums.
+ $e=Event 66.2945 $GameMs
+ $e.cause=[ordered]@{name='MissileHit';attacker=@{guid=$attacker;name='MineComeTestRanged_fixture'};victim=@{guid=$victim;name='Dude'};
+  impactVelocity=@{x=-12.71;y=-83.8922;z=-1.39005};targetNormal=@{x=-.185128;y=.982137;z=-.0336974};origMatId0=5;
+  attackerWeapon=@{id='44444444-4444-4444-8444-444444444444';name='crossbowMediumCheap01'};
+  attackerAmmo=@{id='55555555-5555-4555-8555-555555555555';name='bolt_piercing'};targetSurfId=116}
+ return $e
+}
 function Json($Events){ConvertTo-Json -InputObject @($Events) -Depth 12 -Compress}
 try{
  $e=Event;$json=Json @($e);$batch=ConvertFrom-GameplayIncomingTelemetry $json $victim
@@ -24,6 +34,38 @@ try{
   Require ((Get-GameplayIncomingDamageKind ([pscustomobject]@{CauseName='CombatHit';AttackType=$pair[0];DamageType=$pair[1]})) -ceq '') 'Unsupported attack pair was guessed.'
  }
  Require ((Get-GameplayIncomingDamageKind ([pscustomobject]@{CauseName='ProjectileHit';AttackType=6;DamageType=4})) -ceq '') 'Unverified projectile source became melee.'
+ $missileJson=Json @((MissileEvent));$missile=(ConvertFrom-GameplayIncomingTelemetry $missileJson $victim).Hits[0]
+ Require ((Get-GameplayIncomingDamageKind $missile) -ceq 'projectile' -and $null -eq $missile.AttackType -and $null -eq $missile.DamageType) 'Captured MissileHit was not projectile or invented melee classification.'
+ Require ($missile.AttributedDamage -eq 66.2945 -and [Math]::Abs($missile.AppliedDamage-66.2945) -lt .000001 -and $missile.AttackerGuid -ceq $attacker -and $missile.AttackerName -ceq 'MineComeTestRanged_fixture') 'Missile owner or attributed/applied damage changed.'
+ Require ($missile.WeaponId -ceq '44444444-4444-4444-8444-444444444444' -and $missile.WeaponName -ceq 'crossbowMediumCheap01' -and $missile.AmmoId -ceq '55555555-5555-4555-8555-555555555555' -and $missile.AmmoName -ceq 'bolt_piercing') 'Missile weapon/ammo evidence changed.'
+ Require ($missile.ImpactVelocity.x -eq -12.71 -and $missile.TargetNormal.y -eq .982137 -and $missile.OrigMatId0 -eq 5 -and $missile.TargetSurfId -eq 116) 'Missile vector/material evidence changed.'
+ Require ((ConvertFrom-GameplayIncomingTelemetry $missileJson '' 'Dude').Hits.Count -eq 1 -and (ConvertFrom-GameplayIncomingTelemetry $missileJson '' 'Other').Hits.Count -eq 0) 'Missile victim name mapping differs.'
+ $e=MissileEvent;$e.cause.attackerAmmo=$null;$nullAmmo=(ConvertFrom-GameplayIncomingTelemetry (Json @($e)) $victim).Hits[0]
+ Require ($null -eq $nullAmmo.AmmoId -and $null -eq $nullAmmo.AmmoName -and (Get-GameplayIncomingDamageKind $nullAmmo) -ceq 'projectile') 'Observed null missile ammo rejected or invented.'
+ $e=MissileEvent;$e.effects[1].opponent.guid=$other;Refuses {ConvertFrom-GameplayIncomingTelemetry (Json @($e)) $victim}
+ $e=MissileEvent;$e.cause.attacker.guid=$other;Refuses {ConvertFrom-GameplayIncomingTelemetry (Json @($e)) $victim}
+ $e=MissileEvent;$e.cause.victim.guid=$other;Require ((ConvertFrom-GameplayIncomingTelemetry (Json @($e)) $victim).Hits.Count -eq 0) 'Foreign missile victim damaged player.'
+ foreach($field in @('impactVelocity','targetNormal','attackerWeapon','attackerAmmo','origMatId0','targetSurfId')){
+  $e=MissileEvent;$e.cause.Remove($field);Refuses {ConvertFrom-GameplayIncomingTelemetry (Json @($e)) $victim}
+ }
+ foreach($field in @('impactVelocity','targetNormal')){
+  foreach($malformed in @($null,@(),@{x=1;y=2},@{x='1';y=2;z=3})){
+   $e=MissileEvent;$e.cause[$field]=$malformed;Refuses {ConvertFrom-GameplayIncomingTelemetry (Json @($e)) $victim}
+  }
+ }
+ Refuses {ConvertFrom-GameplayIncomingTelemetry ($missileJson.Replace('-12.71','1e999')) $victim}
+ foreach($field in @('origMatId0','targetSurfId')){
+  $e=MissileEvent;$e.cause[$field]=1.5;Refuses {ConvertFrom-GameplayIncomingTelemetry (Json @($e)) $victim}
+ }
+ foreach($field in @('attackerWeapon','attackerAmmo')){
+  $e=MissileEvent;$e.cause[$field].id='not-a-guid';Refuses {ConvertFrom-GameplayIncomingTelemetry (Json @($e)) $victim}
+  $e=MissileEvent;$e.cause[$field].Remove('name');Refuses {ConvertFrom-GameplayIncomingTelemetry (Json @($e)) $victim}
+ }
+ $e=MissileEvent;$e.cause.attackerWeapon=$null;Refuses {ConvertFrom-GameplayIncomingTelemetry (Json @($e)) $victim}
+ $e=MissileEvent;$e.cause.attacker.name='';Refuses {ConvertFrom-GameplayIncomingTelemetry (Json @($e)) $victim}
+ $e=MissileEvent;$e.cause.victim.Remove('name');Refuses {ConvertFrom-GameplayIncomingTelemetry (Json @($e)) $victim}
+ $e=MissileEvent;$e.cause.name='CombatHit';Refuses {ConvertFrom-GameplayIncomingTelemetry (Json @($e)) $victim}
+ $e=Event;$e.cause.name='MissileHit';Refuses {ConvertFrom-GameplayIncomingTelemetry (Json @($e)) $victim}
  Require ((ConvertFrom-GameplayIncomingTelemetry '[]' $victim).Hits.Count -eq 0) 'Empty native batch produced damage.'
  Refuses {ConvertFrom-GameplayIncomingTelemetry '{}' $victim}
  Refuses {ConvertFrom-GameplayIncomingTelemetry '[{}]' $victim}
@@ -60,6 +102,10 @@ try{
  $same=@(Add-GameplayIncomingTelemetryBatch $state 'epoch3/file0' (Json @((Event),(Event))) 23000)
  Require ($same.Count -eq 2 -and $same[0].SourceId -cne $same[1].SourceId -and $same[0].EventSha256 -ceq $same[1].EventSha256) 'Actual identical same-frame attacks collapsed.'
  Require (@(Add-GameplayIncomingTelemetryBatch $state 'epoch4/file0' (Json @((Event 3.2 999))) 24000).Count -eq 0 -and $state.OldHits -eq 1) 'Pre-lease event admitted.'
+ $missileReader=New-GameplayIncomingReader $victim 1000
+ Require (@(Add-GameplayIncomingTelemetryBatch $missileReader 'missiles/file0' $missileJson 10000).Count -eq 1) 'Captured-form missile batch not admitted.'
+ Require (@(Add-GameplayIncomingTelemetryBatch $missileReader 'missiles/file0' $missileJson 11000).Count -eq 0 -and $missileReader.Sources['missiles/file0'].CapturedUtcMs -eq 10000) 'Missile cursor replayed damage or renewed capture.'
+ $e=MissileEvent;$e.cause.attackerAmmo=$null;Refuses {Add-GameplayIncomingTelemetryBatch $missileReader 'missiles/file0' (Json @($e)) 12000}
  $file=Join-Path $dir 'partial.json';$reader=New-GameplayIncomingReader $victim 0
  [IO.File]::WriteAllText($file,$json.Substring(0,30))
  Require (-not (Read-GameplayIncomingTelemetryFile $reader $file 'epoch1/a' 10000).Complete) 'Partial JSON published.'
@@ -113,6 +159,33 @@ try{
  Require (@(Add-GameplayIncomingClosedEpoch $drift 3 2200 12000 12020 12030 $buffered).Count -eq 0 -and $driftHits[0].SourceUtcMs -eq 10775) 'Rolling anchors renewed an admitted hit timestamp.'
  $null=Add-GameplayIncomingClosedEpoch $drift 4 2600 11900 11920 11930 @()
  Refuses {Add-GameplayIncomingClosedEpoch $drift 5 3000 12901 12921 12930 @()}
+ # Exercise projectile admission through the existing exact generation, clock,
+ # pending packet and ACK path. No engine/game/network calls are involved.
+ $missileEpoch=Join-Path $dir 'missile-epoch';[void][IO.Directory]::CreateDirectory($missileEpoch)
+ [IO.File]::WriteAllText((Join-Path $missileEpoch 'eventlog_missile.json'),$missileJson)
+ function MissileHost([string]$OwnerGuid=$attacker,[string]$OwnerName='MineComeTestRanged_fixture',[double]$FirstSeenMs=1000){
+  $incoming=New-GameplayIncomingState $dir;$incoming.Enabled=$true;$incoming.Begin=[pscustomobject]@{native_maximum=100.;player_name='Dude'}
+  $incoming.Reader=New-GameplayIncomingEpochReader ('b'*32) '' 1000 10000 10020 'Dude'
+  $incoming.Identities[7]=[pscustomobject]@{Token=7;Name=$OwnerName;FirstSeenMs=$FirstSeenMs;Guid=$OwnerGuid;Actor=[pscustomobject]@{token=7}}
+  $incoming.Closed.Enqueue([pscustomobject]@{Receipt=[pscustomobject]@{sequence=1;native_clock_ms=1400;closed_path=$missileEpoch};Sent=10400L;Received=10420L})
+  return [pscustomobject]@{Incoming=$incoming;Stopping=$false}
+ }
+ foreach($invalidHost in @((MissileHost $other),(MissileHost $attacker 'Other'),(MissileHost $attacker 'MineComeTestRanged_fixture' 1351))){
+  Refuses {Update-GameplayIncomingEpochs $invalidHost 10440}
+  Require ($invalidHost.Incoming.Pending.Count -eq 0 -and $invalidHost.Incoming.HurtSequence -eq 0) 'Unproven missile owner generation entered pending packet.'
+ }
+ $missileHost=MissileHost;Update-GameplayIncomingEpochs $missileHost 10440;$incoming=$missileHost.Incoming
+ Require ($incoming.Pending.Count -eq 1 -and $incoming.Pending[0].Hurt.kind -ceq 'projectile' -and $incoming.Pending[0].Hurt.attacker_token -eq 7 -and [Math]::Abs($incoming.Pending[0].Hurt.damage-13.2589) -lt .000001 -and $incoming.Pending[0].Hurt.source_utc_ms -eq 10350) 'Missile admission changed source kind, identity, damage scale or original clock.'
+ Update-GameplayIncomingEpochs $missileHost 10500
+ Require ($incoming.HurtSequence -eq 1 -and $incoming.Events -eq 1) 'Consumed missile epoch repeated admission.'
+ Refuses {Accept-GameplayIncomingAck $missileHost 2}
+ Accept-GameplayIncomingAck $missileHost 1
+ Require ($incoming.Pending.Count -eq 0 -and $incoming.HurtAck -eq 1) 'Missile acknowledgement did not clear the pending packet.'
+ Refuses {Accept-GameplayIncomingAck $missileHost 0}
+ $missileClosed=New-GameplayIncomingEpochReader ('c'*32) $victim 1000 10000 10020
+ $missileFiles=@([pscustomobject]@{Name='eventlog_missile.json';Text=$missileJson})
+ Require (@(Add-GameplayIncomingClosedEpoch $missileClosed 1 1400 10400 10420 10440 $missileFiles).Count -eq 1) 'Missile closed epoch not admitted.'
+ Require (@(Add-GameplayIncomingClosedEpoch $missileClosed 1 1400 10900 10920 10940 $missileFiles).Count -eq 0 -and $missileClosed.Hits -eq 1) 'Duplicate missile closed epoch repeated damage.'
  $capture=Join-Path $PSScriptRoot '../runtime/evidence/combat-stream-watch-0ba69e97163c4ec9b8ce3e6d1e681160'
  $capturedHits=0;$capturedDamage=0.
  if(Test-Path -LiteralPath $capture){

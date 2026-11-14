@@ -1,4 +1,43 @@
-# MineCome progress — 2026-11-09
+# MineCome progress — 2026-11-14
+
+
+## Native bows and crossbows damage Minecraft health
+
+**Implemented, installed and automatically verified in both games.** The incoming
+reader now admits actual `MissileHit` events as vanilla projectile damage. It
+validates native attacker/victim identity, weapon, nullable ammunition, impact
+vectors, material IDs and attributed health loss; original event hashes,
+generation/clock bounds and exactly-once acknowledgements remain enforced.
+No new direct Minecraft health writes or duplicate rendered projectiles are used.
+
+The native archer blocker was fixture AI configuration. Original MineCome tables
+pair a Switching starter with the shipped Scheduler and an individually owned
+SmartObjectHolder. `System.SpawnEntity` with lowercase `properties` correctly
+sets its template; XGen spawning had silently retained the default template.
+The fixture verifies the actual template before spawning its NPC, removes both
+owned resources independently and preserves foreign replacements. Production
+assets are packaged with the existing diagnostics mod; no global AI is replaced.
+
+Automatic coupled acceptance:
+
+- Crossbow: Minecraft health20→6.7162;279 post-hit composition/reprojection advances.
+  `runtime/evidence/gameplay-kcd-20261114-220551-b985e754f5fa4de6b80653fb18a38eff/native-incoming-combat-verification.json`.
+- Bow: Minecraft health20→9.16254;148 post-hit composition/reprojection advances.
+  `runtime/evidence/gameplay-kcd-20261114-220959-f8264d016d984e06999adc7d0913c963/native-incoming-combat-verification.json`.
+
+Both verify a real native projectile, matching immutable source, vanilla arrow
+source/tags, client/server health, adapter/NPC/holder cleanup, continued HUD,
+normal save/exit and restored native health/protection/logging state. Native-only
+captures additionally observed three crossbow and five bow hits, including null
+ammo records. These are automated guest-control checks, not new physical-input
+acceptance.130 incoming-parser checks and the real-Lua fixture lifecycle suite pass.
+
+Both games closed normally. The temporary AI pak was removed after hash ownership
+verification; the production diagnostics package and existing Play renderer stay
+installed. Launcher preflight passes with no changes or required installation.
+The user's persistent Play save was not used. Incoming log latency and combined
+native/Minecraft armor balance remain known limits; general status effects and
+outgoing Minecraft crossbows remain separate work.
 
 ## Equipped weapon and consumable HUD squares now hide too
 
