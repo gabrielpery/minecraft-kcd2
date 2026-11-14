@@ -1,7 +1,7 @@
 # Sustained HUD/inventory, with an explicit Minecraft walking profile.
 [CmdletBinding()]
 param([string]$BundleDirectory,[string]$InstanceDirectory,[string]$JavaHome='C:/Program Files/Java/jdk-24',
- [ValidateRange(0,300)][int]$SmokeSeconds=0,[switch]$PreflightOnly,[switch]$HideNativeVitals,[switch]$Movement,[switch]$Blocks,[switch]$Explore,[switch]$Chat,[switch]$Flight,[switch]$Hands,[switch]$WorldBlocks,[switch]$Combat,[switch]$CombatCheck,[switch]$IncomingCombatCheck,[ValidateSet('unarmed','sword','bow','crossbow')][string]$IncomingWeapon='unarmed',[switch]$ProjectileCheck,[string]$CombatFixtureRun,[string]$GroundPatchFile,[switch]$ThirdPersonWalkingCheck,[switch]$DropsCheck,[switch]$CraftingCheck,[switch]$FurnaceCheck,[switch]$TntCheck,[switch]$TntCombatCheck,[switch]$RespawnCheck,[ValidateRange(0,1)][int]$InitialTerrainRadius=0)
+ [ValidateRange(0,300)][int]$SmokeSeconds=0,[switch]$PreflightOnly,[switch]$HideNativeVitals,[switch]$Movement,[switch]$Blocks,[switch]$Explore,[switch]$Chat,[switch]$Flight,[switch]$Hands,[switch]$WorldBlocks,[switch]$Combat,[switch]$CombatCheck,[switch]$IncomingCombatCheck,[ValidateSet('unarmed','sword','bow','crossbow')][string]$IncomingWeapon='unarmed',[switch]$ProjectileCheck,[switch]$CrossbowCheck,[string]$CombatFixtureRun,[string]$GroundPatchFile,[switch]$ThirdPersonWalkingCheck,[switch]$DropsCheck,[switch]$CraftingCheck,[switch]$FurnaceCheck,[switch]$TntCheck,[switch]$TntCombatCheck,[switch]$RespawnCheck,[ValidateRange(0,1)][int]$InitialTerrainRadius=0)
 . (Join-Path $PSScriptRoot 'powershell7.ps1')
 if($PSVersionTable.PSVersion.Major -lt 7){
  $code=Invoke-MineComePowerShell7 -ScriptPath $PSCommandPath -BoundParameters $PSBoundParameters
@@ -18,6 +18,7 @@ if($IncomingCombatCheck){$InitialTerrainRadius=1}
 elseif($IncomingWeapon -cne 'unarmed'){throw 'IncomingWeapon requires IncomingCombatCheck.'}
 if($RespawnCheck){$InitialTerrainRadius=1}
 if($InitialTerrainRadius -eq 1){$Explore=$true}
+if($CrossbowCheck){$ProjectileCheck=$true}
 if($ProjectileCheck -and -not $CombatCheck){throw 'ProjectileCheck requires the owned CombatCheck.'}
 if($CombatCheck -or $TntCombatCheck -or $IncomingCombatCheck){if($CombatFixtureRun -cnotmatch '^[0-9a-f]{32}$'){throw 'Use the Test-Kcd combat wrapper to own the isolated NPC lifecycle.'};$Combat=$true}
 elseif($CombatFixtureRun){throw 'CombatFixtureRun requires the owned automated combat or TNT combat check.'}
@@ -103,7 +104,7 @@ try{
  if($Chat){$arguments+='-Chat'}
  if($Flight){$arguments+='-Flight'}
  if($Hands){$arguments+='-Hands'};if($WorldBlocks){$arguments+='-WorldBlocks'};if($Combat){$arguments+='-Combat'}
- if($CombatCheck){$arguments+='-CombatCheck'};if($ProjectileCheck){$arguments+='-ProjectileCheck'}
+ if($CombatCheck){$arguments+='-CombatCheck'};if($ProjectileCheck){$arguments+='-ProjectileCheck'};if($CrossbowCheck){$arguments+='-CrossbowCheck'}
  if($IncomingCombatCheck){$arguments+=@('-IncomingCombatCheck','-IncomingWeapon',$IncomingWeapon)}
  if($RespawnCheck){$arguments+='-RespawnCheck'}
  if($TntCheck){$arguments+='-TntCheck'}
@@ -172,7 +173,7 @@ try{
  try{$bytes=[Text.Encoding]::UTF8.GetBytes($armText);$file.Write($bytes,0,$bytes.Length);$file.Flush($true);$armWritten=$true}finally{$file.Dispose()}
  [IO.File]::WriteAllText((Join-Path $directory 'arm.ini'),$armText)
  Write-Output "GAMEPLAY_READY run=$run stop_file=$(Join-Path $directory 'session.stop')"
- if($ProjectileCheck){Write-Output 'AUTOMATED_PROJECTILE_CHECK: actual vanilla bow arrows against native NPCs and scenery; no physical input or reciprocal native damage claim.'}
+ if($ProjectileCheck){Write-Output 'AUTOMATED_PROJECTILE_CHECK: actual vanilla bow/crossbow arrows against native NPCs and scenery; no physical input or reciprocal native damage claim.'}
  elseif($CombatCheck){Write-Output 'AUTOMATED_COMBAT_CHECK: production native NPC snapshots and vanilla primary melee; no physical input or reciprocal native damage claim.'}
  if($RespawnCheck){Write-Output 'AUTOMATED_RESPAWN_CHECK: keep KCD2 focused; scripted guest walking, death and a real Respawn-button click verify native relocation and continued play. Physical input is not claimed.'}
  if($TntCheck){Write-Output 'AUTOMATED_TNT_CHECK: actual vanilla priming, chain explosions, owned block destruction and saved cleanup; no physical input or native geometry destruction claim.'}

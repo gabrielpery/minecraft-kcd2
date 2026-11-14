@@ -56,7 +56,7 @@ normally. It never loads retail KCD2 saves or resets a Minecraft world.
 
 New saves start in Creative with commands enabled. Use `/gamemode survival` or
 `/gamemode creative` in chat. The launcher includes Minecraft blocks, hands/Steve,
-crafting, food, bows and the current NPC combat adapter. Existing coverage,
+crafting, food, bows, crossbow arrows and the current NPC combat adapter. Existing coverage,
 collision, palette and ranged-enemy limitations still apply; this remains a
 configured-machine prototype, not a standalone redistributable release.
 
@@ -1142,7 +1142,7 @@ the resulting damage fraction onto the native NPC's maximum health. Native
 NPCs keep their identity, movement and AI. Block mining keeps its existing path
 when the crosshair does not select an NPC. Inventory and chat suppress attacks.
 
-The outgoing bridge covers melee, bows and the TNT path above. Incoming native
+The outgoing bridge covers melee, bows, crossbow arrows and the TNT path above. Incoming native
 unarmed, sword, bow and crossbow attacks now reduce real Minecraft health; unarmed hits are also
 verified during inventory.
 The adapter reads attributed native hit records, normalizes native health loss
@@ -1150,8 +1150,7 @@ to Minecraft's20-health scale and invokes vanilla damage. Minecraft applies
 armor, hurt cooldowns, Creative immunity and its own knockback. Native health is
 temporarily maintained as a proxy, with its original health and owned protection
 restored on stop. Use `-Combat -Explore` for room to move under knockback.
-Outgoing Minecraft crossbows, sweep/knockback and secondary
-enchantment effects remain unfinished. Native incoming damage still includes
+Outgoing sweep/knockback and secondary enchantment effects remain unfinished. Native incoming damage still includes
 native armor before Minecraft armor; this is an initial balance, not exact
 vanilla weapon parity. See [incoming source and limits](research/INCOMING-COMBAT.md).
 The automated sword check now also verifies owned injury protection, preventing
@@ -1179,6 +1178,31 @@ Each actual arrow segment queries native scenery and NPC collision. A nearer
 Minecraft block or native obstruction wins; NPC damage uses vanilla's actual
 impact calculation, attributed to the native player with hit reactions enabled.
 
+Crossbows use the same native collision path: hold right-click to charge,
+release to load, then right-click again to fire. Releasing a charge never fires
+an arrow. Vanilla owns Quick Charge timing, Multishot arrows, ammunition,
+durability and the charged item component. Partial loading cancels when inventory
+opens or authority is lost; a loaded crossbow remains loaded through inventory
+and fires only on a later click. The input path waits for authoritative charge
+consumption before accepting another shot. Piercing crossbows and firework
+ammunition are refused before use with an actionbar explanation; neither ammo
+nor charge is consumed by that refusal.
+
+Automatic crossbow acceptance passes a real KCD2 NPC hit (health 100→60 from
+8 vanilla damage), actual scenery collision with 756 arrow colour/depth pixels,
+subsequent walking, 181 post-walk HUD composition/reprojection advances and full
+save/cleanup. Receipt:
+`runtime/evidence/gameplay-kcd-20261114-224156-16f41e30bef641e2ac19dd5eeaabe342/native-combat-verification.json`.
+The separate actual-Minecraft fixture passes ordinary loading/firing, partial
+cancellation, loaded inventory retention, no-ammunition behavior, and Quick Charge III
+with Multishot I. It observes five distinct arrow UUIDs, including three concurrent
+arrows, four synthetic scenery contacts and one synthetic NPC contact. Receipt:
+`runtime/evidence/gameplay-combat-20261114-224304-bcbbdc1fe7f24cd487b0c8a3ac785abb/verification.json`.
+Enchanted item snapshots compare serialized registry keys across client/server
+registries; same-server cancellation still verifies the exact active components.
+The native acceptance uses an ordinary crossbow; native Multishot and physical
+mouse input are not separately claimed by those automated checks.
+
 The transport still waits for a native reply before each arrow tick. New flight
 requests can dispatch during the camera acknowledgement wait using the same
 guarded console worker. Rendering interpolates along consecutive confirmed
@@ -1189,9 +1213,9 @@ automatic coupled run averaged136ms per request and recorded32 intermediate
 render frames. Vanilla flight speed and subjective smoothness are not yet proven.
 Limits are 16 active flights, 4 metres per segment, 64 metres of cumulative travel
 and 10 seconds per flight, with 64 retained arrow records. Existing embedded arrows retain vanilla aging, save
-and pickup. Standard bow arrows are covered by live checks; spectral/tipped bow
-arrows share the collision path, but their special native effects are not
-transferred. Crossbows and piercing remain unsupported.
+and pickup. Standard bow arrows are covered by live checks. Standard, spectral
+and tipped crossbow arrows share the collision path; spectral/tipped effects are
+not transferred to native NPCs. Piercing and crossbow fireworks remain unsupported.
 Incoming events keep their original source timestamps and identities through
 acknowledgement. The log transport adds delay (roughly0.6–1s in current live hits);
 it does not reset vanilla hurt cooldowns. Death/respawn discards old-life pending
@@ -1205,10 +1229,14 @@ Automated checks use isolated saves and require no manual attack sequence:
 & './scripts/Test-GameplayCombat.ps1' -BowCheck
 # Real Minecraft arrows against explicitly synthetic native contacts:
 & './scripts/Test-GameplayCombat.ps1' -ProjectileCheck
+# Crossbow charging/cancellation/firing and explicitly synthetic native contacts:
+& './scripts/Test-GameplayCombat.ps1' -CrossbowCheck
 # Installed WorldBlocks bundle and a fresh, loaded KCD2 tools world:
 & './scripts/Test-KcdCombat.ps1' -BundleDirectory $bundle
 # Actual bow arrows against an owned native NPC and real native scenery:
 & './scripts/Test-KcdCombat.ps1' -BundleDirectory $bundle -ProjectileCheck
+# Actual crossbow arrows against native NPCs and scenery (fresh loaded process):
+& './scripts/Test-KcdCombat.ps1' -BundleDirectory $bundle -CrossbowCheck
 # Real hostile hits, inventory damage, expanded terrain and continued HUD:
 & './scripts/Test-KcdIncomingCombat.ps1' -BundleDirectory $bundle
 # Actual native ranged hits (each check requires a fresh loaded native process):

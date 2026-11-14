@@ -1,10 +1,10 @@
 # Actual vanilla melee/armour and optional bow use/rendering; synthetic host only.
 [CmdletBinding()]
-param([string]$JavaHome='C:/Program Files/Java/jdk-24',[string]$ReceiverPath,[switch]$BowCheck,[switch]$ProjectileCheck)
+param([string]$JavaHome='C:/Program Files/Java/jdk-24',[string]$ReceiverPath,[switch]$BowCheck,[switch]$ProjectileCheck,[switch]$CrossbowCheck)
 . (Join-Path $PSScriptRoot 'powershell7.ps1')
 if($PSVersionTable.PSVersion.Major -lt 7){$code=Invoke-MineComePowerShell7 -ScriptPath $PSCommandPath -BoundParameters $PSBoundParameters;if($code -ne 0){throw "Combat check failed: $code"};return}
 $ErrorActionPreference='Stop';Set-StrictMode -Version Latest
-if($ProjectileCheck){$BowCheck=$true}
+if($CrossbowCheck){$ProjectileCheck=$true};if($ProjectileCheck){$BowCheck=$true}
 $root=Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot 'HudGroundMovement.ps1')
 $run=[guid]::NewGuid().ToString('N');$directory=Join-Path $root ('runtime/evidence/gameplay-combat-'+[DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss')+'-'+$run)
@@ -16,7 +16,7 @@ $hash=(Get-FileHash -LiteralPath $patch).Hash.ToLowerInvariant();$passed=$false;
 try{
  $arguments=@{JavaHome=$JavaHome;InstanceDirectory=$instance;EvidenceDirectory=(Join-Path $directory 'combat');FixturePhase='combat';WorldBlocks=$true;Combat=$true;GroundPatchFile=$patch}
  if($ReceiverPath){$arguments.ReceiverPath=$ReceiverPath}
- if($BowCheck){$arguments.BowCheck=$true};if($ProjectileCheck){$arguments.ProjectileCheck=$true}
+ if($BowCheck){$arguments.BowCheck=$true};if($ProjectileCheck){$arguments.ProjectileCheck=$true};if($CrossbowCheck){$arguments.CrossbowCheck=$true}
  $result=@(& (Join-Path $PSScriptRoot 'Start-GameplayGuest.ps1') @arguments|ForEach-Object {if($_ -isnot [string] -and $_.PSObject.Properties['VerificationFile']){$_}else{Write-Host $_}})
  if($result.Count -ne 1){throw 'Missing combat result.'}
  $v=Get-Content -LiteralPath $result[0].VerificationFile -Raw|ConvertFrom-Json
@@ -48,8 +48,18 @@ try{
  foreach($capture in $f.images){if($capture.file -cne ('combat-'+$capture.stage+'.png') -or (Get-FileHash -LiteralPath (Join-Path $result[0].EvidenceDirectory $capture.file)).Hash.ToLowerInvariant() -cne $capture.sha256 -or
   $capture.metadata.world_id -cne $session.world_id -or $capture.metadata.combat_fixture_stage -cne $capture.stage -or -not $capture.metadata.PSObject.Properties['world_camera']){throw 'Combat capture bytes/identity differ.'}}
  if($BowCheck){
-  $bow=$f.bow
+  $bow=if($CrossbowCheck){$f.crossbow}else{$f.bow}
   foreach($flag in @('experimental_fixture_only','inventory_cancel_verified','authority_cancel_verified','short_charge_verified','full_charge_verified','no_ammunition_verified','projectile_render_pixels_verified')){if($bow.$flag -isnot [bool] -or -not $bow.$flag){throw "Missing actual bow capability: $flag"}}
+  if($CrossbowCheck){
+   foreach($flag in @('load_without_shot_verified','charged_inventory_retention_verified','second_click_fire_verified','quick_charge_verified','multishot_verified')){if($bow.$flag -isnot [bool] -or -not $bow.$flag){throw "Missing actual crossbow capability: $flag"}}
+   if($bow.native_projectile_collision_verified -isnot [bool] -or $bow.native_projectile_collision_verified -or
+    $bow.controller.starts -ne 6 -or $bow.controller.vanilla_releases -ne 4 -or $bow.controller.cancellations -ne 3 -or $bow.controller.rejected -ne 1 -or
+    $bow.controller.crossbow_load_releases -ne 4 -or $bow.controller.crossbow_fires -ne 3 -or $bow.controller.unsupported -ne 0 -or $bow.controller.crossbow_fire_pending -or
+    $bow.controller.cancel_pending -or $bow.controller.held -or $bow.controller.active -or $bow.controller.synthetic_use_key -or $bow.controller.projectiles_created_directly -or
+    $bow.final_state.arrows -ne 0 -or $bow.final_state.held -cne 'minecraft:crossbow' -or $bow.final_state.held_damage -ne 3 -or $bow.final_state.charged){throw 'Crossbow ownership, vanilla load/fire or cleanup differs.'}
+   if($bow.shots.Count -ne 5 -or @($bow.shots|Where-Object {-not $_.critical -or $_.initial_speed -lt 3 -or $_.initial_speed -gt 3.3}).Count -or
+    @($bow.shots.id|Select-Object -Unique).Count -ne 5 -or @($bow.shots.owner|Select-Object -Unique).Count -ne 1){throw 'Vanilla crossbow shots differ.'}
+  }else{
   if($bow.native_projectile_collision_verified -isnot [bool] -or $bow.native_projectile_collision_verified -or
    $bow.controller.starts -ne 4 -or $bow.controller.vanilla_releases -ne 2 -or $bow.controller.cancellations -ne 3 -or $bow.controller.rejected -ne 1 -or
    $bow.controller.cancel_pending -or $bow.controller.held -or $bow.controller.active -or $bow.controller.synthetic_use_key -or $bow.controller.projectiles_created_directly -or
@@ -57,6 +67,7 @@ try{
   if($bow.shots.Count -ne 2 -or $bow.shots[0].critical -or -not $bow.shots[1].critical -or
    $bow.shots[0].initial_speed -le .3 -or $bow.shots[0].initial_speed -ge 2.5 -or $bow.shots[1].initial_speed -lt 2.8 -or $bow.shots[1].initial_speed -gt 3.2 -or
    $bow.shots[0].id -ceq $bow.shots[1].id -or $bow.shots[0].owner -cne $bow.shots[1].owner){throw 'Vanilla bow shots differ.'}
+  }
   foreach($shot in $bow.shots){[void][guid]::Parse($shot.id);[void][guid]::Parse($shot.owner)}
   $capture=$f.images[1];$meta=$capture.metadata
   if($capture.world_file -cne 'combat-bow-world.png' -or (Get-FileHash -LiteralPath (Join-Path $result[0].EvidenceDirectory $capture.world_file)).Hash.ToLowerInvariant() -cne $capture.world_sha256 -or
@@ -65,14 +76,16 @@ try{
   foreach($projectile in $meta.projectiles){if($projectile.owner -cne $bow.shots[0].owner -or $projectile.id -cnotin $bow.shots.id){throw 'Rendered arrow is not an observed vanilla bow shot.'}}
   if($ProjectileCheck){
    $projectiles=$c.projectiles
-   if($projectiles.prequeued_segments -lt 1){throw 'Actual arrow check did not exercise prompt next-segment dispatch.'}
-   if($projectiles.rendered_intermediate_samples -lt 1){throw 'Actual arrow check did not render confirmed intermediate flight positions.'}
-   if(-not $bow.synthetic_projectile_contacts_verified -or $bow.synthetic_projectile_scenery_hits -ne 1 -or $bow.synthetic_projectile_impacts -ne 1 -or
-    $projectiles.impacts -ne 1 -or $projectiles.actor_hits -ne 1 -or $projectiles.scenery_hits -ne 1 -or $projectiles.rejected -ne 0 -or $projectiles.pending -or -not $projectiles.cleanup_complete -or
+   if(-not $CrossbowCheck -and $projectiles.prequeued_segments -lt 1){throw 'Actual arrow check did not exercise prompt next-segment dispatch.'}
+   if(-not $CrossbowCheck -and $projectiles.rendered_intermediate_samples -lt 1){throw 'Actual arrow check did not render confirmed intermediate flight positions.'}
+   $expectedScenery=if($CrossbowCheck){4}else{1}
+   if($CrossbowCheck -and ($projectiles.crossbow_arrows -ne 5 -or $projectiles.bow_arrows -ne 0 -or $projectiles.peak_active -lt 3)){throw 'Crossbow Multishot did not bridge three concurrent vanilla arrows.'}
+   if(-not $bow.synthetic_projectile_contacts_verified -or $bow.synthetic_projectile_scenery_hits -ne $expectedScenery -or $bow.synthetic_projectile_impacts -ne 1 -or
+    $projectiles.impacts -ne 1 -or $projectiles.actor_hits -ne 1 -or $projectiles.scenery_hits -ne $expectedScenery -or $projectiles.rejected -ne 0 -or $projectiles.pending -or -not $projectiles.cleanup_complete -or
     $projectiles.damage -le 0 -or [Math]::Abs($projectiles.damage-$bow.synthetic_projectile_damage) -gt .001 -or [Math]::Abs($projectiles.native_damage-$projectiles.damage*5) -gt .01){throw 'Actual arrow physics and synthetic native impact proof differ.'}
   }
- }elseif($f.PSObject.Properties['bow']){throw 'Unexpected bow experiment in ordinary combat fixture.'}
+ }elseif($f.PSObject.Properties['bow'] -or $f.PSObject.Properties['crossbow']){throw 'Unexpected bow experiment in ordinary combat fixture.'}
  $passed=$true
 }catch{$failure=$_.Exception.Message;throw}
-finally{[ordered]@{schema=1;kind='minecome_gameplay_combat_verification_v1';run=$run;result=$(if($passed){'passed'}else{'failed'});failure=$failure;actual_minecraft=$true;synthetic_host=$true;bow_check=[bool]$BowCheck;scripted_guest_input=$true;native_input_verified=$false;kcd_connected=$false;instance=$instance;patch_sha256=$hash;session=$session}|ConvertTo-Json -Depth 30|Set-Content -LiteralPath (Join-Path $directory 'verification.json') -Encoding utf8NoBOM}
+finally{[ordered]@{schema=1;kind='minecome_gameplay_combat_verification_v1';run=$run;result=$(if($passed){'passed'}else{'failed'});failure=$failure;actual_minecraft=$true;synthetic_host=$true;bow_check=[bool]$BowCheck;crossbow_check=[bool]$CrossbowCheck;scripted_guest_input=$true;native_input_verified=$false;kcd_connected=$false;instance=$instance;patch_sha256=$hash;session=$session}|ConvertTo-Json -Depth 30|Set-Content -LiteralPath (Join-Path $directory 'verification.json') -Encoding utf8NoBOM}
 Write-Output "GAMEPLAY_COMBAT_PASS evidence=$directory"

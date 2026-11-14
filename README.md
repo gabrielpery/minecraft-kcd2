@@ -42,8 +42,7 @@ on stop; see [incoming combat design and limits](docs/research/INCOMING-COMBAT.m
 Automatic bow and crossbow checks passed real native projectile hits through
 Minecraft's arrow damage source, continued HUD rendering and full cleanup. The earlier
 unarmed check verified two real hits and inventory damage. These checks require no
-manual attack sequence. Player-fired Minecraft crossbows and secondary combat
-effects remain unfinished.
+manual attack sequence. Secondary combat effects remain unfinished.
 
 The combat profile also connects Minecraft bows: hold right-click to draw and
 release to fire. Arrows test their actual flight segments against KCD2 scenery
@@ -55,6 +54,18 @@ requests can dispatch while the camera is waiting for its update. Native collisi
 round trips still make flight slower than vanilla. An automated two-game check
 passed interpolated rendering, NPC damage, ground collision, later walking and
 continued HUD rendering.
+
+Player-fired crossbow arrows now use the same native NPC/scenery collision path.
+Hold right-click to charge, release to load, then right-click again to fire.
+Minecraft owns Quick Charge, Multishot, ammunition, durability and the loaded
+state. Inventory or lost authority cancels a partial charge; a loaded crossbow
+stays loaded. Piercing and firework ammunition are refused with an on-screen
+explanation. Tipped/spectral arrows use the collision path, but their special
+effects are not transferred to KCD2 NPCs. Automatic two-game acceptance passed
+crossbow NPC damage, native scenery collision, later walking and continued HUD
+rendering. Separate actual-Minecraft checks passed Quick Charge III and Multishot I
+with three simultaneous arrows against explicitly synthetic native contacts.
+
 See [combat testing and limits](docs/GAMEPLAY_SESSION.md#npc-melee-bridge).
 
 The experimental [TNT path](docs/GAMEPLAY_SESSION.md#tnt-and-owned-construction)

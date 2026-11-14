@@ -9,6 +9,11 @@ import net.minecraft.entity.EquipmentSlot;
 import net.minecraft.entity.projectile.PersistentProjectileEntity;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerEntityEvents;
 import net.minecraft.item.Items;
+import net.minecraft.item.CrossbowItem;
+import net.minecraft.item.ItemStack;
+import net.minecraft.enchantment.Enchantments;
+import net.minecraft.component.DataComponentTypes;
+import net.minecraft.component.type.ChargedProjectilesComponent;
 import net.minecraft.block.Blocks;
 import net.minecraft.util.math.BlockPos;
 import net.minecraft.registry.Registries;
@@ -29,7 +34,7 @@ import java.util.function.Consumer;
  */
 public final class GameplayCombatFixture {
     private record State(long at,int tick,UUID player,String mode,Vec3d position,float health,
-                         String held,int heldDamage,String chest,int chestDamage,int armor,boolean chestEnchanted,int arrows,boolean using,int useTicks){}
+                         String held,int heldDamage,String chest,int chestDamage,int armor,boolean chestEnchanted,int arrows,boolean using,int useTicks,boolean charged,int chargedCount,int pullTicks,JsonElement heldIdentity){}
     private record Shot(UUID id,UUID owner,double speed,boolean critical){}
     private record Sample(String stage,HudReadback.Completed frame){}
     private final GameplayCombat combat;private final GameplayBlocks blocks;private final GameplayMovement movement;
@@ -47,6 +52,8 @@ public final class GameplayCombatFixture {
     private boolean fistVerified,woodVerified,diamondVerified,cooldownVerified,durabilityVerified,inventoryVerified,inventoryAttackAttempted,occlusionVerified,incomingVerified,armorVerified,rendered;
     private float beforeHurt;private State finalState;
     private final boolean bowCheck=GameplayRangedUse.enabled();
+    private final boolean crossbowCheck=Boolean.getBoolean("minecome.gameplayCrossbowFixture");
+    private boolean crossbowLoaded,crossbowRetained,crossbowSecondClick,crossbowQuickCharge,crossbowMultishot;
     private final CopyOnWriteArrayList<Shot> shots=new CopyOnWriteArrayList<>();
     private boolean bowInventoryCancel,bowAuthorityCancel,bowShortRelease,bowFullRelease,bowNoAmmo,bowRendered;
     private BlockPos bowWall;
@@ -64,7 +71,7 @@ public final class GameplayCombatFixture {
         if(bowCheck)ServerEntityEvents.ENTITY_LOAD.register((entity,world)->{
             if(closing||finished||server==null||world!=server.getOverworld()||!(entity instanceof PersistentProjectileEntity arrow)||
                 arrow.getOwner()==null||!arrow.getOwner().getUuid().equals(playerId))return;
-            if(shots.size()>=4){failure.compareAndSet(null,"Unexpected extra fixture arrows");return;}
+            if(shots.size()>=(crossbowCheck?8:4)){failure.compareAndSet(null,"Unexpected extra fixture arrows");return;}
             // Read actual vanilla spawn velocity before its first collision tick.
             shots.add(new Shot(arrow.getUuid(),arrow.getOwner().getUuid(),arrow.getVelocity().length(),arrow.isCritical()));
         });
@@ -107,11 +114,11 @@ public final class GameplayCombatFixture {
                 case 41->{if(hurtAck<3||s.health()>=beforeHurt)return;projectileHurt=beforeHurt-s.health();near(projectileHurt,armoredHurt,"Unenchanted armor receives the same vanilla melee/arrow damage");incomingProjectileVerified=true;
                     send(c,"item replace entity @s armor.chest with minecraft:diamond_chestplate[minecraft:enchantments={levels:{\"minecraft:projectile_protection\":4}}]");send(c,"effect give @s minecraft:instant_health 1 4 true");actionTick=s.tick();next(42,now);}
                 case 42->{if(s.health()!=20||!s.chestEnchanted()||s.chestDamage()!=0||s.tick()-actionTick<25)return;beforeHurt=s.health();requestedHurt=4;next(43,now);}
-                case 43->{if(hurtAck<4||s.health()>=beforeHurt||s.chestDamage()==0)return;projectileProtectedHurt=beforeHurt-s.health();near(projectileProtectedHurt,projectileHurt*.68,"Vanilla ProjectileProtectionIV reduces arrow damage by32percent");projectileProtectionVerified=true;finalState=s;if(bowCheck)next(20,now);else complete(c,true,null);}
+                case 43->{if(hurtAck<4||s.health()>=beforeHurt||s.chestDamage()==0)return;projectileProtectedHurt=beforeHurt-s.health();near(projectileProtectedHurt,projectileHurt*.68,"Vanilla ProjectileProtectionIV reduces arrow damage by32percent");projectileProtectionVerified=true;finalState=s;if(bowCheck)next(crossbowCheck?50:20,now);else complete(c,true,null);}
                 case 12->{if(!c.world.getBlockState(new BlockPos(1,65,0)).isOf(Blocks.STONE))return;if(combat.aimedTargetDistance(c,renderAim())>=0||combat.event(c,event(7,0)))throw new IllegalStateException("Minecraft wall permitted actor attack");combat.event(c,event(8,0));actionTick=s.tick();next(13,now);}
                 case 13->{if(s.tick()-actionTick<5)return;if(hits.size()!=4||hitAck!=4)throw new IllegalStateException("Occluded actor attack changed host health");send(c,"fill 1 65 -1 1 65 1 minecraft:air");next(14,now);}
                 case 14->{if(!c.world.getBlockState(new BlockPos(1,65,0)).isAir()||combat.aimedTargetDistance(c,renderAim())<0)return;occlusionVerified=true;beforeHurt=s.health();requestedHurt=1;next(9,now);}
-                case 20->{if(!c.player.isOnGround()||c.player.getVelocity().horizontalLengthSquared()>.0001||!delay(s,10))return;forward=new Vec3d(s.position().x<0?1:-1,0,0);bowWall=BlockPos.ofFloored(s.position().add(forward.multiply(3)));if(!movement.surface().containsFeet(bowWall.getX()+.5,bowWall.getZ(),1.1))throw new IllegalStateException("Bow backstop outside captured coverage");send(c,"item replace entity @s hotbar.0 with minecraft:bow");send(c,"item replace entity @s hotbar.1 with minecraft:arrow 4");projectileOrigin=s.position();if(!projectileCheck)send(c,bowWallCommand("stone"));next(21,now);}
+                case 20->{if(!c.player.isOnGround()||c.player.getVelocity().horizontalLengthSquared()>.0001||!delay(s,10))return;prepareRangedAim(s);send(c,"item replace entity @s hotbar.0 with minecraft:bow");send(c,"item replace entity @s hotbar.1 with minecraft:arrow 4");projectileOrigin=s.position();if(!projectileCheck)send(c,bowWallCommand("stone"));next(21,now);}
                 case 21->{if(!s.held().equals("minecraft:bow")||s.arrows()!=4||c.player.getInventory().count(Items.ARROW)!=4||!c.player.getMainHandStack().isOf(Items.BOW)||!delay(s,6))return;bowPress(c);next(22,now);}
                 case 22->{if(!s.using()||s.useTicks()<25)return;blocks.suspend(c);key(c,'E');actionTick=s.tick();next(23,now);}
                 case 23->{if(!(c.currentScreen instanceof InventoryScreen)||s.tick()-actionTick<6)return;unchangedBow(c,s);bowInventoryCancel=true;key(c,'E');next(24,now);}
@@ -122,9 +129,77 @@ public final class GameplayCombatFixture {
                 case 28->{if(s.using()||s.arrows()!=3||s.heldDamage()!=1||c.player.getMainHandStack().getDamage()!=1||shots.size()!=1)return;var shot=shots.getFirst();if(shot.critical()||shot.speed()<=.3||shot.speed()>=2.5)throw new IllegalStateException("Short vanilla bow charge differs: "+shot);bowShortRelease=true;bowPress(c);next(29,now);}
                 case 29->{if(!s.using()||s.useTicks()<25)return;bowRelease(c);next(30,now);}
                 case 30->{if(s.using()||s.arrows()!=2||s.heldDamage()!=2||shots.size()!=2)return;var shot=shots.get(1);if(!shot.critical()||shot.speed()<2.8||shot.speed()>3.2||shot.speed()<=shots.getFirst().speed())throw new IllegalStateException("Full vanilla bow charge differs: "+shot);bowFullRelease=true;next(31,now);}
-                case 31->{if(projectileCheck&&(projectileScenery!=1||projectileImpacts!=1||combat.evidence(c).getAsJsonObject("projectiles").get("pending").getAsBoolean()))return;if(!images.containsKey("bow"))return;validateBowImage();bowRendered=true;send(c,"clear @s minecraft:arrow");send(c,bowWallCommand("air"));next(32,now);}
+                case 31->{if(projectileCheck&&(projectileScenery!=1||projectileImpacts!=1||combat.evidence(c).getAsJsonObject("projectiles").get("pending").getAsBoolean()))return;if(!images.containsKey("bow"))return;validateBowImage();bowRendered=true;
+                    if(crossbowCheck){send(c,"item replace entity @s hotbar.0 with minecraft:crossbow[minecraft:enchantments={levels:{\"minecraft:quick_charge\":3,\"minecraft:multishot\":1}}]");send(c,"item replace entity @s hotbar.1 with minecraft:arrow 2");next(67,now);}
+                    else{send(c,"clear @s minecraft:arrow");send(c,bowWallCommand("air"));next(32,now);}}
                 case 32->{if(s.arrows()!=0||c.player.getInventory().count(Items.ARROW)!=0||!c.world.getBlockState(bowWall.up()).isAir()||!delay(s,3))return;blocks.tick(c,true);blocks.event(c,event(7,1));actionTick=s.tick();next(33,now);}
                 case 33->{if(s.tick()-actionTick<6)return;blocks.event(c,event(8,1));if(s.using()||c.player.isUsingItem()||shots.size()!=2||s.heldDamage()!=2)throw new IllegalStateException("Bow fired without ammunition");bowNoAmmo=true;complete(c,true,null);}
+                // Crossbow keeps vanilla's load-on-release and fire-on-second-use phases.
+                // Source: pinned CrossbowItem.use/onStoppedUsing/getPullTime (1.21.1).
+                case 50->{
+                    if(!c.player.isOnGround()||c.player.getVelocity().horizontalLengthSquared()>.0001||!delay(s,10))return;
+                    prepareRangedAim(s);
+                    send(c,"item replace entity @s hotbar.0 with minecraft:crossbow");send(c,"item replace entity @s hotbar.1 with minecraft:arrow 4");projectileOrigin=s.position();
+                    if(!projectileCheck)send(c,bowWallCommand("stone"));next(51,now);
+                }
+                case 51->{if(!s.held().equals("minecraft:crossbow")||s.arrows()!=4||c.player.getInventory().count(Items.ARROW)!=4||!c.player.getMainHandStack().isOf(Items.CROSSBOW)||!delay(s,6))return;bowPress(c);next(52,now);}
+                case 52->{if(!s.using()||s.useTicks()<5)return;blocks.suspend(c);key(c,'E');actionTick=s.tick();next(53,now);}
+                case 53->{if(!(c.currentScreen instanceof InventoryScreen)||s.tick()-actionTick<6)return;unchangedCrossbow(c,s);bowInventoryCancel=true;key(c,'E');next(54,now);}
+                case 54->{if(c.currentScreen!=null||!delay(s,3))return;bowPress(c);next(55,now);}
+                case 55->{if(!s.using()||s.useTicks()<5)return;blocks.beforeTick(c,false);actionTick=s.tick();next(56,now);}
+                case 56->{if(s.tick()-actionTick<6)return;unchangedCrossbow(c,s);bowAuthorityCancel=true;bowPress(c);next(57,now);}
+                case 57->{if(!s.using()||s.useTicks()<5)return;bowRelease(c);actionTick=s.tick();next(58,now);}
+                case 58->{if(s.tick()-actionTick<6)return;unchangedCrossbow(c,s);bowShortRelease=true;bowPress(c);next(59,now);}
+                case 59->{if(!s.using()||s.useTicks()<25)return;bowRelease(c);next(60,now);}
+                case 60->{
+                    if(s.using()||!s.charged()||s.chargedCount()!=1||!CrossbowItem.isCharged(c.player.getMainHandStack())||s.arrows()!=3)return;
+                    if(s.heldDamage()!=0||!shots.isEmpty())throw new IllegalStateException("Loading crossbow fired or damaged it before second click");
+                    crossbowLoaded=true;key(c,'E');actionTick=s.tick();next(61,now);
+                }
+                case 61->{
+                    if(!(c.currentScreen instanceof InventoryScreen)||s.tick()-actionTick<6)return;
+                    if(!s.charged()||s.chargedCount()!=1||s.arrows()!=3||s.heldDamage()!=0||!shots.isEmpty())throw new IllegalStateException("Inventory lost or fired loaded crossbow");
+                    crossbowRetained=true;key(c,'E');next(62,now);
+                }
+                case 62->{if(c.currentScreen!=null||!delay(s,3))return;crossbowFire(c);next(63,now);}
+                case 63->{
+                    if(s.using()||s.charged()||s.arrows()!=3||s.heldDamage()!=1||c.player.getMainHandStack().getDamage()!=1||shots.size()!=1)return;
+                    checkCrossbowShot(shots.getFirst());crossbowSecondClick=true;
+                    if(projectileCheck&&(projectileScenery!=1||combat.evidence(c).getAsJsonObject("projectiles").get("pending").getAsBoolean()))return;
+                    bowPress(c);next(64,now);
+                }
+                case 64->{if(!s.using()||s.useTicks()<25)return;bowRelease(c);next(65,now);}
+                case 65->{
+                    if(s.using()||!s.charged()||s.chargedCount()!=1||!CrossbowItem.isCharged(c.player.getMainHandStack())||s.arrows()!=2)return;
+                    if(s.heldDamage()!=1||shots.size()!=1)throw new IllegalStateException("Second crossbow load fired before second click");
+                    crossbowFire(c);next(66,now);
+                }
+                case 66->{if(s.using()||s.charged()||s.arrows()!=2||s.heldDamage()!=2||shots.size()!=2)return;checkCrossbowShot(shots.get(1));bowFullRelease=true;next(31,now);}
+                case 67->{
+                    var held=c.player.getMainHandStack();
+                    boolean multishot=held.getEnchantments().getEnchantmentEntries().stream().anyMatch(e->e.getKey().matchesKey(Enchantments.MULTISHOT)&&e.getIntValue()==1);
+                    // Command ACK and the client's item packet can arrive on different
+                    // ticks. Start the settle interval only after exact component readback.
+                    if(!s.held().equals("minecraft:crossbow")||s.heldDamage()!=0||s.pullTicks()!=10||s.arrows()!=2||!held.isOf(Items.CROSSBOW)||
+                        CrossbowItem.getPullTime(held,c.player)!=10||!multishot||!s.heldIdentity().equals(GameplayRangedUse.componentIdentity(held,c.world.getRegistryManager()))){
+                        readyTick=-1;return;
+                    }
+                    if(!delay(s,6))return;bowPress(c);next(68,now);
+                }
+                case 68->{if(!s.using()||s.useTicks()<10)return;if(s.pullTicks()!=10)throw new IllegalStateException("Quick Charge III pull time differs");bowRelease(c);next(69,now);}
+                case 69->{
+                    if(s.using()||!s.charged()||s.chargedCount()!=3||!CrossbowItem.isCharged(c.player.getMainHandStack())||s.arrows()!=1)return;
+                    if(s.heldDamage()!=0||shots.size()!=2)throw new IllegalStateException("Quick Charge/Multishot loaded incorrectly");
+                    crossbowQuickCharge=true;crossbowFire(c);next(70,now);
+                }
+                case 70->{
+                    if(s.using()||s.charged()||s.arrows()!=1||s.heldDamage()!=3||shots.size()!=5)return;
+                    for(int i=2;i<5;i++)checkCrossbowShot(shots.get(i));
+                    if(projectileCheck){var p=combat.evidence(c).getAsJsonObject("projectiles");if(projectileScenery!=4||projectileImpacts!=1||p.get("crossbow_arrows").getAsLong()!=5||p.get("pending").getAsBoolean())return;}
+                    crossbowMultishot=true;send(c,"clear @s minecraft:arrow");send(c,bowWallCommand("air"));next(71,now);
+                }
+                case 71->{if(s.arrows()!=0||c.player.getInventory().count(Items.ARROW)!=0||!c.world.getBlockState(bowWall.up()).isAir()||!delay(s,3))return;blocks.tick(c,true);blocks.event(c,event(7,1));actionTick=s.tick();next(72,now);}
+                case 72->{if(s.tick()-actionTick<6)return;blocks.event(c,event(8,1));if(s.using()||s.charged()||c.player.isUsingItem()||shots.size()!=5||s.heldDamage()!=3)throw new IllegalStateException("Crossbow fired without ammunition");bowNoAmmo=true;complete(c,true,null);}
                 default->throw new IllegalStateException("Unknown combat fixture stage");
             }
         }catch(Exception e){complete(c,false,e.toString());}
@@ -140,13 +215,30 @@ public final class GameplayCombatFixture {
     private static void near(double value,double expected,String label){if(Math.abs(value-expected)>.01)throw new IllegalStateException(label+" differs: "+value);}
     private void attack(MinecraftClient c){combat.tick(c,true,renderAim(),-1);if(!combat.event(c,event(7,0)))throw new IllegalStateException("Combat controller did not consume aimed attack");combat.event(c,event(8,0));}
     private void bowPress(MinecraftClient c){blocks.tick(c,true);blocks.event(c,event(7,1));if(!c.player.isUsingItem())throw new IllegalStateException("Bow draw did not start: "+blocks.evidence(c).get("ranged_use"));}
+    private void crossbowFire(MinecraftClient c){blocks.tick(c,true);blocks.event(c,event(7,1));blocks.event(c,event(8,1));}
+    private static void checkCrossbowShot(Shot shot){if(!shot.critical()||shot.speed()<3||shot.speed()>3.3)throw new IllegalStateException("Vanilla crossbow arrow differs: "+shot);}
+    private void unchangedCrossbow(MinecraftClient c,State s){unchangedBow(c,s);if(s.charged()||CrossbowItem.isCharged(c.player.getMainHandStack()))throw new IllegalStateException("Partial/cancelled crossbow retained loaded ammunition");}
     private void bowRelease(MinecraftClient c){blocks.event(c,event(8,1));}
-    private String bowWallCommand(String block){return "fill "+bowWall.getX()+" "+bowWall.getY()+" "+(bowWall.getZ()-1)+" "+bowWall.getX()+" "+(bowWall.getY()+4)+" "+(bowWall.getZ()+1)+" minecraft:"+block;}
+    private void prepareRangedAim(State s){
+        // Vanilla incoming knockback can leave either axis near the arena edge.
+        // Aim inward from the observed position; never move the player or extend
+        // terrain simply to make this isolated ranged fixture fit.
+        var inward=new Vec3d(-s.position().x,0,-s.position().z);
+        forward=inward.lengthSquared()>.01?inward.normalize():new Vec3d(1,0,0);
+        bowWall=BlockPos.ofFloored(s.position().add(forward.multiply(3)));
+        if(!movement.surface().containsFeet(bowWall.getX()+.5,bowWall.getZ()+.5,1.1))throw new IllegalStateException("Ranged backstop outside captured coverage");
+    }
+    private String bowWallCommand(String block){
+        int x=bowWall.getX(),y=bowWall.getY(),z=bowWall.getZ();
+        return Math.abs(forward.x)>=Math.abs(forward.z)?
+            "fill "+x+" "+y+" "+(z-1)+" "+x+" "+(y+4)+" "+(z+1)+" minecraft:"+block:
+            "fill "+(x-1)+" "+y+" "+z+" "+(x+1)+" "+(y+4)+" "+z+" minecraft:"+block;
+    }
     private void unchangedBow(MinecraftClient c,State s){if(s.using()||c.player.isUsingItem()||s.arrows()!=4||s.heldDamage()!=0||!shots.isEmpty()||blocks.evidence(c).getAsJsonObject("ranged_use").get("cancel_pending").getAsBoolean())throw new IllegalStateException("Cancelled bow fired or retained draw: "+state(s));}
     private void owner(MinecraftClient c){if(!c.isOnThread()||c.world!=world||c.player!=player||c.getServer()!=server||!c.isIntegratedServerRunning())throw new IllegalStateException("Combat fixture owner changed");}
     private void observe(){if(!observing.compareAndSet(false,true))return;server.execute(()->{try{
         if(closing||finished)return;var p=server.getPlayerManager().getPlayer(playerId);if(!server.isOnThread()||p==null||p.getWorld()!=server.getOverworld()||!save.saveName().equals(server.getSaveProperties().getLevelName()))throw new IllegalStateException("Combat fixture server owner changed");
-        var held=p.getMainHandStack();var chest=p.getEquippedStack(EquipmentSlot.CHEST);observation.set(new State(System.nanoTime(),server.getTicks(),p.getUuid(),p.interactionManager.getGameMode().getName(),p.getPos(),p.getHealth(),Registries.ITEM.getId(held.getItem()).toString(),held.getDamage(),Registries.ITEM.getId(chest.getItem()).toString(),chest.getDamage(),p.getArmor(),chest.hasEnchantments(),p.getInventory().count(Items.ARROW),p.isUsingItem(),p.getItemUseTime()));
+        var held=p.getMainHandStack();var chest=p.getEquippedStack(EquipmentSlot.CHEST);observation.set(new State(System.nanoTime(),server.getTicks(),p.getUuid(),p.interactionManager.getGameMode().getName(),p.getPos(),p.getHealth(),Registries.ITEM.getId(held.getItem()).toString(),held.getDamage(),Registries.ITEM.getId(chest.getItem()).toString(),chest.getDamage(),p.getArmor(),chest.hasEnchantments(),p.getInventory().count(Items.ARROW),p.isUsingItem(),p.getItemUseTime(),CrossbowItem.isCharged(held),held.getOrDefault(DataComponentTypes.CHARGED_PROJECTILES,ChargedProjectilesComponent.DEFAULT).getProjectiles().size(),held.isOf(Items.CROSSBOW)?CrossbowItem.getPullTime(held,p):0,GameplayRangedUse.componentIdentity(held,p.getWorld().getRegistryManager())));
     }catch(Exception e){failure.compareAndSet(null,e.toString());}finally{observing.set(false);}});}
     private HudInputProtocol.Event event(int kind,int code){return new HudInputProtocol.Event(++events,System.currentTimeMillis(),kind,code,0,0,0);}
     private void key(MinecraftClient c,int code){ui.apply(c,event(1,code));ui.apply(c,event(2,code));}
@@ -194,16 +286,18 @@ public final class GameplayCombatFixture {
         if(seq!=projectileSequence+1||!request.get("run").getAsString().equals(identity.run())||!request.get("world_id").getAsString().equals(save.id().toString())||!request.get("kind").getAsString().equals("minecome_gameplay_projectiles_guest_v1"))throw new IOException("Synthetic projectile identity/order changed");
         var q=request.getAsJsonObject("request");String id=q.get("projectile").getAsString();int shot=-1;
         for(int i=0;i<shots.size();i++)if(shots.get(i).id().toString().replace("-","").equals(id))shot=i;
-        if(shot<0||shot>1||projectileOrigin==null)throw new IOException("Synthetic projectile was not a real observed bow shot");
+        if(shot<0||shot>(crossbowCheck?4:1)||projectileOrigin==null)throw new IOException("Synthetic projectile was not a real observed bow shot");
         var reply=new JsonObject();String operation=q.get("operation").getAsString();reply.addProperty("operation",operation);reply.addProperty("projectile",id);reply.addProperty("segment",q.get("segment").getAsInt());reply.addProperty("reason","");reply.addProperty("actor_token",0);reply.add("actor",JsonNull.INSTANCE);reply.add("before",JsonNull.INSTANCE);reply.add("after",JsonNull.INSTANCE);reply.add("normal",vector(Vec3d.ZERO));
         var from=readVector(q.getAsJsonObject("from"));var to=readVector(q.getAsJsonObject("to"));reply.add("contact",vector(to));
         if(operation.equals("trace")){
-            double plane=movement.surface().centerX()+projectileOrigin.x+forward.x*(shot==0?2.25:2.75);
-            double fraction=(plane-from.x)/(to.x-from.x);
+            var origin=GameplayCombatProtocol.toHost(new GameplayCombatProtocol.Point(projectileOrigin.x,projectileOrigin.y,projectileOrigin.z),movement.surface());
+            var hostForward=new Vec3d(forward.x,-forward.z,0);
+            var plane=new Vec3d(origin.x(),origin.y(),origin.z()).add(hostForward.multiply(shot==1?2.75:2.25));
+            double fraction=plane.subtract(from).dotProduct(hostForward)/to.subtract(from).dotProduct(hostForward);
             if(Double.isFinite(fraction)&&fraction>=0&&fraction<=1){
-                var point=from.lerp(to,fraction);reply.add("contact",vector(point));reply.add("normal",vector(new Vec3d(-forward.x,0,0)));
-                if(shot==0){reply.addProperty("result","scenery");projectileScenery++;}
-                else{reply.addProperty("result","actor");reply.addProperty("actor_token",200);var actor=new JsonObject();actor.addProperty("token",200);actor.addProperty("x",plane+forward.x*.3);actor.addProperty("y",movement.surface().centerY()-projectileOrigin.z);actor.addProperty("z",movement.surface().centerZ()+projectileOrigin.y-64);actor.addProperty("width",.6);actor.addProperty("height",1.8);actor.addProperty("health",projectileHealth);actor.addProperty("max_health",100);actor.addProperty("alive",true);reply.add("actor",actor);}
+                var point=from.lerp(to,fraction);reply.add("contact",vector(point));reply.add("normal",vector(hostForward.multiply(-1)));
+                if(shot!=1){reply.addProperty("result","scenery");projectileScenery++;}
+                else{reply.addProperty("result","actor");reply.addProperty("actor_token",200);var center=plane.add(hostForward.multiply(.3));var actor=new JsonObject();actor.addProperty("token",200);actor.addProperty("x",center.x);actor.addProperty("y",center.y);actor.addProperty("z",center.z);actor.addProperty("width",.6);actor.addProperty("height",1.8);actor.addProperty("health",projectileHealth);actor.addProperty("max_health",100);actor.addProperty("alive",true);reply.add("actor",actor);}
             }else reply.addProperty("result","clear");
         }else if(operation.equals("impact")){
             if(shot!=1||projectileImpacts!=0||q.get("actor_token").getAsInt()!=200)throw new IOException("Unexpected synthetic arrow impact");
@@ -215,11 +309,11 @@ public final class GameplayCombatFixture {
     private static Vec3d readVector(JsonObject p){return new Vec3d(p.get("x").getAsDouble(),p.get("y").getAsDouble(),p.get("z").getAsDouble());}
     private void write(String name,JsonObject value)throws IOException,InterruptedException{var temp=directory.resolve(name+"-combat-fixture.tmp");Files.writeString(temp,value.toString(),StandardCharsets.UTF_8,StandardOpenOption.CREATE,StandardOpenOption.TRUNCATE_EXISTING);HudFixtureCameraFiles.replace(temp,directory.resolve(name+".json"));}
     private static JsonObject vector(Vec3d v){var j=new JsonObject();j.addProperty("x",v.x);j.addProperty("y",v.y);j.addProperty("z",v.z);return j;}
-    private static JsonObject state(State s){var j=new JsonObject();if(s==null)return j;j.addProperty("player_id",s.player().toString());j.addProperty("mode",s.mode());j.addProperty("health",s.health());j.addProperty("held",s.held());j.addProperty("held_damage",s.heldDamage());j.addProperty("chest",s.chest());j.addProperty("chest_damage",s.chestDamage());j.addProperty("armor",s.armor());j.addProperty("chest_enchanted",s.chestEnchanted());j.addProperty("server_tick",s.tick());j.add("position",vector(s.position()));j.addProperty("arrows",s.arrows());j.addProperty("using",s.using());j.addProperty("use_ticks",s.useTicks());return j;}
+    private static JsonObject state(State s){var j=new JsonObject();if(s==null)return j;j.addProperty("player_id",s.player().toString());j.addProperty("mode",s.mode());j.addProperty("health",s.health());j.addProperty("held",s.held());j.addProperty("held_damage",s.heldDamage());j.addProperty("chest",s.chest());j.addProperty("chest_damage",s.chestDamage());j.addProperty("armor",s.armor());j.addProperty("chest_enchanted",s.chestEnchanted());j.addProperty("server_tick",s.tick());j.add("position",vector(s.position()));j.addProperty("arrows",s.arrows());j.addProperty("using",s.using());j.addProperty("use_ticks",s.useTicks());j.addProperty("charged",s.charged());j.addProperty("charged_count",s.chargedCount());j.addProperty("pull_ticks",s.pullTicks());return j;}
     private void complete(MinecraftClient c,boolean passed,String error){
         if(finished)return;finished=true;try{combat.suspend(c);movement.suspend(c);blocks.suspend(c);if(ui!=null)ui.releaseAndClose(c);}catch(Exception e){passed=false;error=e.toString();}
         var p=new JsonObject();p.addProperty("schema",1);p.addProperty("kind","minecome_gameplay_combat_fixture_v1");p.addProperty("mode","combat");p.addProperty("result",passed?"passed":"failed");p.addProperty("failure",error);p.addProperty("world_id",save.id().toString());p.addProperty("actual_minecraft",true);p.addProperty("standalone_scripted",true);p.addProperty("synthetic_host",true);p.addProperty("native_input_verified",false);p.addProperty("live_kcd_verified",false);p.addProperty("position_writes_used",false);p.addProperty("direct_health_inventory_entity_writes",false);p.addProperty("fist_damage_verified",fistVerified);p.addProperty("wooden_sword_verified",woodVerified);p.addProperty("diamond_sword_verified",diamondVerified);p.addProperty("cooldown_verified",cooldownVerified);p.addProperty("durability_verified",durabilityVerified);p.addProperty("inventory_suppression_verified",inventoryVerified);p.addProperty("minecraft_block_occlusion_verified",occlusionVerified);p.addProperty("incoming_damage_verified",incomingVerified);p.addProperty("armor_verified",armorVerified);p.addProperty("render_pixels_verified",rendered);p.addProperty("barehand_damage",bareHit);p.addProperty("wooden_sword_damage",woodHit);p.addProperty("diamond_sword_damage",diamondHit);p.addProperty("rapid_diamond_damage",quickHit);p.addProperty("unarmored_hurt",bareHurt);p.addProperty("armored_hurt",armoredHurt);p.addProperty("incoming_projectile_verified",incomingProjectileVerified);p.addProperty("projectile_protection_verified",projectileProtectionVerified);p.addProperty("projectile_hurt",projectileHurt);p.addProperty("projectile_protected_hurt",projectileProtectedHurt);p.addProperty("host_writes",hostWrites);p.addProperty("scripted_view_writes",viewWrites);p.addProperty("last_stage",stage);p.addProperty("elapsed_ms",begun==0?0:(System.nanoTime()-begun)/1_000_000);var a=new JsonArray();commands.forEach(a::add);p.add("commands",a);a=new JsonArray();for(var h:hits)a.add(h.deepCopy());p.add("hits",a);a=new JsonArray();if(images.containsKey("combat"))a.add(images.get("combat").deepCopy());p.add("images",a);p.add("final_state",state(finalState==null?observation.get():finalState));p.add("combat",combat.evidence(c));
-        if(bowCheck){var bow=new JsonObject();bow.addProperty("experimental_fixture_only",true);bow.addProperty("inventory_cancel_verified",bowInventoryCancel);bow.addProperty("authority_cancel_verified",bowAuthorityCancel);bow.addProperty("short_charge_verified",bowShortRelease);bow.addProperty("full_charge_verified",bowFullRelease);bow.addProperty("no_ammunition_verified",bowNoAmmo);bow.addProperty("projectile_render_pixels_verified",bowRendered);bow.addProperty("native_projectile_collision_verified",false);bow.addProperty("synthetic_projectile_contacts_verified",projectileCheck&&projectileScenery==1&&projectileImpacts==1&&projectileDamage>0);bow.addProperty("synthetic_projectile_scenery_hits",projectileScenery);bow.addProperty("synthetic_projectile_impacts",projectileImpacts);bow.addProperty("synthetic_projectile_damage",projectileDamage);bow.add("controller",blocks.evidence(c).get("ranged_use").deepCopy());bow.add("final_state",state(observation.get()));var arrows=new JsonArray();for(var shot:shots){var j=new JsonObject();j.addProperty("id",shot.id().toString());j.addProperty("owner",shot.owner().toString());j.addProperty("initial_speed",shot.speed());j.addProperty("critical",shot.critical());arrows.add(j);}bow.add("shots",arrows);p.add("bow",bow);if(images.containsKey("bow"))p.getAsJsonArray("images").add(images.get("bow").deepCopy());}
+        if(bowCheck){var bow=new JsonObject();bow.addProperty("experimental_fixture_only",true);bow.addProperty("inventory_cancel_verified",bowInventoryCancel);bow.addProperty("authority_cancel_verified",bowAuthorityCancel);bow.addProperty("short_charge_verified",bowShortRelease);bow.addProperty("full_charge_verified",bowFullRelease);bow.addProperty("no_ammunition_verified",bowNoAmmo);bow.addProperty("projectile_render_pixels_verified",bowRendered);bow.addProperty("native_projectile_collision_verified",false);bow.addProperty("synthetic_projectile_contacts_verified",projectileCheck&&projectileScenery==(crossbowCheck?4:1)&&projectileImpacts==1&&projectileDamage>0);bow.addProperty("synthetic_projectile_scenery_hits",projectileScenery);bow.addProperty("synthetic_projectile_impacts",projectileImpacts);bow.addProperty("synthetic_projectile_damage",projectileDamage);bow.add("controller",blocks.evidence(c).get("ranged_use").deepCopy());bow.add("final_state",state(observation.get()));var arrows=new JsonArray();for(var shot:shots){var j=new JsonObject();j.addProperty("id",shot.id().toString());j.addProperty("owner",shot.owner().toString());j.addProperty("initial_speed",shot.speed());j.addProperty("critical",shot.critical());arrows.add(j);}bow.add("shots",arrows);if(crossbowCheck){bow.addProperty("load_without_shot_verified",crossbowLoaded);bow.addProperty("charged_inventory_retention_verified",crossbowRetained);bow.addProperty("second_click_fire_verified",crossbowSecondClick);bow.addProperty("quick_charge_verified",crossbowQuickCharge);bow.addProperty("multishot_verified",crossbowMultishot);p.add("crossbow",bow);}else p.add("bow",bow);if(images.containsKey("bow"))p.getAsJsonArray("images").add(images.get("bow").deepCopy());}
         try{save.verifyOwnership();Files.writeString(directory.resolve("gameplay-combat-fixture.json"),p.toString(),StandardCharsets.UTF_8,StandardOpenOption.CREATE_NEW);}catch(Exception e){p.addProperty("result","failed");p.addProperty("failure",e.toString());}completed.accept(p);
     }
     public void close(){if(closing)return;closing=true;var c=MinecraftClient.getInstance();if(c.isOnThread()&&c.player==player){combat.suspend(c);movement.suspend(c);blocks.suspend(c);if(ui!=null)ui.releaseAndClose(c);}}

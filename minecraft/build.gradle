@@ -27,6 +27,10 @@ loom {
                     vmArgs '-Dminecome.gameplayProjectileFixture=true'
                 if (project.hasProperty('minecomeGameplayProjectileCheck'))
                     vmArgs '-Dminecome.gameplayProjectileCheck=true'
+                if (project.hasProperty('minecomeGameplayCrossbowFixture'))
+                    vmArgs '-Dminecome.gameplayCrossbowFixture=true'
+                if (project.hasProperty('minecomeGameplayCrossbowCheck'))
+                    vmArgs '-Dminecome.gameplayCrossbowCheck=true'
                 if (project.hasProperty('minecomeGameplayCombatCheck'))
                     vmArgs '-Dminecome.gameplayCombatCheck=true'
                 if (project.hasProperty('minecomeGameplayIncomingCombatCheck'))

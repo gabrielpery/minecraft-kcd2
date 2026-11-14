@@ -1,7 +1,43 @@
 # Resume checkpoint — 14 November 2026
 
+## Current checkpoint: player crossbows verified
 
-## Current checkpoint: native ranged damage complete
+Player-fired Minecraft crossbows now hit KCD2 NPCs and scenery in the normal
+`-Combat`/Play profile. Hold right-click, release to load, then click again to fire.
+Vanilla owns charge, ammunition, durability and enchantments. Partial charging
+cancels on inventory/authority loss; loaded weapons survive inventory transitions.
+
+- Actual Minecraft: `gameplay-combat-20261114-224304-bcbbdc1fe7f24cd487b0c8a3ac785abb`
+  passes cancellation, load/fire, no-ammo, Quick Charge III and Multishot I;
+  five real arrows include three concurrent arrows, with synthetic scenery/NPC contacts.
+- Actual KCD2: `gameplay-kcd-20261114-224156-16f41e30bef641e2ac19dd5eeaabe342`
+  passes NPC health 100→60 from 8 vanilla damage, real scenery contact with 756 arrow
+  colour/depth pixels, inventory suppression, 0.641 m walking, 181 post-walk HUD
+  advances, save/normal exit and complete owned NPC cleanup.
+- Existing bow regression: `gameplay-combat-20261114-224405-48537ba182c5414d97c872d7a31e8553`.
+
+Evidence lives under `runtime/evidence/`; see PROGRESS for exact receipt names.
+No repeat manual bow/inventory/walking check is needed. Cross-world stack identity
+uses registry-key codec data; raw RegistryEntry equality rejected synchronized
+Quick Charge/Multishot components. Same-world cancellation checks remain exact.
+Standalone fixtures aim inward after real knockback. Native full-power scenery
+checks need a downward initial view (about 35° worked) to land inside the captured
+patch; a 24° shot hit correctly but landed 4.15 m out, past the 4 m render boundary.
+
+**Machine state:** both games closed normally. The existing Play renderer remains
+installed/unarmed; no native code/assets changed in this milestone. Normal Play
+builds the updated Java source automatically. The user's persistent save was not
+used by these isolated tests.
+
+**Follow-up crossbow scope:** Piercing needs multi-NPC continuation and prior-hit
+exclusions instead of the terminal one-impact trajectory. Firework rockets need
+their own projectile/entity/explosion bridge. Both currently show a clear
+unsupported message before use. Tipped/spectral arrow damage uses the shared
+route; native potion/glowing effects remain unimplemented. Preserve this working
+milestone and defer another open-ended latency-tuning cycle.
+
+
+## Prior checkpoint: native ranged damage complete
 
 Real KCD2 bow and crossbow hits now damage real Minecraft health through the
 normal `-Combat` path. Both automatic coupled checks passed; do not repeat manual
@@ -24,11 +60,10 @@ removed. Its ignored receipt records `restored=true`. Play renderer remains
 `Play-MineCome.ps1 -PreflightOnly` passes without changes. No restart, installation
 or human acceptance is pending. The user Play save remains untouched.
 
-**Next concrete gameplay work:** outgoing Minecraft crossbows through the existing
-bow/native collision path, retaining vanilla charge, ammunition and enchantment
-semantics. Incoming native crossbows are complete; outgoing crossbows are not.
-Preserve the Play launcher and this ranged acceptance. Defer the known incoming
-log delay/armor-balance polish and optional native scenery destruction.
+Outgoing ordinary-arrow crossbows are now verified above. Incoming native
+crossbows remain complete; preserve both directions and the Play launcher.
+Defer the known incoming log delay/armor-balance polish and optional native
+scenery destruction.
 
 The following sections retain earlier milestone details; this checkpoint takes
 precedence over their dated machine state and historical next-work suggestions.

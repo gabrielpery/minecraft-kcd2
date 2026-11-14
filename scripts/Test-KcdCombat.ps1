@@ -1,10 +1,11 @@
 # A real NPC, vanilla melee or bow impacts, and normal save/cleanup. No physical-input claim.
 [CmdletBinding()]
 param([Parameter(Mandatory)][string]$BundleDirectory,[string]$InstanceDirectory,[string]$GroundPatchFile,
- [string]$JavaHome='C:/Program Files/Java/jdk-24',[switch]$ProjectileCheck)
+ [string]$JavaHome='C:/Program Files/Java/jdk-24',[switch]$ProjectileCheck,[switch]$CrossbowCheck)
 . (Join-Path $PSScriptRoot 'powershell7.ps1')
 if($PSVersionTable.PSVersion.Major -lt 7){$code=Invoke-MineComePowerShell7 -ScriptPath $PSCommandPath -BoundParameters $PSBoundParameters;if($code -ne 0){throw "Native combat check failed: $code"};return}
 $ErrorActionPreference='Stop';Set-StrictMode -Version Latest
+if($CrossbowCheck){$ProjectileCheck=$true}
 . (Join-Path $PSScriptRoot 'KcdToolsProbeHelpers.ps1')
 . (Join-Path $PSScriptRoot 'GameplayHudProfile.ps1')
 . (Join-Path $PSScriptRoot 'GameplayHudSessionGuard.ps1')
@@ -21,7 +22,7 @@ $probe=New-MineComeProbeRun $context 'gameplay-combat-fixture' (Join-Path $conte
 $saved=$null;$attempted=$false;$removed=$false
 try{
  $attempted=$true
- & (Join-Path $PSScriptRoot 'Start-GameplaySession.ps1') -BundleDirectory $BundleDirectory -InstanceDirectory $InstanceDirectory -JavaHome $JavaHome -GroundPatchFile $GroundPatchFile -Combat -CombatCheck -ProjectileCheck:$ProjectileCheck -CombatFixtureRun $run | ForEach-Object {
+ & (Join-Path $PSScriptRoot 'Start-GameplaySession.ps1') -BundleDirectory $BundleDirectory -InstanceDirectory $InstanceDirectory -JavaHome $JavaHome -GroundPatchFile $GroundPatchFile -Combat -CombatCheck -ProjectileCheck:$ProjectileCheck -CrossbowCheck:$CrossbowCheck -CombatFixtureRun $run | ForEach-Object {
   if($_ -is [string] -and $_.StartsWith('GAMEPLAY_SESSION_SAVED evidence=')){$saved=$_.Substring('GAMEPLAY_SESSION_SAVED evidence='.Length)}
   Write-Host $_
  }
@@ -55,7 +56,10 @@ if(-not $ProjectileCheck -and ($c.outgoing_hits -ne 1 -or $c.hit_ack -ne 1 -or $
 foreach($capture in $f.images){if((Get-FileHash -LiteralPath (Join-Path $saved $capture.file)).Hash.ToLowerInvariant() -cne $capture.sha256 -or $capture.metadata.world_id -cne $s.world_id -or -not $capture.metadata.PSObject.Properties['world_camera']){throw 'Native combat image identity differs.'}}
 if($ProjectileCheck){
  $p=$c.projectiles;$native=$h.Combat.Projectiles;$impact=$native.LastImpact.reply
- if($p.rendered_intermediate_samples -lt 1 -or $p.prequeued_segments -lt 1){throw 'Native projectile check did not exercise flight dispatch and rendering smoothing.'}
+ if($CrossbowCheck -and (-not $f.crossbow_check -or $f.ranged_weapon -cne 'crossbow' -or -not $f.crossbow_load_without_shot_verified -or -not $f.crossbow_second_click_fire_verified -or
+  $p.crossbow_arrows -ne 2 -or $p.bow_arrows -ne 0)){throw 'Connected crossbow load/fire and actual projectile ownership proof missing.'}
+
+ if(-not $CrossbowCheck -and ($p.rendered_intermediate_samples -lt 1 -or $p.prequeued_segments -lt 1)){throw 'Native projectile check did not exercise flight dispatch and rendering smoothing.'}
  if(-not $f.projectile_check -or -not $f.native_projectile_scenery_verified -or $p.impacts -ne 1 -or $p.scenery_hits -ne 1 -or $p.rejected -ne 0 -or $p.pending -or -not $p.cleanup_complete -or
   $native.Impacts -ne 1 -or $native.Scenery -ne 1 -or $native.Damaged -ne 1 -or $native.Rejected -ne 0 -or $native.Pending -or -not $native.CleanupComplete -or
   $impact.result -cne 'damaged' -or $impact.before -ne $f.native_health_before -or [Math]::Abs($impact.after-$f.native_health_after) -gt .01 -or
@@ -96,7 +100,7 @@ $compositedDelta=$window[-1].composited-$window[0].composited;$reprojectedDelta=
 if($compositedDelta -lt 1 -or $reprojectedDelta -lt 1){throw 'Native composition/reprojection stopped before the post-walk observation.'}
 [ordered]@{schema=1;kind='minecome_native_combat_verification_v1';result='passed';run=$s.run;world_id=$s.world_id;fixture_run=$run;fixture_removed=$removed;
  actual_minecraft=$true;actual_native_npc=$true;scripted_guest_input=$true;physical_native_input_verified=$false;reciprocal_native_damage_verified=$false;hostile_free_aim_verified=$false;
- projectile_check=[bool]$ProjectileCheck;native_damage_receipt=$(if($ProjectileCheck){$h.Combat.Projectiles.LastImpact.reply}else{$h.Combat.LastHit});projectiles=$h.Combat.Projectiles;vanilla_damage=$f.vanilla_damage;walk_distance=$f.walk_distance;fixture_evidence=$probe.Directory;
+ crossbow_check=[bool]$CrossbowCheck;projectile_check=[bool]$ProjectileCheck;native_damage_receipt=$(if($ProjectileCheck){$h.Combat.Projectiles.LastImpact.reply}else{$h.Combat.LastHit});projectiles=$h.Combat.Projectiles;vanilla_damage=$f.vanilla_damage;walk_distance=$f.walk_distance;fixture_evidence=$probe.Directory;
  minecraft_projectiles=$(if($ProjectileCheck){$c.projectiles}else{$null});
  native_composited_frames=($depth.composited|Measure-Object -Maximum).Maximum;native_reprojected_frames=($depth.reprojected|Measure-Object -Maximum).Maximum;
  native_post_walk_composited_frames=$compositedDelta;native_post_walk_reprojected_frames=$reprojectedDelta;native_post_walk_counter_samples=$window;

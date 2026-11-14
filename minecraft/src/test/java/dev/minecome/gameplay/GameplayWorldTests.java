@@ -26,7 +26,9 @@ public final class GameplayWorldTests {
         }
         profile.setProperty("minecome.someOtherFixture","true");reject(()->GameplayMode.requireExclusive(profile),"Bow gate does not permit other diagnostic ownership");
         profile.remove("minecome.someOtherFixture");profile.setProperty("minecome.gameplayProjectileFixture","true");GameplayMode.requireExclusive(profile);check(GameplayMode.projectileFixtureEnabled(profile),"Projectile simulator requires exact standalone bow fixture");
-        profile.remove("minecome.gameplayBowFixture");reject(()->GameplayMode.requireExclusive(profile),"Projectile fixture cannot bypass bow owner");profile.remove("minecome.gameplayProjectileFixture");
+        profile.setProperty("minecome.gameplayCrossbowFixture","true");GameplayMode.requireExclusive(profile);
+        profile.remove("minecome.gameplayProjectileFixture");reject(()->GameplayMode.requireExclusive(profile),"Crossbow fixture cannot bypass projectile owner");
+        profile.setProperty("minecome.gameplayProjectileFixture","true");profile.remove("minecome.gameplayBowFixture");reject(()->GameplayMode.requireExclusive(profile),"Projectile fixture cannot bypass bow owner");profile.remove("minecome.gameplayProjectileFixture");profile.remove("minecome.gameplayCrossbowFixture");
         check(!GameplayMode.rangedUseEnabled(profile),"Ordinary standalone does not admit connected bow input");profile.remove("minecome.gameplayStandalone");profile.remove("minecome.gameplayFixture");check(GameplayMode.rangedUseEnabled(profile),"Connected Combat owns production bows");
         Path root=Files.createTempDirectory("minecome-gameplay-world-").toRealPath();
         Path saves=root.resolve("instance/saves");

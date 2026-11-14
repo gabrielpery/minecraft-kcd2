@@ -46,7 +46,7 @@ public final class GameplayProjectiles {
     private final AtomicReference<Pending> pending=new AtomicReference<>();private final AtomicReference<GameplayProjectileProtocol.Reply> delivered=new AtomicReference<>();
     private volatile GameplayProjectileProtocol.Reply lastReply,lastImpact,lastScenery;private volatile boolean closed,workerClosed,serverClosed,ready;
     private Object clientWorld,clientPlayer;private volatile MinecraftServer server;private ServerPlayerEntity player;
-    private long sequence,published,readSequence;private String readText;private volatile long traces,clear,scenery,actorHits,impacts,rejected,waitTicks,prequeuedSegments,mirroredTicks,removedOnStop,renderedIntermediateSamples;
+    private long sequence,published,readSequence;private String readText;private volatile long traces,clear,scenery,actorHits,impacts,rejected,waitTicks,prequeuedSegments,mirroredTicks,removedOnStop,renderedIntermediateSamples,bowArrows,crossbowArrows,peakActive;
     private volatile double damage,minecraftDamage;private volatile String failure;
     public GameplayProjectiles(GameplayCombat combat,HudInputProtocol.Identity identity,GameplayWorld save,GroundSurface surface,Path directory,boolean standalone)throws IOException{
         this.combat=combat;this.identity=identity;this.worldId=save.id().toString();this.surface=surface;
@@ -94,9 +94,14 @@ public final class GameplayProjectiles {
         try{return arrow.getWorld().isClient?s.clientTick(arrow):s.serverTick(arrow,inGround);}catch(Exception e){s.fail(e.toString());if(!arrow.getWorld().isClient&&s.owned(arrow))arrow.discard();return true;}
     }
     private boolean owned(PersistentProjectileEntity arrow){return server!=null&&server.isOnThread()&&player!=null&&arrow.getWorld()==server.getOverworld()&&arrow.getOwner()==player;}
-    // SpectralArrowEntity also delegates its tick to this same vanilla base; the
-    // exact bow weapon/owner gate admits it without admitting tridents/crossbows.
-    private boolean eligible(PersistentProjectileEntity arrow){return owned(arrow)&&arrow.getWeaponStack()!=null&&arrow.getWeaponStack().isOf(Items.BOW);}
+    // Pinned CrossbowItem.createArrowEntity delegates arrow creation to the same
+    // RangedWeaponItem base, retaining this actual weapon stack. Ordinary, tipped
+    // and spectral arrows therefore share vanilla tick/impact/rendering; a
+    // Multishot volley owns three independent UUIDs. FireworkRocketEntity and
+    // tridents are not admitted by this PersistentProjectileEntity weapon gate.
+    // Source: runtime/evidence/crossbow-input-source-20261114/CrossbowItem.txt.
+    private boolean eligible(PersistentProjectileEntity arrow){return owned(arrow)&&arrow.getWeaponStack()!=null&&
+        (arrow.getWeaponStack().isOf(Items.BOW)||arrow.getWeaponStack().isOf(Items.CROSSBOW));}
     private boolean clientTick(PersistentProjectileEntity arrow){
         var c=MinecraftClient.getInstance();if(!c.isOnThread()||c.world!=clientWorld||c.player!=clientPlayer||arrow.getWorld()!=clientWorld||arrow.getOwner()!=clientPlayer)return false;
         var pose=poses.get(arrow.getUuid());if(pose==null)return false;
@@ -113,8 +118,10 @@ public final class GameplayProjectiles {
         if(track==null){
             if(inGround)return false; // Existing saved embedded arrows retain vanilla lifetime/pickup.
             if(tracks.size()>=64||tracks.values().stream().filter(t->!t.embedded&&!t.finished).count()>=16)throw new IllegalStateException("Native projectile ownership capacity exceeded");
-            if(arrow.getPierceLevel()!=0||arrow.isNoClip())throw new IllegalStateException("Only ordinary nonpiercing bow arrows are supported");
-            track=new Track(arrow);tracks.put(arrow.getUuid(),track);publishPoses();
+            if(arrow.getPierceLevel()!=0||arrow.isNoClip())throw new IllegalStateException("Only nonpiercing bow/crossbow arrows are supported");
+            track=new Track(arrow);tracks.put(arrow.getUuid(),track);
+            if(arrow.getWeaponStack().isOf(Items.CROSSBOW))crossbowArrows++;else bowArrows++;
+            peakActive=Math.max(peakActive,tracks.values().stream().filter(t->!t.embedded&&!t.finished&&!t.arrow.isRemoved()).count());publishPoses();
         }
         if(track.arrow!=arrow||!track.owner.equals(player.getUuid()))throw new IllegalStateException("Projectile entity generation changed");
         if(inGround){track.embedded=true;return false;}
@@ -227,6 +234,7 @@ public final class GameplayProjectiles {
     public void respawn(){if(!enabled)return;closeServer();resetVisuals=true;serverClosed=false;player=null;clientPlayer=null;clientWorld=null;ready=false;pending.set(null);delivered.set(null);}
     public JsonObject evidence(){var j=new JsonObject();j.addProperty("enabled",enabled);j.addProperty("traces",traces);j.addProperty("clear_segments",clear);j.addProperty("scenery_hits",scenery);j.addProperty("actor_hits",actorHits);j.addProperty("impacts",impacts);j.addProperty("damage",minecraftDamage);j.addProperty("native_damage",damage);j.addProperty("rejected",rejected);j.addProperty("wait_ticks",waitTicks);j.addProperty("prequeued_segments",prequeuedSegments);j.addProperty("client_mirror_ticks",mirroredTicks);j.addProperty("pending",pending.get()!=null);j.addProperty("cleanup_complete",!enabled||closed&&workerClosed&&serverClosed);j.addProperty("removed_on_stop",removedOnStop);if(failure!=null)j.addProperty("failure",failure);
         j.addProperty("rendered_intermediate_samples",renderedIntermediateSamples);
+        j.addProperty("bow_arrows",bowArrows);j.addProperty("crossbow_arrows",crossbowArrows);j.addProperty("peak_active",peakActive);
         if(lastReply!=null)j.add("last_reply",replyEvidence(lastReply));if(lastImpact!=null)j.add("last_impact",replyEvidence(lastImpact));if(lastScenery!=null)j.add("last_scenery",replyEvidence(lastScenery));return j;}
     private static JsonObject replyEvidence(GameplayProjectileProtocol.Reply r){var value=new JsonObject();value.addProperty("seq",r.seq());value.addProperty("operation",r.operation());value.addProperty("projectile",r.projectile());value.addProperty("segment",r.segment());value.addProperty("result",r.result());value.addProperty("reason",r.reason());value.addProperty("actor_token",r.token());value.addProperty("before",r.before());value.addProperty("after",r.after());value.add("contact",point(r.contact()));value.add("normal",point(r.normal()));return value;}
     private static JsonObject point(GameplayCombatProtocol.Point p){var j=new JsonObject();j.addProperty("x",p.x());j.addProperty("y",p.y());j.addProperty("z",p.z());return j;}

@@ -1,5 +1,44 @@
 # MineCome progress — 2026-11-14
 
+## Player crossbows hit native NPCs and scenery
+
+**Implemented and automatically verified in both games.** Hold right-click to
+charge, release to load, then click again to fire. Vanilla owns ammunition,
+charged components, Quick Charge, Multishot and durability. Inventory/authority
+loss cancels partial charging; loaded weapons survive inventory transitions.
+A post-fire acknowledgement gate prevents stale charged state from initiating
+an unintended reload. Cross-world weapon comparison now uses registry-key codec
+data: raw enchantment RegistryEntry equality rejected synchronized enchanted
+weapons. Same-world cancellation and active-stack checks remain exact.
+
+Actual Minecraft acceptance:
+`runtime/evidence/gameplay-combat-20261114-224304-bcbbdc1fe7f24cd487b0c8a3ac785abb/verification.json`.
+It passes cancellation, short-release rejection, loading without firing, charged
+inventory retention, second-click fire, Quick Charge III, Multishot I, no-ammo,
+durability and arrow pixels. Five real arrows include three concurrent Multishot
+arrows; explicitly synthetic contacts verify four scenery hits and one NPC hit.
+The existing bow/projectile regression also passes:
+`runtime/evidence/gameplay-combat-20261114-224405-48537ba182c5414d97c872d7a31e8553/verification.json`.
+
+Actual KCD2 acceptance:
+`runtime/evidence/gameplay-kcd-20261114-224156-16f41e30bef641e2ac19dd5eeaabe342/native-combat-verification.json`.
+Two ordinary crossbow arrows produce one native NPC impact (100→60 health from
+8 vanilla damage) and one native scenery contact with 756 arrow colour/depth pixels.
+Inventory suppression, 0.641 m later walking, 181 post-walk composition/reprojection
+advances, normal save/exit and owned NPC cleanup pass. These are scripted guest
+controls; native Multishot and subjective physical-input feel were not separately
+tested. Compilation, 413 combat/protocol checks and 38 world/profile checks pass.
+
+The test now aims inward after real Minecraft knockback, preserving terrain margins
+without moving the player. An initial native shot hit just beyond the 8×8 test patch
+and was correctly excluded by the renderer; a 35° downward initial view kept the
+retry inside coverage. No renderer bounds or freshness limits were relaxed.
+Production arrow rendering still requires captured terrain, with existing 64 m / 10 s
+flight limits. Piercing and firework crossbows show an unsupported-action message;
+multi-NPC continuation and rocket entity/explosion handling remain separate work.
+Normal, tipped and spectral arrows share the route, but native potion/glowing
+effects remain unimplemented. Both games closed normally after verification.
+
 
 ## Native bows and crossbows damage Minecraft health
 

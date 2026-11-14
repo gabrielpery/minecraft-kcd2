@@ -21,9 +21,10 @@ public final class GameplayMode {
         if(Boolean.parseBoolean(properties.getProperty("minecome.gameplayBowFixture","false"))&&!bowFixtureEnabled(properties))
             throw new IllegalArgumentException("Experimental bow input requires the standalone WorldBlocks combat fixture");
         if(Boolean.parseBoolean(properties.getProperty("minecome.gameplayProjectileFixture","false"))&&!projectileFixtureEnabled(properties))throw new IllegalArgumentException("Projectile fixture requires the standalone bow fixture");
+        if(Boolean.parseBoolean(properties.getProperty("minecome.gameplayCrossbowFixture","false"))&&!projectileFixtureEnabled(properties))throw new IllegalArgumentException("Crossbow fixture requires the standalone projectile fixture");
         for(String key:properties.stringPropertyNames()){
             if(!key.startsWith("minecome.")||!"true".equalsIgnoreCase(properties.getProperty(key)))continue;
-            if(key.endsWith("Lab")||key.endsWith("Fixture")&&!Set.of("minecome.gameplayFixture","minecome.gameplayBowFixture","minecome.gameplayProjectileFixture").contains(key)||
+            if(key.endsWith("Lab")||key.endsWith("Fixture")&&!Set.of("minecome.gameplayFixture","minecome.gameplayBowFixture","minecome.gameplayProjectileFixture","minecome.gameplayCrossbowFixture").contains(key)||
                     key.equals("minecome.smokeWorld")||key.equals("minecome.dynamicBridgeSmoke")||
                     key.equals("minecome.hudPhysicalMovement")||key.equals("minecome.hudWalkingAimed"))
                 throw new IllegalArgumentException("Gameplay cannot share a diagnostic owner: "+key);
