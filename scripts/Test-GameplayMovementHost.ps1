@@ -29,6 +29,38 @@ try{
     Write-Pose $valid
     $p=Read-GameplayMovementPose $poseFile $identity $bounds 0 -1 $now
     Require ($p.seq -eq 1 -and $p.position.z -eq 3) 'Fresh pose read differs.';$passed++
+    Require ($p.gliding -ceq $false -and $p.eyeHeight -eq 1.62) 'Legacy pose aerial defaults differ.'
+    foreach($eye in @(.35,.4,1.27,1.62,1.7)){
+        $v=Copy-Pose;$v.eyeHeight=$eye;$v.gliding=$false;Write-Pose $v
+        $read=Read-GameplayMovementPose $poseFile $identity $bounds 0 -1 $now
+        Require ($read.eyeHeight -eq $eye -and -not $read.gliding) 'Valid vanilla pose eye height rejected.'
+    };$passed++
+    foreach($change in @(@{gliding='true'},@{gliding=1},@{gliding=$null},@{eyeHeight='0.4'},@{eyeHeight=$true},@{eyeHeight=$null},@{eyeHeight=.349},@{eyeHeight=1.701},@{gliding=$true},@{gliding=$true;eyeHeight=1.62},@{gliding=$true;eyeHeight=.401},@{gliding=$false;eyeHeight=.4;extra=1})){
+        $v=Copy-Pose;foreach($key in $change.Keys){$v[$key]=$change[$key]};Write-Pose $v
+        Refuses {Read-GameplayMovementPose $poseFile $identity $bounds 0 -1 $now $false $true}
+    };$passed++
+    $v=Copy-Pose;$v.eyeHeight=.4;$v.gliding=$true;Write-Pose $v
+    Refuses {Read-GameplayMovementPose $poseFile $identity $bounds 0 -1 $now}
+    $read=Read-GameplayMovementPose $poseFile $identity $bounds 0 -1 $now $false $true
+    Require ($read.gliding -and $read.eyeHeight -eq .4) 'Explicit flight pose rejected.'
+    $command=ConvertTo-GameplayMovementPoseCommand $identity.Run $read
+    Require ($command -ceq "MineCome.GameplayMovementPose('$($identity.Run)',1,0,1,2,3,nil,nil,nil,nil,nil,nil,nil,0.4,true)") 'New aerial arguments shifted legacy fields.'
+    $v=Copy-WorldPose;$v.eyeHeight=.4000000059604645;$v.gliding=$true;Write-Pose $v
+    $read=Read-GameplayMovementPose $poseFile $identity $bounds 0 -1 $now $true
+    Require $read.gliding 'World-block flight rejected float32 eye height.'
+    $command=ConvertTo-GameplayMovementPoseCommand $identity.Run $read $true
+    Require ($command.Contains(',1,1,nil,nil,nil,nil,nil,0.4000000059604645,true)')) 'Perspective aerial arguments shifted.'
+    $read|Add-Member -NotePropertyName lifecycle -NotePropertyValue respawn
+    $read|Add-Member -NotePropertyName respawn_epoch -NotePropertyValue 2
+    $read|Add-Member -NotePropertyName respawn_from -NotePropertyValue ([pscustomobject]@{x=4.;y=5.;z=6.})
+    $command=ConvertTo-GameplayMovementPoseCommand $identity.Run $read $true
+    Require ($command.Contains(",1,1,'respawn',2,4,5,6,0.4000000059604645,true)")) 'Respawn aerial arguments shifted.'
+    foreach($field in @('gliding','eyeHeight')){
+        $v=Copy-Pose;$v.gliding=$false;$v.eyeHeight=.4;$json=$v|ConvertTo-Json -Depth 6 -Compress
+        $old=if($field -eq 'gliding'){'"gliding":false'}else{'"eyeHeight":0.4'}
+        [IO.File]::WriteAllText($poseFile,$json.Replace($old,$old+','+$old));Refuses {Read-GameplayMovementPose $poseFile $identity $bounds 0 -1 $now $false $true}
+    };$passed++
+    Write-Pose $valid
     Require ($null -eq (Read-GameplayMovementPose $poseFile $identity $bounds 1 0 $now)) 'Duplicate pose was renewed.'
     Require ($null -eq (Read-GameplayMovementPose $poseFile $identity $bounds 0 -1 ($now+251))) 'Stale pose was renewed.';$passed++
     foreach($change in @(@{run='d'*32},@{target_pid=999},@{seq=0},@{utc_ms=$now+51},@{source_ms=86400001},@{schema='1'},@{target_start_filetime=123})){
@@ -322,7 +354,7 @@ function Invoke-MineComeToolsRequest([string]$PathAndQuery,[int]$TimeoutMillisec
         $s=$shared['Snapshot'];Require ($s.Stopped -and $null -ne $s.Terminal) 'WorldBlocks did not return native cleanup acknowledgement.'
         $commands=@($shared['FixtureCommands'].ToArray())
         Require (@($commands|Where-Object {$_ -match "GameplayMovementBegin\('[a-f0-9]+',[^)]*,true,true\)"}).Count -eq 1) 'WorldBlocks begin did not enable flight and camera authority.'
-        Require (@($commands|Where-Object {$_ -match "GameplayMovementPose\('[a-f0-9]+',\d+,[0-9.]+,1,2,3,$($case.Perspective),[12]\)"}).Count -gt 0) 'WorldBlocks pose omitted its perspective request/collision generation.'
+        Require (@($commands|Where-Object {$_ -match "GameplayMovementPose\('[a-f0-9]+',\d+,[0-9.]+,1,2,3,$($case.Perspective),[12],nil,nil,nil,nil,nil,1.62,false\)"}).Count -gt 0) 'WorldBlocks pose omitted its perspective request/collision generation or legacy aerial defaults.'
         Require (@($commands|Where-Object {$_ -match "GameplayMovementSample\('[a-f0-9]+',\d+,true\)"}).Count -gt 0) 'WorldBlocks did not request native aim.'
         Require ($s.MaxRequestPathLength -le 2000) 'Perspective request exceeded console URL bound.'
         $geometry=@(foreach($command in $commands){foreach($m in [regex]::Matches($command,"GameplayCameraGeometry\('[a-f0-9]+',(\d+),(\d+),(\d+),0,0,-64,(true|false),'([0-9a-f]*)'\)")){

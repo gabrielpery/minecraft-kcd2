@@ -19,7 +19,7 @@ import java.util.concurrent.atomic.*;
 
 /** Ongoing vanilla movement on ephemeral host collision; inventory/mode/player state stay vanilla. */
 public final class GameplayMovement {
-    private record Observation(Object world,Object player,long seq,long at,long utc,GameplayBoundary.Motion motion,float yaw,float pitch,boolean grounded,boolean flying,boolean falling,float fallDistance,boolean alive){}
+    private record Observation(Object world,Object player,long seq,long at,long utc,GameplayBoundary.Motion motion,float yaw,float pitch,boolean grounded,boolean flying,boolean falling,float fallDistance,boolean alive,boolean gliding,float eyeHeight){}
     private record RespawnStep(long epoch,GameplayBoundary.Motion from,GameplayBoundary.Motion target,long at){}
     private final GameplayWorld save;private volatile GroundSurface surface,serverSurface;
     private final GameplayTerrainBinding binding;private final GameplayTerrainBinding.Position resume;
@@ -51,6 +51,7 @@ public final class GameplayMovement {
     private volatile long lifecycleEpoch,serverRespawns,clientRespawns;
     private final AtomicLong deathAcknowledged=new AtomicLong(),respawnAcknowledged=new AtomicLong();
     private GameplayBlocks blocks;
+    private JsonObject finalGlideSafety;
     public void blockController(GameplayBlocks controller){if(clientWorld!=null||serverInstalled.get())throw new IllegalStateException("Block controller must precede world load");blocks=controller;}
     public GameplayMovement(Path root,GameplayWorld save,Path groundFile,boolean fixture,HudInputProtocol.Identity identity,Path evidenceDirectory)throws IOException{
         this.save=save;this.fixture=fixture;this.identity=identity;keys=new GameplayMovementKeys(flight);binding=GameplayTerrainBinding.open(save,groundFile,fixture,Boolean.getBoolean("minecome.gameplayBlocks"),Boolean.getBoolean("minecome.gameplayExplore"),flight);surface=binding.currentSurface();serverSurface=surface;resume=binding.resume();
@@ -101,7 +102,7 @@ public final class GameplayMovement {
                 oldPlayer.getWorld()!=clientWorld||client.player.getWorld()!=clientWorld||!oldPlayer.getUuid().equals(playerId)||!client.player.getUuid().equals(playerId)||
                 step==null||epoch!=step.epoch()||serverRespawns!=clientRespawns+1||!GroundCollision.matches(client.world,surface,false))
             throw new IllegalStateException("Gameplay client respawn ownership changed");
-        suspend(client);clientPlayer=client.player;clientRespawns=serverRespawns;paused="respawn_pending";
+        suspend(client);if(flight)GameplayGlideSafety.clear(oldPlayer);clientPlayer=client.player;if(flight)GameplayGlideSafety.install(client.player,surface);clientRespawns=serverRespawns;paused="respawn_pending";
     }
     private void check(){if(views.failure()!=null)failure.compareAndSet(null,views.failure());if(files.failure()!=null)failure.compareAndSet(null,files.failure());if(growth!=null&&growth.failure()!=null)failure.compareAndSet(null,growth.failure());if(failure.get()!=null)throw new IllegalStateException(failure.get());}
     public boolean terrainTransition(){return admission!=null;}
@@ -121,15 +122,17 @@ public final class GameplayMovement {
         var view=views.current(System.currentTimeMillis(),now);var reading=readObservation();var observed=fresh(reading);
         if(view==null||observed==null){recordSourcePause(now,view==null,observed==null,reading);paused="source_stale";suspend(client);return;}
         client.player.setYaw(view.view().yaw());client.player.setPitch(view.view().pitch());
-        if(client.player.isFallFlying()||client.player.getAbilities().flying&&(!flight||!creativeFlight(client.player))){paused="flight_not_connected";suspend(client);return;}
+        if(client.player.isFallFlying()&&(!flight||!fixture&&!Boolean.getBoolean("minecome.gameplayWorldBlocks"))||client.player.getAbilities().flying&&(!flight||!creativeFlight(client.player))){paused="flight_not_connected";suspend(client);return;}
         keys.tick(now);
         var motion=motion(client.player);
         int forward=(keys.down('W',now)?1:0)-(keys.down('S',now)?1:0),side=(keys.down('A',now)?1:0)-(keys.down('D',now)?1:0);
         boolean flying=flight&&creativeFlight(client.player),jump=keys.down(0x20,now),sneak=flight&&keys.down(0x10,now),sprint=flight&&keys.down(0x11,now);
-        boolean allowed=flying?boundary.allowsFlight(motion,forward,side,(jump?1:0)-(sneak?1:0),view.view().yaw(),client.player.getAbilities().getFlySpeed(),sprint||client.player.isSprinting()):boundary.allows(motion,forward,side,jump,view.view().yaw(),client.player.getMovementSpeed()*1.3+.00001);
+        boolean gliding=flight&&client.player.isFallFlying();
+        boolean allowed=gliding|| (flying?boundary.allowsFlight(motion,forward,side,(jump?1:0)-(sneak?1:0),view.view().yaw(),client.player.getAbilities().getFlySpeed(),sprint||client.player.isSprinting()):boundary.allows(motion,forward,side,jump,view.view().yaw(),client.player.getMovementSpeed()*1.3+.00001));
         if((flying||!keys.neutral(now))&&!allowed){
             boundaryPauses++;paused="terrain_frontier";suspend(client);return;
         }
+        if(flight)GameplayGlideSafety.setHeld(client.player,false);
         paused="none";controlsOwned=true;
         client.options.forwardKey.setPressed(keys.down('W',now));client.options.backKey.setPressed(keys.down('S',now));
         client.options.leftKey.setPressed(keys.down('A',now));client.options.rightKey.setPressed(keys.down('D',now));client.options.jumpKey.setPressed(jump);
@@ -148,12 +151,13 @@ public final class GameplayMovement {
         if(!clientInstalled){
             release(client);if(!serverInstalled.get())return;
             if(!GroundCollision.available(false)||!allAir(client.world))throw new IllegalStateException("Gameplay collision cells already occupied");
-            GroundCollision.install(client.world,surface,false);clientInstalled=true;
+            GroundCollision.install(client.world,surface,false);clientInstalled=true;if(flight)GameplayGlideSafety.install(client.player,surface);
         }
         if(!teleportRequested){
             teleportRequested=true;server.execute(()->{
                 try{
                     if(closing)return;var p=server.getPlayerManager().getPlayer(playerId);requireServer(server,p);
+                    if(resume!=null&&resume.gliding()&&(!p.isFallFlying()||p.getAbilities().flying||p.hasVehicle()))throw new IllegalStateException("Gliding checkpoint differs from saved vanilla Elytra state");
                     if(resume!=null&&resume.flying()&&!creativeFlight(p))throw new IllegalStateException("Aerial checkpoint differs from saved vanilla Creative flight abilities");
                     if(resume!=null&&resume.falling()&&(p.getAbilities().flying||p.isFallFlying()||p.hasVehicle()))throw new IllegalStateException("Falling checkpoint differs from saved vanilla abilities");
                     var v=views.current(System.currentTimeMillis(),System.nanoTime());float yaw=resume!=null?resume.yaw():v==null?p.getYaw():v.view().yaw();
@@ -166,9 +170,12 @@ public final class GameplayMovement {
         }
         var o=fresh(readObservation());var current=motion(client.player);
         if(!ready){
-            boolean aerial=resume!=null&&resume.flying();
+            boolean aerial=resume!=null&&(resume.flying()||resume.gliding());
+            // A restored attached rocket may update velocity while the exact
+            // client travel hold keeps position stable. Glide readiness is the
+            // acknowledged pose/position, not Creative's zero-inertia condition.
             boolean deadAttached=!client.player.isAlive()&&o!=null&&!o.alive()&&surface.containsFeet(current.x(),current.z(),.31)&&client.world.isSpaceEmpty(client.player,client.player.getBoundingBox());
-            boolean stable=teleported.get()&&o!=null&&(deadAttached||(aerial?creativeFlight(client.player)&&o.flying()&&Math.abs(current.vy())<.01&&Math.abs(current.vx())<.01&&Math.abs(current.vz())<.01:grounded(current,(BlockView)clientWorld)&&o.grounded()))&&distance(current,o.motion())<.01&&views.current(System.currentTimeMillis(),now)!=null;
+            boolean stable=teleported.get()&&o!=null&&(deadAttached||(aerial?(resume.gliding()?client.player.isFallFlying()&&o.gliding():creativeFlight(client.player)&&o.flying()&&Math.abs(current.vy())<.01&&Math.abs(current.vx())<.01&&Math.abs(current.vz())<.01):grounded(current,(BlockView)clientWorld)&&o.grounded()))&&distance(current,o.motion())<.01&&views.current(System.currentTimeMillis(),now)!=null;
             if(!stable)stableAt=0;else if(stableAt==0)stableAt=now;else if(now-stableAt>=250_000_000L){
                 // Publish the anchor before the volatile ready flag exposes it to
                 // the integrated server's flight observations and pose writer.
@@ -194,7 +201,7 @@ public final class GameplayMovement {
             }
             if(playerId==null)return;var p=source.getPlayerManager().getPlayer(playerId);requireServer(source,p);
             if(!teleported.get())return;
-            var m=motion(p);var o=new Observation(p.getWorld(),p,++sequence,System.nanoTime(),System.currentTimeMillis(),m,p.getYaw(),p.getPitch(),grounded(m,(BlockView)serverWorld),flight&&creativeFlight(p),flight&&falling(p),p.fallDistance,p.isAlive());observation.set(o);
+            var m=motion(p);var o=new Observation(p.getWorld(),p,++sequence,System.nanoTime(),System.currentTimeMillis(),m,p.getYaw(),p.getPitch(),grounded(m,(BlockView)serverWorld),flight&&creativeFlight(p),flight&&falling(p),p.fallDistance,p.isAlive(),flight&&p.isFallFlying(),(float)(p.getEyeY()-p.getY()));observation.set(o);
             if(!o.alive()&&deathAnchor==null){
                 if(respawnStep!=null)throw new IllegalStateException("Player died during respawn relocation");
                 var previous=lastAlive;
@@ -220,15 +227,16 @@ public final class GameplayMovement {
         var j=new JsonObject();j.addProperty("schema",1);j.addProperty("kind","minecome_gameplay_pose_v1");j.addProperty("run",identity.run());j.addProperty("world_id",save.id().toString());
         j.addProperty("target_pid",identity.targetPid());j.addProperty("target_start_filetime",Long.toUnsignedString(identity.targetStart()));j.addProperty("patch_run",surface.run());j.addProperty("patch_sha256",surface.sha256());
         j.addProperty("seq",o.seq());j.addProperty("utc_ms",o.utc());j.addProperty("source_ms",(o.at()-born)/1_000_000);
-        GameplayBoundary.Motion published=o.motion();var transition=respawnStep;var dead=deathAnchor;
+        Observation camera=o;GameplayBoundary.Motion published=o.motion();var transition=respawnStep;var dead=deathAnchor;
         if(transition!=null&&deathAcknowledged.get()==transition.epoch()){
             j.addProperty("lifecycle","respawn");j.addProperty("respawn_epoch",transition.epoch());j.add("respawn_from",nativePosition(transition.from()));published=transition.target();
-        }else if(dead!=null){j.addProperty("lifecycle","dead");j.addProperty("respawn_epoch",lifecycleEpoch);published=dead.motion();}
+        }else if(dead!=null){j.addProperty("lifecycle","dead");j.addProperty("respawn_epoch",lifecycleEpoch);published=dead.motion();camera=dead;}
         if(Boolean.getBoolean("minecome.gameplayWorldBlocks")){
             j.addProperty("perspective_request",dev.minecome.hud.GameplaySession.requestedPerspective());
             if(blocks==null)throw new IllegalStateException("WorldBlocks camera collision owner missing");
             j.add("camera_collision",blocks.cameraCollision(server,(ServerPlayerEntity)serverPlayer).json(serverSurface));
         }
+        if(flight){j.addProperty("gliding",camera.gliding());j.addProperty("eyeHeight",camera.eyeHeight());}
         j.add("position",nativePosition(published));files.pose(j);
     }
     private Vec3d nativeVector(GameplayBoundary.Motion motion){return new Vec3d(surface.centerX()+motion.x(),surface.centerY()-motion.z(),surface.centerZ()+motion.y()-GroundPatch.ANCHOR_Y);}
@@ -256,7 +264,7 @@ public final class GameplayMovement {
     private static boolean creativeFlight(net.minecraft.entity.player.PlayerEntity p){return p.isCreative()&&p.getAbilities().allowFlying&&p.getAbilities().flying&&!p.isFallFlying()&&!p.hasVehicle();}
     private static boolean falling(net.minecraft.entity.player.PlayerEntity p){return !p.isOnGround()&&!p.getAbilities().flying&&!p.isFallFlying()&&!p.hasVehicle()&&!p.isSpectator()&&p.isAlive();}
     /** A UI/lease handoff cancels flight inertia, never position or vanilla abilities. */
-    private void stopFlightDrift(MinecraftClient c){if(flight&&c.player!=null&&c.player==clientPlayer&&creativeFlight(c.player))c.player.setVelocity(Vec3d.ZERO);}
+    private void stopFlightDrift(MinecraftClient c){if(flight&&c.player==clientPlayer&&clientInstalled)GameplayGlideSafety.setHeld(c.player,true);if(flight&&c.player!=null&&c.player==clientPlayer&&creativeFlight(c.player))c.player.setVelocity(Vec3d.ZERO);}
     private boolean grounded(GameplayBoundary.Motion m,BlockView world){var s=world==serverWorld?serverSurface:surface;return m.ground()&&s.containsFeet(m.x(),m.z(),.3)&&Math.abs(m.y()-(blocks==null?s.groundForFeet(m.x(),m.z(),.3):blocks.groundForFeet(world,m.x(),m.y(),m.z(),.3)))<.15;}
     private static double distance(GameplayBoundary.Motion a,GameplayBoundary.Motion b){return Math.sqrt(Math.pow(a.x()-b.x(),2)+Math.pow(a.y()-b.y(),2)+Math.pow(a.z()-b.z(),2));}
     private boolean allAir(BlockView w){return allAir(w,w==serverWorld?serverSurface:surface);}
@@ -279,7 +287,7 @@ public final class GameplayMovement {
         if(now-admissionAt>5_000_000_000L)throw new IllegalStateException("Terrain handoff deadline");
         if(!admissionSubmitted&&serverAdmission==admission){
             if(!allAir(client.world,admission.next())||!GroundCollision.replace(client.world,admission.expected(),admission.next(),false))throw new IllegalStateException("Client terrain handoff failed");
-            surface=admission.next();boundary=new GameplayBoundary(surface);if(blocks!=null)blocks.terrain(surface);
+            surface=admission.next();boundary=new GameplayBoundary(surface);if(flight)GameplayGlideSafety.updateSurface(client.player,surface);if(blocks!=null)blocks.terrain(surface);
             growth.applied(admission);admissionSubmitted=true;
         }
         if(admissionSubmitted&&growth.persistedGeneration()==admission.next().generation()){
@@ -299,11 +307,11 @@ public final class GameplayMovement {
                 // packet can precede the next periodic observation by one tick.
                 if(ready&&failure.get()==null&&deathAnchor==null&&respawnStep==null){
                     var p=server.getPlayerManager().getPlayer(playerId);requireServer(server,p);var m=motion(p);
-                    var current=new Observation(p.getWorld(),p,++sequence,System.nanoTime(),System.currentTimeMillis(),m,p.getYaw(),p.getPitch(),grounded(m,(BlockView)serverWorld),flight&&creativeFlight(p),flight&&falling(p),p.fallDistance,p.isAlive());observation.set(current);
+                    var current=new Observation(p.getWorld(),p,++sequence,System.nanoTime(),System.currentTimeMillis(),m,p.getYaw(),p.getPitch(),grounded(m,(BlockView)serverWorld),flight&&creativeFlight(p),flight&&falling(p),p.fallDistance,p.isAlive(),flight&&p.isFallFlying(),(float)(p.getEyeY()-p.getY()));observation.set(current);
                     var stable=lastGrounded.get();
                     if(current.grounded())stable=current;
-                    else if(flight&&(current.flying()||current.falling())&&serverSurface.containsFeet(m.x(),m.z(),.31)&&m.y()>=serverSurface.groundForFeet(m.x(),m.z(),.3)&&m.y()<=GameplayBoundary.FLIGHT_MAX_Y)stable=current;
-                    if(stable!=null&&System.nanoTime()-stable.at()<=250_000_000L)position=new GameplayTerrainBinding.Position(stable.motion().x(),stable.motion().y(),stable.motion().z(),stable.yaw(),stable.pitch(),stable.flying()&&!stable.grounded(),stable.falling()&&!stable.grounded(),stable.falling()&&!stable.grounded()?stable.fallDistance():0);
+                    else if(flight&&(current.flying()||current.falling()||current.gliding())&&serverSurface.containsFeet(m.x(),m.z(),.31)&&m.y()>=serverSurface.groundForFeet(m.x(),m.z(),.3)&&m.y()<=GameplayBoundary.FLIGHT_MAX_Y)stable=current;
+                    if(stable!=null&&System.nanoTime()-stable.at()<=250_000_000L)position=new GameplayTerrainBinding.Position(stable.motion().x(),stable.motion().y(),stable.motion().z(),stable.yaw(),stable.pitch(),stable.flying()&&!stable.grounded(),stable.falling()&&!stable.grounded(),stable.falling()&&!stable.grounded()?stable.fallDistance():0,stable.gliding()&&!stable.grounded());
                 }
             }catch(Exception e){failure.compareAndSet(null,"Gameplay final checkpoint: "+e);}
             finally{
@@ -313,6 +321,10 @@ public final class GameplayMovement {
                 files.close(failure.get()==null?position:null);
             }
         });
+    }
+    public void clientDisconnected(MinecraftClient client){
+        if(!closing||clientPlayer!=null&&client.player==clientPlayer)throw new IllegalStateException("Glide disposal requires completed client disconnect");
+        if(flight&&clientInstalled&&finalGlideSafety==null){finalGlideSafety=GameplayGlideSafety.evidence();if(!GameplayGlideSafety.clear((ClientPlayerEntity)clientPlayer))throw new IllegalStateException("Glide cleanup owner changed");finalGlideSafety.addProperty("released",true);}
     }
     /** Fabric SERVER_STOPPED runs at MinecraftServer.shutdown TAIL, after final save/world close. */
     public void serverStopped(MinecraftServer source){
@@ -334,6 +346,7 @@ public final class GameplayMovement {
         j.addProperty("movement_events",events);j.addProperty("held_ticks",heldTicks);j.addProperty("client_walk",clientWalk);j.addProperty("server_walk",serverWalk);j.addProperty("boundary_pauses",boundaryPauses);j.addProperty("paused",paused);
         j.addProperty("respawn_epoch",lifecycleEpoch);j.addProperty("death_pending",deathPending());j.addProperty("respawn_pending",respawnPending());j.addProperty("server_respawns",serverRespawns);j.addProperty("client_respawns",clientRespawns);j.addProperty("death_acknowledged",deathAcknowledged.get());j.addProperty("respawn_acknowledged",respawnAcknowledged.get());
         j.addProperty("source_pauses",sourcePauses);j.addProperty("held_source_pauses",heldSourcePauses);if(lastSourcePause!=null)j.add("last_source_pause",lastSourcePause.deepCopy());if(lastHeldSourcePause!=null)j.add("last_held_source_pause",lastHeldSourcePause.deepCopy());
+        if(flight)j.add("glide_safety",finalGlideSafety==null?GameplayGlideSafety.evidence():finalGlideSafety.deepCopy());
         j.addProperty("flight_enabled",flight);j.addProperty("client_flying",client.player!=null&&client.player==clientPlayer&&creativeFlight(client.player));j.addProperty("server_flying",observation.get()!=null&&observation.get().flying());j.addProperty("client_flight_ticks",clientFlightTicks);j.addProperty("server_flight_ticks",serverFlightTicks);j.addProperty("max_client_altitude",maxClientAltitude);j.addProperty("max_server_altitude",maxServerAltitude);
         if(resume!=null&&resume.falling()){j.addProperty("resume_fall_restored",resumeFallRestored);j.addProperty("resume_fall_distance_max",resumeFallDistanceMax);j.addProperty("resume_fall_landed",resumeFallLanded);j.addProperty("resume_fall_landing_health",resumeFallLandingHealth);j.addProperty("resume_fall_landing_age",resumeFallLandingAge);}
         j.addProperty("client_queries",Math.max(clientQueries.get(),GroundCollision.queries(false)));j.addProperty("server_queries",Math.max(serverQueries.get(),GroundCollision.queries(true)));j.addProperty("pose_writes",files.writes());j.addProperty("server_observations",sequence);
@@ -341,7 +354,7 @@ public final class GameplayMovement {
         if(client.player!=null&&client.player==clientPlayer)j.add("client_position",positionJson(motion(client.player)));
         var observed=observation.get();if(observed!=null)j.add("server_position",positionJson(observed.motion()));
         var checkpoint=binding.resume();j.addProperty("resume_checkpoint_present",checkpoint!=null);
-        if(checkpoint!=null){var p=new JsonObject();p.addProperty("x",checkpoint.x());p.addProperty("y",checkpoint.y());p.addProperty("z",checkpoint.z());p.addProperty("flying",checkpoint.flying());p.addProperty("falling",checkpoint.falling());p.addProperty("fall_distance",checkpoint.fallDistance());j.add("resume_checkpoint",p);}
+        if(checkpoint!=null){var p=new JsonObject();p.addProperty("x",checkpoint.x());p.addProperty("y",checkpoint.y());p.addProperty("z",checkpoint.z());p.addProperty("flying",checkpoint.flying());p.addProperty("falling",checkpoint.falling());p.addProperty("gliding",checkpoint.gliding());p.addProperty("fall_distance",checkpoint.fallDistance());j.add("resume_checkpoint",p);}
         j.addProperty("controls_released",!controlsOwned);j.addProperty("client_collision_released",clientReleased);j.addProperty("server_collision_released",serverReleased.get());j.addProperty("shutdown_prepared",shutdownPrepared());j.addProperty("cleanup_complete",cleanupComplete());
         j.addProperty("failure",failure.get()!=null?failure.get():files.failure());j.addProperty("blocks_written",0);
         if(surface instanceof GameplayTerrain terrain){j.addProperty("terrain_generation",terrain.generation());j.addProperty("terrain_tiles",terrain.tileCount());j.addProperty("terrain_digest",terrain.digest());j.addProperty("terrain_client_generation",terrain.generation());j.addProperty("terrain_server_generation",((GameplayTerrain)serverSurface).generation());j.addProperty("terrain_admissions",admissions);j.addProperty("terrain_failure",growth.failure());j.addProperty("terrain_transition",admission!=null);}

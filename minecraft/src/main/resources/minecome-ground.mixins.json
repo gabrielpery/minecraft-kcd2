@@ -3,6 +3,6 @@
   "package": "dev.minecome.terrain.mixin",
   "compatibilityLevel": "JAVA_21",
   "mixins": ["GroundCollisionMixin", "GroundItemCollisionMixin", "GroundProjectileCollisionMixin", "GroundTntMixin", "GroundTntBlockMixin", "GroundExplosionMixin", "TntBlastInvoker"],
-  "client": ["GroundCorrectionMixin"],
+  "client": ["GroundCorrectionMixin", "GameplayGlideTravelMixin"],
   "injectors": { "defaultRequire": 1 }
 }

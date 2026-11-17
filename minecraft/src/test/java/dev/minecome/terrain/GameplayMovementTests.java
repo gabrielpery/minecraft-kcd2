@@ -10,6 +10,7 @@ public final class GameplayMovementTests {
     private static int checks;
     private static void check(boolean ok,String why){checks++;if(!ok)throw new AssertionError(why);}
     private static void reject(Action a,String why)throws Exception{try{a.run();throw new AssertionError(why);}catch(java.io.IOException expected){checks++;}}
+    private static void invalid(Action a,String why)throws Exception{try{a.run();throw new AssertionError(why);}catch(IllegalArgumentException expected){checks++;}}
     private interface Action{void run()throws Exception;}
     public static void main(String[] args)throws Exception{
         // Deterministic interleaving: the server publishes after the caller's
@@ -60,6 +61,12 @@ public final class GameplayMovementTests {
         aerial.checkpoint(new GameplayTerrainBinding.Position(.5,67,-.25,40,2,false,true,1.25f));
         var resumedFall=GameplayTerrainBinding.open(world,patchFile,true,true,false,true);check(resumedFall.resume().falling()&&!resumedFall.resume().flying()&&resumedFall.resume().fallDistance()==1.25f,"midfall save replaces stale flying tag and retains existing fall distance");
         reject(()->GameplayTerrainBinding.open(world,patchFile,true,true,false),"walking profile cannot load a falling checkpoint");
+        aerial.checkpoint(new GameplayTerrainBinding.Position(.5,68,-.25,40,2,false,false,0,true));
+        var resumedGlide=GameplayTerrainBinding.open(world,patchFile,true,true,false,true);
+        check(resumedGlide.resume().gliding()&&!resumedGlide.resume().flying()&&!resumedGlide.resume().falling(),"glide checkpoint has distinct vanilla state");
+        reject(()->GameplayTerrainBinding.open(world,patchFile,true,true,false),"walking profile cannot load gliding checkpoint");
+        invalid(()->new GameplayTerrainBinding.Position(.5,68,-.25,40,2,true,false,0,true),"gliding and Creative flight conflict");
+        invalid(()->new GameplayTerrainBinding.Position(.5,68,-.25,40,2,false,true,1,true),"gliding and falling conflict");
         aerial.checkpoint(new GameplayTerrainBinding.Position(.5,64,-.25,40,2));check(!GameplayTerrainBinding.open(world,patchFile,true).resume().flying(),"landed checkpoint remains compatible with previous walking profile");
         var changed=patch();changed.getAsJsonObject("center").addProperty("z",51);for(var point:changed.getAsJsonArray("points"))point.getAsJsonObject().addProperty("z",51);
         Path other=root.resolve("changed.json");Files.writeString(other,changed.toString());reject(()->GameplayTerrainBinding.open(world,other,true),"new capture cannot silently move established origin");

@@ -1,7 +1,7 @@
 # Persistent guest foundation. Actual Minecraft window; no KCD launch or input capture.
 [CmdletBinding()]
 param([string]$JavaHome='C:/Program Files/Java/jdk-24',[string]$InstanceDirectory,
- [string]$EvidenceDirectory,[string]$ReceiverPath,[ValidateSet('','create','resume','walking','walking-resume','blocks','blocks-resume','blocks-survival','food','food-resume','drops','drops-resume','crafting','crafting-resume','tnt','tnt-resume','furnace','furnace-resume','storage','storage-resume','respawn','respawn-resume','combat','terrain','terrain-resume','chat','chat-resume','flight','flight-resume','flight-fall','flight-fall-resume','hands','world-blocks','world-blocks-resume','shapes','shapes-resume','depth','connected','connected-resume','shape-walking','player')][string]$FixturePhase='',
+ [string]$EvidenceDirectory,[string]$ReceiverPath,[ValidateSet('','create','resume','walking','walking-resume','blocks','blocks-resume','blocks-survival','food','food-resume','drops','drops-resume','crafting','crafting-resume','tnt','tnt-resume','furnace','furnace-resume','storage','storage-resume','respawn','respawn-resume','combat','terrain','terrain-resume','chat','chat-resume','flight','flight-resume','flight-fall','flight-fall-resume','elytra','elytra-save','elytra-resume','hands','world-blocks','world-blocks-resume','shapes','shapes-resume','depth','connected','connected-resume','shape-walking','player')][string]$FixturePhase='',
  [switch]$Movement,[switch]$Blocks,[switch]$Explore,[switch]$Chat,[switch]$Flight,[switch]$Hands,[switch]$WorldBlocks,[switch]$Combat,[switch]$BowCheck,[switch]$ProjectileCheck,[switch]$CrossbowCheck,[string]$GroundPatchFile,[switch]$PreflightOnly)
 . (Join-Path $PSScriptRoot 'powershell7.ps1')
 if($PSVersionTable.PSVersion.Major -lt 7){
@@ -14,7 +14,7 @@ $root=[IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
 if($Combat -or $FixturePhase -eq 'combat'){$Combat=$true;$WorldBlocks=$true};if($WorldBlocks){$Hands=$true};if($Hands){$Flight=$true};if($Flight){$Chat=$true}
 if($Explore -or $Chat){$Blocks=$true};if($Blocks){$Movement=$true}
 if($CrossbowCheck){$ProjectileCheck=$true};if($ProjectileCheck){$BowCheck=$true};if($BowCheck -and $FixturePhase -cne 'combat'){throw 'BowCheck requires the isolated standalone combat fixture.'}
-if($FixturePhase.StartsWith('flight') -and -not $Flight){throw 'Flight fixture requires -Flight.'}
+if(($FixturePhase.StartsWith('flight') -or $FixturePhase.StartsWith('elytra')) -and -not $Flight){throw 'Flight fixture requires -Flight.'}
 if(($FixturePhase.StartsWith('tnt') -or $FixturePhase.StartsWith('respawn') -or $FixturePhase.StartsWith('furnace') -or $FixturePhase.StartsWith('storage') -or $FixturePhase.StartsWith('crafting') -or $FixturePhase.StartsWith('drops') -or $FixturePhase.StartsWith('world-blocks') -or $FixturePhase.StartsWith('shapes') -or $FixturePhase -eq 'depth' -or $FixturePhase.StartsWith('connected') -or $FixturePhase -eq 'shape-walking' -or $FixturePhase -eq 'player') -and -not $WorldBlocks){throw 'World block fixtures require -WorldBlocks.'};if($FixturePhase -eq 'hands' -and -not $Hands){throw 'Hands fixture requires -Hands.'}
 if($FixturePhase.StartsWith('terrain') -and -not $Explore){throw 'Terrain fixture requires -Explore.'}
 if($FixturePhase.StartsWith('chat') -and -not $Chat){throw 'Chat fixture requires -Chat.'}

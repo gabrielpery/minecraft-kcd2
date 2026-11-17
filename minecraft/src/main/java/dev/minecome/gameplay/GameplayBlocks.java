@@ -64,6 +64,7 @@ public final class GameplayBlocks {
     private final GameplayCameraCollision cameraCollision=new GameplayCameraCollision();
     private final GameplayFoodUse foodUse=new GameplayFoodUse();
     private final GameplayRangedUse rangedUse=new GameplayRangedUse();
+    private final GameplayRocketUse rocketUse=new GameplayRocketUse();
     private final GameplayTnt tnt;
     private final AtomicReference<Intent> intent=new AtomicReference<>();private final AtomicReference<Observation> observation=new AtomicReference<>();
     private final AtomicReference<String> failure=new AtomicReference<>();
@@ -124,7 +125,7 @@ public final class GameplayBlocks {
                 client.player==null||!client.player.isAlive()||client.world!=clientWorld||client.getServer()!=server||!client.isIntegratedServerRunning()||
                 oldPlayer.getWorld()!=clientWorld||client.player.getWorld()!=clientWorld||!oldPlayer.getUuid().equals(playerId)||!client.player.getUuid().equals(playerId)||
                 serverRespawns!=clientRespawns+1)throw new IllegalStateException("Block client respawn ownership changed");
-        foodUse.suspend(client);rangedUse.suspend(client);actions=false;left=false;right=false;aim=null;pending=null;intent.set(null);dispatched=false;breakCancelled=false;
+        foodUse.suspend(client);rangedUse.suspend(client);rocketUse.suspend();actions=false;left=false;right=false;aim=null;pending=null;intent.set(null);dispatched=false;breakCancelled=false;
         ready=false;clientPlayer=client.player;clientRespawns=serverRespawns;lastResult="respawn_rebound";
     }
     public Set<BlockPos> ownedBlocks(){var result=new HashSet<BlockPos>();for(var c:owned.get().keySet())result.add(pos(c));return Set.copyOf(result);}
@@ -199,15 +200,16 @@ public final class GameplayBlocks {
         // Vanilla block use precedes food use unless sneaking with a held item.
         // A valid workstation hit opens its actual handler even while holding food.
         boolean workstationPress=down&&event.code()==1&&actions&&pending==null&&!left&&workstationTarget(client);
+        if(!workstationPress&&rocketUse.event(client,event,actions&&pending==null&&!left&&foodAuthority(client))){right=false;return;}
         if(!workstationPress&&foodUse.event(client,event,actions&&pending==null&&!left&&foodAuthority(client))){right=false;return;}
         if(!workstationPress&&rangedUse.event(client,event,actions&&pending==null&&!left&&foodAuthority(client))){right=false;return;}
-        if(workstationPress){foodUse.suspend(client);rangedUse.suspend(client);}
-        if(down&&event.code()==0){foodUse.suspend(client);rangedUse.suspend(client);}
+        if(workstationPress){foodUse.suspend(client);rangedUse.suspend(client);rocketUse.suspend();}
+        if(down&&event.code()==0){foodUse.suspend(client);rangedUse.suspend(client);rocketUse.suspend();}
         if(event.code()==0)left=down;else right=down;
         if(down&&actions&&pending==null)queue(client,event.code());
         if(!down&&event.code()==0&&dispatched&&pending!=null&&pending.action()==0&&!pending.creative()&&client.interactionManager!=null){client.interactionManager.cancelBlockBreaking();breakCancelled=true;}
     }
-    public void suspend(MinecraftClient client){actions=false;left=false;right=false;foodUse.suspend(client);rangedUse.suspend(client);if(client.interactionManager!=null&&pending!=null&&pending.action()==0&&dispatched&&!breakCancelled){client.interactionManager.cancelBlockBreaking();breakCancelled=true;}}
+    public void suspend(MinecraftClient client){actions=false;left=false;right=false;foodUse.suspend(client);rangedUse.suspend(client);rocketUse.suspend();if(client.interactionManager!=null&&pending!=null&&pending.action()==0&&dispatched&&!breakCancelled){client.interactionManager.cancelBlockBreaking();breakCancelled=true;}}
     /** Recheck input/owner authority before vanilla has an opportunity to continue a held meal. */
     public void beforeTick(MinecraftClient client,boolean enabled){boolean allowed=enabled&&actions&&pending==null&&foodAuthority(client);foodUse.tick(client,allowed);rangedUse.tick(client,allowed);}
     public boolean interceptVanillaItemStop(MinecraftClient client,boolean authorityFresh){boolean allowed=authorityFresh&&actions&&pending==null&&foodAuthority(client);return rangedUse.interceptVanillaStop(client,allowed)||foodUse.preserve(client,allowed);}
@@ -385,7 +387,7 @@ public final class GameplayBlocks {
             if(playerId!=null){var player=source.getPlayerManager().getPlayer(playerId);if(player==null||player.getWorld()!=world)throw new IllegalStateException("Block player changed");
                 if(serverPlayer==null)serverPlayer=player;if(serverPlayer!=player)throw new IllegalStateException("Block player identity changed");
                 foodUse.observe(player);
-                rangedUse.observe(player);
+                rangedUse.observe(player);rocketUse.observe(player);
                 if(request!=null){var plan=request.plan();planId=plan.id();targetState=state(world,plan.selection().target());
                     if(request.dispatchedAt()==0){try{var selected=select(world,player,plan.aim(),plan.action(),Set.copyOf(serverCells.keySet()));
                         admitted=same(selected,plan.selection())&&sameStack(player,plan)&&(plan.action()!=1||placementState(player,selected).equals(plan.expectedState()))&&
@@ -464,7 +466,7 @@ public final class GameplayBlocks {
         j.addProperty("tnt_ignitions",tntIgnitions);j.add("tnt",tnt.evidence());
         j.addProperty("server_respawns",serverRespawns);j.addProperty("client_respawns",clientRespawns);
         j.add("food_use",foodUse.evidence(client));
-        j.add("ranged_use",rangedUse.evidence());
+        j.add("ranged_use",rangedUse.evidence());j.add("rocket_use",rocketUse.evidence());
         j.addProperty("world_blocks",worldBlocks);
         j.addProperty("pending",pending!=null);j.addProperty("snapshot_writes",files.writes());j.addProperty("persisted_revision",files.persistedRevision());j.addProperty("cleanup_complete",cleanupComplete());j.addProperty("controls_released",!left&&!right);
         j.addProperty("minecraft_blocks_removed_on_stop",0);j.addProperty("failure",failure.get()!=null?failure.get():files.failure());return j;}

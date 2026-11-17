@@ -25,7 +25,7 @@ The [product target](docs/PRODUCT.md) includes Minecraft's Steve, hands and equi
 Survival health/hunger and combat with KCD2 NPCs, general building/mining, crafting,
 commands such as `/gamemode survival`, Creative flight and Elytra flight. These are
 required goals. Several core systems now work in the prototype; NPC combat,
-Elytra, complete host collision and the wider Minecraft systems remain unfinished.
+Complete host collision and the wider Minecraft systems remain unfinished.
 
 The experimental [`-Combat` profile](docs/GAMEPLAY_SESSION.md#npc-melee-bridge)
 adds a primary-melee bridge: Minecraft calculates weapon damage, cooldown and
@@ -117,8 +117,15 @@ and chat suppression, landing and airborne save/reopen. An automated live KCD2
 check also passes native takeoff, ascent, hovering, inventory and landing with the
 HUD visible. Flight currently uses captured terrain and owned stone collision,
 with an 18m height ceiling above the original capture origin. Complete host
-collision, cross-game combat and Elytra remain unfinished. The WorldBlocks
+collision remains incomplete; Elytra support is described below. The WorldBlocks
 profile adds third-person Steve as described below.
+[Elytra flight](docs/GAMEPLAY_SESSION.md#elytra-flight) now uses vanilla glide,
+mouse steering and right-click rocket boosting in the same Play profile. Automatic
+Minecraft checks cover flight, inventory hold, landing/damage and saved glide
+restoration. A coupled KCD2 check also passes gliding, the lowered camera, inventory
+hold/resume, continued HUD rendering and a saved glide. Captured-terrain and
+height limits still apply; native boosted landing and third-person glide visuals
+remain separate acceptance.
 Bounded labs remain available.
 
 Survival food is now connected to the same gameplay controls: select food and
@@ -318,7 +325,8 @@ deviation during landing; it is not counted as a passing walking check.
 |---|---|
 | Minecraft stone in KCD2 | Actual Minecraft-derived stone appears and disappears in the official KCD2 development world after vanilla placement/breaking. |
 | Hotbar and Creative inventory | Minecraft's real UI is composited inside KCD2. Physical slot selection, inventory opening/closing, clicks, dragging and scrolling have passed live tests. |
-| Creative flight | Native KCD2 takeoff, ascent, hover, inventory and landing pass an automated live check with the HUD visible. Actual-Minecraft fixtures also verify descent, horizontal/sprint flight and airborne save/reopen. Limited to captured terrain/owned stone collision and an 18m ceiling; no Elytra yet. |
+| Creative flight | Native KCD2 takeoff, ascent, hover, inventory and landing pass an automated live check with the HUD visible. Actual-Minecraft fixtures also verify descent, horizontal/sprint flight and airborne save/reopen. Limited to captured terrain/owned stone collision and an 18m ceiling. See the separate Elytra path below. |
+| Elytra | Vanilla gliding, steering, rocket boosting, inventory hold, landing/damage and mid-glide save/reopen pass actual-Minecraft checks. Coupled KCD2 glide, camera, HUD and cleanup pass automatically. Flight remains bounded by captured collision and the existing height ceiling. |
 | First-person hands and held items | The `-Hands` profile renders the actual vanilla arm, selected item and swing animation in the transparent stream. Seven actual-Minecraft image checks pass. An automated live KCD2 check passes arm/held stone and chat/inventory hiding/restoration. |
 | Third-person Steve | WorldBlocks connects F5 to KCD2's acknowledged camera. Live checks pass Steve, back/front mouse look, inventory suppression, placement/mining and first-person return. Automated guest key events also drive six walking strides in each native view. Camera collision passes against controlled Minecraft walls; physical third-person walking keys and long sessions remain separate acceptance. |
 | Additional world blocks | `-WorldBlocks` renders actual opaque Minecraft block models. A two-launch Minecraft fixture passes dirt/planks/bricks/oriented-log placement, model pixels, inventory, saved-state restoration and mining. Automated live KCD2 checks pass dirt/bricks placement, reopening, inventory and aimed removal; no host depth occlusion or unrestricted block support. |

@@ -1,5 +1,51 @@
 # MineCome progress — 2026-11-17
 
+## Elytra and rocket flight
+
+**Implemented, compiled and automatically verified in both games.** Normal Play/WorldBlocks
+now forwards the vanilla Elytra jump edge and mouse view, supports immediate
+main-hand rocket boosting and follows the actual gliding eye height. Vanilla
+owns physics, consumption, durability, damage and landing. Inventory/chat or lost
+input/view authority hold the exact client player's travel; known terrain and
+owned blocks still use vanilla swept collision. Unknown coverage and the existing
+height ceiling remain bounded. No full native scenery collision claim is made.
+
+A separate gliding checkpoint preserves real `FallFlying` across save/reopen.
+Creative and ordinary falling checkpoints remain compatible. See
+[implementation/source notes](research/ELYTRA.md) and
+[controls](GAMEPLAY_SESSION.md#elytra-flight).
+
+Automatic evidence under `runtime/evidence/`:
+
+- `gameplay-elytra-20261117-185543-0fee00c772e74951b69dbee40f81c959/verification.json`:
+  actual vanilla equip, glide, steer, one consumed rocket/boost, inventory hold,
+  natural landing with damage, walking, and negative grounded/no-Elytra cases.
+- `gameplay-elytra-20261117-185901-b0b06a2f281b4a9081df43a344b678e7/reverification.json`:
+  both actual mid-glide save/reopen phases pass. The first wrapper incorrectly
+  compared final landing health to pre-flight health; read-only reverification
+  correctly checks health at reopen and preserves the original failed receipt.
+- `gameplay-flight-20261117-185650-13d46d801bd44088afd981f62a21731b/verification.json`:
+  existing Creative flight and airborne reload regression passed.
+- `elytra-native-eye-20261117-185657-cbdcba0f17ba4e3b90faf7912350a2c1/verification.json`:
+  actual KCD2 stationary glide camera at feet+0.4 and normal standing restoration,
+  ten receipts each, zero position writes, complete camera/body/timer cleanup.
+
+Focused checks: 418 block, 46 movement/checkpoint, 17 glide safety, 47 native Lua,
+48 host transport, 13 respawn and 17 console-batch checks pass. Build/assemble pass.
+Coupled live acceptance also passes:
+`runtime/evidence/gameplay-kcd-20261117-190941-e678149fcb784524a2755476eb85fd36/native-elytra-verification.json`.
+Actual Minecraft glided 3.56 metres with KCD2 following the 0.4-metre eye, held
+inventory, resumed flight and saved a gliding checkpoint. There were 150 continued
+native composition/reprojection advances; camera/body cleanup and guest exit were
+normal. The fixture handles additive-terrain control handoffs using balanced,
+server-timed jump holds. It does not weaken movement authority guards.
+
+Physical mouse/key feel, third-person Elytra appearance and rocket effects in a
+live native frame remain unverified; native rocket flight/landing is not claimed
+by the coupled check. Vanilla boost and landing/damage are verified separately in
+actual Minecraft. Both test games are now closed normally. No renderer reinstall
+or manual retest is required to continue implementation.
+
 ## Persistent storage barrels
 
 **Implemented and automatically verified in both games.** WorldBlocks/Play now

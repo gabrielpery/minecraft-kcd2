@@ -35,7 +35,10 @@ end
 -- supplies independent mouse look. Preserve the bounded local eye offset
 -- observed at Begin, rotated by live yaw and translated by actual native feet;
 -- never use a guest-requested position or the overridden camera as the eye.
+local function posed_eye(p)return p and p.eye_height and math.abs(p.eye_height-1.62)>.0001 end
+local function same_eye(a,b)return math.abs((a or 1.62)-(b or 1.62))<=.0001 end
 local function camera_eye(s,p)
+ if p and p.allow_perspective and posed_eye(p) then return plus(s.position,{x=0,y=0,z=p.eye_height}) end
  if not p or not p.allow_perspective or not (p.camera_owned or p.requested_mode~=0) then return copy(s.head_position) end
  local forward,right=horizontal_basis(s.head_direction);local offset=p.head_offset
  if not forward or not vector(offset) or not vector(s.position) then return nil end
@@ -291,6 +294,7 @@ end
 local function admit_view(p,s)
  if not p.allow_perspective then return s end
  if not p.camera_owned then
+  if posed_eye(p) then return nil end
   s.perspective=0;s.eye=copy(s.camera);s.forward=unit(s.forward);s.aim_direction=copy(s.forward);s.camera_forward=copy(s.forward);s.camera_up=copy(s.up);return s
  end
  if p.camera_releasing then return nil end
@@ -301,7 +305,7 @@ local function admit_view(p,s)
  -- never combine its camera with the newest (different) head/eye/mode.
  local history=p.camera_requests or {}
  for i=#history,1,-1 do local candidate=history[i]
-  if now>=candidate.at and now-candidate.at<=.25 and distance(s.camera,candidate.camera)<=.03 and distance(actual,candidate.direction)<=.01 then r=candidate;break end
+  if same_eye(candidate.eye_height,p.eye_height) and now>=candidate.at and now-candidate.at<=.25 and distance(s.camera,candidate.camera)<=.03 and distance(actual,candidate.direction)<=.01 then r=candidate;break end
  end
  if not r then return nil end
  s.camera_forward=unit(s.forward);s.camera_up=copy(s.up);s.eye=copy(r.eye);s.aim_direction=copy(s.camera_forward);s.perspective=r.mode
@@ -315,7 +319,7 @@ local function sample_view(p,s,request)
 end
 local function update_camera(p,s,t)
  if not p.allow_perspective then return true end
- if p.requested_mode==0 or p.camera_releasing then
+ if (p.requested_mode==0 and not posed_eye(p)) or p.camera_releasing then
   if not restore_body(p) then return false,'body_restore_failed' end
   if not p.camera_owned then return true end
   if p.camera_releasing and restored(s,p) then p.camera_owned=false;p.camera_releasing=nil;p.camera_requests=nil;p.camera_restored=true;return true end
@@ -332,12 +336,13 @@ local function update_camera(p,s,t)
  local eye=camera_eye(s,p)
  if not forward or not up or not eye then return false,'head_camera_unavailable' end
  if not p.body_hidden and not draw_body(p,0) then return false,'body_hide_failed' end
- local offset=scale(forward,p.requested_mode==1 and -1 or 1);local owned_reach=owned_camera_distance(p,eye,offset)
- local reach=math.min(clipped_distance(s,eye,offset,up),owned_reach);p.camera_owned_distance=owned_reach
+ local offset=scale(forward,p.requested_mode==1 and -1 or 1)
+ local owned_reach=p.requested_mode==0 and 0 or owned_camera_distance(p,eye,offset)
+ local reach=p.requested_mode==0 and 0 or math.min(clipped_distance(s,eye,offset,up),owned_reach);p.camera_owned_distance=owned_reach
  local target=plus(eye,scale(offset,reach));local direction=scale(forward,p.requested_mode==2 and -1 or 1)
  local history=p.camera_requests or {};p.camera_requests=history
  while #history>0 and (t-history[1].at>.25 or #history>=16) do table.remove(history,1) end
- history[#history+1]={camera=target,direction=direction,eye=copy(eye),forward=forward,up=up,mode=p.requested_mode,at=t}
+ history[#history+1]={camera=target,direction=direction,eye=copy(eye),eye_height=p.eye_height,forward=forward,up=up,mode=p.requested_mode,at=t}
  p.camera_attempted=true;p.camera_owned=true;p.camera_restored=false;p.unacked_since=p.unacked_since or t
  if t-p.unacked_since>.25 then return false,'camera_readback_expired' end
  local ok,v=pcall(p.set_camera,copy(target),{direction.x,direction.y,direction.z})
@@ -373,7 +378,7 @@ function MineCome.GameplayMovementBegin(run,duration_ms,minx,maxx,miny,maxy,minz
  -- Vanilla 1.21.1 PlayerEntity.getOffGroundSpeed doubles default .05 flight
  -- acceleration when sprinting; LivingEntity.travel damps XZ by .91. Its
  -- asymptote is below24m/s. Walking retains its existing12m/s admission.
- p.max_speed=flight==true and 24 or 12
+ p.flight=flight==true;p.max_speed=p.flight and 24 or 12
  if not inside(p,s.position,2) then return false,'host_outside_capture' end
  state.active=p
  if not arm(p,'hard','MineCome_GameplayMovementExpiry',duration_ms) or not arm(p,'tick','MineCome_GameplayMovementTick',1) then finish(p,'initial_timer_failed');return false,'initial_timer_failed' end
@@ -381,11 +386,15 @@ function MineCome.GameplayMovementBegin(run,duration_ms,minx,maxx,miny,maxy,minz
  if not emit(p,'begin','ready',s) then finish(p,'log_failed');return false,'log_failed' end
  return true,'ready'
 end
-function MineCome.GameplayMovementPose(run,seq,source_ms,x,y,z,requested_mode,camera_generation,lifecycle,epoch,from_x,from_y,from_z)
+function MineCome.GameplayMovementPose(run,seq,source_ms,x,y,z,requested_mode,camera_generation,lifecycle,epoch,from_x,from_y,from_z,eye_height,gliding)
  local p=state.active;if not token(run) or not p or p.run~=run then return false,'inactive' end
  local target={x=x,y=y,z=z};local t=clock();local reason
  local life=p.lifecycle;local from={x=from_x,y=from_y,z=from_z};local relocate=false;local new_death=false
  if p.stopping then return false,'stopping' end
+ if eye_height~=nil and (not finite(eye_height) or eye_height<.35 or eye_height>1.7) then reason='eye_height_invalid'
+ elseif gliding~=nil and type(gliding)~='boolean' then reason='gliding_mode_invalid'
+ elseif gliding==true and (not p.flight or not finite(eye_height) or math.abs(eye_height-.4)>.0001) then reason='gliding_profile_invalid' end
+ if reason then finish(p,reason);return false,reason end
  -- An explicit dead epoch must be applied/acknowledged before its single
  -- relocation. Ordinary poses retain their original speed/lease guards.
  if lifecycle~=nil then
@@ -408,7 +417,9 @@ function MineCome.GameplayMovementPose(run,seq,source_ms,x,y,z,requested_mode,ca
  elseif not finite(source_ms) or source_ms<0 or source_ms>86400000 or (p.latest and source_ms<=p.latest.source_ms) then reason='source_time_invalid'
  elseif not inside(p,target,0) then reason='target_outside_capture'
  elseif not t or t<p.last_clock or t>=p.deadline or (p.latest and t-p.latest.received>LEASE) then reason='source_lease_expired'
- elseif not relocate and p.latest and distance(target,p.latest.target)>0.5+p.max_speed*(source_ms-p.latest.source_ms)/1000 then reason='source_velocity_invalid' end
+ -- The first grounded publication can include the final gliding step before
+ -- vanilla cleared its flag. Only that adjacent transition retains80m/s.
+ elseif not relocate and p.latest and distance(target,p.latest.target)>0.5+((gliding==true or p.latest.gliding) and 80 or p.max_speed)*(source_ms-p.latest.source_ms)/1000 then reason='source_velocity_invalid' end
  if reason then finish(p,reason);return false,reason end
  local continuing=lifecycle~=nil and life~=nil and life.phase==lifecycle and life.epoch==epoch
  local first=p.sequence==0 or relocate or (continuing and p.latest and p.latest.first)
@@ -418,7 +429,7 @@ function MineCome.GameplayMovementPose(run,seq,source_ms,x,y,z,requested_mode,ca
  -- Fresh frozen poses renew only their lease/sequence. Restarting this segment
  -- on every50ms heartbeat would prevent its100ms interpolation completing.
  if not continuing then p.segment={from=copy(p.last_owned),started=t} end
- p.latest={seq=seq,source_ms=source_ms,target=copy(target),received=t,first=first,camera_generation=camera_generation};p.sequence=seq
+ p.latest={seq=seq,source_ms=source_ms,target=copy(target),received=t,first=first,camera_generation=camera_generation,gliding=gliding==true};p.sequence=seq;p.eye_height=eye_height
  if p.allow_perspective then p.requested_mode=requested_mode end
  return true,'queued'
 end

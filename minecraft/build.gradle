@@ -45,6 +45,8 @@ loom {
                     vmArgs '-Dminecome.gameplayTntCombatCheck=true'
                 if (project.hasProperty('minecomeGameplayFurnaceCheck'))
                     vmArgs '-Dminecome.gameplayFurnaceCheck=true'
+                if (project.hasProperty('minecomeGameplayElytraCheck'))
+                    vmArgs '-Dminecome.gameplayElytraCheck=true'
                 if (project.hasProperty('minecomeGameplayStorageCheck'))
                     vmArgs '-Dminecome.gameplayStorageCheck=true'
                 if (project.hasProperty('minecomeGameplayCraftingCheck'))
@@ -463,3 +465,10 @@ tasks.register('gameplayCombatTest', JavaExec) {
     mainClass = 'dev.minecome.gameplay.GameplayCombatProtocolTests'
 }
 tasks.named('check') { dependsOn 'gameplayCombatTest' }
+
+tasks.register('gameplayGlideSafetyTest', JavaExec) {
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'dev.minecome.terrain.GameplayGlideSafetyTests'
+}
+check.dependsOn gameplayGlideSafetyTest

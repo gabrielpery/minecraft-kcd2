@@ -1,7 +1,7 @@
 # Sustained HUD/inventory, with an explicit Minecraft walking profile.
 [CmdletBinding()]
 param([string]$BundleDirectory,[string]$InstanceDirectory,[string]$JavaHome='C:/Program Files/Java/jdk-24',
- [ValidateRange(0,300)][int]$SmokeSeconds=0,[switch]$PreflightOnly,[switch]$HideNativeVitals,[switch]$Movement,[switch]$Blocks,[switch]$Explore,[switch]$Chat,[switch]$Flight,[switch]$Hands,[switch]$WorldBlocks,[switch]$Combat,[switch]$CombatCheck,[switch]$IncomingCombatCheck,[ValidateSet('unarmed','sword','bow','crossbow')][string]$IncomingWeapon='unarmed',[switch]$ProjectileCheck,[switch]$CrossbowCheck,[string]$CombatFixtureRun,[string]$GroundPatchFile,[switch]$ThirdPersonWalkingCheck,[switch]$DropsCheck,[switch]$CraftingCheck,[switch]$FurnaceCheck,[switch]$StorageCheck,[switch]$TntCheck,[switch]$TntCombatCheck,[switch]$RespawnCheck,[ValidateRange(0,1)][int]$InitialTerrainRadius=0)
+ [ValidateRange(0,300)][int]$SmokeSeconds=0,[switch]$PreflightOnly,[switch]$HideNativeVitals,[switch]$Movement,[switch]$Blocks,[switch]$Explore,[switch]$Chat,[switch]$Flight,[switch]$Hands,[switch]$WorldBlocks,[switch]$Combat,[switch]$CombatCheck,[switch]$IncomingCombatCheck,[ValidateSet('unarmed','sword','bow','crossbow')][string]$IncomingWeapon='unarmed',[switch]$ProjectileCheck,[switch]$CrossbowCheck,[string]$CombatFixtureRun,[string]$GroundPatchFile,[switch]$ThirdPersonWalkingCheck,[switch]$DropsCheck,[switch]$CraftingCheck,[switch]$FurnaceCheck,[switch]$StorageCheck,[switch]$ElytraCheck,[switch]$TntCheck,[switch]$TntCombatCheck,[switch]$RespawnCheck,[ValidateRange(0,1)][int]$InitialTerrainRadius=0)
 . (Join-Path $PSScriptRoot 'powershell7.ps1')
 if($PSVersionTable.PSVersion.Major -lt 7){
  $code=Invoke-MineComePowerShell7 -ScriptPath $PSCommandPath -BoundParameters $PSBoundParameters
@@ -29,6 +29,7 @@ if($CombatCheck -and ($SmokeSeconds -ne 0 -or $ThirdPersonWalkingCheck -or $Drop
 if($RespawnCheck -and (-not $WorldBlocks -or $SmokeSeconds -ne 0 -or $ThirdPersonWalkingCheck -or $DropsCheck -or $CraftingCheck -or $FurnaceCheck)){throw 'RespawnCheck requires WorldBlocks and owns its bounded duration; omit other checks/SmokeSeconds.'}
 if($TntCheck -and (-not $WorldBlocks -or $SmokeSeconds -ne 0 -or $ThirdPersonWalkingCheck -or $DropsCheck -or $CraftingCheck -or $FurnaceCheck -or $RespawnCheck -or $CombatCheck)){throw 'TntCheck requires WorldBlocks and owns its bounded duration; omit other checks/SmokeSeconds.'}
 if($FurnaceCheck -and (-not $WorldBlocks -or $SmokeSeconds -ne 0 -or $ThirdPersonWalkingCheck -or $DropsCheck -or $CraftingCheck)){throw "FurnaceCheck requires WorldBlocks and owns its bounded duration; omit other checks/SmokeSeconds."}
+if($ElytraCheck -and (-not $WorldBlocks -or $SmokeSeconds -ne 0 -or $ThirdPersonWalkingCheck -or $DropsCheck -or $CraftingCheck -or $FurnaceCheck -or $StorageCheck -or $TntCheck -or $RespawnCheck -or $CombatCheck -or $IncomingCombatCheck)){throw "ElytraCheck requires WorldBlocks and owns its duration; omit other checks/SmokeSeconds."}
 if($StorageCheck -and (-not $WorldBlocks -or $SmokeSeconds -ne 0 -or $ThirdPersonWalkingCheck -or $DropsCheck -or $CraftingCheck -or $FurnaceCheck -or $TntCheck -or $RespawnCheck -or $CombatCheck -or $IncomingCombatCheck)){throw "StorageCheck requires WorldBlocks and owns its bounded duration; omit other checks/SmokeSeconds."}
 if($CraftingCheck -and (-not $WorldBlocks -or $SmokeSeconds -ne 0 -or $ThirdPersonWalkingCheck -or $DropsCheck)){throw "CraftingCheck requires WorldBlocks and owns its bounded duration; omit other checks/SmokeSeconds."}
 if($DropsCheck -and (-not $WorldBlocks -or $SmokeSeconds -ne 0 -or $ThirdPersonWalkingCheck)){throw "DropsCheck requires WorldBlocks and owns its bounded duration; omit other checks/SmokeSeconds."}
@@ -112,6 +113,7 @@ try{
  if($TntCombatCheck){$arguments+='-TntCombatCheck'}
  if($FurnaceCheck){$arguments+='-FurnaceCheck'}
  if($StorageCheck){$arguments+='-StorageCheck'}
+ if($ElytraCheck){$arguments+='-ElytraCheck'}
  if($CraftingCheck){$arguments+='-CraftingCheck'}
  if($DropsCheck){$arguments+='-DropsCheck'}
  if($ThirdPersonWalkingCheck){$arguments+='-ThirdPersonWalkingCheck'}
@@ -180,12 +182,14 @@ try{
  if($RespawnCheck){Write-Output 'AUTOMATED_RESPAWN_CHECK: keep KCD2 focused; scripted guest walking, death and a real Respawn-button click verify native relocation and continued play. Physical input is not claimed.'}
  if($TntCheck){Write-Output 'AUTOMATED_TNT_CHECK: actual vanilla priming, chain explosions, owned block destruction and saved cleanup; no physical input or native geometry destruction claim.'}
  if($FurnaceCheck){Write-Output 'AUTOMATED_FURNACE_CHECK: keep KCD2 focused; actual guest UI clicks load fuel/input, smelt and collect output, then save. Physical input is not claimed.'}
+ if($ElytraCheck){Write-Output 'AUTOMATED_ELYTRA_CHECK: actual guest glide and inventory hold; no physical input is claimed.'}
  if($StorageCheck){Write-Output 'AUTOMATED_STORAGE_CHECK: keep KCD2 focused; actual guest UI clicks store and retrieve barrel contents, then save. Physical input is not claimed.'}
  if($CraftingCheck){Write-Output 'AUTOMATED_CRAFTING_CHECK: keep KCD2 focused; real guest UI clicks craft ingredients/table/tool, verify unused-input return, then save. Physical input is not claimed.'}
  if($DropsCheck){Write-Output 'AUTOMATED_DROPS_CHECK: keep KCD2 focused and controls released; scripted guest actions mine, render and walk to collect a drop, then save. Physical mouse/keys are not claimed.'}
  if($ThirdPersonWalkingCheck){Write-Output 'AUTOMATED_THIRD_PERSON_WALKING_CHECK: keep KCD2 focused and controls released; the guest will test back/front walking, inventory suppression and first-person return, then save and close. Physical keyboard input is not claimed by this check.'}
  if($Explore){Write-Output 'Terrain grows automatically toward your movement, up to 64 captured tiles. Saved terrain and construction keep their original coordinates.'}
  if($Chat){Write-Output 'T opens Minecraft chat; / opens commands. Type a command and press Enter; Escape cancels. Walking and mining pause while chat is open.'}
+ if($Flight){Write-Output 'Elytra: equip in the chest slot, press Space while falling, steer with the mouse, and right-click a held rocket to boost. Inventory holds a glide; captured collision and height limits apply.'}
  if($Hands){Write-Output $(if($WorldBlocks){'Minecraft hands and Steve use the layered HUD stream. F5 requests first/back/front perspective while inventory and chat are closed; the view changes after native camera acknowledgement.'}else{'Minecraft first-person hands and held items share the HUD stream. Inventory hides them; use WorldBlocks for Steve and F5 perspective controls.'})}
  if($Flight){Write-Output 'Creative flight: /gamemode creative, double-tap Space to toggle; Space rises, Shift descends, Ctrl sprints. Flight stays within captured terrain and its vertical limit; F8 saves airborne position.'}
  Write-Output $(if($WorldBlocks){'Minecraft models render owned solid blocks. Right-click places supported held blocks; left-click mines. E opens inventory; F8 saves. Captured ground occludes blocks. Native scenery depth is used when camera/projection checks match.'}elseif($Blocks){'Focus KCD2 with controls released. Walking, HUD and stone controls activate automatically: right-click places held stone, left-click mines owned stone. E opens inventory; F8 stops and saves. Terrain coverage and owned stone capacity are bounded.'}elseif($Movement){'Focus KCD2 with controls released. Minecraft walking and HUD activate automatically. F8 stops and saves at the last safe position. Walking is limited to the captured terrain; blocks, commands and flight are not connected in this path yet.'}else{'Focus KCD2 with controls released. HUD activates automatically; F8 stops and saves. KCD owns walking; Minecraft commands/flight are not connected yet.'})
@@ -290,6 +294,14 @@ try{
    if($f.$flag -ne $true){throw "Native TNT capability missing: $flag"}
   }
  }
+ if($ElytraCheck){
+  $f=$session.fixture
+  if($f.kind -cne 'minecome_gameplay_elytra_fixture_v1' -or $f.mode -cne 'elytra-native' -or $f.result -cne 'passed' -or $f.failure -or
+   -not $f.actual_minecraft -or $f.standalone_scripted -or $f.native_input_verified -or $f.position_writes_used){throw 'Native Elytra fixture identity/scope differs.'}
+  foreach($flag in @('creative_takeoff_verified','glide_verified','glide_pose_verified','inventory_hold_verified','glide_resumed_verified','gliding_save_verified')){
+   if($f.$flag -ne $true){throw "Native Elytra capability missing: $flag"}
+  }
+ }
  if($StorageCheck){
   $f=$session.fixture
   if($f.kind -cne 'minecome_gameplay_storage_fixture_v1' -or $f.mode -cne 'storage-native' -or $f.result -cne 'passed' -or $f.failure -or
@@ -351,7 +363,7 @@ finally{
  }
  [ordered]@{schema=1;kind='minecome_gameplay_kcd_session_v1';run=$run;result=$(if($passed){'passed'}else{'failed'});failure=$failure;
   target_pid=$context.GamePid;target_start_filetime=$targetStart;instance=$InstanceDirectory;smoke_seconds=$SmokeSeconds;
-  minecraft_movement_connected=[bool]($Movement -and $passed);movement_profile=[bool]$Movement;blocks_profile=[bool]$Blocks;explore_profile=[bool]$Explore;chat_profile=[bool]$Chat;flight_profile=[bool]$Flight;hands_profile=[bool]$Hands;world_blocks_profile=[bool]$WorldBlocks;drops_check=[bool]$DropsCheck;crafting_check=[bool]$CraftingCheck;furnace_check=[bool]$FurnaceCheck;storage_check=[bool]$StorageCheck;tnt_check=[bool]$TntCheck;tnt_combat_check=[bool]$TntCombatCheck;respawn_check=[bool]$RespawnCheck;combat_profile=[bool]$Combat;combat_check=[bool]$CombatCheck;hide_native_vitals=[bool]$HideNativeVitals;host_command_typing_verified=$false;normal_client_exit=($helper -and $helper.HasExited -and $helper.ExitCode -eq 0)}|
+  minecraft_movement_connected=[bool]($Movement -and $passed);movement_profile=[bool]$Movement;blocks_profile=[bool]$Blocks;explore_profile=[bool]$Explore;chat_profile=[bool]$Chat;flight_profile=[bool]$Flight;hands_profile=[bool]$Hands;world_blocks_profile=[bool]$WorldBlocks;drops_check=[bool]$DropsCheck;crafting_check=[bool]$CraftingCheck;furnace_check=[bool]$FurnaceCheck;storage_check=[bool]$StorageCheck;elytra_check=[bool]$ElytraCheck;tnt_check=[bool]$TntCheck;tnt_combat_check=[bool]$TntCombatCheck;respawn_check=[bool]$RespawnCheck;combat_profile=[bool]$Combat;combat_check=[bool]$CombatCheck;hide_native_vitals=[bool]$HideNativeVitals;host_command_typing_verified=$false;normal_client_exit=($helper -and $helper.HasExited -and $helper.ExitCode -eq 0)}|
   ConvertTo-Json|Set-Content -LiteralPath (Join-Path $directory 'verification.json') -Encoding utf8NoBOM
 }
 if(-not $passed){throw $failure}

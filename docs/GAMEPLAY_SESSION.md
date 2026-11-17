@@ -24,7 +24,7 @@ walking and blocks; it can also be combined with `-Explore`.
 The additional `-Flight`, `-Hands` and `-WorldBlocks` profiles described below add
 Creative flight, first-person hands/items, a bounded palette of Minecraft models
 and native perspective control with Steve. Unrestricted blocks, cross-game
-health/combat and Elytra remain unfinished. Existing bounded gameplay labs remain
+full host collision and wider Minecraft systems remain unfinished. Existing bounded gameplay labs remain
 separate.
 
 ## Play on the configured development machine
@@ -798,7 +798,7 @@ the authoritative position. Coverage remains the captured ground heightfield
 and owned Minecraft stone; native buildings, branches and other unsampled
 obstacles are not complete collision. Feet stay below 18 metres above the original
 capture origin. Unknown terrain stops movement; this is not unrestricted travel
-or Elytra support. Modified flight speeds above Minecraft's default are unsupported.
+outside captured collision. Modified Creative flight speeds above Minecraft's default are unsupported; Elytra uses its separate bounded glide path below.
 
 After stopping and closing KCD2:
 
@@ -813,6 +813,43 @@ Verification results and remaining live limits are recorded in `PROGRESS.md`.
 The focused `./scripts/Test-GameplayFlight.ps1 -FixturePhase flight-fall` regression
 switches from Creative flight to Survival, saves during the fall, then reopens
 and checks restored fall distance, natural landing and vanilla login protection.
+
+## Elytra flight
+
+Normal Play/WorldBlocks includes Elytra; the older HUD-only Flight profile lacks
+the required posed camera and holds gliding instead. Equip it in the chest slot, enter
+Survival, jump from a ledge and press **Space** again while airborne. Mouse look
+steers vanilla flight. Right-click a firework rocket in the main hand to boost;
+Minecraft owns consumption, acceleration, durability, landing and damage.
+Rockets with explosion components retain vanilla self-damage. Crossbow-fired
+fireworks are a separate feature and remain unsupported.
+
+Inventory, chat or lost input/view authority hold a glide in place. Closing the
+screen or restoring authority resumes it. This bridge-specific hold prevents
+continued travel without usable controls. The saved glide has its own checkpoint
+and vanilla `FallFlying` state; reopening restores that pose at the saved position
+with velocity reset during attachment. It does not reopen as Creative flight or
+silently fall back to an old grounded checkpoint.
+
+The native first-person camera follows Minecraft's actual 0.4-metre gliding eye
+height and restores standing height on landing. Gliding checks the exact vanilla
+movement step against captured coverage before collision runs. Known terrain and
+owned Minecraft blocks retain vanilla swept collision. Unsampled native walls,
+branches and roofs remain a collision limitation; the existing 18-metre ceiling
+and a bounded 80 m/s glide limit also apply. This is not unrestricted world flight.
+
+Automatic checks:
+
+```powershell
+& './scripts/Test-GameplayElytra.ps1'
+& './scripts/Test-GameplayElytra.ps1' -Persistence
+```
+
+The first uses real commands/input to equip, glide, steer, boost, hold inventory,
+land and walk. It also checks rejected grounded rocket use and jumping without
+an Elytra. The second saves while gliding and reopens the same isolated world.
+Neither substitutes position, ability, inventory or glide-flag writes. See
+`PROGRESS.md` for the separately recorded native verification scope.
 
 ## Automatic sustained movement check
 

@@ -68,7 +68,7 @@ function Publish-GameplayMovementView([string]$Temporary,[string]$Destination,[V
         }
     }
 }
-function Read-GameplayMovementPose([string]$Path,$Identity,$Bounds,[long]$LastSequence,[double]$LastSource,[long]$Now,[bool]$WorldBlocks=$false){
+function Read-GameplayMovementPose([string]$Path,$Identity,$Bounds,[long]$LastSequence,[double]$LastSource,[long]$Now,[bool]$WorldBlocks=$false,[bool]$Flight=$false){
     if(-not [IO.File]::Exists($Path)){return $null}
     $file=$null
     try{
@@ -94,6 +94,7 @@ function Read-GameplayMovementPose([string]$Path,$Identity,$Bounds,[long]$LastSe
     }catch [IO.IOException]{if(($_.Exception.HResult -band 0xffff) -in @(2,3,32,33,303)){return $null};throw}
     finally{if($file){$file.Dispose()}}
     $keys=@('schema','kind','run','world_id','target_pid','target_start_filetime','patch_run','patch_sha256','seq','utc_ms','source_ms','position')
+    foreach($key in @('gliding','eyeHeight')){if($p.PSObject.Properties[$key]){$keys+=$key}}
     if($WorldBlocks){$keys+=@('perspective_request','camera_collision')}
     if($WorldBlocks -and $p.PSObject.Properties['lifecycle']){
         $keys+=@('lifecycle','respawn_epoch')
@@ -109,6 +110,9 @@ function Read-GameplayMovementPose([string]$Path,$Identity,$Bounds,[long]$LastSe
         $p.target_pid -ne $Identity.Pid -or $p.target_start_filetime -cne $Identity.Start -or $p.patch_run -cne $Identity.PatchRun -or $p.patch_sha256 -cne $Identity.PatchHash){throw 'Gameplay pose identity differs.'}
     foreach($key in @('schema','target_pid','seq','utc_ms','source_ms')){if(-not(Test-GameplayHostNumber $p.$key)){throw "Invalid gameplay pose number: $key"}}
     if($p.target_start_filetime -isnot [string]){throw 'Gameplay target start must be a string.'}
+    if($p.PSObject.Properties['gliding']){if($p.gliding -isnot [bool]){throw 'Invalid gameplay gliding mode.'}}else{$p|Add-Member -NotePropertyName gliding -NotePropertyValue $false}
+    if($p.PSObject.Properties['eyeHeight']){if(-not(Test-GameplayHostNumber $p.eyeHeight) -or $p.eyeHeight -lt .35 -or $p.eyeHeight -gt 1.7){throw 'Invalid gameplay eye height.'}}else{$p|Add-Member -NotePropertyName eyeHeight -NotePropertyValue 1.62}
+    if($p.gliding -and ((-not $Flight -and -not $WorldBlocks) -or [Math]::Abs($p.eyeHeight-.4) -gt .0001)){throw 'Gliding pose differs from the flight profile or vanilla eye height.'}
     if($WorldBlocks -and (-not(Test-GameplayHostNumber $p.perspective_request) -or $p.perspective_request -notin @(0,1,2))){throw 'Invalid gameplay perspective request.'}
     if($WorldBlocks){
         $c=$p.camera_collision
@@ -131,6 +135,22 @@ function Read-GameplayMovementPose([string]$Path,$Identity,$Bounds,[long]$LastSe
     if($p.seq -lt $LastSequence -or ($p.seq -gt $LastSequence -and $p.source_ms -le $LastSource)){throw 'Gameplay pose sequence/source clock regressed.'}
     if($p.seq -eq $LastSequence -or $Now-$p.utc_ms -gt 250){return $null}
     return $p
+}
+function ConvertTo-GameplayMovementPoseCommand([string]$Run,$Pose,[bool]$WorldBlocks=$false){
+    # Positional optional arguments retain the existing lifecycle contract.
+    # Missing legacy fields keep the standing eye/native camera behavior.
+    function PoseNumber($n){return ([double]$n).ToString('R',[Globalization.CultureInfo]::InvariantCulture)}
+    $args=[Collections.Generic.List[string]]::new()
+    $args.Add("'$Run'");$args.Add([string]$Pose.seq);$args.Add((PoseNumber $Pose.source_ms))
+    foreach($axis in @('x','y','z')){$args.Add((PoseNumber $Pose.position.$axis))}
+    $args.Add($(if($WorldBlocks){[string]$Pose.perspective_request}else{'nil'}))
+    $args.Add($(if($WorldBlocks){[string]$Pose.camera_collision.generation}else{'nil'}))
+    $life=$Pose.PSObject.Properties['lifecycle']
+    $args.Add($(if($life){"'$($Pose.lifecycle)'"}else{'nil'}));$args.Add($(if($life){[string]$Pose.respawn_epoch}else{'nil'}))
+    foreach($axis in @('x','y','z')){$args.Add($(if($life -and $Pose.lifecycle -ceq 'respawn'){PoseNumber $Pose.respawn_from.$axis}else{'nil'}))}
+    $args.Add($(if($Pose.PSObject.Properties['eyeHeight']){PoseNumber $Pose.eyeHeight}else{'nil'}))
+    $args.Add($(if($Pose.PSObject.Properties['gliding']){([string]$Pose.gliding).ToLowerInvariant()}else{'nil'}))
+    return 'MineCome.GameplayMovementPose('+($args -join ',')+')'
 }
 function New-GameplayRespawnHostState {
     return [pscustomobject]@{Epoch=0L;Phase='alive';From=$null;Target=$null;FirstSequence=0L;LastSequence=0L;StartedUtc=0L;Acked=$false}
@@ -353,7 +373,7 @@ function Get-GameplayMovementWorker {
             while(-not $Token.IsCancellationRequested){
                 $utc=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds();$elapsed=$stopwatch.Elapsed.TotalMilliseconds
                 if($utc -ge $ExpiresUtcMs -or $elapsed -ge $limit){throw 'Gameplay host identity expired.'}
-                $pose=Read-GameplayMovementPose $PoseFile $Identity $Bounds $sequence $source $utc $WorldBlocks
+                $pose=Read-GameplayMovementPose $PoseFile $Identity $Bounds $sequence $source $utc $WorldBlocks $Flight
                 $parts=[Collections.Generic.List[string]]::new()
                 # Consume the guest's actual hurt ACK and notify native before
                 # any pose carrying that same vanilla knockback is dispatched.
@@ -386,12 +406,7 @@ function Get-GameplayMovementWorker {
                 if($BlocksState){$command=Get-GameplayBlocksCommands $BlocksState $utc;if($command){$parts.Add((RejectWrapper $command))}}
                 if($combatCommand){$parts.Add((RejectWrapper $combatCommand))}
                 if($pose){
-                    $perspectiveArgument=if($WorldBlocks){','+[string]$pose.perspective_request+','+[string]$pose.camera_collision.generation}else{''}
-                    if($pose.PSObject.Properties['lifecycle']){
-                        $perspectiveArgument+=",'$($pose.lifecycle)',$($pose.respawn_epoch)"
-                        if($pose.lifecycle -ceq 'respawn'){$perspectiveArgument+=",$(Numeric $pose.respawn_from.x),$(Numeric $pose.respawn_from.y),$(Numeric $pose.respawn_from.z)"}
-                    }
-                    $parts.Add((RejectWrapper "MineCome.GameplayMovementPose('$run',$($pose.seq),$(Numeric $pose.source_ms),$(Numeric $pose.position.x),$(Numeric $pose.position.y),$(Numeric $pose.position.z)$perspectiveArgument)"))
+                    $parts.Add((RejectWrapper (ConvertTo-GameplayMovementPoseCommand $run $pose $WorldBlocks)))
                 }
                 $startView=$null -eq $pendingViewRequest -and $elapsed-$lastViewAt -ge 40
                 $viewCall=''

@@ -1,6 +1,55 @@
 # Resume checkpoint — 17 November 2026
 
-## Current checkpoint: persistent storage barrels verified
+## Current checkpoint: Elytra flight and rockets implemented
+
+Normal Play/WorldBlocks supports vanilla Elytra equip/jump/glide/steer and
+main-hand rocket boost. Inventory/chat/stale authority hold only the exact client
+player's travel. Actual swept collision remains vanilla; every glide step is
+checked against captured terrain, the 18m ceiling and an 80m/s cap. Native eye
+height is .4 while gliding and returns to standing. Old HUD-only Flight cannot
+supply that posed camera and holds Elytra instead; normal Play is supported.
+Gliding saves use a distinct checkpoint plus vanilla FallFlying NBT; reopening
+holds pose/position through attachment, then resumes. Creative/falling saves remain
+compatible. Source notes: `docs/research/ELYTRA.md`.
+
+Do not repeat completed manual controls tests. Automatic evidence:
+
+- `gameplay-elytra-20261117-185543-0fee00c772e74951b69dbee40f81c959/verification.json`:
+  actual Minecraft equip, steering, rocket consumption/boost, inventory hold,
+  landing with damage, walking and negative cases.
+- `gameplay-elytra-20261117-185901-b0b06a2f281b4a9081df43a344b678e7/reverification.json`:
+  both real mid-glide save/reopen phases passed; corrected verifier checks health
+  at reopen rather than after the subsequent damaging landing. No rerun needed.
+- `gameplay-flight-20261117-185650-13d46d801bd44088afd981f62a21731b/verification.json`:
+  Creative flight and airborne reload still pass.
+- `elytra-native-eye-20261117-185657-cbdcba0f17ba4e3b90faf7912350a2c1/verification.json`:
+  native .4 eye and standing restoration, ten receipts each.
+- `gameplay-kcd-20261117-190941-e678149fcb784524a2755476eb85fd36/native-elytra-verification.json`:
+  coupled glide 3.56m, correct eye, inventory hold/resume, gliding save, 150 continued
+  compositor/reprojection advances and complete cleanup. Uses real host view;
+  fixture writes no camera, position, ability or glide flags.
+
+Paths are under `runtime/evidence/`. Focused block 418/movement 46/glide 17/native Lua 47/
+host 48/respawn 13/batch 17 checks pass. Scripts: `Test-GameplayElytra.ps1` (also
+`-Persistence` and `-VerifyEvidenceDirectory`) and `Test-KcdElytra.ps1` (also verify).
+Native fixture must use actual altitude and balanced server-timed jump holds:
+terrain admission legitimately releases controls, so a stale fixture held-set
+cannot be assumed to remain pressed. It pauses briefly before final camera proof.
+
+Both games are closed normally. Renderer remains installed/unarmed; Play picks up
+Java/script changes without reinstall. Tests used separate owned worlds; the
+user's Play save was untouched. Native per-process session guard still requires
+normal restart between connected checks; do not bypass it.
+
+Next: extend the same automated native Elytra check to a controlled rocket boost,
+landing and third-person Steve image, then move to the next missing gameplay
+system. Avoid another manual countdown cycle. Full native walls/roofs/branches
+collision, unrestricted flight range, offhand rockets and crossbow fireworks are
+not established. Long-flight feel/third-person appearance remain separate from the
+passed coupled first-person glide evidence. Preserve the completed barrel and
+crossbow milestones below.
+
+## Prior checkpoint: persistent storage barrels verified
 
 Barrels now work in the normal WorldBlocks/Play path: place, open the real 27-slot
 screen, store/retrieve, close/reopen, retain contents across saves and mine them

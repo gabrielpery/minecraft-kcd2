@@ -21,7 +21,7 @@ local function fixture()
   KillTimer=function(id)assert(f.timers[id] and f.timers[id].alive,'unowned timer');f.timers[id].alive=false end}
  dofile(MINECOME_MODULE_PATH);eq(MineCome._movement_probe,retained);eq(f.serial,0);eq(f.writes,0)
  function f:begin(run,duration)return MineCome.GameplayMovementBegin(run or A,duration or 86400000,-10,10,-10,10,-10,10)end
- function f:pose(seq,source,x,y,z,mode,generation)return MineCome.GameplayMovementPose(A,seq,source,x,y,z,mode,mode~=nil and (generation or 1) or nil)end
+ function f:pose(seq,source,x,y,z,mode,generation,eye_height,gliding)return MineCome.GameplayMovementPose(A,seq,source,x,y,z,mode,mode~=nil and (generation or 1) or nil,nil,nil,nil,nil,nil,eye_height,gliding)end
  function f:fire(slot,advance)
   local event;for _,e in pairs(self.timers)do if e.alive and e.data.slot==slot then event=e;break end end
   assert(event,'missing timer '..slot);event.alive=false;self.time=self.time+(advance or 0);self.callback=true
@@ -104,6 +104,27 @@ test('flight follows vertical rise hover and landing with normal lease cleanup',
  for i=12,21 do eq(f:pose(i,(i-1)*100,1,2,5.5),true);f:fire('tick',.1)end
  for i=22,31 do eq(f:pose(i,(i-1)*100,1,2,5.5-(i-21)*.25),true);f:fire('tick',.1)end
  assert(math.abs(f.position.z-3)<.000001);eq(MineCome.GameplayMovementEnd(A),true);eq(f:activeTimers(),0)
+end)
+
+test('only explicit gliding admits bounded faster flight and landing restores Creative limit',function()
+ local f=fixture();eq(MineCome.GameplayMovementBegin(A,86400000,-10,10,-10,10,-10,10,true),true)
+ eq(f:pose(1,0,1,2,3,nil,nil,.4,true),true);f:fire('tick',.001)
+ eq(f:pose(2,100,8,2,3,nil,nil,.4,true),true);f:fire('tick',.1);assert(math.abs(f.position.x-8)<.000001)
+ eq(f:pose(3,200,1,2,3,nil,nil,1.62,false),true);f:fire('tick',.1)
+ eq(f:pose(4,300,8,2,3,nil,nil,1.62,false),false);f:lastReason('source_velocity_invalid')
+ f=fixture();MineCome.GameplayMovementBegin(A,86400000,-10,10,-10,10,-10,10,true)
+ f:pose(1,0,1,2,3,nil,nil,.4,true);f:fire('tick',.001)
+ eq(f:pose(2,100,9.6,2,3,nil,nil,.4,true),false);f:lastReason('source_velocity_invalid')
+end)
+
+test('gliding metadata rejects wrong types heights and absent flight authority',function()
+ for _,v in ipairs({{eye='0.4',glide=true},{eye=false,glide=true},{eye=0/0,glide=true},{eye=math.huge,glide=true},{eye=.349,glide=false},{eye=1.701,glide=false},{eye=.4,glide='true'},{eye=.4,glide=1},{glide=true},{eye=.401,glide=true},{eye=1.62,glide=true},{eye=.4,glide=true,no_flight=true}})do
+  local f=fixture();MineCome.GameplayMovementBegin(A,86400000,-10,10,-10,10,-10,10,not v.no_flight)
+  eq(f:pose(1,0,1,2,3,nil,nil,v.eye,v.glide),false);eq(f.writes,0);eq(f:activeTimers(),0)
+ end
+ local f=fixture();MineCome.GameplayMovementBegin(A,86400000,-10,10,-10,10,-10,10,true)
+ eq(f:pose(1,0,1,2,3,nil,nil,.4000000059604645,true),true)
+ eq(MineCome.GameplayMovementEnd(A),true)
 end)
 test('native binding failure cleans up and preserves changed world position',function()
  local f=fixture();f:begin();f.write_error=true;f:pose(1,0,5,2,3);f:fire('tick',.01)
@@ -192,8 +213,8 @@ local function perspective_fixture()
   else f.last_aim={origin=copy(o),direction=copy(d)} end
   return 0
  end}
- function f:beginPerspective()
-  local ok,why=MineCome.GameplayMovementBegin(A,86400000,-10,10,-10,10,-10,10,false,true)
+ function f:beginPerspective(flight)
+  local ok,why=MineCome.GameplayMovementBegin(A,86400000,-10,10,-10,10,-10,10,flight==true,true)
   if ok then eq(MineCome.GameplayCameraGeometry(A,1,1,1,0,0,0,true,''),true) end
   return ok,why
  end
@@ -207,6 +228,36 @@ test('perspective is explicit and initial first person remains camera-write free
  f=fixture();f:begin();eq(f:pose(1,0,1,2,3,1),false);f:lastReason('perspective_request_invalid')
  for _,mode in ipairs({-1,3,1.5,'1'})do f=perspective_fixture();f:beginPerspective();eq(f:pose(1,0,1,2,3,mode),false);eq(f.camera_writes,0)end
 end)
+test('gliding first person owns exact Minecraft eye and waits for camera readback',function()
+ local f=perspective_fixture();eq(f:beginPerspective(true),true)
+ eq(f:pose(1,0,1,2,3,0,1,.4,true),true)
+ local ok,why=MineCome.GameplayMovementSample(A,1,true);eq(ok,true);eq(why,'camera_pending')
+ f:fire('tick',.01);eq(f.camera_writes,1);eq(f.clip_rays,0)
+ f:fire('tick',.01);assert(math.abs(f.camera.position.z-3.4)<.000001)
+ eq(f.camera.position.x,1);eq(f.camera.position.y,2)
+ assert(math.abs(f.last_aim.origin.z-3.4)<.000001);eq(f.last_aim.origin.y,2)
+ assert(f.logs[#f.logs]:find('"perspective":0',1,true));eq(MineCome.GameplayMovementCombatView(A).origin.z,3.4)
+ eq(f:pose(2,50,1,2,3,0,1,.4000000059604645,true),true)
+ ok,why=MineCome.GameplayMovementSample(A,2,true);eq(ok,true);eq(why,'sampled')
+ eq(f:pose(3,100,1,2,3,0,1,1.27,false),true)
+ ok,why=MineCome.GameplayMovementSample(A,3,true);eq(ok,true);eq(why,'camera_pending')
+ f:fire('tick',.01);f:fire('tick',.01);assert(math.abs(f.last_aim.origin.z-4.27)<.000001)
+ eq(f:pose(4,200,1,2,3,0,1,1.62,false),true)
+ ok,why=MineCome.GameplayMovementSample(A,4,true);eq(ok,true);eq(why,'camera_pending')
+ f:fire('tick',.01);f:fire('tick',.01);f:fire('tick',.01)
+ eq(f.camera,nil);eq(f.last_aim.origin.z,4.6)
+ local writes=f.camera_writes;f:fire('tick',.01);eq(f.camera_writes,writes);f:finishPerspective()
+end)
+
+test('gliding third person camera and aim share the Minecraft eye height',function()
+ local f=perspective_fixture();eq(f:beginPerspective(true),true)
+ eq(f:pose(1,0,1,2,3,1,1,.4,true),true);f:fire('tick',.01);f:fire('tick',.01)
+ eq(MineCome.GameplayMovementSample(A,1,true),true)
+ assert(math.abs(f.camera.position.z-3.4)<.000001);eq(f.camera.position.y,-.5)
+ assert(math.abs(f.last_aim.origin.z-3.4)<.000001);eq(f.last_aim.origin.y,2)
+ f:finishPerspective()
+end)
+
 test('third back acknowledges only actual deferred camera and keeps eye aiming',function()
  local f=perspective_fixture();f:beginPerspective();f:pose(1,0,1,2,3,1);f:fire('tick',.01)
  eq(f.camera_writes,1);eq(f.clip_rays,5)
