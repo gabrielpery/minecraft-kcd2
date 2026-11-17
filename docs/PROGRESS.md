@@ -1,4 +1,45 @@
-# MineCome progress — 2026-11-14
+# MineCome progress — 2026-11-17
+
+## Persistent storage barrels
+
+**Implemented and automatically verified in both games.** WorldBlocks/Play now
+supports vanilla barrels, all six orientations, open/closed models and the real
+27-slot inventory. Right-click opens storage; E/Escape closes it. Contents remain
+in the actual block entity across screen transitions and normal save/reopen.
+Survival mining drops the barrel and its remaining contents with vanilla tool wear.
+The existing inventory input path suppresses movement while storage is open.
+
+Ownership retains the exact server block entity and checks that the screen handler
+uses that inventory. Saved state reconciliation permits only the barrel's OPEN
+transition at the same orientation. It does not recreate inventories or admit
+replacement containers. Furnaces retain their original behavior.
+Pinned source evidence: `runtime/evidence/barrel-source-20261117/`.
+
+Automatic actual-Minecraft save/reopen acceptance passes:
+`runtime/evidence/gameplay-storage-20261117-183741-0b7eb35f80bd44c7a11c40fecd900f27/verification.json`.
+It deposits seven diamonds and sixteen cobblestone in the first/last barrel slots,
+retrieves two diamonds, closes/reopens and saves. A second launch verifies all
+27 slots and saved components, retrieves one more diamond, then mines the barrel.
+The resulting drops contain exactly one barrel, four diamonds and sixteen
+cobblestone; the player retains three diamonds and the axe gains one damage.
+The existing furnace create/save/reopen regression also passes:
+`runtime/evidence/gameplay-furnace-20261117-183842-6807136fa8e14ba18f616b057bdfcc44/verification.json`.
+
+Automatic coupled KCD2 acceptance passes:
+`runtime/evidence/gameplay-kcd-20261117-184229-a6ae06c5e0e5407f8a89432beee197c1/native-storage-verification.json`.
+It verifies placement, the actual storage UI, deposit/retrieval, screen reopen,
+inventory movement suppression, survival mining and exact contents drops. Native
+composition and reprojection both advance 160 frames during the storage dwell.
+Normal guest save/exit and host body/control cleanup pass; no fixture camera
+override was used. Computer Use also observed the populated barrel UI in KCD2.
+These checks use scripted guest controls, not a new physical mouse acceptance.
+
+Compilation, assemble and 418 block-policy/ownership checks pass. Both games
+closed normally afterward. The installed Play renderer remains ready; no native
+code/assets or the user's persistent Play save changed. README/gameplay guidance
+also removes obsolete claims that native health/equipment widgets still need hiding.
+Chests, double chests, shulker boxes and hopper automation remain unsupported.
+
 
 ## Player crossbows hit native NPCs and scenery
 

@@ -34,7 +34,8 @@ final class HudVanillaUiAdapter {
         for(int button=0;button<2;button++)if(pointer.awaitingRelease(button))next.pointer.press(button);
         next.pointer.releaseScreen();pointer.clear();keys.clear();editKeys.clear();ownedChat=null;return next;
     }
-    static boolean inventory(Screen screen){return screen instanceof InventoryScreen || screen instanceof CreativeInventoryScreen || screen instanceof CraftingScreen || screen instanceof FurnaceScreen;}
+    static boolean inventory(Screen screen){return screen instanceof InventoryScreen || screen instanceof CreativeInventoryScreen || screen instanceof CraftingScreen || screen instanceof FurnaceScreen ||
+        screen instanceof GenericContainerScreen container && container.getScreenHandler().getRows()==3;}
     static boolean chat(Screen screen){return screen instanceof ChatScreen;}
     static boolean death(Screen screen){return screen instanceof DeathScreen;}
     static boolean transition(Screen screen){return screen instanceof DownloadingTerrainScreen;}
@@ -110,6 +111,12 @@ final class HudVanillaUiAdapter {
         // Inspected runtime/evidence/furnace-source-20261108/FurnaceScreen.txt.
         if(current instanceof FurnaceScreen furnace && (furnace.getScreenHandler()!=client.player.currentScreenHandler || furnace.getScreenHandler().syncId<=0))
             throw new IllegalStateException("Furnace screen handler ownership changed");
+        // BarrelBlockEntity.createScreenHandler uses the vanilla 9x3 handler.
+        // Source: runtime/evidence/barrel-source-20261117/. Slot packets, cursor
+        // contents and close behavior remain owned by this exact live handler.
+        if(current instanceof GenericContainerScreen container && (container.getScreenHandler()!=client.player.currentScreenHandler ||
+                container.getScreenHandler().syncId<=0 || container.getScreenHandler().getRows()!=3))
+            throw new IllegalStateException("Storage screen handler ownership changed");
         if(ownedChat!=null&&current!=ownedChat){releaseChatKeys();ownedChat=null;}
         if(commandsAllowed&&current!=null&&!pointerScreen(current)&&!transition(current)&&current!=ownedChat)throw new IllegalStateException("Unowned screen during gameplay chat");
         if(current==pointerScreen)return;

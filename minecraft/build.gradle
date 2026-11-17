@@ -45,6 +45,8 @@ loom {
                     vmArgs '-Dminecome.gameplayTntCombatCheck=true'
                 if (project.hasProperty('minecomeGameplayFurnaceCheck'))
                     vmArgs '-Dminecome.gameplayFurnaceCheck=true'
+                if (project.hasProperty('minecomeGameplayStorageCheck'))
+                    vmArgs '-Dminecome.gameplayStorageCheck=true'
                 if (project.hasProperty('minecomeGameplayCraftingCheck'))
                     vmArgs '-Dminecome.gameplayCraftingCheck=true'
                 if (project.hasProperty('minecomeGameplayDropsCheck'))

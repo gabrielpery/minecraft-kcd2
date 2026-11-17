@@ -1,6 +1,39 @@
-# Resume checkpoint — 14 November 2026
+# Resume checkpoint — 17 November 2026
 
-## Current checkpoint: player crossbows verified
+## Current checkpoint: persistent storage barrels verified
+
+Barrels now work in the normal WorldBlocks/Play path: place, open the real 27-slot
+screen, store/retrieve, close/reopen, retain contents across saves and mine them
+with correct contents drops/tool wear. All six orientations and open/closed models
+are supported. Exact block-entity and handler identity checks preserve ownership.
+
+Automatic checks passed; do not repeat manual inventory/mining sequences:
+
+- `gameplay-storage-20261117-183741-0b7eb35f80bd44c7a11c40fecd900f27/verification.json`:
+  actual Minecraft create/save/reopen, exact slot/component retention, retrieval
+  and survival mining with conserved drops.
+- `gameplay-furnace-20261117-183842-6807136fa8e14ba18f616b057bdfcc44/verification.json`:
+  existing furnace regression after shared container ownership changes.
+- `gameplay-kcd-20261117-184229-a6ae06c5e0e5407f8a89432beee197c1/native-storage-verification.json`:
+  live KCD2 storage, 160 continued composition/reprojection advances, exact drops,
+  normal guest save/exit and native cleanup. No fixture camera override was used.
+
+Evidence is under `runtime/evidence/`. Build/assemble and 418 block checks pass.
+Both games are closed normally. Existing Play renderer remains installed/unarmed;
+no installation is needed. All tests used isolated instances, not the user's Play
+save. Scripts: `Test-GameplayStorage.ps1` and `Test-KcdStorage.ps1`; the latter can
+re-verify evidence without launching games. No human acceptance is pending.
+
+Next gameplay priority: advance required Elytra flight using the existing vanilla
+player/Creative-flight and terrain authority paths. Preserve verified storage,
+combat and launcher behavior; avoid repeating completed HUD/input tests.
+Chests and other storage remain separate work. Piercing is explicitly deferred:
+vanilla resolves multiple entity hits within one tick, so correct support needs
+ordered contact batches, exactly-once damage acknowledgements and verified native
+collider exclusions. Removing its input guard alone is incorrect. Firework crossbow
+projectiles and native potion/glowing effects also remain unsupported.
+
+## Prior checkpoint: player crossbows verified
 
 Player-fired Minecraft crossbows now hit KCD2 NPCs and scenery in the normal
 `-Combat`/Play profile. Hold right-click, release to load, then click again to fire.

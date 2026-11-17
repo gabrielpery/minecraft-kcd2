@@ -310,6 +310,29 @@ public final class GameplayBlocksTests {
         check(furnaceLedger.initialStates.equals(Map.of(c,cold)),"Furnace ownership survives ledger reopen");
         furnaceLedger.persist(10,Map.of(c,burning));
         check(new GameplayBlocksLedger(save,SURFACE,true).initialStates.equals(Map.of(c,burning)),"Confirmed burning state persists without replacing the furnace cell");
+        check(GameplayBlocksPalette.sameContainer(cold,burning)&&GameplayBlocksPalette.containerState(cold),"Container reconciliation preserves existing furnace burn transitions");
+        for(var facing:List.of("north","south","east","west","up","down")){
+            var closedBarrel="minecraft:barrel[facing="+facing+",open=false]";
+            var openBarrel="minecraft:barrel[facing="+facing+",open=true]";
+            check(GameplayBlocksPalette.supportsState(closedBarrel)&&GameplayBlocksPalette.supportsState(openBarrel)&&
+                GameplayBlocksPalette.barrelState(closedBarrel)&&GameplayBlocksPalette.containerState(openBarrel),"All six barrel orientations retain both viewer states");
+            check(GameplayBlocksPalette.sameBarrel(closedBarrel,openBarrel)&&GameplayBlocksPalette.sameBarrel(openBarrel,closedBarrel)&&
+                GameplayBlocksPalette.sameContainer(closedBarrel,closedBarrel),"Opening/closing a barrel preserves its orientation and ownership");
+        }
+        check(GameplayBlocksPalette.supportsBlock("minecraft:barrel")&&GameplayBlocksPalette.blockIds().contains("minecraft:barrel"),"Barrel item is admitted for vanilla placement");
+        var closedBarrel="minecraft:barrel[facing=up,open=false]";var openBarrel="minecraft:barrel[facing=up,open=true]";
+        for(var invalid:List.of("minecraft:barrel","minecraft:barrel[facing=up]","minecraft:barrel[facing=north,open=False]",
+                "minecraft:barrel[open=false,facing=north]","minecraft:barrel[facing=diagonal,open=false]","minecraft:barrel[facing=UP,open=false]",
+                "minecraft:barrel[facing=up,open=false,lit=false]","minecraft:barrel[facing=up,open=false,open=true]","minecraft:barrel[facing=up,open=false ]"))
+            check(!GameplayBlocksPalette.supportsState(invalid)&&!GameplayBlocksPalette.sameBarrel(closedBarrel,invalid),"Malformed barrel state cannot reconcile a saved container");
+        for(var changedBarrel:List.of("minecraft:barrel[facing=down,open=false]",cold,"minecraft:crafting_table","minecraft:stone"))
+            check(!GameplayBlocksPalette.sameContainer(closedBarrel,changedBarrel)&&!GameplayBlocksPalette.sameContainer(changedBarrel,closedBarrel),"Container reconciliation rejects rotation, type change and ownership substitution");
+        check(!GameplayBlocksPalette.sameContainer(null,closedBarrel)&&!GameplayBlocksPalette.sameContainer(closedBarrel,null),"Missing container state cannot reconcile ownership");
+        var barrelLedger=new GameplayBlocksLedger(save,SURFACE,true);barrelLedger.persist(11,Map.of(c,closedBarrel));
+        check(new GameplayBlocksLedger(save,SURFACE,true).initialStates.equals(Map.of(c,closedBarrel)),"Saved barrel ownership retains vertical orientation");
+        barrelLedger.persist(12,Map.of(c,openBarrel));
+        check(new GameplayBlocksLedger(save,SURFACE,true).initialStates.equals(Map.of(c,openBarrel)),"Open barrel checkpoint remains readable for vanilla close-on-save reconciliation");
+        reject(()->new GameplayBlocksLedger(save,SURFACE),"Legacy stone renderer cannot silently adopt barrel storage");
     }
     private static void terrainLedgerTests(Path root)throws Exception{
         var seed=GameplayTerrain.initial(tile(0));var grown=seed.admit(1,0,tile(1));

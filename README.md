@@ -146,7 +146,7 @@ a table and a wooden pickaxe, then verifies the table and resulting inventory
 after reopening the save. A coupled KCD2 check passes the same recipe chain with
 the actual crafting screen streamed through the native renderer. These checks
 use scripted guest controls; physical mouse crafting was not newly verified.
-Other containers and enchanting remain separate work.
+Storage barrels are supported below; other containers and enchanting remain separate work.
 See [crafting controls and automation](docs/GAMEPLAY_SESSION.md#crafting).
 
 Ordinary furnaces now use Minecraft's real smelting screen, fuel and recipes.
@@ -157,6 +157,14 @@ Minecraft checks pass fuel consumption, smelting and unfinished-input save/reope
 A connected KCD2 check also passes both smelts, screen close/reopen and collection
 with native composition using scripted guest clicks.
 See [furnace controls and automation](docs/GAMEPLAY_SESSION.md#furnace-smelting).
+
+Storage barrels provide Minecraft's real 27-slot inventory in KCD2. Place one,
+right-click to store or retrieve items, and close with E or Escape. Contents stay
+inside across sessions; Survival mining drops the barrel and its remaining items.
+Minecraft owns the inventory, item components, tool durability and drops.
+Automated save/reload and connected KCD2 checks passed storage, retrieval and
+contents drops; the existing furnace regression also passes.
+See [storage controls and automation](docs/GAMEPLAY_SESSION.md#storage-barrels).
 
 Minecraft death and the real Respawn button now have an explicit player/host
 handoff. Automated Minecraft checks pass death drops, safe captured respawn,
@@ -357,9 +365,9 @@ Live checks above use the **official KCD2 1.5.5 development build**. The native
 prerequisites. A successful development-world test does not establish retail support.
 
 Unrestricted block rendering, full host collision, cross-game survival/combat,
-Elytra and multiplayer remain unfinished. KCD's own HUD
-and health systems still exist; selective widget replacement and health-system
-integration are separate work. Sessions remain isolated, experimental single-player
+Elytra and multiplayer remain unfinished. During Play, KCD2's native health/stamina
+bars and equipped weapon/consumable squares hide, while Minecraft health receives
+supported native NPC attacks. Sessions remain isolated, experimental single-player
 development worlds. Bounded labs keep their explicit time limits; the persistent
 gameplay path runs until stop or peer loss within its supported coverage.
 

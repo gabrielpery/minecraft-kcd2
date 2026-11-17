@@ -1,7 +1,7 @@
 # Sustained HUD/inventory, with an explicit Minecraft walking profile.
 [CmdletBinding()]
 param([string]$BundleDirectory,[string]$InstanceDirectory,[string]$JavaHome='C:/Program Files/Java/jdk-24',
- [ValidateRange(0,300)][int]$SmokeSeconds=0,[switch]$PreflightOnly,[switch]$HideNativeVitals,[switch]$Movement,[switch]$Blocks,[switch]$Explore,[switch]$Chat,[switch]$Flight,[switch]$Hands,[switch]$WorldBlocks,[switch]$Combat,[switch]$CombatCheck,[switch]$IncomingCombatCheck,[ValidateSet('unarmed','sword','bow','crossbow')][string]$IncomingWeapon='unarmed',[switch]$ProjectileCheck,[switch]$CrossbowCheck,[string]$CombatFixtureRun,[string]$GroundPatchFile,[switch]$ThirdPersonWalkingCheck,[switch]$DropsCheck,[switch]$CraftingCheck,[switch]$FurnaceCheck,[switch]$TntCheck,[switch]$TntCombatCheck,[switch]$RespawnCheck,[ValidateRange(0,1)][int]$InitialTerrainRadius=0)
+ [ValidateRange(0,300)][int]$SmokeSeconds=0,[switch]$PreflightOnly,[switch]$HideNativeVitals,[switch]$Movement,[switch]$Blocks,[switch]$Explore,[switch]$Chat,[switch]$Flight,[switch]$Hands,[switch]$WorldBlocks,[switch]$Combat,[switch]$CombatCheck,[switch]$IncomingCombatCheck,[ValidateSet('unarmed','sword','bow','crossbow')][string]$IncomingWeapon='unarmed',[switch]$ProjectileCheck,[switch]$CrossbowCheck,[string]$CombatFixtureRun,[string]$GroundPatchFile,[switch]$ThirdPersonWalkingCheck,[switch]$DropsCheck,[switch]$CraftingCheck,[switch]$FurnaceCheck,[switch]$StorageCheck,[switch]$TntCheck,[switch]$TntCombatCheck,[switch]$RespawnCheck,[ValidateRange(0,1)][int]$InitialTerrainRadius=0)
 . (Join-Path $PSScriptRoot 'powershell7.ps1')
 if($PSVersionTable.PSVersion.Major -lt 7){
  $code=Invoke-MineComePowerShell7 -ScriptPath $PSCommandPath -BoundParameters $PSBoundParameters
@@ -29,6 +29,7 @@ if($CombatCheck -and ($SmokeSeconds -ne 0 -or $ThirdPersonWalkingCheck -or $Drop
 if($RespawnCheck -and (-not $WorldBlocks -or $SmokeSeconds -ne 0 -or $ThirdPersonWalkingCheck -or $DropsCheck -or $CraftingCheck -or $FurnaceCheck)){throw 'RespawnCheck requires WorldBlocks and owns its bounded duration; omit other checks/SmokeSeconds.'}
 if($TntCheck -and (-not $WorldBlocks -or $SmokeSeconds -ne 0 -or $ThirdPersonWalkingCheck -or $DropsCheck -or $CraftingCheck -or $FurnaceCheck -or $RespawnCheck -or $CombatCheck)){throw 'TntCheck requires WorldBlocks and owns its bounded duration; omit other checks/SmokeSeconds.'}
 if($FurnaceCheck -and (-not $WorldBlocks -or $SmokeSeconds -ne 0 -or $ThirdPersonWalkingCheck -or $DropsCheck -or $CraftingCheck)){throw "FurnaceCheck requires WorldBlocks and owns its bounded duration; omit other checks/SmokeSeconds."}
+if($StorageCheck -and (-not $WorldBlocks -or $SmokeSeconds -ne 0 -or $ThirdPersonWalkingCheck -or $DropsCheck -or $CraftingCheck -or $FurnaceCheck -or $TntCheck -or $RespawnCheck -or $CombatCheck -or $IncomingCombatCheck)){throw "StorageCheck requires WorldBlocks and owns its bounded duration; omit other checks/SmokeSeconds."}
 if($CraftingCheck -and (-not $WorldBlocks -or $SmokeSeconds -ne 0 -or $ThirdPersonWalkingCheck -or $DropsCheck)){throw "CraftingCheck requires WorldBlocks and owns its bounded duration; omit other checks/SmokeSeconds."}
 if($DropsCheck -and (-not $WorldBlocks -or $SmokeSeconds -ne 0 -or $ThirdPersonWalkingCheck)){throw "DropsCheck requires WorldBlocks and owns its bounded duration; omit other checks/SmokeSeconds."}
 if($ThirdPersonWalkingCheck -and (-not $WorldBlocks -or $SmokeSeconds -ne 0)){throw 'ThirdPersonWalkingCheck requires WorldBlocks and owns its bounded duration; omit SmokeSeconds.'}
@@ -110,6 +111,7 @@ try{
  if($TntCheck){$arguments+='-TntCheck'}
  if($TntCombatCheck){$arguments+='-TntCombatCheck'}
  if($FurnaceCheck){$arguments+='-FurnaceCheck'}
+ if($StorageCheck){$arguments+='-StorageCheck'}
  if($CraftingCheck){$arguments+='-CraftingCheck'}
  if($DropsCheck){$arguments+='-DropsCheck'}
  if($ThirdPersonWalkingCheck){$arguments+='-ThirdPersonWalkingCheck'}
@@ -178,6 +180,7 @@ try{
  if($RespawnCheck){Write-Output 'AUTOMATED_RESPAWN_CHECK: keep KCD2 focused; scripted guest walking, death and a real Respawn-button click verify native relocation and continued play. Physical input is not claimed.'}
  if($TntCheck){Write-Output 'AUTOMATED_TNT_CHECK: actual vanilla priming, chain explosions, owned block destruction and saved cleanup; no physical input or native geometry destruction claim.'}
  if($FurnaceCheck){Write-Output 'AUTOMATED_FURNACE_CHECK: keep KCD2 focused; actual guest UI clicks load fuel/input, smelt and collect output, then save. Physical input is not claimed.'}
+ if($StorageCheck){Write-Output 'AUTOMATED_STORAGE_CHECK: keep KCD2 focused; actual guest UI clicks store and retrieve barrel contents, then save. Physical input is not claimed.'}
  if($CraftingCheck){Write-Output 'AUTOMATED_CRAFTING_CHECK: keep KCD2 focused; real guest UI clicks craft ingredients/table/tool, verify unused-input return, then save. Physical input is not claimed.'}
  if($DropsCheck){Write-Output 'AUTOMATED_DROPS_CHECK: keep KCD2 focused and controls released; scripted guest actions mine, render and walk to collect a drop, then save. Physical mouse/keys are not claimed.'}
  if($ThirdPersonWalkingCheck){Write-Output 'AUTOMATED_THIRD_PERSON_WALKING_CHECK: keep KCD2 focused and controls released; the guest will test back/front walking, inventory suppression and first-person return, then save and close. Physical keyboard input is not claimed by this check.'}
@@ -287,6 +290,14 @@ try{
    if($f.$flag -ne $true){throw "Native TNT capability missing: $flag"}
   }
  }
+ if($StorageCheck){
+  $f=$session.fixture
+  if($f.kind -cne 'minecome_gameplay_storage_fixture_v1' -or $f.mode -cne 'storage-native' -or $f.result -cne 'passed' -or $f.failure -or
+   -not $f.actual_minecraft -or $f.standalone_scripted -or $f.native_input_verified -or $f.position_writes_used){throw 'Native storage fixture identity/scope differs.'}
+  foreach($flag in @('barrel_placement_verified','barrel_open_verified','deposit_verified','inventory_suppression_verified','contents_persistence_verified','retrieval_verified','render_pixels_verified','survival_mining_verified','contents_drops_verified')){
+   if($f.$flag -ne $true){throw "Native storage capability missing: $flag"}
+  }
+ }
  if($FurnaceCheck){
   $f=$session.fixture
   if($f.kind -cne 'minecome_gameplay_furnace_fixture_v1' -or $f.mode -cne 'furnace-native' -or $f.result -cne 'passed' -or $f.failure -or
@@ -340,7 +351,7 @@ finally{
  }
  [ordered]@{schema=1;kind='minecome_gameplay_kcd_session_v1';run=$run;result=$(if($passed){'passed'}else{'failed'});failure=$failure;
   target_pid=$context.GamePid;target_start_filetime=$targetStart;instance=$InstanceDirectory;smoke_seconds=$SmokeSeconds;
-  minecraft_movement_connected=[bool]($Movement -and $passed);movement_profile=[bool]$Movement;blocks_profile=[bool]$Blocks;explore_profile=[bool]$Explore;chat_profile=[bool]$Chat;flight_profile=[bool]$Flight;hands_profile=[bool]$Hands;world_blocks_profile=[bool]$WorldBlocks;drops_check=[bool]$DropsCheck;crafting_check=[bool]$CraftingCheck;furnace_check=[bool]$FurnaceCheck;tnt_check=[bool]$TntCheck;tnt_combat_check=[bool]$TntCombatCheck;respawn_check=[bool]$RespawnCheck;combat_profile=[bool]$Combat;combat_check=[bool]$CombatCheck;hide_native_vitals=[bool]$HideNativeVitals;host_command_typing_verified=$false;normal_client_exit=($helper -and $helper.HasExited -and $helper.ExitCode -eq 0)}|
+  minecraft_movement_connected=[bool]($Movement -and $passed);movement_profile=[bool]$Movement;blocks_profile=[bool]$Blocks;explore_profile=[bool]$Explore;chat_profile=[bool]$Chat;flight_profile=[bool]$Flight;hands_profile=[bool]$Hands;world_blocks_profile=[bool]$WorldBlocks;drops_check=[bool]$DropsCheck;crafting_check=[bool]$CraftingCheck;furnace_check=[bool]$FurnaceCheck;storage_check=[bool]$StorageCheck;tnt_check=[bool]$TntCheck;tnt_combat_check=[bool]$TntCombatCheck;respawn_check=[bool]$RespawnCheck;combat_profile=[bool]$Combat;combat_check=[bool]$CombatCheck;hide_native_vitals=[bool]$HideNativeVitals;host_command_typing_verified=$false;normal_client_exit=($helper -and $helper.HasExited -and $helper.ExitCode -eq 0)}|
   ConvertTo-Json|Set-Content -LiteralPath (Join-Path $directory 'verification.json') -Encoding utf8NoBOM
 }
 if(-not $passed){throw $failure}

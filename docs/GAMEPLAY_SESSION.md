@@ -56,7 +56,7 @@ normally. It never loads retail KCD2 saves or resets a Minecraft world.
 
 New saves start in Creative with commands enabled. Use `/gamemode survival` or
 `/gamemode creative` in chat. The launcher includes Minecraft blocks, hands/Steve,
-crafting, food, bows, crossbow arrows and the current NPC combat adapter. Existing coverage,
+crafting, food, storage barrels, bows, crossbow arrows and the current NPC combat adapter. Existing coverage,
 collision, palette and ranged-enemy limitations still apply; this remains a
 configured-machine prototype, not a standalone redistributable release.
 
@@ -888,13 +888,39 @@ furnace, including across save/reopen; closing it does not return its contents
 to the player. Movement and camera input are suppressed while its screen is
 open. Sneak with an item held to place against a furnace instead of opening it.
 Normal ownership, reach, captured-terrain and obstruction limits still apply.
-Smokers, blast furnaces, storage containers and automation are separate work.
+Smokers, blast furnaces and automation are separate work. Storage barrels are
+supported below.
 
 `Test-GameplayFurnace.ps1` uses real inventory clicks, waits for vanilla smelting,
 and reopens the same saved furnace to finish another item. `Test-KcdFurnace.ps1`
 exercises the connected path with scripted guest inputs and records native
 composition while the furnace screen is open. Its -VerifyEvidenceDirectory
 option checks an existing run without launching either game again.
+
+## Storage barrels
+
+Place a barrel on captured terrain or against an owned block, then right-click
+to open Minecraft's 27-slot storage screen. Move items with the existing inventory
+mouse controls. **E** or **Escape** closes it; items remain in the barrel and
+survive a normal save/reopen. Sneak with an item held to place against the barrel
+instead of opening it. Movement and camera input stay suppressed while storage
+is open.
+
+All six barrel orientations and the open/closed model states use Minecraft's
+normal block renderer. Minecraft's block entity owns the contents; MineCome does
+not recreate or refill it when reopening a save. Survival mining uses the real
+tool and drops both the barrel and its remaining contents. Chests, double chests,
+shulker boxes, hoppers and other storage automation remain separate work.
+
+`Test-GameplayStorage.ps1` automatically places a barrel, deposits and retrieves
+items through the real screen, closes/reopens it, saves, restarts the same world,
+retrieves another item and mines the barrel. It checks exact item conservation,
+tool wear and dropped entities. `Test-KcdStorage.ps1` checks the connected path
+and continued native composition with the storage screen open; its
+`-VerifyEvidenceDirectory` option reads an existing result without another launch.
+Both automatic storage checks pass, including exact saved contents and mining
+drops. The native run recorded 160 composition/reprojection advances during the
+storage dwell; see [the evidence](PROGRESS.md#persistent-storage-barrels).
 
 ## Dropped items and Survival pickup
 
@@ -942,14 +968,12 @@ post-occlusion screenshot visibility.
 
 ## Native health/stamina HUD
 
-KCD2's health/stamina widgets still overlap Minecraft's HUD. They should be hidden
-only while MineCome owns the session and restored afterward. The existing
-`wh_ui_ShowHud` probe verified a reversible whole-HUD toggle, but selective
-health/stamina element identities are not yet verified; hiding the whole HUD may
-also affect dialogue, subtitles and the compass. The old helper's 120-second
-lease is not suitable for sustained sessions. Selective hiding, or a renewable
-lease with original-state restoration and dialogue checks, remains required UI
-integration work.
+The Play launcher enables `-HideNativeVitals`. While MineCome owns the session,
+it hides native `Stats`, `QAMWeapon` and `QAMFood` clips: health/stamina bars and
+the equipped weapon/consumable squares. Compass, subtitles, dialogue and prompts
+remain separate. Each original visibility state is restored on stop or peer loss.
+The automatic Play checks verify hiding, restoration and continued composition;
+see the current evidence in [PROGRESS.md](PROGRESS.md).
 
 ## Survival food and regeneration
 

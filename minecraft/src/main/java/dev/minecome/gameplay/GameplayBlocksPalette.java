@@ -2,7 +2,7 @@ package dev.minecome.gameplay;
 
 import java.util.*;
 
-/** Bounded world-rendered palette: solid cubes, crafting tables, furnaces and dry shapes.
+/** Bounded world-rendered palette: solid cubes, crafting tables, containers and dry shapes.
  * State names are canonical and validated without initializing Minecraft registries,
  * so saved ownership validation also runs in the offline protocol tests.
  */
@@ -18,6 +18,7 @@ public final class GameplayBlocksPalette {
     private static final Set<String> FENCE_SUFFIXES;
     private static final Set<String> WALL_SUFFIXES;
     private static final Set<String> FURNACE_STATES;
+    private static final Set<String> BARREL_STATES;
     static {
         var plain=new HashSet<String>();
         for(var name:List.of("stone","cobblestone","dirt","coarse_dirt","granite","polished_granite",
@@ -83,11 +84,19 @@ public final class GameplayBlocksPalette {
         for(var facing:List.of("north","south","east","west"))for(var lit:List.of(false,true))
             furnaces.add("minecraft:furnace[facing="+facing+",lit="+lit+"]");
         FURNACE_STATES=Set.copyOf(furnaces);
+        // Pinned BarrelBlock uses all six FACING directions and OPEN. Its
+        // viewer manager changes only OPEN; rendering is the ordinary MODEL
+        // path, and the actual 27-slot block entity owns inventory and drops.
+        // Source: runtime/evidence/barrel-source-20261117/.
+        var barrels=new HashSet<String>();
+        for(var facing:List.of("north","south","east","west","up","down"))for(var open:List.of(false,true))
+            barrels.add("minecraft:barrel[facing="+facing+",open="+open+"]");
+        BARREL_STATES=Set.copyOf(barrels);
     }
     private GameplayBlocksPalette(){}
-    public static boolean supportsBlock(String id){return id!=null&&(id.equals("minecraft:furnace")||id.equals("minecraft:tnt")||PLAIN.contains(id)||AXIS.contains(id)||SLABS.contains(id)||STAIRS.contains(id)||FENCES.contains(id)||WALLS.contains(id));}
+    public static boolean supportsBlock(String id){return id!=null&&(id.equals("minecraft:furnace")||id.equals("minecraft:barrel")||id.equals("minecraft:tnt")||PLAIN.contains(id)||AXIS.contains(id)||SLABS.contains(id)||STAIRS.contains(id)||FENCES.contains(id)||WALLS.contains(id));}
     public static boolean supportsState(String state){
-        if(state==null)return false;if(PLAIN.contains(state)||furnaceState(state)||tntState(state))return true;
+        if(state==null)return false;if(PLAIN.contains(state)||furnaceState(state)||barrelState(state)||tntState(state))return true;
         for(var value:List.of("x","y","z")){
             var suffix="[axis="+value+"]";
             if(state.endsWith(suffix)&&AXIS.contains(state.substring(0,state.length()-suffix.length())))return true;
@@ -99,11 +108,18 @@ public final class GameplayBlocksPalette {
         return false;
     }
     public static boolean furnaceState(String state){return state!=null&&FURNACE_STATES.contains(state);}
+    public static boolean barrelState(String state){return state!=null&&BARREL_STATES.contains(state);}
     /** Normal vanilla placed TNT. Command-only unstable mining ignition is not admitted. */
     public static boolean tntState(String state){return "minecraft:tnt[unstable=false]".equals(state);}
     /** Only vanilla burn-state changes may reconcile a persisted furnace. */
     public static boolean sameFurnace(String before,String after){
         return furnaceState(before)&&furnaceState(after)&&before.substring(0,before.indexOf(",lit=")).equals(after.substring(0,after.indexOf(",lit=")));
     }
-    public static Set<String> blockIds(){var all=new TreeSet<>(PLAIN);all.addAll(AXIS);all.addAll(SLABS);all.addAll(STAIRS);all.addAll(FENCES);all.addAll(WALLS);all.add("minecraft:furnace");all.add("minecraft:tnt");return Collections.unmodifiableSet(all);}
+    /** Opening/closing never changes barrel orientation or inventory ownership. */
+    public static boolean sameBarrel(String before,String after){
+        return barrelState(before)&&barrelState(after)&&before.substring(0,before.indexOf(",open=")).equals(after.substring(0,after.indexOf(",open=")));
+    }
+    public static boolean containerState(String state){return furnaceState(state)||barrelState(state);}
+    public static boolean sameContainer(String before,String after){return sameFurnace(before,after)||sameBarrel(before,after);}
+    public static Set<String> blockIds(){var all=new TreeSet<>(PLAIN);all.addAll(AXIS);all.addAll(SLABS);all.addAll(STAIRS);all.addAll(FENCES);all.addAll(WALLS);all.add("minecraft:furnace");all.add("minecraft:barrel");all.add("minecraft:tnt");return Collections.unmodifiableSet(all);}
 }
